@@ -107,7 +107,9 @@ src/
     Symbols.jsx                electrical symbol glyphs
 ```
 
-Further reading: [`DESIGN.md`](DESIGN.md) covers the interaction rules — blueprint/table synchronization, autosave, undo semantics, revision handling, and the finish-review blocking logic — and [`ROADMAP.md`](ROADMAP.md) lists the remaining screens.
+If you open this repo in Claude Code, [`CLAUDE.md`](CLAUDE.md) loads automatically and carries the design context — status vocabulary, the rules that are easy to break, and the decisions still open.
+
+Further reading: [`DESIGN.md`](DESIGN.md) covers the interaction rules — blueprint/table synchronization, autosave, undo semantics, revision handling, and the finish-review blocking logic — [`ROADMAP.md`](ROADMAP.md) lists the remaining screens, and [`docs/product-spec.md`](docs/product-spec.md) is the full eleven-screen specification.
 
 ---
 

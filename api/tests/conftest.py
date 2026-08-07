@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.db import Base, get_db
 from app.main import app
+from app.takeoff.actions import ACTION_LOG_GUARD_DDL
 from app.takeoff.models import Item, Project, ReviewStatus, Sheet
 
 # The test suite drops and recreates a whole database on every run, so the
@@ -71,20 +72,14 @@ def create_test_database():
 @pytest.fixture
 def db():
     Base.metadata.create_all(test_engine)
+    # Base.metadata.create_all does not run migrations, so the append-only
+    # guard (triggers, ENABLE ALWAYS, the privilege REVOKE) has to be
+    # installed here too. Sourced from the same constant the migration
+    # executes -- see app.takeoff.actions -- so the two paths cannot drift
+    # apart and leave this fixture's tests passing against a table that
+    # doesn't actually have the guard.
     with test_engine.begin() as conn:
-        conn.execute(text("""
-            create or replace function actions_are_append_only() returns trigger as $$
-            begin
-                raise exception 'actions is append-only: % is not permitted', tg_op;
-            end;
-            $$ language plpgsql;
-            drop trigger if exists actions_no_update on actions;
-            drop trigger if exists actions_no_delete on actions;
-            create trigger actions_no_update before update on actions
-                for each statement execute function actions_are_append_only();
-            create trigger actions_no_delete before delete on actions
-                for each statement execute function actions_are_append_only();
-        """))
+        conn.execute(text(ACTION_LOG_GUARD_DDL))
     session = TestSession()
     try:
         yield session

@@ -3,7 +3,10 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import (
+    BigInteger, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index, Integer,
+    Numeric, String, Text, func, text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -99,9 +102,27 @@ class Action(Base):
     """Append-only. Undo appends a compensating row; nothing is ever rewritten."""
 
     __tablename__ = "actions"
+    __table_args__ = (
+        # At most one action may claim to undo a given action, but most
+        # actions undo nothing at all, so NULL has to stay unconstrained --
+        # a plain unique index would forbid more than one NULL-free row,
+        # which is not what "undoes nothing" means here.
+        Index(
+            "uq_actions_undoes_action_id", "undoes_action_id",
+            unique=True, postgresql_where=text("undoes_action_id is not null"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    # created_at is the *transaction* timestamp -- identical for every row
+    # written in the same transaction (the compound scale-confirmation
+    # flow writes more than one) -- so it cannot give a total order on its
+    # own. seq is a real Postgres identity sequence: strictly increasing
+    # per row regardless of transaction boundaries or clock resolution,
+    # which is what a LIFO undo needs to find "the most recent action"
+    # unambiguously.
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True, index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"), index=True)
     kind: Mapped[str] = mapped_column(String(30))
     item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     sheet_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
@@ -109,5 +130,5 @@ class Action(Base):
     label: Mapped[str] = mapped_column(String(300))
     before: Mapped[dict] = mapped_column(JSONB, default=dict)
     after: Mapped[dict] = mapped_column(JSONB, default=dict)
-    undoes_action_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("actions.id"), nullable=True, index=True)
+    undoes_action_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("actions.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

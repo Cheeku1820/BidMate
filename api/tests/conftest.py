@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.db import Base, get_db
 from app.main import app
+from app.takeoff.models import Item, Project, ReviewStatus, Sheet
 
 # The test suite drops and recreates a whole database on every run, so the
 # database name it targets must come from TEST_DATABASE_URL — never from a
@@ -85,3 +86,40 @@ def client(db):
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def org(db):
+    from app.identity.models import Org
+
+    o = Org(name="Meridian Electric")
+    db.add(o)
+    db.flush()
+    return o
+
+
+@pytest.fixture
+def project(db, org):
+    p = Project(org_id=org.id, name="Meridian Distribution Center", revision_set_label="E1.1 Rev 3")
+    db.add(p)
+    db.flush()
+    return p
+
+
+@pytest.fixture
+def sheet(db, project):
+    s = Sheet(project_id=project.id, number="E2.1", title="Power plan — warehouse",
+              discipline="Electrical", revision="Rev 2", scale="mixed", scale_options=[], plan="warehouse")
+    db.add(s)
+    db.flush()
+    return s
+
+
+@pytest.fixture
+def item(db, project, sheet):
+    i = Item(project_id=project.id, sheet_id=sheet.id, symbol="receptacle",
+             name="20A duplex receptacle", system="Power", category="Devices",
+             quantity=14, unit="EA", status=ReviewStatus.READY, x=556, y=508)
+    db.add(i)
+    db.flush()
+    return i

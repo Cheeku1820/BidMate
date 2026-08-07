@@ -9,6 +9,7 @@ from app.config import settings
 from app.db import Base
 from app.auth import models as auth_models  # noqa: F401
 from app.identity import models as identity_models  # noqa: F401
+from app.takeoff import models as takeoff_models  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

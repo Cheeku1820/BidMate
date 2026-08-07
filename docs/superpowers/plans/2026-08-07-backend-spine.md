@@ -53,7 +53,10 @@
 | `api/app/identity/` | orgs, users |
 | `api/app/auth/` | passwords, sessions, `current_user` |
 | `api/app/takeoff/models.py` | projects, sheets, items, warnings, actions |
-| `api/app/takeoff/service.py` | mutations and rules; owns `commit()` |
+| `api/app/takeoff/actions.py` | owns `commit()` — the only write primitive |
+| `api/app/takeoff/review.py` | approve, reject, unreject, edit, delete |
+| `api/app/takeoff/bulk.py` | bulk approval |
+| `api/app/takeoff/scale.py` | scale confirmation as a compound action |
 | `api/app/takeoff/undo.py` | undo/redo derivation over the action log |
 | `api/app/takeoff/totals.py` | the single totals query |
 | `api/app/takeoff/snapshot.py` | the poll payload and its version |
@@ -974,13 +977,13 @@ git commit -m "Add projects, sheets, items, and warnings with a four-value statu
 
 **Files:**
 - Modify: `api/app/takeoff/models.py`
-- Create: `api/app/takeoff/service.py`
+- Create: `api/app/takeoff/actions.py`
 - Create: `api/migrations/versions/0004_actions.py`
 - Test: `api/tests/test_action_log.py`
 
 **Interfaces:**
 - Consumes: `app.takeoff.models`, `app.identity.models.User`
-- Produces: `Action(id, project_id, kind, item_id, sheet_id, actor_user_id, label, before, after, undoes_action_id, created_at)`; `app.takeoff.service.commit(db, *, actor: User, project_id: UUID, kind: str, label: str, before: dict, after: dict, item_id: UUID | None = None, sheet_id: UUID | None = None, undoes_action_id: UUID | None = None) -> Action`
+- Produces: `Action(id, project_id, kind, item_id, sheet_id, actor_user_id, label, before, after, undoes_action_id, created_at)`; `app.takeoff.actions.commit(db, *, actor: User, project_id: UUID, kind: str, label: str, before: dict, after: dict, item_id: UUID | None = None, sheet_id: UUID | None = None, undoes_action_id: UUID | None = None) -> Action`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -990,12 +993,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import InternalError, ProgrammingError
 
-from app.takeoff import service
+from app.takeoff import actions as actions_module
 from app.takeoff.models import Action
 
 
 def test_commit_records_the_actor_and_a_label(db, dana, project, item):
-    action = service.commit(
+    action = actions_module.commit(
         db, actor=dana, project_id=project.id, kind="approve", label="Approved 20A duplex receptacle",
         before={"status": "ready"}, after={"status": "approved"}, item_id=item.id,
     )
@@ -1007,7 +1010,7 @@ def test_commit_records_the_actor_and_a_label(db, dana, project, item):
 
 
 def test_the_database_refuses_to_update_an_action(db, dana, project, item):
-    action = service.commit(db, actor=dana, project_id=project.id, kind="approve", label="Approved",
+    action = actions_module.commit(db, actor=dana, project_id=project.id, kind="approve", label="Approved",
                             before={}, after={}, item_id=item.id)
     db.flush()
 
@@ -1016,7 +1019,7 @@ def test_the_database_refuses_to_update_an_action(db, dana, project, item):
 
 
 def test_the_database_refuses_to_delete_an_action(db, dana, project, item):
-    action = service.commit(db, actor=dana, project_id=project.id, kind="approve", label="Approved",
+    action = actions_module.commit(db, actor=dana, project_id=project.id, kind="approve", label="Approved",
                             before={}, after={}, item_id=item.id)
     db.flush()
 
@@ -1067,7 +1070,7 @@ class Action(Base):
 
 Note `item_id` and `sheet_id` are plain columns without foreign keys — a deleted item must not take its history with it.
 
-- [ ] **Step 4: Write `api/app/takeoff/service.py` with `commit` only**
+- [ ] **Step 4: Write `api/app/takeoff/actions.py` with `commit` only**
 
 ```python
 import uuid
@@ -1174,7 +1177,7 @@ Expected: `No new upgrade operations detected.`
 - [ ] **Step 9: Commit**
 
 ```bash
-git add api/app/takeoff api/migrations api/tests/test_action_log.py api/tests/conftest.py
+git add api/app/takeoff/actions.py api/app/takeoff/models.py api/migrations api/tests/test_action_log.py api/tests/conftest.py
 git commit -m "Add an append-only action log enforced by a Postgres trigger"
 ```
 
@@ -1330,12 +1333,12 @@ git commit -m "Add the single totals query excluding superseded sheets and rejec
 ## Task 7: Review mutations and the blocking rule
 
 **Files:**
-- Modify: `api/app/takeoff/service.py`
+- Create: `api/app/takeoff/review.py`
 - Test: `api/tests/test_review_state_machine.py`
 
 **Interfaces:**
-- Consumes: `service.commit`, `app.errors.DomainError`
-- Produces: `service.approve_item(db, actor, item) -> Action`; `service.reject_item(db, actor, item) -> Action`; `service.unreject_item(db, actor, item) -> Action`; `service.edit_item(db, actor, item, changes: dict) -> Action`; `service.delete_item(db, actor, item) -> Action`. `changes` accepts keys `system`, `category`, `quantity`, `notes`, `symbol` only.
+- Consumes: `actions.commit`, `app.errors.DomainError`
+- Produces: `review.approve_item(db, actor, item) -> Action`; `review.reject_item(db, actor, item) -> Action`; `review.unreject_item(db, actor, item) -> Action`; `review.edit_item(db, actor, item, changes: dict) -> Action`; `review.delete_item(db, actor, item) -> Action`. `changes` accepts keys `system`, `category`, `quantity`, `notes`, `symbol` only.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1344,12 +1347,12 @@ git commit -m "Add the single totals query excluding superseded sheets and rejec
 import pytest
 
 from app.errors import DomainError
-from app.takeoff import service
+from app.takeoff import review
 from app.takeoff.models import ReviewStatus
 
 
 def test_approving_records_who_approved_it(db, dana, item):
-    service.approve_item(db, dana, item)
+    review.approve_item(db, dana, item)
     db.flush()
 
     assert item.status is ReviewStatus.APPROVED
@@ -1362,7 +1365,7 @@ def test_a_missing_information_item_cannot_be_approved(db, dana, item):
     db.flush()
 
     with pytest.raises(DomainError) as caught:
-        service.approve_item(db, dana, item)
+        review.approve_item(db, dana, item)
 
     assert caught.value.code == "missing_information_blocks_approval"
     assert item.status is ReviewStatus.MISSING
@@ -1372,7 +1375,7 @@ def test_a_needs_attention_item_can_be_approved(db, dana, item):
     item.status = ReviewStatus.ATTENTION
     db.flush()
 
-    service.approve_item(db, dana, item)
+    review.approve_item(db, dana, item)
 
     assert item.status is ReviewStatus.APPROVED
 
@@ -1381,7 +1384,7 @@ def test_rejecting_leaves_the_review_status_intact(db, dana, item):
     item.status = ReviewStatus.ATTENTION
     db.flush()
 
-    service.reject_item(db, dana, item)
+    review.reject_item(db, dana, item)
     db.flush()
 
     assert item.rejected_at is not None
@@ -1390,10 +1393,10 @@ def test_rejecting_leaves_the_review_status_intact(db, dana, item):
 
 def test_unrejecting_restores_the_item_without_guessing_a_status(db, dana, item):
     item.status = ReviewStatus.ATTENTION
-    service.reject_item(db, dana, item)
+    review.reject_item(db, dana, item)
     db.flush()
 
-    service.unreject_item(db, dana, item)
+    review.unreject_item(db, dana, item)
     db.flush()
 
     assert item.rejected_at is None
@@ -1405,7 +1408,7 @@ def test_editing_an_unclassified_item_moves_it_to_ready(db, dana, item):
     item.category = "Unclassified"
     db.flush()
 
-    service.edit_item(db, dana, item, {"category": "Devices"})
+    review.edit_item(db, dana, item, {"category": "Devices"})
     db.flush()
 
     assert item.status is ReviewStatus.READY
@@ -1413,7 +1416,7 @@ def test_editing_an_unclassified_item_moves_it_to_ready(db, dana, item):
 
 def test_editing_rejects_a_field_that_is_not_editable(db, dana, item):
     with pytest.raises(DomainError) as caught:
-        service.edit_item(db, dana, item, {"status": "approved"})
+        review.edit_item(db, dana, item, {"status": "approved"})
 
     assert caught.value.code == "field_not_editable"
 ```
@@ -1423,7 +1426,7 @@ def test_editing_rejects_a_field_that_is_not_editable(db, dana, item):
 Run: `docker compose run --rm api pytest tests/test_review_state_machine.py -v`
 Expected: FAIL — `module 'app.takeoff.service' has no attribute 'approve_item'`
 
-- [ ] **Step 3: Add the mutations to `api/app/takeoff/service.py`**
+- [ ] **Step 3: Write `api/app/takeoff/review.py`**
 
 ```python
 from datetime import datetime
@@ -1520,7 +1523,7 @@ Expected: 7 passed
 - [ ] **Step 5: Commit**
 
 ```bash
-git add api/app/takeoff/service.py api/tests/test_review_state_machine.py
+git add api/app/takeoff/review.py api/tests/test_review_state_machine.py
 git commit -m "Add review mutations with missing-information approval blocked server-side"
 ```
 
@@ -1529,18 +1532,18 @@ git commit -m "Add review mutations with missing-information approval blocked se
 ## Task 8: Bulk approval, restricted to Ready to review
 
 **Files:**
-- Modify: `api/app/takeoff/service.py`
+- Create: `api/app/takeoff/bulk.py`
 - Test: `api/tests/test_bulk_approve.py`
 
 **Interfaces:**
-- Consumes: `service.approve_item`, `service.commit`
-- Produces: `service.bulk_approve(db, actor, project_id, item_ids: list[UUID]) -> BulkApproveResult` — a dataclass with `approved: list[UUID]`, `skipped: dict[UUID, str]` mapping id to reason code, and `action: Action | None`
+- Consumes: `review.approve_item`, `actions.commit`
+- Produces: `bulk.bulk_approve(db, actor, project_id, item_ids: list[UUID]) -> BulkApproveResult` — a dataclass with `approved: list[UUID]`, `skipped: dict[UUID, str]` mapping id to reason code, and `action: Action | None`
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # api/tests/test_bulk_approve.py
-from app.takeoff import service
+from app.takeoff import bulk
 from app.takeoff.models import Item, ReviewStatus
 
 
@@ -1557,7 +1560,7 @@ def test_only_ready_items_are_approved(db, dana, project, sheet):
     attention = _extra(db, project, sheet, ReviewStatus.ATTENTION)
     missing = _extra(db, project, sheet, ReviewStatus.MISSING)
 
-    result = service.bulk_approve(db, dana, project.id, [ready.id, attention.id, missing.id])
+    result = bulk.bulk_approve(db, dana, project.id, [ready.id, attention.id, missing.id])
     db.flush()
 
     assert result.approved == [ready.id]
@@ -1571,7 +1574,7 @@ def test_bulk_approval_writes_one_action_not_one_per_item(db, dana, project, she
     a = _extra(db, project, sheet, ReviewStatus.READY)
     b = _extra(db, project, sheet, ReviewStatus.READY)
 
-    result = service.bulk_approve(db, dana, project.id, [a.id, b.id])
+    result = bulk.bulk_approve(db, dana, project.id, [a.id, b.id])
     db.flush()
 
     assert result.action is not None
@@ -1587,7 +1590,7 @@ def test_bulk_approval_ignores_items_from_another_project(db, dana, project, she
     db.flush()
     mine = _extra(db, project, sheet, ReviewStatus.READY)
 
-    result = service.bulk_approve(db, dana, other.id, [mine.id])
+    result = bulk.bulk_approve(db, dana, other.id, [mine.id])
 
     assert result.approved == []
     assert result.skipped[mine.id] == "not_in_project"
@@ -1598,7 +1601,7 @@ def test_bulk_approval_ignores_items_from_another_project(db, dana, project, she
 Run: `docker compose run --rm api pytest tests/test_bulk_approve.py -v`
 Expected: FAIL — `module 'app.takeoff.service' has no attribute 'bulk_approve'`
 
-- [ ] **Step 3: Add `bulk_approve` to `api/app/takeoff/service.py`**
+- [ ] **Step 3: Write `api/app/takeoff/bulk.py`**
 
 ```python
 from dataclasses import dataclass, field
@@ -1655,7 +1658,7 @@ Expected: 3 passed
 - [ ] **Step 5: Commit**
 
 ```bash
-git add api/app/takeoff/service.py api/tests/test_bulk_approve.py
+git add api/app/takeoff/bulk.py api/tests/test_bulk_approve.py
 git commit -m "Add bulk approval restricted to Ready to review items"
 ```
 
@@ -1664,18 +1667,18 @@ git commit -m "Add bulk approval restricted to Ready to review items"
 ## Task 9: Scale confirmation as one compound action
 
 **Files:**
-- Modify: `api/app/takeoff/service.py`
+- Create: `api/app/takeoff/scale.py`
 - Test: `api/tests/test_scale.py`
 
 **Interfaces:**
-- Consumes: `service.commit`
-- Produces: `service.set_scale(db, actor, sheet, value: str) -> Action` — sets the sheet scale and re-derives every *Missing information* item on that sheet to *Ready to review*, clearing its warning, as a single action
+- Consumes: `actions.commit`
+- Produces: `scale.set_scale(db, actor, sheet, value: str) -> Action` — sets the sheet scale and re-derives every *Missing information* item on that sheet to *Ready to review*, clearing its warning, as a single action
 
 - [ ] **Step 1: Write the failing tests**
 
 ```python
 # api/tests/test_scale.py
-from app.takeoff import service
+from app.takeoff import scale as scale_module
 from app.takeoff.models import Item, ReviewStatus, Warning
 
 
@@ -1694,7 +1697,7 @@ def _blocked(db, project, sheet):
 def test_setting_the_scale_releases_every_blocked_item_on_that_sheet(db, dana, project, sheet):
     one, two = _blocked(db, project, sheet), _blocked(db, project, sheet)
 
-    service.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
+    scale_module.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
     db.flush()
 
     assert sheet.scale == '1/8" = 1\'-0"'
@@ -1705,7 +1708,7 @@ def test_setting_the_scale_releases_every_blocked_item_on_that_sheet(db, dana, p
 def test_the_warnings_on_released_items_are_cleared(db, dana, project, sheet):
     item = _blocked(db, project, sheet)
 
-    service.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
+    scale_module.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
     db.flush()
 
     assert db.query(Warning).filter(Warning.item_id == item.id).count() == 0
@@ -1715,7 +1718,7 @@ def test_it_is_one_action_naming_how_many_items_moved(db, dana, project, sheet):
     _blocked(db, project, sheet)
     _blocked(db, project, sheet)
 
-    action = service.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
+    action = scale_module.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
     db.flush()
 
     assert action.kind == "scale"
@@ -1732,7 +1735,7 @@ def test_items_on_another_sheet_are_untouched(db, dana, project, sheet):
     db.flush()
     elsewhere = _blocked(db, project, other)
 
-    service.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
+    scale_module.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
     db.flush()
 
     assert elsewhere.status is ReviewStatus.MISSING
@@ -1743,7 +1746,7 @@ def test_items_on_another_sheet_are_untouched(db, dana, project, sheet):
 Run: `docker compose run --rm api pytest tests/test_scale.py -v`
 Expected: FAIL — no attribute `set_scale`
 
-- [ ] **Step 3: Add `set_scale` to `api/app/takeoff/service.py`**
+- [ ] **Step 3: Write `api/app/takeoff/scale.py`**
 
 ```python
 from app.takeoff.models import Sheet, Warning
@@ -1787,7 +1790,7 @@ Expected: 4 passed
 - [ ] **Step 5: Commit**
 
 ```bash
-git add api/app/takeoff/service.py api/tests/test_scale.py
+git add api/app/takeoff/scale.py api/tests/test_scale.py
 git commit -m "Add scale confirmation as one compound undoable action"
 ```
 
@@ -1800,7 +1803,7 @@ git commit -m "Add scale confirmation as one compound undoable action"
 - Test: `api/tests/test_undo_redo.py`
 
 **Interfaces:**
-- Consumes: `app.takeoff.models.Action`, `service.commit`
+- Consumes: `app.takeoff.models.Action`, `actions.commit`
 - Produces: `undo.undo_head(db, project_id) -> Action | None`; `undo.redo_head(db, project_id) -> Action | None`; `undo.undo(db, actor, project_id) -> Action | None`; `undo.redo(db, actor, project_id) -> Action | None`
 
 **Design note for the implementer:** nothing is deleted. Undoing action `A` appends an action of kind `undo` whose `undoes_action_id` is `A.id`. Redo appends kind `redo` pointing at the undo action. An action counts as live when no *live* action targets it — a short recursive walk, evaluated in Python over the project's actions, which is honest at this scale and documented as a future indexing concern.
@@ -1809,12 +1812,12 @@ git commit -m "Add scale confirmation as one compound undoable action"
 
 ```python
 # api/tests/test_undo_redo.py
-from app.takeoff import service, undo
+from app.takeoff import review, scale as scale_module, undo
 from app.takeoff.models import ReviewStatus
 
 
 def test_undo_restores_the_previous_status(db, dana, project, item):
-    service.approve_item(db, dana, item)
+    review.approve_item(db, dana, item)
     db.flush()
 
     undo.undo(db, dana, project.id)
@@ -1826,7 +1829,7 @@ def test_undo_restores_the_previous_status(db, dana, project, item):
 def test_undo_appends_rather_than_deleting_history(db, dana, project, item):
     from app.takeoff.models import Action
 
-    service.approve_item(db, dana, item)
+    review.approve_item(db, dana, item)
     db.flush()
     undo.undo(db, dana, project.id)
     db.flush()
@@ -1835,7 +1838,7 @@ def test_undo_appends_rather_than_deleting_history(db, dana, project, item):
 
 
 def test_redo_reapplies_the_action(db, dana, project, item):
-    service.approve_item(db, dana, item)
+    review.approve_item(db, dana, item)
     db.flush()
     undo.undo(db, dana, project.id)
     db.flush()
@@ -1848,9 +1851,9 @@ def test_redo_reapplies_the_action(db, dana, project, item):
 
 def test_undo_merges_only_the_fields_the_action_touched(db, dana, project, item):
     """B undoing A's approval must not clobber an unrelated quantity edit."""
-    service.approve_item(db, dana, item)
+    review.approve_item(db, dana, item)
     db.flush()
-    service.edit_item(db, dana, item, {"quantity": 99})
+    review.edit_item(db, dana, item, {"quantity": 99})
     db.flush()
 
     # undo the edit, then the approval
@@ -1870,7 +1873,7 @@ def test_undoing_a_scale_reverses_both_halves_together(db, dana, project, sheet)
                    status=ReviewStatus.MISSING)
     db.add(blocked)
     db.flush()
-    service.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
+    scale_module.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
     db.flush()
 
     undo.undo(db, dana, project.id)
@@ -1900,7 +1903,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.identity.models import User
 from app.takeoff.models import Action, Item, ReviewStatus, Sheet
-from app.takeoff.service import commit
+from app.takeoff.actions import commit
 
 REVERSIBLE = {"approve", "reject", "unreject", "edit", "scale"}
 
@@ -2574,7 +2577,7 @@ Expected: FAIL — routes do not exist
 ```python
 from pydantic import BaseModel
 
-from app.takeoff import service, undo as undo_module
+from app.takeoff import bulk, review, scale as scale_module, undo as undo_module
 from app.takeoff.models import Item, Sheet
 
 
@@ -2605,7 +2608,7 @@ class ScaleIn(BaseModel):
 @router.post("/items/{item_id}/approve")
 def approve(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> dict:
     item = load_item(item_id, db, user)
-    action = service.approve_item(db, user, item)
+    action = review.approve_item(db, user, item)
     db.commit()
     return {"label": action.label}
 
@@ -2613,7 +2616,7 @@ def approve(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSessio
 @router.post("/items/{item_id}/reject")
 def reject(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> dict:
     item = load_item(item_id, db, user)
-    action = service.reject_item(db, user, item)
+    action = review.reject_item(db, user, item)
     db.commit()
     return {"label": action.label}
 
@@ -2621,7 +2624,7 @@ def reject(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession
 @router.post("/items/{item_id}/unreject")
 def unreject(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> dict:
     item = load_item(item_id, db, user)
-    action = service.unreject_item(db, user, item)
+    action = review.unreject_item(db, user, item)
     db.commit()
     return {"label": action.label}
 
@@ -2630,7 +2633,7 @@ def unreject(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSessi
 def edit(item_id: uuid.UUID, body: EditIn, user: User = Depends(current_user),
          db: DbSession = Depends(get_db)) -> dict:
     item = load_item(item_id, db, user)
-    action = service.edit_item(db, user, item, body.model_dump(exclude_none=True))
+    action = review.edit_item(db, user, item, body.model_dump(exclude_none=True))
     db.commit()
     return {"label": action.label}
 
@@ -2638,7 +2641,7 @@ def edit(item_id: uuid.UUID, body: EditIn, user: User = Depends(current_user),
 @router.delete("/items/{item_id}")
 def delete(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> dict:
     item = load_item(item_id, db, user)
-    action = service.delete_item(db, user, item)
+    action = review.delete_item(db, user, item)
     db.commit()
     return {"label": action.label}
 
@@ -2647,7 +2650,7 @@ def delete(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession
 def bulk_approve(project_id: uuid.UUID, body: BulkApproveIn, user: User = Depends(current_user),
                  db: DbSession = Depends(get_db)) -> dict:
     project = load_project(project_id, db, user)
-    result = service.bulk_approve(db, user, project.id, body.item_ids)
+    result = bulk.bulk_approve(db, user, project.id, body.item_ids)
     db.commit()
     return {
         "approved": [str(i) for i in result.approved],
@@ -2663,7 +2666,7 @@ def set_scale(sheet_id: uuid.UUID, body: ScaleIn, user: User = Depends(current_u
     if sheet is None:
         raise NOT_FOUND
     load_project(sheet.project_id, db, user)
-    action = service.set_scale(db, user, sheet, body.value)
+    action = scale_module.set_scale(db, user, sheet, body.value)
     db.commit()
     return {"label": action.label}
 
@@ -2907,11 +2910,42 @@ describe("seed store", () => {
 Run: `npm test`
 Expected: FAIL — cannot resolve `./seed.js`
 
-- [ ] **Step 4: Write `src/lib/store/seed.js`**
+- [ ] **Step 4: Write `src/lib/rules.js`**
 
-Move the `localStorage`, `BroadcastChannel`, and `identity()` internals from `src/lib/sync.js` into this module, and express the same rules the server enforces — approving a *Missing information* item rejects with `{ code: "missing_information_blocks_approval" }`, rejected items and superseded sheets are excluded from totals, and `setScale` releases only blocked items on that sheet as one undoable entry. Export `createSeedStore()`.
+The client needs these rules twice — `seed.js` enforces them because there is no server behind it, and `App.jsx` checks them for immediate feedback with the evidence on screen. Write them once:
 
-The rules are duplicated here on purpose: seed mode has no server, and the prototype's value is that the rules are visible. The API implementation trusts the server instead.
+```javascript
+// src/lib/rules.js
+export const BLOCKED_BY_MISSING_INFORMATION = {
+  code: "missing_information_blocks_approval",
+  message:
+    "This item is missing evidence it needs, so it cannot be approved yet. " +
+    "Resolve the warning on the sheet first.",
+};
+
+/** Returns null when the item may be approved, or the refusal describing why not. */
+export function refusalToApprove(item) {
+  return item.status === "missing" ? BLOCKED_BY_MISSING_INFORMATION : null;
+}
+
+/** Bulk approval accepts Ready to review only — never attention or missing. */
+export function approvableInBulk(items) {
+  return items.filter((i) => i.status === "ready" && !i.rejected);
+}
+
+/** Superseded sheets and rejected items never contribute to a total. */
+export function countsTowardTotals(item, sheetsById) {
+  return !item.rejected && !sheetsById[item.sheetId]?.superseded;
+}
+```
+
+This mirrors the Python service rather than sharing code with it — the two languages cannot share a module, and the server stays authoritative regardless. What it prevents is the same rule being written twice *within* the client.
+
+- [ ] **Step 5: Write `src/lib/store/seed.js`**
+
+Move the `localStorage`, `BroadcastChannel`, and `identity()` internals from `src/lib/sync.js` into this module. Import the rules from `../rules.js` rather than restating them — `approveItem` rejects with `refusalToApprove(item)` when it returns a refusal, totals use `countsTowardTotals`, and `setScale` releases only blocked items on that sheet as one undoable entry. Export `createSeedStore()`.
+
+Renumber the remaining steps of this task accordingly.
 
 - [ ] **Step 5: Write `src/lib/store/index.js`**
 

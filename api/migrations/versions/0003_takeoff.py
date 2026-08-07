@@ -115,3 +115,10 @@ def downgrade() -> None:
     op.drop_index(op.f('ix_projects_org_id'), table_name='projects')
     op.drop_table('projects')
     # ### end Alembic commands ###
+
+    # A Postgres native enum is an object independent of the column that
+    # uses it, so dropping 'items' does not drop 'review_status'. Drop it
+    # explicitly, after every table that references it (only 'items') is
+    # already gone, or the type is orphaned and the next upgrade fails
+    # trying to create a type that already exists.
+    sa.Enum(name='review_status').drop(op.get_bind(), checkfirst=False)

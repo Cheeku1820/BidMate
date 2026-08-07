@@ -49,3 +49,21 @@ def test_totals_group_by_system(db, project, sheet):
     by_system = approved_totals(db, project.id).by_system
 
     assert by_system == {"Power": Decimal("14"), "Lighting": Decimal("38")}
+
+
+def test_fractional_quantity_survives_aggregation_as_decimal(db, project, sheet):
+    # 10.33 is not exactly representable in binary floating point, unlike
+    # the whole-number quantities the other tests use (Decimal("14") == 14.0
+    # is True, so those tests can't tell a Decimal from a float). Equality
+    # alone isn't enough either -- a float that happened to compare equal
+    # would still be the wrong type to hand to something that prices the
+    # number -- so this asserts both the exact value and the type.
+    db.add(_item(project, sheet, system="Power", quantity=Decimal("10.33")))
+    db.flush()
+
+    result = approved_totals(db, project.id)
+
+    assert result.approved_units == Decimal("10.33")
+    assert isinstance(result.approved_units, Decimal)
+    assert result.by_system["Power"] == Decimal("10.33")
+    assert isinstance(result.by_system["Power"], Decimal)

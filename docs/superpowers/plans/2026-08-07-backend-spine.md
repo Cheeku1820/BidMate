@@ -2247,14 +2247,22 @@ from app.takeoff.totals import approved_totals
 
 router = APIRouter(prefix="/api", tags=["takeoff"])
 
-NOT_FOUND = DomainError("project_not_found", "That project is not available to your account.", status=404)
+def not_found() -> DomainError:
+    """A fresh instance per raise.
+
+    A module-level exception singleton re-raised on every rejection
+    accumulates tracebacks — each retained frame holds that frame's locals,
+    which on an auth-adjacent path means retaining request data for the life
+    of the process, and growing without bound under load.
+    """
+    return DomainError("project_not_found", "That project is not available to your account.", status=404)
 
 
 def load_project(project_id: uuid.UUID, db: DbSession, user: User) -> Project:
     """The single tenancy gate for every project-scoped route."""
     project = db.get(Project, project_id)
     if project is None or project.org_id != user.org_id:
-        raise NOT_FOUND
+        raise not_found()
     return project
 
 
@@ -2584,7 +2592,7 @@ from app.takeoff.models import Item, Sheet
 def load_item(item_id: uuid.UUID, db: DbSession, user: User) -> Item:
     item = db.get(Item, item_id)
     if item is None:
-        raise NOT_FOUND
+        raise not_found()
     load_project(item.project_id, db, user)
     return item
 
@@ -2664,7 +2672,7 @@ def set_scale(sheet_id: uuid.UUID, body: ScaleIn, user: User = Depends(current_u
               db: DbSession = Depends(get_db)) -> dict:
     sheet = db.get(Sheet, sheet_id)
     if sheet is None:
-        raise NOT_FOUND
+        raise not_found()
     load_project(sheet.project_id, db, user)
     action = scale_module.set_scale(db, user, sheet, body.value)
     db.commit()

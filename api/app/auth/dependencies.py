@@ -10,18 +10,23 @@ from app.identity.models import User
 
 COOKIE_NAME = "takeoff_session"
 
-NOT_SIGNED_IN = DomainError("not_signed_in", "Sign in to continue.", status=401)
+
+def _not_signed_in() -> DomainError:
+    # A fresh instance every call — see the matching note on
+    # app.auth.service._invalid_credentials for why a shared/module-level
+    # exception instance is unsafe to raise repeatedly.
+    return DomainError("not_signed_in", "Sign in to continue.", status=401)
 
 
 def current_user(request: Request, db: DbSession = Depends(get_db)) -> User:
     raw = request.cookies.get(COOKIE_NAME)
     if not raw:
-        raise NOT_SIGNED_IN
+        raise _not_signed_in()
     try:
         session_id = uuid.UUID(raw)
     except ValueError:
-        raise NOT_SIGNED_IN
+        raise _not_signed_in()
     user = user_for_session(db, session_id)
     if user is None:
-        raise NOT_SIGNED_IN
+        raise _not_signed_in()
     return user

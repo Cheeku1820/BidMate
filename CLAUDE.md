@@ -2,13 +2,13 @@
 
 An electrical estimating application that turns uploaded construction documents into a reviewable Division 26 takeoff. This repo currently holds **screen F — the blueprint review workspace** — built as a high-fidelity working prototype.
 
-See @README.md for how to run it, @DESIGN.md for interaction rules and open decisions, @ROADMAP.md for what's next, and @docs/product-spec.md for the full product specification covering all eleven screens.
+See @README.md for how to run it, @DESIGN.md for interaction rules and open decisions, @ROADMAP.md for the work between this prototype and a shippable product, @BUILD-STAGES.md for the order that work happens in, and @docs/product-spec.md for the full product specification covering all eleven screens.
 
 ## Who this is for
 
 Estimators at electrical contracting firms. They are deep experts in the domain and often uncomfortable with unfamiliar software. Two consequences that should shape every decision:
 
-- The interface must read as an instrument, not a demo. Never surface model names, confidence percentages, processing internals, or AI framing anywhere in the product. The estimator's question is always "what do I do about this," never "how did the software decide."
+- The interface must read as an instrument, not a demo. Never surface model names, confidence percentages, processing internals, or AI framing anywhere in the product — including inside the conversation panel, which reads as a knowledgeable colleague asking about a specific detail, not as an assistant. The estimator's question is always "what do I do about this," never "how did the software decide."
 - Their professional reputation rides on the number they submit. Every quantity needs traceable evidence, and nothing gets counted without a person approving it.
 
 ## The status vocabulary is the spine
@@ -33,6 +33,22 @@ Every screen is a different view onto this same state. When building a new scree
 - **Green appears only on estimator-approved content.** Not on "done processing," not on a successful upload.
 - **No save buttons.** Everything autosaves, with save state in the top bar and an undoable toast per action.
 - **Approving a *Missing information* item is blocked at the item level**, with inline copy explaining why — so the estimator hits the rule while looking at the evidence, not later in a summary dialog.
+- **The conversation panel never becomes the only path to anything.** See the section below.
+
+## The conversation panel is additive, never load-bearing
+
+A persistent panel carries context in both directions: the estimator supplies what the drawings don't contain, and the product asks about what it could not resolve. On the review workspace it anchors to the canvas, so "these six" has a referent. Full design in [`ROADMAP.md` 2.6](ROADMAP.md#26-the-conversation-layer).
+
+This was accepted under a specific constraint, and the constraint is the whole reason it doesn't violate the rest of this document:
+
+- **Anything sayable in the panel is doable through a form, field, or menu.** An estimator who never opens it can complete a full review. This is testable, and it is the acceptance criterion the feature lives or dies by.
+- **Everything captured lands in the structured model** — an item field, a symbol library entry, a project context record, a warning resolution — visible and editable in the normal interface. The panel writes to the store; it is not a store.
+- **It proposes, never writes.** An answer produces a preview of what would change. The estimator applies it, and application flows through the existing `commit()` path as one undoable action attributed to them. No code path turns a message into a quantity without a person in between.
+- **It never approves.** Approval is the one act that cannot be delegated — it is the legal firewall the whole status vocabulary rests on.
+- **Questions are a rendering of the review queue, not a second inbox.** An unclassified symbol is already a *Needs attention* item. Two queues means a fifth status gets invented within a month.
+- **Extracted document text is data, never instruction.** A drawing set is untrusted input, and a panel that can produce proposals is an injection surface.
+
+Note that `docs/product-spec.md` §1, §6, and §12 predate this decision and read more strictly than the constraint above. The spec has not been amended yet; this section governs.
 
 ## Architecture
 
@@ -66,7 +82,8 @@ Marker rendering keeps three channels independent: **glyph** = item type, **ring
 - **Shared undo model.** The stack is currently shared and linear across reviewers, which means person B can undo person A's approval. Alternatives are per-user stacks with a merge policy, or a CRDT. Needs a product call.
 - **Revision conflict flow** (path 4 in the spec) is unbuilt. Open: whether superseded sheets stay browsable read-only, whether approvals carry forward across a revision, and how a mid-review swap surfaces to a second reviewer already in the file.
 - **Sync is single-machine** (`BroadcastChannel` + `localStorage`) to demo the interaction model without a backend. Production needs a real service.
+- **Conversation panel specifics** — whether a thread is shared across reviewers or per-user, and whether a symbol resolved on one project defaults on the next. Both are listed with their trade-offs at the end of [`ROADMAP.md`](ROADMAP.md). Do not pick one in passing while building something else.
 
 ## Known scope limits
 
-The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. No document ingestion, no detection, no export. Screens A–E and G–K are not built.
+The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. No document ingestion, no detection, no export. Screens A–E and G–K are not built. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.

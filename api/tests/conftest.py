@@ -71,6 +71,20 @@ def create_test_database():
 @pytest.fixture
 def db():
     Base.metadata.create_all(test_engine)
+    with test_engine.begin() as conn:
+        conn.execute(text("""
+            create or replace function actions_are_append_only() returns trigger as $$
+            begin
+                raise exception 'actions is append-only: % is not permitted', tg_op;
+            end;
+            $$ language plpgsql;
+            drop trigger if exists actions_no_update on actions;
+            drop trigger if exists actions_no_delete on actions;
+            create trigger actions_no_update before update on actions
+                for each statement execute function actions_are_append_only();
+            create trigger actions_no_delete before delete on actions
+                for each statement execute function actions_are_append_only();
+        """))
     session = TestSession()
     try:
         yield session
@@ -123,3 +137,15 @@ def item(db, project, sheet):
     db.add(i)
     db.flush()
     return i
+
+
+@pytest.fixture
+def dana(db, org):
+    from app.auth.passwords import hash_password
+    from app.identity.models import User
+
+    u = User(org_id=org.id, email="dana@example.com", password_hash=hash_password("correct-horse"),
+             name="Dana Whitfield", color="#23528f")
+    db.add(u)
+    db.flush()
+    return u

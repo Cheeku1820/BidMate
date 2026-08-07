@@ -665,7 +665,9 @@ class UserOut(BaseModel):
 
 ```python
 # router.py
-from fastapi import APIRouter, Depends, Response
+import uuid
+
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session as DbSession
 
 from app.auth import service
@@ -694,24 +696,9 @@ def login(body: LoginRequest, response: Response, db: DbSession = Depends(get_db
 
 
 @router.post("/logout", status_code=204)
-def logout(response: Response, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> None:
-    import uuid as _uuid
-
-    from fastapi import Request  # noqa: F401
-
-    response.delete_cookie(COOKIE_NAME)
-
-
-@router.get("/me", response_model=UserOut)
-def me(user: User = Depends(current_user)) -> User:
-    return user
-```
-
-Note: `logout` needs the session id, which lives on the request. Replace the body with a version that reads it directly:
-
-```python
-@router.post("/logout", status_code=204)
 def logout(request: Request, response: Response, db: DbSession = Depends(get_db)) -> None:
+    """Reads the cookie directly rather than depending on current_user, so
+    signing out of an already-expired session still clears the cookie."""
     raw = request.cookies.get(COOKIE_NAME)
     if raw:
         try:
@@ -720,9 +707,12 @@ def logout(request: Request, response: Response, db: DbSession = Depends(get_db)
         except ValueError:
             pass
     response.delete_cookie(COOKIE_NAME)
-```
 
-with `import uuid` and `from fastapi import Request` at the top of the file, and the earlier placeholder version removed.
+
+@router.get("/me", response_model=UserOut)
+def me(user: User = Depends(current_user)) -> User:
+    return user
+```
 
 - [ ] **Step 9: Register the router and the error handler in `api/app/main.py`**
 
@@ -2522,8 +2512,7 @@ def test_another_org_cannot_approve_your_item(client, dana, rival, project, shee
     response = client.post(f"/api/items/{item.id}/approve")
 
     assert response.status_code == 404
-    db_status = client.app  # item untouched
-    assert item.status.value == "ready"
+    assert item.status.value == "ready", "the item must be untouched"
 
 
 def test_another_org_cannot_undo_your_action(client, dana, rival, project, sheet, item):

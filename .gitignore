@@ -4,3 +4,6 @@ dist
 *.local
 .vite
 .superpowers
+api/.env
+api/.env.*
+!api/.env.example

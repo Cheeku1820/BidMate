@@ -1,3 +1,5 @@
+import uuid
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import pytest
@@ -121,6 +123,37 @@ def test_before_and_after_round_trip_decimal_and_enum_through_jsonb(db, dana, pr
 
     assert actions_module.decode_snapshot_value(action.before["status"], ReviewStatus) is ReviewStatus.READY
     assert actions_module.decode_snapshot_value(action.before["quantity"], Decimal) == Decimal("14.00")
+
+
+def test_before_and_after_round_trip_datetime_and_uuid_through_jsonb(db, dana, project, item):
+    """Item.approved_at is a timezone-aware datetime and
+    Item.approved_by_user_id is a uuid.UUID -- review.py's snapshots carry
+    both, so encode_snapshot() must handle them the same way it already
+    handles Decimal and enum, and decode_snapshot_value() must reverse it.
+
+    db.expire(action), not a fresh read of the Python object, so the
+    assertions are against what actually reached the JSONB columns rather
+    than whatever the identity map happens to still be holding.
+    """
+    approved_at = datetime(2026, 8, 7, 15, 30, 0, tzinfo=timezone.utc)
+    action = actions_module.commit(
+        db, actor=dana, project_id=project.id, kind="approve", label="Approved",
+        before={"approved_at": None, "approved_by_user_id": None},
+        after={"approved_at": approved_at, "approved_by_user_id": dana.id},
+        item_id=item.id,
+    )
+    db.flush()
+    db.expire(action)  # force the reload from the database, not the identity map
+
+    assert action.before == {"approved_at": None, "approved_by_user_id": None}
+    assert action.after == {
+        "approved_at": approved_at.isoformat(),
+        "approved_by_user_id": str(dana.id),
+    }
+
+    assert actions_module.decode_snapshot_value(action.after["approved_at"], datetime) == approved_at
+    assert actions_module.decode_snapshot_value(action.after["approved_by_user_id"], uuid.UUID) == dana.id
+    assert actions_module.decode_snapshot_value(action.before["approved_at"], datetime) is None
 
 
 def test_seq_gives_a_total_order_within_the_same_transaction(db, dana, project, item):

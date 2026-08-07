@@ -1,5 +1,6 @@
 import enum
 import uuid
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy.orm import Session as DbSession
@@ -82,6 +83,15 @@ def _encode_snapshot_value(value):
         return str(value)
     if isinstance(value, enum.Enum):
         return value.value
+    # datetime before date: datetime is a subclass of date, so checking
+    # date first would encode every timestamp with .isoformat()'s date-only
+    # behavior never actually running -- order matters here.
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, uuid.UUID):
+        return str(value)
     return value
 
 
@@ -92,12 +102,17 @@ def encode_snapshot(fields: dict) -> dict:
     `Decimal` becomes `str`, so `Item.quantity` round-trips exactly --
     `float()` would silently lose precision. Enum members become
     `.value`, so `Item.status` stores "approved" rather than failing to
-    serialize, or storing the unusable "ReviewStatus.APPROVED".
+    serialize, or storing the unusable "ReviewStatus.APPROVED". `datetime`
+    and `date` become `.isoformat()` strings (`Item.approved_at`,
+    `Item.rejected_at`), and `uuid.UUID` becomes `str()`
+    (`Item.approved_by_user_id`) -- both fields review.py's mutations
+    snapshot on every approve/reject/unreject.
 
     Shallow only: it does not recurse into nested lists or dicts, because
-    nothing in the current schema needs that. A Decimal or Enum nested
-    inside a list value still raises at commit() rather than silently
-    mis-encoding -- extend this function first if that need shows up.
+    nothing in the current schema needs that. A Decimal, Enum, datetime,
+    date, or UUID nested inside a list value still raises at commit()
+    rather than silently mis-encoding -- extend this function first if
+    that need shows up.
 
     `decode_snapshot_value()` below is the inverse, kept in this module
     so a future reader can't drift from what a writer actually did.
@@ -110,10 +125,10 @@ def decode_snapshot_value(value, as_type):
     should become.
 
     JSONB carries no type information of its own -- a stored string
-    could be a plain string, an encoded Decimal, or an encoded enum
-    value -- so the caller has to say which. This is the one place that
-    knows the encoding, for whichever task reconstructs prior item state
-    from a stored snapshot.
+    could be a plain string, an encoded Decimal, an encoded enum value,
+    an isoformat datetime/date, or an encoded UUID -- so the caller has
+    to say which. This is the one place that knows the encoding, for
+    whichever task reconstructs prior item state from a stored snapshot.
     """
     if value is None:
         return None
@@ -121,6 +136,12 @@ def decode_snapshot_value(value, as_type):
         return Decimal(value)
     if isinstance(as_type, type) and issubclass(as_type, enum.Enum):
         return as_type(value)
+    if as_type is datetime:
+        return datetime.fromisoformat(value)
+    if as_type is date:
+        return date.fromisoformat(value)
+    if as_type is uuid.UUID:
+        return uuid.UUID(value)
     return value
 
 

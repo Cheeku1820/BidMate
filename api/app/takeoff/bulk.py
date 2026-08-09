@@ -168,7 +168,7 @@ def bulk_approve(
         elif item.status is not ReviewStatus.READY:
             result.skipped[item_id] = NOT_READY_TO_REVIEW
         else:
-            before_fields, after_fields = _apply_approve(db, item, actor)
+            before_fields, after_fields = _apply_approve(db, actor, item)
             per_item_before[str(item_id)] = encode_snapshot(before_fields)
             per_item_after[str(item_id)] = encode_snapshot(after_fields)
             result.approved.append(item_id)

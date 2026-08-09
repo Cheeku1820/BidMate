@@ -126,15 +126,28 @@ def _validate_edit(changes: dict) -> None:
 
     if "quantity" in changes:
         try:
-            Decimal(str(changes["quantity"]))
+            parsed = Decimal(str(changes["quantity"]))
         except (InvalidOperation, ValueError, TypeError):
             raise DomainError(
                 "invalid_quantity",
                 "Quantity must be a number, such as 14 or 3.5. Correct it and save the edit again.",
             )
+        # Decimal("NaN") / Decimal("Infinity") / Decimal("-Infinity") all
+        # parse without raising, and Postgres numeric happily stores NaN
+        # -- one edit like that poisons every SUM downstream, which is
+        # exactly the drawer total and export figure a contractor bids
+        # off. is_finite() rejects NaN and both infinities in one check.
+        # A quantity is also a count or a measured length, and there is
+        # no such thing as a negative one, so that is refused here too
+        # rather than accepted as a value nobody would legitimately enter.
+        if not parsed.is_finite() or parsed < 0:
+            raise DomainError(
+                "invalid_quantity",
+                "Quantity must be a positive number, such as 14 or 3.5. Correct it and save the edit again.",
+            )
 
 
-def _apply_approve(db: DbSession, item: Item, actor: User) -> tuple[dict, dict]:
+def _apply_approve(db: DbSession, actor: User, item: Item) -> tuple[dict, dict]:
     """Mutate `item` into an approved state and return its before/after
     pair, without recording an action.
 
@@ -146,10 +159,24 @@ def _apply_approve(db: DbSession, item: Item, actor: User) -> tuple[dict, dict]:
     Ready to review, reviewer B can flip it to Missing information and
     commit, and without this re-read A's approval would act on a stale
     in-memory value and let a Missing information item through.
+
+    That same re-read can also come back empty: a concurrent reviewer
+    may have deleted the row entirely while this lock request was
+    waiting for it. `.scalar_one()` would raise `NoResultFound` in that
+    case -- an unhandled 500 with no recovery copy -- so the empty
+    result is checked explicitly and turned into a `DomainError` naming
+    what happened, the same way every other refusal in this module does.
     """
-    db.execute(
+    locked = db.execute(
         select(Item).where(Item.id == item.id).with_for_update().execution_options(populate_existing=True)
-    ).scalar_one()
+    ).scalar_one_or_none()
+
+    if locked is None:
+        raise DomainError(
+            "item_no_longer_exists",
+            "This item was deleted by another reviewer. Refresh the sheet to see its current items.",
+            status=409,
+        )
 
     if item.status is ReviewStatus.MISSING:
         raise DomainError(
@@ -182,7 +209,7 @@ def _apply_approve(db: DbSession, item: Item, actor: User) -> tuple[dict, dict]:
 
 
 def approve_item(db: DbSession, actor: User, item: Item) -> Action:
-    before, after = _apply_approve(db, item, actor)
+    before, after = _apply_approve(db, actor, item)
     return commit(
         db, actor=actor, project_id=item.project_id, kind="approve",
         label=f"Approved {item.name}", before=before, after=after, item_id=item.id,

@@ -237,3 +237,59 @@ def test_editing_quantity_to_a_fraction_round_trips_as_an_exact_decimal_string(d
     assert item.quantity == Decimal("12.55")
     assert action.after["quantity"] == "12.55"
     assert isinstance(action.after["quantity"], str)
+
+
+# --- Carry-forward fix: Decimal("NaN")/("Infinity") pass InvalidOperation
+# but poison every SUM downstream, so the validator must reject them by
+# name rather than relying on Decimal's parser alone. ---
+
+
+@pytest.mark.parametrize("bad_value", ["NaN", "nan", "Infinity", "-Infinity", "inf"])
+def test_editing_quantity_to_a_non_finite_value_is_refused(db, dana, item, bad_value):
+    with pytest.raises(DomainError) as caught:
+        review.edit_item(db, dana, item, {"quantity": bad_value})
+
+    assert caught.value.code == "invalid_quantity"
+    assert item.quantity == Decimal("14.00"), "a refused edit must not have mutated the item"
+
+
+def test_editing_quantity_to_a_negative_value_is_refused(db, dana, item):
+    """A takeoff quantity is a count or a measured length -- there is no
+    such thing as -6 receptacles or -40 linear feet of conduit, so a
+    negative value is not a valid edit rather than a value the estimator
+    might legitimately want."""
+    with pytest.raises(DomainError) as caught:
+        review.edit_item(db, dana, item, {"quantity": "-1"})
+
+    assert caught.value.code == "invalid_quantity"
+    assert item.quantity == Decimal("14.00")
+
+
+# --- Carry-forward fix: approve_item's locked re-read must not surface a
+# concurrent delete as an unhandled 500 ---
+
+
+def test_approving_an_item_deleted_by_a_concurrent_reviewer_is_a_domain_error(db, dana, item):
+    """Reviewer A (this session) holds a reference to `item`. Reviewer B
+    -- a separate connection and transaction -- deletes the row and
+    commits. approve_item()'s locked re-read (`.with_for_update()`) must
+    not raise NoResultFound as a bare 500 with no recovery copy; it
+    should refuse with a DomainError naming what happened.
+    """
+    db.commit()
+
+    other_engine = create_engine(settings.test_database_url)
+    OtherSession = sessionmaker(bind=other_engine, expire_on_commit=False)
+    other = OtherSession()
+    try:
+        other_item = other.get(Item, item.id)
+        other.delete(other_item)
+        other.commit()
+    finally:
+        other.close()
+        other_engine.dispose()
+
+    with pytest.raises(DomainError) as caught:
+        review.approve_item(db, dana, item)
+
+    assert caught.value.code == "item_no_longer_exists"

@@ -196,6 +196,21 @@ def commit(
       flush-time default, so a caller that chains
       `undoes_action_id=prior.id` before ever flushing never silently
       writes `None`.
+
+    Lock ordering, for any caller that locks more than one row within
+    the same transaction before calling this function: acquire those
+    locks in ascending primary-key order, never in caller-supplied order
+    and never in whatever order a query happened to return them in.
+    `bulk.bulk_approve()` is the first caller to lock multiple `Item`
+    rows at once, and it does so ordered by `Item.id` -- two reviewers
+    approving overlapping sets from different clients, in different
+    list orders, would otherwise deadlock against each other. That
+    reasoning is not specific to bulk approval: any future caller that
+    takes locks on more than one row of the same table before a single
+    `commit()` -- the compound scale confirmation that re-derives every
+    measured item on a sheet is the next one expected to -- needs the
+    same fixed, caller-independent ordering, or the deadlock this
+    convention exists to avoid comes back.
     """
     project = db.get(Project, project_id)
     if project is None or project.org_id != actor.org_id:

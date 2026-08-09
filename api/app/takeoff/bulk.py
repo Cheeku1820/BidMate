@@ -16,28 +16,44 @@ status (see `review._apply_reject()`).
 Every skip is reported with a reason code rather than dropped silently.
 An estimator who clicks "approve 40" and gets back 31 approved needs to
 know which nine did not move and why, in the same response -- not by
-noticing a discrepancy later.
+noticing a discrepancy later. Already-approved items get their own
+reason distinct from Needs attention / Missing information: "a
+colleague already approved these nine" needs no action, while "these
+nine need attention or are missing evidence" is work the estimator must
+go do. Collapsing the two into one code would send someone to look at
+items where nothing is wrong.
 
 The whole batch is recorded as a single action, not one per item, so
 Task 10's undo can reverse the batch in one step. `commit()`'s
 `before`/`after` are a flat dict, so recording N items' prior and new
 state needs a nesting convention -- this follows the one
 `review._apply_delete()` already established for its nested warnings
-list: nest under a key, and pre-encode the nested structure with
-`encode_snapshot()` before handing it to `commit()`, since `commit()`'s
-own encoding is shallow and will not reach inside a nested dict.
+list: nest under a key (`ITEMS_SNAPSHOT_KEY`), and pre-encode the nested
+structure with `encode_snapshot()` before handing it to `commit()`,
+since `commit()`'s own encoding is shallow and will not reach inside a
+nested dict.
+
+Approval itself is delegated to `review._apply_approve()` rather than
+reimplemented here, so there is exactly one definition of what
+approving an item means. `review.py` factored `_apply_approve()` out of
+`approve_item()` specifically so a caller like this one could reuse the
+mutate-and-snapshot step under its own commit() -- see that module's
+docstring. Reusing it means a future change to what gets snapshotted on
+approval (a fourth field, say) cannot drift between the single-item and
+bulk paths, and it means both paths decode with the same type map
+(`review.ITEM_SNAPSHOT_TYPES`).
 """
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.identity.models import User
-from app.takeoff.actions import commit, encode_snapshot
-from app.takeoff.models import Action, Item, ReviewStatus
+from app.takeoff.actions import CrossOrgActionError, commit, encode_snapshot
+from app.takeoff.models import Action, Item, Project, ReviewStatus
+from app.takeoff.review import _apply_approve
 
 # Skip reason codes. Kept as module-level strings (not an enum) because
 # they travel to the client as plain JSON dict values, the same way
@@ -45,7 +61,13 @@ from app.takeoff.models import Action, Item, ReviewStatus
 # decoded back to .value at every boundary that touches it.
 NOT_IN_PROJECT = "not_in_project"
 REJECTED = "rejected"
+ALREADY_APPROVED = "already_approved"
 NOT_READY_TO_REVIEW = "not_ready_to_review"
+
+# The key `before`/`after` nest per-item snapshots under. Exported so
+# Task 10's undo reads this constant rather than string-matching
+# "items" out of a docstring.
+ITEMS_SNAPSHOT_KEY = "items"
 
 
 @dataclass
@@ -60,6 +82,22 @@ def bulk_approve(
 ) -> BulkApproveResult:
     """Approve every Ready to review item named in `item_ids` that
     belongs to `project_id`; skip everything else with a reason.
+
+    Authorization runs first, before any row is read or locked. Without
+    this, a caller whose org does not own `project_id` could still learn
+    something: pass any project id and any item ids, and the per-item
+    skip reasons in the result (`not_in_project` vs `rejected` vs
+    `not_ready_to_review` vs `already_approved`) disclose whether each
+    item exists, which project it belongs to, and its review state --
+    cross-tenant visibility into another firm's bid, which is exactly
+    what this product's tenancy model exists to prevent. Resolving the
+    project and checking its org here, before the locking query, also
+    means correctness for the "nothing qualifies" path never depended on
+    a caller happening to call `commit()` -- previously the only
+    authorization check ran inside `commit()`, which is skipped entirely
+    when `result.approved` ends up empty, and rows were locked and
+    mutated before that check ran at all for the case where something
+    *did* qualify.
 
     Concurrency: every candidate row is locked with `SELECT ... FOR
     UPDATE` before any status is read, the same re-read discipline
@@ -77,15 +115,39 @@ def bulk_approve(
     items in the opposite order) locks item 2 then item 1, the two
     transactions deadlock. Locking in one order that does not depend on
     caller input, id order, removes that possibility regardless of which
-    order either reviewer's client happened to list the items in.
+    order either reviewer's client happened to list the items in. This
+    is a repo-wide convention, not a fact private to this function --
+    see the note next to `commit()` in `actions.py`, which every
+    mutation path already imports, so a future caller that locks more
+    than one row (Task 9's compound scale confirmation, for one) finds
+    it there rather than re-discovering it the hard way.
+
+    `item_ids` may contain duplicates; each id is processed once, in its
+    first-seen position, so the same id can never appear in both
+    `approved` and `skipped`, and a repeated id in the request can never
+    inflate the approved count.
     """
     result = BulkApproveResult()
+
+    project = db.get(Project, project_id)
+    if project is None or project.org_id != actor.org_id:
+        raise CrossOrgActionError(
+            f"actor {actor.id} is not authorized to bulk-approve items for project {project_id}"
+        )
+
     if not item_ids:
         return result
 
+    deduped_ids: list[uuid.UUID] = []
+    seen: set[uuid.UUID] = set()
+    for item_id in item_ids:
+        if item_id not in seen:
+            seen.add(item_id)
+            deduped_ids.append(item_id)
+
     locked_rows = db.scalars(
         select(Item)
-        .where(Item.id.in_(item_ids))
+        .where(Item.id.in_(deduped_ids))
         .order_by(Item.id)
         .with_for_update()
         .execution_options(populate_existing=True)
@@ -95,28 +157,18 @@ def bulk_approve(
     per_item_before: dict[str, dict] = {}
     per_item_after: dict[str, dict] = {}
 
-    for item_id in item_ids:
+    for item_id in deduped_ids:
         item = items_by_id.get(item_id)
         if item is None or item.project_id != project_id:
             result.skipped[item_id] = NOT_IN_PROJECT
         elif item.rejected_at is not None:
             result.skipped[item_id] = REJECTED
+        elif item.status is ReviewStatus.APPROVED:
+            result.skipped[item_id] = ALREADY_APPROVED
         elif item.status is not ReviewStatus.READY:
             result.skipped[item_id] = NOT_READY_TO_REVIEW
         else:
-            before_fields = {
-                "status": item.status,
-                "approved_by_user_id": item.approved_by_user_id,
-                "approved_at": item.approved_at,
-            }
-            item.status = ReviewStatus.APPROVED
-            item.approved_by_user_id = actor.id
-            item.approved_at = datetime.now(timezone.utc)
-            after_fields = {
-                "status": item.status,
-                "approved_by_user_id": item.approved_by_user_id,
-                "approved_at": item.approved_at,
-            }
+            before_fields, after_fields = _apply_approve(db, item, actor)
             per_item_before[str(item_id)] = encode_snapshot(before_fields)
             per_item_after[str(item_id)] = encode_snapshot(after_fields)
             result.approved.append(item_id)
@@ -126,7 +178,7 @@ def bulk_approve(
         result.action = commit(
             db, actor=actor, project_id=project_id, kind="bulk_approve",
             label=f"Approved {count} item{'s' if count != 1 else ''}",
-            before={"items": per_item_before},
-            after={"items": per_item_after},
+            before={ITEMS_SNAPSHOT_KEY: per_item_before},
+            after={ITEMS_SNAPSHOT_KEY: per_item_after},
         )
     return result

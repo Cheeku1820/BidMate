@@ -23,6 +23,35 @@ class ReviewStatus(enum.Enum):
 status_enum = Enum(ReviewStatus, name="review_status", values_callable=lambda e: [m.value for m in e])
 
 
+class WarningReason(enum.Enum):
+    """What kind of evidence a warning is about -- a closed vocabulary,
+    extendable only by a migration someone writes on purpose (see
+    migrations/versions/0005_warning_reason.py).
+
+    This exists so a caller that only knows how to resolve one kind of
+    evidence gap -- `scale.set_scale()` resolves a missing scale -- can
+    tell its own warnings apart from every other reason an item might be
+    Missing information, instead of treating every warning on a Missing
+    information item as something it is entitled to clear. Confirming a
+    scale must never delete the warning that explains an unclassified
+    symbol; only a typed reason makes that distinction checkable in code
+    rather than left to the coincidence of what the seed data contains.
+
+    Members are named for the evidence that is missing, not for the
+    status it produces (`ReviewStatus.MISSING` already names that) --
+    "scale" reads as "this warning is about the sheet's scale," which is
+    what a reader actually needs to know at the call site.
+    """
+
+    SCALE = "scale"
+    LEGEND = "legend"
+
+
+warning_reason_enum = Enum(
+    WarningReason, name="warning_reason", values_callable=lambda e: [m.value for m in e]
+)
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -91,6 +120,7 @@ class Warning(Base):
     item_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), nullable=True, index=True)
     sheet_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sheets.id", ondelete="CASCADE"), nullable=True, index=True)
 
+    reason: Mapped[WarningReason] = mapped_column(warning_reason_enum, nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     found: Mapped[str] = mapped_column(Text, nullable=False)
     why: Mapped[str] = mapped_column(Text, nullable=False)

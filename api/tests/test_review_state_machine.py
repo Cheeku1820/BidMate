@@ -7,8 +7,9 @@ from sqlalchemy.orm import sessionmaker
 from app.config import settings
 from app.errors import DomainError
 from app.takeoff import actions
-from app.takeoff.models import Item, ReviewStatus, Warning
+from app.takeoff.models import Item, ReviewStatus, Warning, WarningReason
 from app.takeoff import review
+from app.takeoff import snapshots
 
 
 def test_approving_records_who_approved_it(db, dana, item):
@@ -155,6 +156,7 @@ def test_unrejecting_then_approving_succeeds(db, dana, item):
 def test_deleting_an_item_snapshots_its_warnings_before_cascade_removes_them(db, dana, item):
     warning = Warning(
         item_id=item.id,
+        reason=WarningReason.SCALE,
         title="Scale needs confirmation",
         found="E2.1 shows two scale labels.",
         why="Measured conduit lengths may be wrong.",
@@ -173,6 +175,7 @@ def test_deleting_an_item_snapshots_its_warnings_before_cascade_removes_them(db,
         "id": str(warning_id),
         "item_id": str(item.id),
         "sheet_id": None,
+        "reason": "scale",
         "title": "Scale needs confirmation",
         "found": "E2.1 shows two scale labels.",
         "why": "Measured conduit lengths may be wrong.",
@@ -187,7 +190,7 @@ def test_decode_snapshot_reconstructs_a_deleted_items_typed_fields(db, dana, ite
     db.flush()
     db.expire(action)
 
-    restored = actions.decode_snapshot(action.before, review.ITEM_SNAPSHOT_TYPES)
+    restored = actions.decode_snapshot(action.before, snapshots.ITEM_SNAPSHOT_TYPES)
 
     assert restored["id"] == item_id
     assert restored["status"] is ReviewStatus.READY
@@ -263,6 +266,38 @@ def test_editing_quantity_to_a_negative_value_is_refused(db, dana, item):
 
     assert caught.value.code == "invalid_quantity"
     assert item.quantity == Decimal("14.00")
+
+
+def test_editing_quantity_to_zero_is_accepted(db, dana, item):
+    """Zero is not negative -- an item counted at zero is a legitimate
+    intermediate state (a run still being traced, say), distinct from a
+    value nobody would legitimately enter."""
+    action = review.edit_item(db, dana, item, {"quantity": "0"})
+    db.flush()
+
+    assert item.quantity == Decimal("0")
+    assert action.after["quantity"] == "0"
+
+
+# --- Review finding F: a quantity within Decimal's finite range can still
+# overflow Item.quantity (Numeric(12, 2)) at flush, as a bare psycopg
+# error with no recovery copy, unless the validator bounds it itself. ---
+
+
+def test_editing_quantity_beyond_the_column_bound_is_refused(db, dana, item):
+    with pytest.raises(DomainError) as caught:
+        review.edit_item(db, dana, item, {"quantity": "1E+15"})
+
+    assert caught.value.code == "invalid_quantity"
+    assert item.quantity == Decimal("14.00"), "a refused edit must not have mutated the item"
+
+
+def test_editing_quantity_at_the_column_bound_is_accepted(db, dana, item):
+    action = review.edit_item(db, dana, item, {"quantity": "9999999999.99"})
+    db.flush()
+
+    assert item.quantity == Decimal("9999999999.99")
+    assert action.after["quantity"] == "9999999999.99"
 
 
 # --- Carry-forward fix: approve_item's locked re-read must not surface a

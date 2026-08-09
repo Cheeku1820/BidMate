@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.exc import DataError, IntegrityError
 
-from app.takeoff.models import Item, Project, ReviewStatus, Sheet, Warning
+from app.takeoff.models import Item, Project, ReviewStatus, Sheet, Warning, WarningReason
 
 
 def test_review_status_has_exactly_four_members():
@@ -24,8 +24,8 @@ def test_an_invented_status_is_rejected_by_the_database(db, project, sheet):
 
 
 def test_a_warning_cannot_be_written_with_a_missing_field(db, project, sheet, item):
-    db.add(Warning(item_id=item.id, title="Scale needs confirmation", found="two labels",
-                   why="lengths may be wrong", fix="select the scale", where_=None))
+    db.add(Warning(item_id=item.id, reason=WarningReason.SCALE, title="Scale needs confirmation",
+                   found="two labels", why="lengths may be wrong", fix="select the scale", where_=None))
     with pytest.raises(IntegrityError):
         db.flush()
 

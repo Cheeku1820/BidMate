@@ -20,18 +20,17 @@ steps directly under one `commit()`, instead of duplicating this
 mutate-then-snapshot pattern outside the module.
 """
 
-import uuid
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select
-from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session as DbSession
 
 from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff.actions import commit, encode_snapshot
 from app.takeoff.models import Action, Item, ReviewStatus, Warning
+from app.takeoff.snapshots import _column_snapshot
 
 # The only fields a generic edit may touch. Status changes go through
 # approve/reject/unreject instead, so "status" is deliberately absent --
@@ -45,63 +44,14 @@ EDITABLE_FIELDS = {"system", "category", "quantity", "notes", "symbol"}
 # and silently promote a Needs attention item to Ready to review.
 REQUIRED_TEXT_FIELDS = {"system", "category", "symbol"}
 
-# Field -> Python type for every value in an Item snapshot (delete_item's
-# full-column snapshot plus its nested "warnings" list), so a future
-# decoder -- Task 10's undo -- can call
-# `actions.decode_snapshot(fields, ITEM_SNAPSHOT_TYPES)` instead of
-# reverse-engineering ~20 columns' types from JSONB, which carries none.
-# "warnings" decodes to `list` (left alone); decode each element with
-# WARNING_SNAPSHOT_TYPES below -- they're already individually encoded.
-ITEM_SNAPSHOT_TYPES: dict[str, type] = {
-    "id": uuid.UUID,
-    "project_id": uuid.UUID,
-    "sheet_id": uuid.UUID,
-    "symbol": str,
-    "name": str,
-    "description": str,
-    "system": str,
-    "category": str,
-    "quantity": Decimal,
-    "unit": str,
-    "status": ReviewStatus,
-    "approved_by_user_id": uuid.UUID,
-    "approved_at": datetime,
-    "rejected_by_user_id": uuid.UUID,
-    "rejected_at": datetime,
-    "x": int,
-    "y": int,
-    "path": list,
-    "notes": str,
-    "evidence": dict,
-    "updated_at": datetime,
-    "warnings": list,
-}
-
-# Counterpart for decoding one element of the nested "warnings" list.
-# Keyed by Python attribute name ("where_"), not the "where" database
-# column name -- see _column_snapshot()'s docstring for why that
-# distinction matters here.
-WARNING_SNAPSHOT_TYPES: dict[str, type] = {
-    "id": uuid.UUID,
-    "item_id": uuid.UUID,
-    "sheet_id": uuid.UUID,
-    "title": str,
-    "found": str,
-    "why": str,
-    "fix": str,
-    "where_": str,
-}
-
-
-def _column_snapshot(obj) -> dict:
-    """Snapshot every mapped column of `obj`, keyed by Python attribute
-    name, not database column name. They match for `Item`, but
-    `Warning.where_` sits on the db column `"where"` (a reserved word) --
-    keying by db column name would produce a `"where"` entry that
-    neither `getattr`/`setattr` on the ORM object can use.
-    """
-    mapper = sa_inspect(type(obj))
-    return {attr.key: getattr(obj, attr.key) for attr in mapper.column_attrs}
+# The largest magnitude Item.quantity (Numeric(12, 2)) can actually
+# store: 12 total digits, 2 after the decimal point, so 10 before it.
+# Decimal.is_finite() alone lets "1E+15" through -- finite, positive, and
+# still too large by ten orders of magnitude -- and the failure then
+# surfaces as a bare psycopg numeric field overflow at flush, with no
+# recovery copy. Checking the bound here turns that into the same
+# DomainError every other refused edit produces.
+MAX_QUANTITY = Decimal("9999999999.99")
 
 
 def _validate_edit(changes: dict) -> None:
@@ -138,12 +88,24 @@ def _validate_edit(changes: dict) -> None:
         # exactly the drawer total and export figure a contractor bids
         # off. is_finite() rejects NaN and both infinities in one check.
         # A quantity is also a count or a measured length, and there is
-        # no such thing as a negative one, so that is refused here too
-        # rather than accepted as a value nobody would legitimately enter.
+        # no such thing as a negative one -- but zero is a legitimate
+        # intermediate state (an item counted at zero while a run is
+        # still being traced, say), so it stays accepted and the copy
+        # says "cannot be negative" rather than "must be positive."
         if not parsed.is_finite() or parsed < 0:
             raise DomainError(
                 "invalid_quantity",
-                "Quantity must be a positive number, such as 14 or 3.5. Correct it and save the edit again.",
+                "Quantity cannot be negative. Enter zero or a positive number, such as 14 or 3.5.",
+            )
+        # is_finite() lets "1E+15" through -- finite, non-negative, and
+        # still ten orders of magnitude past what Item.quantity
+        # (Numeric(12, 2)) can store. Left unchecked, that value passes
+        # every validator here and fails only at flush, as a bare
+        # psycopg numeric field overflow with no recovery copy.
+        if parsed > MAX_QUANTITY:
+            raise DomainError(
+                "invalid_quantity",
+                f"Quantity must be {MAX_QUANTITY:,} or less. Correct it and save the edit again.",
             )
 
 

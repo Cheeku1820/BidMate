@@ -207,10 +207,19 @@ def commit(
     list orders, would otherwise deadlock against each other. That
     reasoning is not specific to bulk approval: any future caller that
     takes locks on more than one row of the same table before a single
-    `commit()` -- the compound scale confirmation that re-derives every
-    measured item on a sheet is the next one expected to -- needs the
-    same fixed, caller-independent ordering, or the deadlock this
-    convention exists to avoid comes back.
+    `commit()` needs the same fixed, caller-independent ordering, or the
+    deadlock this convention exists to avoid comes back.
+
+    Cross-table order: `scale.set_scale()` is the first caller to lock
+    rows in more than one table within a single action -- a `Sheet` row
+    plus every `Item` row it releases. It locks the sheet first, then
+    items in ascending `Item.id` order. Any future caller that locks
+    across more than one table follows the same fixed table order
+    (sheets before items) for the same reason `Item.id` ordering exists
+    within a single table: two transactions taking the same locks in
+    different orders is how a deadlock happens, and a fixed order that
+    does not depend on caller input removes the possibility regardless
+    of which table either transaction happens to touch first.
     """
     project = db.get(Project, project_id)
     if project is None or project.org_id != actor.org_id:

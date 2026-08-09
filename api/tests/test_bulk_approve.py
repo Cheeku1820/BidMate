@@ -71,8 +71,8 @@ def test_bulk_approval_writes_one_action_not_one_per_item(db, dana, project, she
     # covers the actual JSONB shape Task 10's undo will read back.
     db.expire_all()
     stored = db.get(Action, result.action.id)
-    before_items = stored.before[bulk.ITEMS_SNAPSHOT_KEY]
-    after_items = stored.after[bulk.ITEMS_SNAPSHOT_KEY]
+    before_items = {entry["id"]: entry for entry in stored.before[bulk.ITEMS_SNAPSHOT_KEY]}
+    after_items = {entry["id"]: entry for entry in stored.after[bulk.ITEMS_SNAPSHOT_KEY]}
     assert set(before_items) == {str(a.id), str(b.id)}
     assert before_items[str(a.id)]["status"] == "ready"
     assert before_items[str(a.id)]["approved_by_user_id"] is None

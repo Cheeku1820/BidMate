@@ -33,6 +33,17 @@ structure with `encode_snapshot()` before handing it to `commit()`,
 since `commit()`'s own encoding is shallow and will not reach inside a
 nested dict.
 
+Each item's snapshot is a dict carrying its own `id` (a list, not a
+dict keyed by item id) -- matching `scale.set_scale()`'s shape.
+Earlier, this module nested per-item snapshots under a dict keyed by
+item-id string while `scale.py` used a list of dicts each carrying its
+own `id`, both under the same `ITEMS_SNAPSHOT_KEY` name -- same key,
+divergent payload, exactly the kind of drift that produces a subtly
+wrong undo for whichever of the two a future reader assumes the other
+also uses. This module now matches `scale.py`'s form, which additionally
+preserves the order items were approved in, something a dict keyed by
+id cannot.
+
 Approval itself is delegated to `review._apply_approve()` rather than
 reimplemented here, so there is exactly one definition of what
 approving an item means. `review.py` factored `_apply_approve()` out of
@@ -41,7 +52,7 @@ mutate-and-snapshot step under its own commit() -- see that module's
 docstring. Reusing it means a future change to what gets snapshotted on
 approval (a fourth field, say) cannot drift between the single-item and
 bulk paths, and it means both paths decode with the same type map
-(`review.ITEM_SNAPSHOT_TYPES`).
+(`snapshots.ITEM_SNAPSHOT_TYPES`).
 """
 
 import uuid
@@ -154,8 +165,8 @@ def bulk_approve(
     ).all()
     items_by_id = {row.id: row for row in locked_rows}
 
-    per_item_before: dict[str, dict] = {}
-    per_item_after: dict[str, dict] = {}
+    items_before: list[dict] = []
+    items_after: list[dict] = []
 
     for item_id in deduped_ids:
         item = items_by_id.get(item_id)
@@ -169,8 +180,8 @@ def bulk_approve(
             result.skipped[item_id] = NOT_READY_TO_REVIEW
         else:
             before_fields, after_fields = _apply_approve(db, actor, item)
-            per_item_before[str(item_id)] = encode_snapshot(before_fields)
-            per_item_after[str(item_id)] = encode_snapshot(after_fields)
+            items_before.append(encode_snapshot({"id": item.id, **before_fields}))
+            items_after.append(encode_snapshot({"id": item.id, **after_fields}))
             result.approved.append(item_id)
 
     if result.approved:
@@ -178,7 +189,7 @@ def bulk_approve(
         result.action = commit(
             db, actor=actor, project_id=project_id, kind="bulk_approve",
             label=f"Approved {count} item{'s' if count != 1 else ''}",
-            before={ITEMS_SNAPSHOT_KEY: per_item_before},
-            after={ITEMS_SNAPSHOT_KEY: per_item_after},
+            before={ITEMS_SNAPSHOT_KEY: items_before},
+            after={ITEMS_SNAPSHOT_KEY: items_after},
         )
     return result

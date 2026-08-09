@@ -1,8 +1,14 @@
-import pytest
+from decimal import Decimal
 
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.config import settings
 from app.errors import DomainError
+from app.takeoff import actions
+from app.takeoff.models import Item, ReviewStatus, Warning
 from app.takeoff import review
-from app.takeoff.models import ReviewStatus
 
 
 def test_approving_records_who_approved_it(db, dana, item):
@@ -73,3 +79,161 @@ def test_editing_rejects_a_field_that_is_not_editable(db, dana, item):
         review.edit_item(db, dana, item, {"status": "approved"})
 
     assert caught.value.code == "field_not_editable"
+
+
+# --- I1: approve_item must recheck status under a lock, not a stale read ---
+
+
+def test_approve_item_rechecks_status_under_a_row_lock_not_a_stale_read(db, dana, item):
+    """Reviewer A (this session) loads the item while it is Ready to
+    review. Reviewer B -- a separate connection and transaction --
+    flips it to Missing information and commits. approve_item() must
+    refuse based on the row's current state in the database, not
+    whatever this session's Python object still says, or a concurrent
+    reviewer's Missing information item could be waved through by a
+    caller sitting on a stale read.
+
+    db.commit() (rather than just flush) is required here, deliberately
+    breaking from this suite's usual single-uncommitted-transaction
+    pattern: a second, independent connection cannot see this session's
+    fixtures at all until they are actually committed. The `db` fixture's
+    teardown drops and recreates the whole schema regardless of commit
+    state, so this is safe.
+    """
+    db.commit()
+
+    other_engine = create_engine(settings.test_database_url)
+    OtherSession = sessionmaker(bind=other_engine, expire_on_commit=False)
+    other = OtherSession()
+    try:
+        other_item = other.get(Item, item.id)
+        other_item.status = ReviewStatus.MISSING
+        other.commit()
+    finally:
+        other.close()
+        other_engine.dispose()
+
+    # This session's own object still says Ready to review -- nothing in
+    # this transaction has told it otherwise yet.
+    assert item.status is ReviewStatus.READY
+
+    with pytest.raises(DomainError) as caught:
+        review.approve_item(db, dana, item)
+
+    assert caught.value.code == "missing_information_blocks_approval"
+    assert item.status is ReviewStatus.MISSING, "the row lock must refresh the stale in-memory read"
+
+
+# --- I5: a rejected item cannot be approved as-is ---
+
+
+def test_a_rejected_item_cannot_be_approved(db, dana, item):
+    review.reject_item(db, dana, item)
+    db.flush()
+
+    with pytest.raises(DomainError) as caught:
+        review.approve_item(db, dana, item)
+
+    assert caught.value.code == "rejected_item_cannot_be_approved"
+    assert item.status is ReviewStatus.READY, "the refusal must not touch review status either"
+
+
+def test_unrejecting_then_approving_succeeds(db, dana, item):
+    review.reject_item(db, dana, item)
+    db.flush()
+    review.unreject_item(db, dana, item)
+    db.flush()
+
+    review.approve_item(db, dana, item)
+
+    assert item.status is ReviewStatus.APPROVED
+
+
+# --- I2 / I3: delete_item snapshots warnings, and the snapshot decodes back ---
+
+
+def test_deleting_an_item_snapshots_its_warnings_before_cascade_removes_them(db, dana, item):
+    warning = Warning(
+        item_id=item.id,
+        title="Scale needs confirmation",
+        found="E2.1 shows two scale labels.",
+        why="Measured conduit lengths may be wrong.",
+        fix="Select the scale that applies to this sheet.",
+        where_="E2.1 title block",
+    )
+    db.add(warning)
+    db.flush()
+    warning_id = warning.id
+
+    action = review.delete_item(db, dana, item)
+    db.flush()
+    db.expire(action)
+
+    assert action.before["warnings"] == [{
+        "id": str(warning_id),
+        "item_id": str(item.id),
+        "sheet_id": None,
+        "title": "Scale needs confirmation",
+        "found": "E2.1 shows two scale labels.",
+        "why": "Measured conduit lengths may be wrong.",
+        "fix": "Select the scale that applies to this sheet.",
+        "where_": "E2.1 title block",
+    }]
+
+
+def test_decode_snapshot_reconstructs_a_deleted_items_typed_fields(db, dana, item):
+    item_id = item.id
+    action = review.delete_item(db, dana, item)
+    db.flush()
+    db.expire(action)
+
+    restored = actions.decode_snapshot(action.before, review.ITEM_SNAPSHOT_TYPES)
+
+    assert restored["id"] == item_id
+    assert restored["status"] is ReviewStatus.READY
+    assert restored["quantity"] == Decimal("14.00")
+    assert restored["warnings"] == []
+
+
+def test_decode_snapshot_raises_for_a_field_with_no_type_given():
+    with pytest.raises(KeyError):
+        actions.decode_snapshot({"mystery_field": "x"}, {})
+
+
+# --- I4: edit_item validates values, not just keys ---
+
+
+def test_editing_category_to_a_blank_string_is_refused(db, dana, item):
+    with pytest.raises(DomainError) as caught:
+        review.edit_item(db, dana, item, {"category": "   "})
+
+    assert caught.value.code == "field_cannot_be_empty"
+    assert item.category == "Devices", "a refused edit must not have mutated the item"
+
+
+def test_editing_quantity_to_a_non_numeric_value_is_a_domain_error_not_a_500(db, dana, item):
+    with pytest.raises(DomainError) as caught:
+        review.edit_item(db, dana, item, {"quantity": "fourteen"})
+
+    assert caught.value.code == "invalid_quantity"
+
+
+def test_editing_notes_to_null_is_refused(db, dana, item):
+    with pytest.raises(DomainError) as caught:
+        review.edit_item(db, dana, item, {"notes": None})
+
+    assert caught.value.code == "field_cannot_be_empty"
+
+
+# --- I6: quantity edits keep exact Decimal precision through the snapshot ---
+
+
+def test_editing_quantity_to_a_fraction_round_trips_as_an_exact_decimal_string(db, dana, item):
+    action = review.edit_item(db, dana, item, {"quantity": "12.55"})
+    db.flush()
+    db.expire(action)
+    db.expire(item)
+
+    assert item.quantity == Decimal("12.55")
+    assert action.after["quantity"] == "12.55"
+    assert isinstance(action.after["quantity"], str)

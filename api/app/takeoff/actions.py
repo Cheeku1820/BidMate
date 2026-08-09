@@ -145,6 +145,32 @@ def decode_snapshot_value(value, as_type):
     return value
 
 
+def decode_snapshot(fields: dict, types: dict) -> dict:
+    """Reverse `encode_snapshot()` for a whole dict of fields, given a
+    per-field type map -- the symmetric counterpart to `encode_snapshot()`.
+
+    `encode_snapshot()` doesn't need a type map because it can
+    isinstance-check the live Python value it's handed. A decoder has no
+    such luxury: JSONB carries no type information of its own, so a
+    stored `"14.00"` could be a `Decimal`, a plain string, or -- without
+    a type map -- silently mistaken for either. `decode_snapshot_value()`
+    above already handles one field at a time for a caller that only
+    wants a couple of fields back; this wraps it for a caller -- such as
+    a future undo that reconstructs an entire row -- that needs every
+    field decoded together and must not silently write a stringified
+    Decimal or a raw status string into a typed column.
+
+    Raises `KeyError` rather than falling through when `fields` contains
+    a key with no entry in `types`, so a snapshot field nobody thought to
+    type is a loud failure here, not a quiet one downstream at the point
+    of restore.
+    """
+    missing = set(fields) - set(types)
+    if missing:
+        raise KeyError(f"decode_snapshot: no type given for: {', '.join(sorted(missing))}")
+    return {key: decode_snapshot_value(value, types[key]) for key, value in fields.items()}
+
+
 def commit(
     db: DbSession,
     *,

@@ -73,6 +73,16 @@ WARNING_SNAPSHOT_TYPES: dict[str, type] = {
     "where_": str,
 }
 
+# The key `before`/`after` nest a list of per-item snapshots under, for
+# any action recording more than one item's state in a single row
+# (`bulk.bulk_approve()`, `scale.set_scale()`). Lives here, not in either
+# of those modules, because it was previously defined twice -- once in
+# each -- and briefly drifted to mean two different payload shapes under
+# the same name before being unified. A single definition both modules
+# import means that can't happen again, and Task 10's undo (which reads
+# this key from actions it did not write) has exactly one place to look.
+ITEMS_SNAPSHOT_KEY = "items"
+
 
 def _column_snapshot(obj) -> dict:
     """Snapshot every mapped column of `obj`, keyed by Python attribute

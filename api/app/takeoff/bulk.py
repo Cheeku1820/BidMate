@@ -65,6 +65,7 @@ from app.identity.models import User
 from app.takeoff.actions import CrossOrgActionError, commit, encode_snapshot
 from app.takeoff.models import Action, Item, Project, ReviewStatus
 from app.takeoff.review import _apply_approve
+from app.takeoff.snapshots import ITEMS_SNAPSHOT_KEY
 
 # Skip reason codes. Kept as module-level strings (not an enum) because
 # they travel to the client as plain JSON dict values, the same way
@@ -74,11 +75,6 @@ NOT_IN_PROJECT = "not_in_project"
 REJECTED = "rejected"
 ALREADY_APPROVED = "already_approved"
 NOT_READY_TO_REVIEW = "not_ready_to_review"
-
-# The key `before`/`after` nest per-item snapshots under. Exported so
-# Task 10's undo reads this constant rather than string-matching
-# "items" out of a docstring.
-ITEMS_SNAPSHOT_KEY = "items"
 
 
 @dataclass

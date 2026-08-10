@@ -91,12 +91,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.identity.models import User
 from app.takeoff.actions import CrossOrgActionError, commit, encode_snapshot
 from app.takeoff.models import Action, Item, Project, ReviewStatus, Sheet, Warning, WarningReason
-from app.takeoff.snapshots import _column_snapshot
-
-# The key `before`/`after` nest per-item snapshots under, matching
-# `bulk.ITEMS_SNAPSHOT_KEY`'s naming so a future reader of either module
-# recognizes the pattern immediately rather than treating it as a new one.
-ITEMS_SNAPSHOT_KEY = "items"
+from app.takeoff.snapshots import ITEMS_SNAPSHOT_KEY, _column_snapshot
 
 
 def set_scale(db: DbSession, actor: User, sheet: Sheet, value: str) -> Action:

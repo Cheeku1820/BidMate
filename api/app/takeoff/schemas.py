@@ -19,12 +19,18 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 MODEL_CONFIG = {"from_attributes": True}
 
 
 class WarningOut(BaseModel):
+    # A specific warning's own id, not just the item's -- Task 13's
+    # mutation endpoints (resolving one warning among an item's several)
+    # need to address a particular row, and there is no other stable
+    # handle for one once an item can carry more than one of these (see
+    # `warnings` below).
+    id: uuid.UUID
     title: str
     found: str
     why: str
@@ -57,7 +63,13 @@ class ItemOut(BaseModel):
     path: list | None = None
     notes: str
     evidence: dict | None = None
-    warning: WarningOut | None = None
+    # A list, not a single optional warning: an item can carry more than
+    # one live warning at once (Task 9's scale-and-legend case is the
+    # concrete example, exercised in tests/test_undo_redo.py), and a
+    # singular field can only ever show one, non-deterministically,
+    # depending on unordered query return order. Sorted by (reason, id) in
+    # snapshot.py's query so the order is stable across polls.
+    warnings: list[WarningOut] = Field(default_factory=list)
 
     model_config = MODEL_CONFIG
 

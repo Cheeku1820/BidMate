@@ -49,6 +49,30 @@ async def cross_org_action_error_handler(request: Request, exc: CrossOrgActionEr
     )
 
 
+@app.middleware("http")
+async def no_shared_caching(request: Request, call_next):
+    """`Cache-Control: private, no-store` and `Vary: Cookie` on every
+    response.
+
+    `/snapshot` carries `undo_label`/`undo_by` -- competitor-readable bid
+    progress, per Task 10's review -- and every route in this API is
+    either tenant-scoped or an auth boundary. A session cookie alone does
+    not make a response private to a *shared* cache under RFC 7234: a
+    proxy keyed on URL alone is free to serve one tenant's 200 to the next
+    caller unless told otherwise, and `/snapshot`'s `ETag` makes that
+    likelier rather than safer -- it is exactly the signal that says "this
+    is cacheable and revalidatable" to a cache that doesn't know the
+    response is per-tenant. Applied globally via middleware rather than
+    per-route: there is no public, safely-shared content anywhere in this
+    API to carve an exception for, so a route that forgets to opt in is
+    not a risk here the way it would be on a mixed public/private surface.
+    """
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["Vary"] = "Cookie"
+    return response
+
+
 app.include_router(auth_router)
 app.include_router(takeoff_router)
 

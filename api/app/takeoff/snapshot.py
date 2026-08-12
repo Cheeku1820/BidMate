@@ -21,6 +21,7 @@ See the Task 11 report for the full reasoning.
 
 import hashlib
 import uuid
+from collections import defaultdict
 from dataclasses import asdict
 
 from sqlalchemy import func, select
@@ -63,6 +64,7 @@ def version(db: DbSession, project_id: uuid.UUID) -> str:
 
 def _warning_out(warning: Warning) -> WarningOut:
     return WarningOut(
+        id=warning.id,
         title=warning.title,
         found=warning.found,
         why=warning.why,
@@ -86,7 +88,7 @@ def sheet_out(sheet: Sheet) -> SheetOut:
     )
 
 
-def _item_out(item: Item, warning: Warning | None, approved_by_name: str | None) -> ItemOut:
+def _item_out(item: Item, warnings: list[Warning], approved_by_name: str | None) -> ItemOut:
     return ItemOut(
         id=item.id,
         sheet_id=item.sheet_id,
@@ -105,13 +107,31 @@ def _item_out(item: Item, warning: Warning | None, approved_by_name: str | None)
         path=item.path,
         notes=item.notes,
         evidence=item.evidence,
-        warning=_warning_out(warning) if warning is not None else None,
+        warnings=[_warning_out(w) for w in warnings],
     )
 
 
-def build(db: DbSession, actor: User, project_id: uuid.UUID) -> SnapshotOut:
+def build(db: DbSession, actor: User, project_id: uuid.UUID, version: str) -> SnapshotOut:
     """Everything the review workspace renders for `project_id`, as of
     right now, on `actor`'s behalf.
+
+    `version` is a parameter, not computed here, and is not this
+    function's job to derive: the caller (`router.get_snapshot`) computes
+    it exactly once, before this function ever reads a row, and uses that
+    one string for both the `ETag` header and `SnapshotOut.version`. This
+    module used to call `version()` a second time as its last statement --
+    harmless under the test harness's single uncommitted transaction, but
+    under READ COMMITTED in production each statement in `build()` takes
+    its own fresh snapshot, so a concurrent commit landing partway through
+    (after `items` is read, say, but before that second `version()` call)
+    produced a response whose body already carried a stale item list next
+    to a version string that already accounted for the very change missing
+    from it. A client keying off `body.version` -- the natural reading,
+    and what the design doc describes -- would send that version back next
+    poll and get a 304, leaving the change invisible until some unrelated
+    later action happened to bump the version again. Taking `version` as a
+    parameter also removes a duplicate aggregate query from the hottest
+    endpoint in the API.
 
     `actor` exists because `undo_head`/`redo_head` authorize internally
     (Task 10) and need someone to authorize -- the router's `load_project`
@@ -120,7 +140,14 @@ def build(db: DbSession, actor: User, project_id: uuid.UUID) -> SnapshotOut:
     primary gate.
     """
     sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project_id).order_by(Sheet.sort_order)))
-    items = list(db.scalars(select(Item).where(Item.project_id == project_id)))
+    # Ordered, not left to whatever order Postgres happens to return --
+    # item order would otherwise be free to shift between polls (a heap
+    # scan gives no ordering guarantee at all) even though nothing about
+    # the items changed, which is a needless diff for the client to render
+    # around.
+    items = list(
+        db.scalars(select(Item).where(Item.project_id == project_id).order_by(Item.sheet_id, Item.id))
+    )
 
     # Scoped to this project via a join through Item, not a bare
     # `select(Warning)` over the whole table -- the plan's sketch loaded
@@ -128,12 +155,22 @@ def build(db: DbSession, actor: User, project_id: uuid.UUID) -> SnapshotOut:
     # every poll. Sheet-level warnings (Warning.sheet_id set, item_id
     # null) are out of scope for ItemOut, which only carries per-item
     # warnings; SheetOut has no warning field, matching the plan's schema.
-    warnings_by_item_id = {
-        w.item_id: w
-        for w in db.scalars(
-            select(Warning).join(Item, Item.id == Warning.item_id).where(Item.project_id == project_id)
-        )
-    }
+    #
+    # Ordered by (reason, id) and grouped into a list per item, not a
+    # `{item_id: warning}` dict keyed by whichever row a query with no
+    # ORDER BY happened to return last. An item can carry more than one
+    # live warning at once (Task 9's scale-and-legend case), and an
+    # unordered dict silently drops all but one, non-deterministically --
+    # two reviewers could be shown different warnings for the same item,
+    # and which one "wins" could swap between polls as the heap changes.
+    warnings_by_item_id: dict[uuid.UUID, list[Warning]] = defaultdict(list)
+    for w in db.scalars(
+        select(Warning)
+        .join(Item, Item.id == Warning.item_id)
+        .where(Item.project_id == project_id)
+        .order_by(Warning.reason, Warning.id)
+    ):
+        warnings_by_item_id[w.item_id].append(w)
 
     head = undo_module.undo_head(db, actor, project_id)
     redo_head = undo_module.redo_head(db, actor, project_id)
@@ -156,9 +193,11 @@ def build(db: DbSession, actor: User, project_id: uuid.UUID) -> SnapshotOut:
     presence = active_presence(db, project_id, exclude=actor.id)
 
     return SnapshotOut(
-        version=version(db, project_id),
+        version=version,
         sheets=[sheet_out(s) for s in sheets],
-        items=[_item_out(i, warnings_by_item_id.get(i.id), names.get(i.approved_by_user_id)) for i in items],
+        items=[
+            _item_out(i, warnings_by_item_id.get(i.id, []), names.get(i.approved_by_user_id)) for i in items
+        ],
         totals=TotalsOut(**asdict(approved_totals(db, project_id))),
         undo=UndoOut(
             can_undo=head is not None,

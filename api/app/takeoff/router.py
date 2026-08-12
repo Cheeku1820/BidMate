@@ -82,6 +82,11 @@ def get_snapshot(
     db: DbSession = Depends(get_db),
 ):
     project = load_project(project_id, db, user)
+    # Computed exactly once, before anything else is read, and reused for
+    # both the header and (via build()'s version= parameter) the response
+    # body -- see snapshot.build()'s docstring for why computing it a
+    # second time after the body's reads is a real bug under READ
+    # COMMITTED, not just a redundant query.
     etag = snapshot_module.version(db, project.id)
 
     if request.headers.get("if-none-match") == etag:
@@ -93,7 +98,7 @@ def get_snapshot(
         return not_modified
 
     response.headers["ETag"] = etag
-    return snapshot_module.build(db, user, project.id)
+    return snapshot_module.build(db, user, project.id, etag)
 
 
 @router.get("/projects/{project_id}/totals", response_model=TotalsOut)

@@ -16,6 +16,8 @@ heartbeats, and `exclude` filtered in SQL rather than in Python.
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import text
+
 from app.auth.passwords import hash_password
 from app.collab.service import ACTIVE_WINDOW, active_presence, heartbeat, presence_signal
 from app.identity.models import Org, User
@@ -203,6 +205,63 @@ def test_the_upsert_survives_two_heartbeats_in_the_same_flush(db, dana, project,
 
     rows = active_presence(db, project.id, exclude=None)
     assert len(rows) == 1
+
+
+def test_heartbeat_refreshes_the_identity_mapped_instance_when_a_reference_is_held(db, dana, project, sheet):
+    """The identity-map staleness hazard from Task 10, reproduced with the
+    precondition made explicit rather than left to GC timing.
+
+    `Presence`'s identity map entries are held by weak reference. The
+    test above (`test_two_heartbeats_for_the_same_user_produce_one_row_
+    with_the_latest_sheet`) calls `heartbeat()` twice but never assigns
+    the first call's return value to a name, so nothing keeps that
+    instance alive between the two calls -- it is immediately eligible
+    for collection, the identity map drops it, and the second call's
+    `RETURNING` naturally builds a fresh object. That test would pass
+    whether or not `heartbeat()` refreshes a live instance, which is
+    exactly why it did not catch this: it exercises the bug's absence by
+    accident of GC timing, not by construction. This test holds a live
+    reference across both calls -- the same reviewer's browser tab would,
+    in practice, hold onto whatever `heartbeat()` last returned -- so the
+    identity map cannot drop the first instance, and the assertions below
+    only pass if `heartbeat()` actually refreshes it in place.
+
+    Also asserts the raw row via `text()`, bypassing the ORM identity map
+    entirely, so a failure here can be told apart from a broken upsert: if
+    the raw row were wrong too, the fix would be to the upsert statement,
+    not to how the ORM reads its own result back.
+    """
+    other_sheet_id = uuid.uuid4()
+
+    first = heartbeat(db, dana, project.id, sheet.id, None)
+    db.flush()
+    held_reference = first  # kept alive deliberately -- see docstring
+
+    second = heartbeat(db, dana, project.id, other_sheet_id, None)
+    db.flush()
+
+    assert second.sheet_id == other_sheet_id
+    # Same identity-mapped instance (same primary key), refreshed in
+    # place -- not merely a second, separately-correct object that leaves
+    # `held_reference` (and anything else in the session still holding a
+    # reference to the first call's result) pointing at stale data.
+    assert held_reference.sheet_id == other_sheet_id
+
+    # The read side: a fresh ORM query in the same session must not be
+    # poisoned by a stale identity-mapped instance.
+    rows = active_presence(db, project.id, exclude=None)
+    assert rows[0].sheet_id == other_sheet_id
+
+    # The write side, independently: raw SQL, no ORM identity map
+    # involved at all. Distinguishes "the write is fine, only the ORM's
+    # read of its own result was stale" (the actual bug here) from "the
+    # upsert itself wrote the wrong value" (a different bug, in the SQL,
+    # not in how the result is materialized).
+    raw = db.execute(
+        text("select sheet_id from presence where user_id = :uid and project_id = :pid"),
+        {"uid": dana.id, "pid": project.id},
+    ).one()
+    assert raw.sheet_id == other_sheet_id
 
 
 # --- A stale row disappears from both active_presence and presence_signal

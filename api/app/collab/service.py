@@ -68,15 +68,39 @@ def heartbeat(
     `INSERT ... ON CONFLICT DO UPDATE` has no such window: Postgres
     resolves the conflict inside the statement itself.
 
-    `.returning(Presence)` rather than a follow-up `db.get()` -- Presence
-    has no surrogate id to key a fresh read on that would bypass a stale
-    identity-mapped instance from an earlier heartbeat in the same
-    session, and `db.get()` on the composite key would return exactly that
-    stale instance (SQLAlchemy's identity map short-circuits `get()` for
-    an object it already holds, and this upsert bypasses the ORM's own
-    attribute-tracking, so the cached instance's attributes would not
-    reflect this call's values). RETURNING sidesteps the question
-    entirely by reading back the row this exact statement just wrote.
+    `.returning(Presence)` alone is **not** enough to avoid a stale read,
+    and an earlier version of this docstring wrongly claimed it was. What
+    is actually true: `db.get()` on the composite key would short-circuit
+    to whatever instance the identity map already holds for
+    `(user.id, project_id)` without re-querying at all, which is the
+    stale-read hazard RETURNING was reached for in the first place. But
+    when the ORM builds an entity from a RETURNING row it still goes
+    through the identity map, and if an instance for that primary key is
+    already present there, SQLAlchemy hands back *that* instance rather
+    than a freshly populated one -- so a second `heartbeat()` call for the
+    same `(user_id, project_id)` in the same session can return the exact
+    same Python object the first call did, still carrying the first
+    call's `sheet_id`/`item_id`/`seen_at`, RETURNING notwithstanding. The
+    row written to the database is correct either way -- this is purely a
+    question of what the ORM hands back to Python -- but a stale returned
+    instance poisons every later ORM read in that session that touches
+    the same row (`active_presence()`, concretely, since it feeds
+    `/snapshot`), not just this function's own return value. Whether it
+    bites is a function of the identity map's *weak* references: if
+    nothing in the session holds the first call's instance alive between
+    the two heartbeats, it is garbage-collected and the second call's
+    RETURNING builds a fresh instance with no bug visible at all -- which
+    is exactly the GC-timing-dependent shape the Task 10 review flagged as
+    the hazard to design against, not just patch around.
+    `execution_options={"populate_existing": True}` is what actually
+    closes this: it tells the ORM to overwrite an already-present identity
+    map entry's attributes from this statement's result rather than trust
+    whatever it already had, so the same-object case is refreshed instead
+    of returned untouched. See `test_heartbeat_refreshes_the_identity_
+    mapped_instance_when_a_reference_is_held` in test_presence.py, which
+    holds a reference across two heartbeats specifically so the test
+    cannot pass by accident of GC timing the way a naive version of it
+    would.
     """
     now = datetime.now(timezone.utc)
     stmt = pg_insert(Presence).values(
@@ -86,7 +110,7 @@ def heartbeat(
         index_elements=[Presence.user_id, Presence.project_id],
         set_={"sheet_id": stmt.excluded.sheet_id, "item_id": stmt.excluded.item_id, "seen_at": stmt.excluded.seen_at},
     ).returning(Presence)
-    return db.execute(stmt).scalars().one()
+    return db.execute(stmt, execution_options={"populate_existing": True}).scalars().one()
 
 
 def active_presence(db: DbSession, project_id: uuid.UUID, exclude: uuid.UUID | None) -> list[PresenceOut]:

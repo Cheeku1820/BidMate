@@ -14,9 +14,11 @@ version derived purely from the action log would never change when a
 colleague only moves their selection -- the request 304s and remote
 selection never updates, which the README demonstrates as a feature.
 Recommendation (a) is taken here: `version()` folds in
-`app.collab.service.presence_signal()`, a small seam that returns a
-constant until Task 12's `Presence` table exists for it to query for real.
-See the Task 11 report for the full reasoning.
+`app.collab.service.presence_signal()`, which (as of Task 12) is a real
+fingerprint of the active presence set, not the constant Task 11 left in
+its place -- see `app.collab.service` for why it fingerprints the set
+rather than `max(seen_at)`, and the Task 11 report for the original
+reasoning behind folding it into `version()` at all.
 """
 
 import hashlib

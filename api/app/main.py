@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.auth.router import router as auth_router
+from app.collab.router import router as collab_router
 from app.db import get_db
 from app.errors import DomainError, domain_error_handler
 from app.takeoff.actions import CrossOrgActionError
@@ -75,6 +76,7 @@ async def no_shared_caching(request: Request, call_next):
 
 app.include_router(auth_router)
 app.include_router(takeoff_router)
+app.include_router(collab_router)
 
 
 @app.get("/api/health")

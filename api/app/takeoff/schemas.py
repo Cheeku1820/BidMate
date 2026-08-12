@@ -16,10 +16,11 @@ user's display name, not their id).
 """
 
 import uuid
-from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
+
+from app.collab.schemas import PresenceOut
 
 MODEL_CONFIG = {"from_attributes": True}
 
@@ -129,19 +130,6 @@ class TotalsOut(BaseModel):
     attention_count: int
     missing_count: int
     approved_units: Decimal
-
-
-class PresenceOut(BaseModel):
-    # Kept identical to the plan's sketch (including seen_at, which
-    # `app.collab.service.active_presence`'s Task 11 stub never produces
-    # since it always returns []) so Task 12's real implementation has a
-    # stable target to fill rather than a schema it also has to revise.
-    user_id: uuid.UUID
-    name: str
-    color: str
-    sheet_id: uuid.UUID | None = None
-    item_id: uuid.UUID | None = None
-    seen_at: datetime
 
 
 class SnapshotOut(BaseModel):

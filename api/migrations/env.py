@@ -8,6 +8,7 @@ from alembic import context
 from app.config import settings
 from app.db import Base
 from app.auth import models as auth_models  # noqa: F401
+from app.collab import models as collab_models  # noqa: F401
 from app.identity import models as identity_models  # noqa: F401
 from app.takeoff import models as takeoff_models  # noqa: F401
 

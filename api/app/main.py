@@ -9,6 +9,7 @@ from app.auth.router import router as auth_router
 from app.collab.router import router as collab_router
 from app.db import get_db
 from app.errors import DomainError, domain_error_handler
+from app.observability import RequestIdMiddleware, configure_logging, request_id_var
 from app.takeoff.actions import CrossOrgActionError
 from app.takeoff.mutations import router as takeoff_mutations_router
 from app.takeoff.router import PROJECT_NOT_FOUND_CODE, PROJECT_NOT_FOUND_MESSAGE
@@ -18,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Takeoff API")
 app.add_exception_handler(DomainError, domain_error_handler)
+
+configure_logging()
+# Registered before no_shared_caching below, on purpose -- see
+# RequestIdMiddleware's docstring (app/observability.py) for why the
+# order isn't interchangeable: this middleware has to sit *inside*
+# no_shared_caching so a synthesized 500 still gets its cache headers.
+app.add_middleware(RequestIdMiddleware)
 
 
 @app.exception_handler(CrossOrgActionError)
@@ -38,12 +46,19 @@ async def cross_org_action_error_handler(request: Request, exc: CrossOrgActionEr
     property, which is why the message is imported from `router.py` rather
     than retyped here.
 
-    No request-id middleware exists yet in this codebase (the design notes
-    one as an architecture goal); this logs whatever `X-Request-Id` header
-    is present, or "unset" otherwise, rather than blocking on that
-    infrastructure landing first.
+    Logs `request_id_var`'s value (app/observability.py), not the raw
+    `X-Request-Id` request header this originally read before
+    `RequestIdMiddleware` existed. The two now differ on purpose:
+    `RequestIdMiddleware` never trusts an inbound header into anything
+    that reaches a log line or a response -- it generates the id
+    server-side instead -- so logging the header here would put
+    unvalidated, attacker-controlled text on a security-relevant log
+    path (a request that just hit an authorization gate), exactly the
+    log-forging vector `RequestIdMiddleware` exists to close everywhere
+    else. The context var carries the same id this request's response
+    is stamped with, set before this handler ever runs.
     """
-    request_id = request.headers.get("x-request-id", "unset")
+    request_id = request_id_var.get() or "unset"
     logger.warning("CrossOrgActionError reached the HTTP boundary (request_id=%s): %s", request_id, exc)
     return JSONResponse(
         status_code=404,

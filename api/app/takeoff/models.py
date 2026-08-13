@@ -26,7 +26,8 @@ status_enum = Enum(ReviewStatus, name="review_status", values_callable=lambda e:
 class WarningReason(enum.Enum):
     """What kind of evidence a warning is about -- a closed vocabulary,
     extendable only by a migration someone writes on purpose (see
-    migrations/versions/0005_warning_reason.py).
+    migrations/versions/0005_warning_reason.py and, for the third member
+    below, 0007_warning_reason_schedule_conflict.py).
 
     This exists so a caller that only knows how to resolve one kind of
     evidence gap -- `scale.set_scale()` resolves a missing scale -- can
@@ -34,17 +35,27 @@ class WarningReason(enum.Enum):
     Missing information, instead of treating every warning on a Missing
     information item as something it is entitled to clear. Confirming a
     scale must never delete the warning that explains an unclassified
-    symbol; only a typed reason makes that distinction checkable in code
-    rather than left to the coincidence of what the seed data contains.
+    symbol, or one that explains a fixture disagreeing with its
+    schedule; only a typed reason makes that distinction checkable in
+    code rather than left to the coincidence of what the seed data
+    contains.
 
-    Members are named for the evidence that is missing, not for the
-    status it produces (`ReviewStatus.MISSING` already names that) --
-    "scale" reads as "this warning is about the sheet's scale," which is
-    what a reader actually needs to know at the call site.
+    Members are named for the evidence that is missing or in conflict,
+    not for the status it produces (`ReviewStatus.MISSING` already names
+    that) -- "scale" reads as "this warning is about the sheet's scale,"
+    which is what a reader actually needs to know at the call site.
+    SCHEDULE_CONFLICT (added by 0007, ported from src/lib/data.js's
+    "Fixture type conflicts with the schedule") is deliberately its own
+    named value rather than a catch-all OTHER -- a junk-drawer member
+    would stop this from being a closed vocabulary at all, and the
+    pipeline that eventually emits real warnings (ROADMAP.md Track 2)
+    has to classify every one it produces into an actual reason, not a
+    default.
     """
 
     SCALE = "scale"
     LEGEND = "legend"
+    SCHEDULE_CONFLICT = "schedule_conflict"
 
 
 warning_reason_enum = Enum(

@@ -21,10 +21,12 @@ import uuid as uuid_module
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import text
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import sessionmaker
 
+from app.config import settings
 from app.takeoff import bulk
-from app.takeoff.models import Item, ReviewStatus, Warning, WarningReason
+from app.takeoff.models import Action, Item, ReviewStatus, Warning, WarningReason
 
 
 def _sign_in(client):
@@ -226,6 +228,7 @@ def _extra_item(db, project, sheet, status, name, **kwargs):
 def test_bulk_approve_reports_each_skip_with_a_code_and_estimator_facing_copy(client, dana, project, sheet, db):
     ready = _extra_item(db, project, sheet, ReviewStatus.READY, "Ready item")
     attention = _extra_item(db, project, sheet, ReviewStatus.ATTENTION, "Attention item")
+    missing = _extra_item(db, project, sheet, ReviewStatus.MISSING, "Missing information item")
     already = _extra_item(
         db, project, sheet, ReviewStatus.APPROVED, "Already approved item",
         approved_at=datetime.now(timezone.utc),
@@ -238,14 +241,25 @@ def test_bulk_approve_reports_each_skip_with_a_code_and_estimator_facing_copy(cl
 
     body = client.post(
         f"/api/projects/{project.id}/items/bulk-approve",
-        json={"item_ids": [str(ready.id), str(attention.id), str(already.id), str(rejected.id)]},
+        json={"item_ids": [
+            str(ready.id), str(attention.id), str(missing.id), str(already.id), str(rejected.id),
+        ]},
     ).json()
 
     assert body["approved"] == [str(ready.id)]
     skipped_by_id = {row["item_id"]: row for row in body["skipped"]}
 
-    assert skipped_by_id[str(attention.id)]["code"] == bulk.NOT_READY_TO_REVIEW
-    assert "resolve" in skipped_by_id[str(attention.id)]["message"].lower()
+    # Needs attention and Missing information are two different skip
+    # codes with two different recoveries, not one collapsed code --
+    # CLAUDE.md's status vocabulary treats them as different states (one
+    # resolvable by judgment call, one blocked with no override), and
+    # bulk approval must preserve that distinction rather than merging
+    # it into a single "not ready" bucket.
+    assert skipped_by_id[str(attention.id)]["code"] == bulk.NEEDS_ATTENTION
+    assert "attention" in skipped_by_id[str(attention.id)]["message"].lower()
+
+    assert skipped_by_id[str(missing.id)]["code"] == bulk.MISSING_INFORMATION
+    assert "resolve" in skipped_by_id[str(missing.id)]["message"].lower()
 
     assert skipped_by_id[str(already.id)]["code"] == bulk.ALREADY_APPROVED
     assert "colleague" in skipped_by_id[str(already.id)]["message"].lower()
@@ -381,3 +395,240 @@ def test_edit_response_reflects_a_status_change_caused_by_the_edit(client, dana,
     body = client.patch(f"/api/items/{unclassified.id}", json={"category": "Devices"}).json()
 
     assert body["item"]["status"] == "ready"
+
+
+# =========================================================================
+# Review round: findings from the Task 13 review
+# =========================================================================
+
+
+def _action_count(db, project_id):
+    return len(db.scalars(select(Action).where(Action.project_id == project_id)).all())
+
+
+def _read_via_a_separate_session(query, params):
+    """Read a row through a brand-new connection/session, not the `db`
+    fixture the `client` fixture also uses. `client` and `db` share one
+    session in this harness (`client` overrides `get_db` with `lambda:
+    db`), so asserting on `db`'s own view of a row only proves the
+    Python object agrees with itself -- exactly what let review finding
+    2 (the echoed-quantity divergence) ship originally. A second,
+    independent connection can only see what was actually committed,
+    which is the thing that matters here: what the *next* poll, from a
+    *different* request and session, would actually read back.
+    """
+    engine = create_engine(settings.test_database_url)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    session = Session()
+    try:
+        return session.execute(text(query), params).scalar_one()
+    finally:
+        session.close()
+        engine.dispose()
+
+
+# --- Finding 1: an empty or unknown-field PATCH wrote a phantom action ---
+
+
+def test_empty_patch_is_refused_rather_than_writing_a_phantom_action(client, dana, project, sheet, item, db):
+    """`PATCH {}` must not return 200 claiming an edit, write a row to the
+    append-only action log, bump the version (forcing every other
+    reviewer to re-fetch the whole snapshot), or add a no-op step to the
+    *shared* undo stack whose tooltip would name an edit that never
+    happened.
+    """
+    db.commit()
+    _sign_in(client)
+    before_count = _action_count(db, project.id)
+
+    response = client.patch(f"/api/items/{item.id}", json={})
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "no_changes_to_apply"
+    assert _action_count(db, project.id) == before_count, "an empty patch must not write an action"
+
+
+def test_patch_with_only_unknown_fields_is_refused_not_silently_ignored(client, dana, project, sheet, item, db):
+    """`{"unit": "LF", "status": "approved"}` -- neither key is editable
+    -- must not be silently reduced to an empty, successful no-op edit.
+    `extra="forbid"` turns it into a 422 before the request ever reaches
+    `review.edit_item()`.
+    """
+    db.commit()
+    _sign_in(client)
+    before_count = _action_count(db, project.id)
+
+    response = client.patch(f"/api/items/{item.id}", json={"unit": "LF", "status": "approved"})
+
+    assert response.status_code == 422
+    assert _action_count(db, project.id) == before_count, "a refused patch must not write an action"
+
+    stored_unit = _read_via_a_separate_session(
+        "select unit from items where id = :id", {"id": str(item.id)}
+    )
+    assert stored_unit == "EA", "a refused patch must not silently change the row"
+
+
+def test_a_mix_of_editable_and_unknown_fields_is_refused_wholesale(client, dana, project, sheet, item, db):
+    """A body mixing one real editable field with one unknown key must
+    not partially apply the editable one -- the whole request is
+    malformed, not "apply what you understood."
+    """
+    db.commit()
+    _sign_in(client)
+
+    response = client.patch(f"/api/items/{item.id}", json={"quantity": "5.00", "unit": "LF"})
+
+    assert response.status_code == 422
+    stored_quantity = _read_via_a_separate_session(
+        "select quantity from items where id = :id", {"id": str(item.id)}
+    )
+    assert stored_quantity == Decimal("14.00")
+
+
+# --- Finding 2: the response echoed a quantity the database did not store ---
+
+
+def test_editing_quantity_to_three_decimal_places_is_refused_not_silently_rounded(
+    client, dana, project, sheet, item, db
+):
+    """`Item.quantity` is `Numeric(12, 2)`. Postgres would round a
+    three-decimal-place value on write without complaint, and
+    `SessionLocal`'s `expire_on_commit=False` means a mutation response
+    built right after that write would have echoed back the un-rounded
+    value the service was handed (184.559), not what the row actually
+    stores (184.56) -- an estimator sees "Saved" against a number the bid
+    total is not using, with no notice the value changed underneath
+    them. The fix rejects the value outright rather than quantizing it:
+    the person decides the rounding, not the database.
+    """
+    db.commit()
+    _sign_in(client)
+
+    response = client.patch(f"/api/items/{item.id}", json={"quantity": "184.559"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_quantity"
+    assert "184.56" in response.json()["detail"]["message"]
+
+    stored_quantity = _read_via_a_separate_session(
+        "select quantity from items where id = :id", {"id": str(item.id)}
+    )
+    assert stored_quantity == Decimal("14.00"), "a refused edit must not have changed the stored row"
+
+
+# --- Finding 3 (tenancy guard blind to routes outside /api) lives in
+# test_tenancy.py, next to the guard it fixes. ---
+
+
+# --- Finding 4: the quantity string contract accepted literals that
+# silently change the number ---
+
+
+def test_quantity_with_pep515_underscore_grouping_is_refused(client, dana, project, sheet, item, db):
+    """Python's `Decimal()` honours PEP 515 underscore grouping, so
+    `"14_0"` parses as 140 -- a silent 10x on a bid quantity. The wire
+    contract is a plain decimal literal, not whatever `Decimal()` itself
+    is willing to accept.
+    """
+    db.commit()
+    _sign_in(client)
+
+    response = client.patch(f"/api/items/{item.id}", json={"quantity": "14_0"})
+
+    assert response.status_code == 422
+    stored_quantity = _read_via_a_separate_session(
+        "select quantity from items where id = :id", {"id": str(item.id)}
+    )
+    assert stored_quantity == Decimal("14.00")
+
+
+def test_quantity_with_surrounding_whitespace_is_refused(client, dana, project, sheet, item, db):
+    """`Decimal()` strips surrounding whitespace, so `"  14 "` silently
+    parses as plain 14 -- fine in this specific case, but not a contract
+    a client should be able to rely on to smuggle formatting through.
+    """
+    db.commit()
+    _sign_in(client)
+
+    response = client.patch(f"/api/items/{item.id}", json={"quantity": "  14 "})
+
+    assert response.status_code == 422
+
+
+def test_quantity_in_scientific_notation_is_refused(client, dana, project, sheet, item, db):
+    """`"1e-40"` is a syntactically valid `Decimal` literal that rounds
+    to 0.00 once it reaches `Numeric(12, 2)` -- silently discarding
+    whatever quantity the estimator actually meant to enter.
+    """
+    db.commit()
+    _sign_in(client)
+
+    response = client.patch(f"/api/items/{item.id}", json={"quantity": "1e-40"})
+
+    assert response.status_code == 422
+    stored_quantity = _read_via_a_separate_session(
+        "select quantity from items where id = :id", {"id": str(item.id)}
+    )
+    assert stored_quantity == Decimal("14.00")
+
+
+def test_quantity_as_a_plain_decimal_string_still_works(client, dana, project, sheet, item):
+    """The stricter literal check must not reject the ordinary case --
+    only reject the surprising ones.
+    """
+    _sign_in(client)
+
+    body = client.patch(f"/api/items/{item.id}", json={"quantity": "184.55"}).json()
+
+    assert body["item"]["quantity"] == "184.55"
+
+
+# --- Finding 5: a fifth bulk-approve skip code with no copy would 500
+# on a request whose writes had already committed ---
+
+
+def test_an_unmapped_skip_code_falls_back_to_generic_copy_instead_of_a_bare_keyerror(monkeypatch, client, dana, project, sheet, db):
+    """Simulates bulk.py reporting a skip code this endpoint's copy table
+    doesn't know about -- the scenario a fifth code landing in bulk.py
+    without a matching `_SKIP_COPY` entry would produce. Must not raise
+    `KeyError` after the batch's real approvals have already been
+    committed; must fall back to generic copy instead.
+    """
+    from app.takeoff import mutations as mutations_module
+
+    ready = _extra_item(db, project, sheet, ReviewStatus.READY, "Ready item")
+    mystery_id = uuid_module.uuid4()
+    original_bulk_approve = bulk.bulk_approve
+
+    def _bulk_approve_with_a_mystery_skip(db_, actor, project_id, item_ids):
+        result = original_bulk_approve(db_, actor, project_id, item_ids)
+        result.skipped[mystery_id] = "some_future_code_nobody_added_copy_for"
+        return result
+
+    monkeypatch.setattr(mutations_module.bulk, "bulk_approve", _bulk_approve_with_a_mystery_skip)
+    _sign_in(client)
+
+    response = client.post(
+        f"/api/projects/{project.id}/items/bulk-approve", json={"item_ids": [str(ready.id)]}
+    )
+
+    assert response.status_code == 200, "an unmapped skip code must not turn into a 500 after a real commit"
+    skipped_by_id = {row["item_id"]: row for row in response.json()["skipped"]}
+    assert skipped_by_id[str(mystery_id)]["message"] == mutations_module._GENERIC_SKIP_MESSAGE
+
+
+def test_the_skip_copy_table_is_total_against_bulks_known_codes():
+    """The import-time half of the fix: catches a missing entry at
+    collection time rather than waiting for a request to hit it.
+    """
+    from app.takeoff import mutations as mutations_module
+
+    assert set(mutations_module._SKIP_COPY) == bulk.SKIP_CODES
+
+
+# --- Finding 6: `not_ready_to_review` collapsed two different statuses
+# with two different recoveries; covered end-to-end in
+# test_bulk_approve_reports_each_skip_with_a_code_and_estimator_facing_copy
+# above, which now asserts NEEDS_ATTENTION and MISSING_INFORMATION
+# separately with their own copy. ---

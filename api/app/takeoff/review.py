@@ -21,7 +21,7 @@ mutate-then-snapshot pattern outside the module.
 """
 
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
@@ -106,6 +106,22 @@ def _validate_edit(changes: dict) -> None:
             raise DomainError(
                 "invalid_quantity",
                 f"Quantity must be {MAX_QUANTITY:,} or less. Correct it and save the edit again.",
+            )
+        # Item.quantity is Numeric(12, 2) -- at most two digits after the
+        # decimal point. Postgres would round a third-decimal-place value
+        # silently on write, and SessionLocal's expire_on_commit=False
+        # means a mutation response built right after would echo back
+        # the value this function was handed (184.559), not what landed
+        # in the row (184.56) -- a review finding. Refusing here keeps
+        # the rounding decision with the person, not Postgres or a lossy
+        # JSON round-trip. as_tuple().exponent is an int by this point --
+        # is_finite() above already ruled out NaN/Infinity, whose
+        # exponent is a sentinel string ('n'/'N'/'F'), not a digit count.
+        if parsed.as_tuple().exponent < -2:
+            rounded = parsed.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            raise DomainError(
+                "invalid_quantity",
+                f"Quantity supports two decimal places. Round to {rounded} and save again.",
             )
 
 

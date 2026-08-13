@@ -27,8 +27,13 @@ def test_only_ready_items_are_approved(db, dana, project, sheet):
     db.flush()
 
     assert result.approved == [ready.id]
-    assert result.skipped[attention.id] == "not_ready_to_review"
-    assert result.skipped[missing.id] == "not_ready_to_review"
+    # Two distinct codes, not one shared "not_ready_to_review" -- Needs
+    # attention and Missing information are different statuses with
+    # different recoveries (CLAUDE.md's status vocabulary), and bulk
+    # approval must report which of the two applies to each skipped item
+    # rather than collapsing them.
+    assert result.skipped[attention.id] == bulk.NEEDS_ATTENTION
+    assert result.skipped[missing.id] == bulk.MISSING_INFORMATION
     assert attention.status is ReviewStatus.ATTENTION
     assert missing.status is ReviewStatus.MISSING
 
@@ -145,10 +150,10 @@ def test_bulk_approval_with_empty_list_is_a_noop(db, dana, project):
 
 
 def test_bulk_approval_skips_an_already_approved_item_with_its_own_reason(db, dana, project, sheet):
-    """Distinct from `not_ready_to_review`: nothing is wrong with an
-    already-approved item, so it must not be reported the same way as a
-    Needs attention or Missing information item, which is work the
-    estimator has to go do.
+    """Distinct from `needs_attention` / `missing_information`: nothing
+    is wrong with an already-approved item, so it must not be reported
+    the same way as a Needs attention or Missing information item, which
+    is work the estimator has to go do.
     """
     approved = _extra(db, project, sheet, ReviewStatus.READY)
     first = bulk.bulk_approve(db, dana, project.id, [approved.id])
@@ -159,8 +164,8 @@ def test_bulk_approval_skips_an_already_approved_item_with_its_own_reason(db, da
     db.flush()
 
     assert second.approved == []
-    assert second.skipped[approved.id] == "already_approved"
-    assert second.skipped[approved.id] != "not_ready_to_review"
+    assert second.skipped[approved.id] == bulk.ALREADY_APPROVED
+    assert second.skipped[approved.id] not in (bulk.NEEDS_ATTENTION, bulk.MISSING_INFORMATION)
     assert second.action is None
 
 

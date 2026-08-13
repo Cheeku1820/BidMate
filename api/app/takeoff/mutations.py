@@ -18,15 +18,17 @@ task-12-brief.md): call the service function, then `db.commit()` in the
 handler. `get_db` never commits on its own.
 """
 
+import re
 import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy.orm import Session as DbSession
 
 from app.auth.dependencies import current_user
 from app.db import get_db
+from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import bulk, review
 from app.takeoff import scale as scale_module
@@ -38,28 +40,52 @@ from app.takeoff.schemas import BulkApproveOut, ItemMutationOut, ScaleMutationOu
 router = APIRouter(prefix="/api", tags=["takeoff-mutations"])
 
 
+# A quantity string must look like a plain decimal literal -- optional
+# leading minus, digits, optional ".digits" -- and nothing else. Python's
+# `Decimal()` is far more permissive: it honours PEP 515 underscore
+# grouping ("14_0" -> 140, a silent 10x), strips surrounding whitespace
+# ("  14 " -> 14), and accepts scientific notation ("1e-40" -> rounds to
+# 0.00). A quantity string is a wire contract for a bid number, not a
+# general-purpose numeric literal parser, so this is deliberately
+# narrower than what `Decimal` itself accepts. `\Z` rather than `$`,
+# since Python's `$` also matches just before a trailing newline.
+_QUANTITY_LITERAL = re.compile(r"^-?\d+(\.\d+)?\Z")
+
+
 class EditIn(BaseModel):
     """The `PATCH /items/{id}` body.
 
-    All five fields default to `None` so the endpoint can tell "this
-    field was not sent" from "this field was sent as null" via
-    `model_fields_set`, rather than `body.model_dump(exclude_none=True)`
-    (the sketch's approach, correction 2) -- `exclude_none=True` strips
-    an explicit `notes: null` before `review._validate_edit()` ever sees
-    it, silently turning its "notes cannot be removed entirely" refusal
-    into a no-op success. See `edit()` below for where that distinction
-    is actually applied.
+    `extra="forbid"` (review finding): the default `extra="ignore"`
+    silently drops any key that isn't one of the five fields below, so
+    `{"unit": "LF", "status": "approved"}` -- neither editable -- reduced
+    to an empty `changes` dict and produced a phantom no-op edit: 200, a
+    permanent row in the append-only action log, a version bump forcing
+    every reviewer to re-fetch, and a no-op step on the *shared* undo
+    stack naming an edit that never happened. `extra="forbid"` turns an
+    unknown key into an immediate 422 instead; `edit()` below separately
+    refuses a body with zero *known* fields (`PATCH {}`), which
+    `extra="forbid"` alone doesn't catch since `{}` has no unknown keys.
+
+    All five fields default to `None` so the endpoint can tell "not
+    sent" from "sent as null" via `model_fields_set`, rather than
+    `body.model_dump(exclude_none=True)` (the sketch's approach,
+    correction 2) -- `exclude_none=True` strips an explicit `notes: null`
+    before `review._validate_edit()` ever sees it, turning its "notes
+    cannot be removed entirely" refusal into a silent no-op success.
 
     `quantity` accepts a JSON *string* only ("184.55"), never a bare JSON
-    number (correction 1). `Item.quantity` is `Numeric(12, 2)` and this
-    application computes bid totals from it; the validator below refuses
-    a float (or int, or bool) before pydantic's own Decimal coercion ever
-    runs, rather than trusting that coercion to stay lossless for every
-    value a client might send. `review._validate_edit()` still does its
-    own `Decimal(str(value))` parsing and `is_finite()`/bounds checks
-    downstream -- this validator only keeps a float from ever entering
-    the path, it does not replace that validation.
+    number (correction 1) -- `Item.quantity` is `Numeric(12, 2)` and this
+    application computes bid totals from it, so the validator below
+    refuses a float/int/bool before pydantic's own Decimal coercion ever
+    runs. It also matches the string against `_QUANTITY_LITERAL` (a
+    second review finding: a syntactically "valid" `Decimal` string can
+    still silently change the number -- see that pattern's comment).
+    `review._validate_edit()` still does its own parsing and
+    finiteness/sign/magnitude/scale checks downstream; this validator
+    only narrows the wire format, it doesn't replace that validation.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     system: str | None = None
     category: str | None = None
@@ -69,10 +95,17 @@ class EditIn(BaseModel):
 
     @field_validator("quantity", mode="before")
     @classmethod
-    def _quantity_must_be_a_string(cls, value):
-        if value is None or isinstance(value, (str, Decimal)):
+    def _quantity_must_be_a_plain_decimal_string(cls, value):
+        if value is None or isinstance(value, Decimal):
             return value
-        raise ValueError('quantity must be sent as a JSON string, such as "184.55", not a number')
+        if not isinstance(value, str):
+            raise ValueError('quantity must be sent as a JSON string, such as "184.55", not a number')
+        if not _QUANTITY_LITERAL.match(value):
+            raise ValueError(
+                'quantity must be a plain decimal number written as a string, such as "184.55" -- '
+                "no underscores, whitespace, scientific notation, or leading plus sign"
+            )
+        return value
 
 
 class BulkApproveIn(BaseModel):
@@ -83,13 +116,21 @@ class ScaleIn(BaseModel):
     value: str
 
 
-# Estimator-facing copy for bulk.py's four skip codes (correction 4,
-# carried forward from Task 8's "skip codes have no estimator-facing copy
-# yet; the endpoint task must give each one a recovery action"). Sentence
-# case, no "please", no "successfully", no processing internals -- the
-# same register every other warning and refusal in this codebase uses.
-# `already_approved` names no action because none is needed; the other
-# three each say what to do next.
+# Estimator-facing copy for bulk.py's skip codes (correction 4, carried
+# forward from Task 8's "skip codes have no estimator-facing copy yet;
+# the endpoint task must give each one a recovery action"). Sentence
+# case, no "please", no "successfully", no processing internals.
+# `already_approved` names no action because none is needed; the rest
+# each say what to do next.
+#
+# `needs_attention` / `missing_information` are two codes, not the one
+# `not_ready_to_review` this shipped with initially (a review finding):
+# collapsing them lost the distinction CLAUDE.md's status vocabulary
+# treats as the spine -- one is a resolvable judgment call, the other is
+# blocked with no override. Screen G (bulk approval's home) is exactly
+# where that distinction has to survive, so `bulk.py` reports the two
+# separately and this echoes the same language `review._apply_approve()`
+# already uses for the item-level Missing information refusal.
 _SKIP_COPY = {
     bulk.NOT_IN_PROJECT: (
         "This item is no longer part of this project — it may have been deleted "
@@ -99,11 +140,32 @@ _SKIP_COPY = {
         "This item was rejected, so bulk approval skipped it. Restore it, then approve it on its own."
     ),
     bulk.ALREADY_APPROVED: "A colleague already approved this item.",
-    bulk.NOT_READY_TO_REVIEW: (
-        "This item needs attention or is missing information, so bulk approval skipped it. "
-        "Open it, resolve what it is waiting on, then approve it."
+    bulk.NEEDS_ATTENTION: (
+        "This item needs attention, so bulk approval skipped it. Open it, resolve the "
+        "conflicting or uncertain information, then approve it."
+    ),
+    bulk.MISSING_INFORMATION: (
+        "This item is missing information it needs, such as a scale or a legend entry, "
+        "so bulk approval skipped it. Resolve the warning on its sheet, then approve it."
     ),
 }
+
+# A fifth skip code landing in bulk.py without a matching entry here must
+# fail loudly at import/collection time, not as a bare KeyError raised
+# after the batch's approvals have already committed (a review finding:
+# `_SKIP_COPY[code]` was indexed directly, downstream of `db.commit()`).
+# `_skip_message()` below is the runtime guard -- `.get()` with a generic
+# fallback, so even if this assertion were bypassed, a request still
+# gets a response rather than an unhandled exception after a real write.
+assert set(_SKIP_COPY) == bulk.SKIP_CODES, (
+    f"_SKIP_COPY is missing copy for: {bulk.SKIP_CODES - set(_SKIP_COPY)}"
+)
+
+_GENERIC_SKIP_MESSAGE = "This item was skipped. Refresh the sheet to see its current state."
+
+
+def _skip_message(code: str) -> str:
+    return _SKIP_COPY.get(code, _GENERIC_SKIP_MESSAGE)
 
 
 def _item_mutation_response(db: DbSession, project_id: uuid.UUID, action, item) -> ItemMutationOut:
@@ -157,6 +219,17 @@ def edit(
     # included -- see EditIn's docstring for why `model_fields_set`
     # replaces the sketch's `exclude_none=True`.
     changes = {field: getattr(body, field) for field in body.model_fields_set}
+    if not changes:
+        # A review finding: review._apply_edit() happily accepts an
+        # empty changes dict and writes a real phantom Action (before={},
+        # after={}) -- a 200, a permanent append-only log row, a version
+        # bump forcing every reviewer to re-fetch, and a no-op step on
+        # the shared undo stack. Refused here rather than teaching the
+        # service layer about "empty" as a special case.
+        raise DomainError(
+            "no_changes_to_apply",
+            "This edit has no changes. Include at least one field to update, such as quantity or notes.",
+        )
     action = review.edit_item(db, user, item, changes)
     db.commit()
     return _item_mutation_response(db, project_id, action, item)
@@ -182,7 +255,7 @@ def bulk_approve(
     return BulkApproveOut(
         approved=result.approved,
         skipped=[
-            SkippedItemOut(item_id=item_id, code=code, message=_SKIP_COPY[code])
+            SkippedItemOut(item_id=item_id, code=code, message=_skip_message(code))
             for item_id, code in result.skipped.items()
         ],
         snapshot=snapshot_module.build(db, user, project.id, version),

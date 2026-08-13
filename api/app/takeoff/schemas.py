@@ -189,8 +189,13 @@ class ItemMutationOut(BaseModel):
 class SkippedItemOut(BaseModel):
     """One bulk-approve item that did not move, with the estimator-facing
     copy for why (task-13-brief.md, decision 4) -- carried forward from
-    Task 8's note that the four skip codes ("not_in_project", "rejected",
-    "already_approved", "not_ready_to_review") had no recovery copy yet.
+    Task 8's note that the skip codes ("not_in_project", "rejected",
+    "already_approved", "needs_attention", "missing_information") had no
+    recovery copy yet. `needs_attention` and `missing_information` are
+    two codes, not the single "not_ready_to_review" this shipped with
+    initially -- a review finding that collapsing them lost the
+    distinction CLAUDE.md's status vocabulary treats as the spine: one is
+    a resolvable judgment call, the other is blocked with no override.
     `code` travels alongside `message` so the client can branch on it
     (grouping skipped items by reason, say) without parsing English, and
     so the wording lives in exactly one place (`mutations._SKIP_COPY`)

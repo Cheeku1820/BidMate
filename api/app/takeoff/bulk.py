@@ -71,10 +71,27 @@ from app.takeoff.snapshots import ITEMS_SNAPSHOT_KEY
 # they travel to the client as plain JSON dict values, the same way
 # ReviewStatus values do once encoded -- an enum here would just be
 # decoded back to .value at every boundary that touches it.
+#
+# NEEDS_ATTENTION and MISSING_INFORMATION are two codes, not the single
+# `not_ready_to_review` this module originally reported (a review finding
+# on Task 13's endpoint work) -- collapsing them lost exactly the
+# distinction CLAUDE.md's status vocabulary exists to preserve: *Needs
+# attention* is a judgment call the estimator can resolve and re-approve;
+# *Missing information* is blocked with no override at all. An estimator
+# reading "these nine need attention or are missing evidence" can't tell
+# which of the nine need a decision versus which are waiting on evidence
+# that doesn't exist yet, and bulk approval (screen G) is exactly the
+# density at which that ambiguity costs the most time.
 NOT_IN_PROJECT = "not_in_project"
 REJECTED = "rejected"
 ALREADY_APPROVED = "already_approved"
-NOT_READY_TO_REVIEW = "not_ready_to_review"
+NEEDS_ATTENTION = "needs_attention"
+MISSING_INFORMATION = "missing_information"
+
+# Every code this module can report, for `mutations.py` to assert its
+# copy table is total against -- see that module's `_SKIP_COPY` and the
+# assertion next to it.
+SKIP_CODES = frozenset({NOT_IN_PROJECT, REJECTED, ALREADY_APPROVED, NEEDS_ATTENTION, MISSING_INFORMATION})
 
 
 @dataclass
@@ -94,12 +111,13 @@ def bulk_approve(
     this, a caller whose org does not own `project_id` could still learn
     something: pass any project id and any item ids, and the per-item
     skip reasons in the result (`not_in_project` vs `rejected` vs
-    `not_ready_to_review` vs `already_approved`) disclose whether each
-    item exists, which project it belongs to, and its review state --
-    cross-tenant visibility into another firm's bid, which is exactly
-    what this product's tenancy model exists to prevent. Resolving the
-    project and checking its org here, before the locking query, also
-    means correctness for the "nothing qualifies" path never depended on
+    `needs_attention` vs `missing_information` vs `already_approved`)
+    disclose whether each item exists, which project it belongs to, and
+    its review state -- cross-tenant visibility into another firm's bid,
+    which is exactly what this product's tenancy model exists to
+    prevent. Resolving the project and checking its org here, before the
+    locking query, also means correctness for the "nothing qualifies"
+    path never depended on
     a caller happening to call `commit()` -- previously the only
     authorization check ran inside `commit()`, which is skipped entirely
     when `result.approved` ends up empty, and rows were locked and
@@ -172,13 +190,24 @@ def bulk_approve(
             result.skipped[item_id] = REJECTED
         elif item.status is ReviewStatus.APPROVED:
             result.skipped[item_id] = ALREADY_APPROVED
-        elif item.status is not ReviewStatus.READY:
-            result.skipped[item_id] = NOT_READY_TO_REVIEW
-        else:
+        elif item.status is ReviewStatus.ATTENTION:
+            result.skipped[item_id] = NEEDS_ATTENTION
+        elif item.status is ReviewStatus.MISSING:
+            result.skipped[item_id] = MISSING_INFORMATION
+        elif item.status is ReviewStatus.READY:
             before_fields, after_fields = _apply_approve(db, actor, item)
             items_before.append(encode_snapshot({"id": item.id, **before_fields}))
             items_after.append(encode_snapshot({"id": item.id, **after_fields}))
             result.approved.append(item_id)
+        else:
+            # ReviewStatus has exactly four members and every one of
+            # them is handled above -- this is unreachable today. Kept
+            # as an explicit branch rather than a trailing `else:
+            # approve it anyway` (what the previous `elif item.status is
+            # not ReviewStatus.READY` shape effectively was), so a fifth
+            # status added later fails loudly here instead of silently
+            # being bulk-approved as if it were Ready to review.
+            raise AssertionError(f"bulk_approve: unhandled ReviewStatus {item.status!r}")
 
     if result.approved:
         count = len(result.approved)

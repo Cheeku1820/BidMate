@@ -127,8 +127,10 @@ TENANCY_TABLE = [
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _ in TENANCY_TABLE]
 
-# Routes that exist under /api but are deliberately not project-scoped, so
-# the guard test below must not demand a tenancy-table row for them.
+# Routes that are deliberately not project-scoped, so the guard test
+# below must not demand a tenancy-table row for them. Not limited to
+# `/api/*` -- see `_live_api_routes()`'s docstring for why the guard
+# stopped filtering by prefix.
 NON_PROJECT_SCOPED_ROUTES = {
     ("GET", "/api/health"),
     ("POST", "/api/auth/login"),
@@ -137,6 +139,14 @@ NON_PROJECT_SCOPED_ROUTES = {
     # Org-scoped by the caller's session, not by a project id in the
     # path or body -- there is nothing to probe with a rival project id.
     ("GET", "/api/projects"),
+    # FastAPI's own framework routes -- docs UI, its OAuth2 redirect
+    # target, the OpenAPI schema, and ReDoc. None of these take a
+    # project id or touch tenant data; they exist the moment `FastAPI()`
+    # is constructed, regardless of any router this app registers.
+    ("GET", "/docs"),
+    ("GET", "/docs/oauth2-redirect"),
+    ("GET", "/openapi.json"),
+    ("GET", "/redoc"),
 }
 
 
@@ -180,11 +190,38 @@ def test_an_unauthenticated_caller_gets_401_on_every_mutation_route(
 
 
 def _live_api_routes():
+    """Every real `(method, path)` pair FastAPI will actually dispatch to,
+    across the whole app -- deliberately NOT filtered to `path.startswith
+    ("/api")`.
+
+    A review finding on this task: the original version of this function
+    filtered to the `/api` prefix, on the assumption that every route in
+    this app carries it. That assumption is one forgotten `prefix="/api"`
+    kwarg away from being false -- `collab/router.py`'s `APIRouter(prefix
+    ="/api", ...)` is no different in shape from any other router
+    construction, and a router built without that kwarg would mount its
+    routes at `/projects/{project_id}/...` instead of `/api/projects/
+    {project_id}/...`. The old filter made such a route invisible to this
+    guard entirely: not in `TENANCY_TABLE`, not in
+    `NON_PROJECT_SCOPED_ROUTES`, and not even in the set this function
+    returned, so `test_every_project_scoped_route_is_covered_by_the_
+    tenancy_table` would stay green while a real, reachable, ungated
+    route shipped. Falsified directly: adding a throwaway router mounted
+    without the `/api` prefix reproduced exactly that silent gap.
+
+    Scanning every route (still skipping only `HEAD`, which FastAPI adds
+    automatically alongside every `GET`) means the four framework routes
+    FastAPI mounts outside `/api` (`/docs`, `/docs/oauth2-redirect`,
+    `/openapi.json`, `/redoc`) now show up here too -- listed in
+    `NON_PROJECT_SCOPED_ROUTES` rather than filtered out, so they're an
+    explicit, visible exemption instead of an implicit one baked into
+    this function's prefix check.
+    """
     found = set()
     for route in app.routes:
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None)
-        if path is None or methods is None or not path.startswith("/api"):
+        if path is None or methods is None:
             continue
         for method in methods:
             if method == "HEAD":

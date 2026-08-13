@@ -10,6 +10,7 @@ from app.collab.router import router as collab_router
 from app.db import get_db
 from app.errors import DomainError, domain_error_handler
 from app.takeoff.actions import CrossOrgActionError
+from app.takeoff.mutations import router as takeoff_mutations_router
 from app.takeoff.router import PROJECT_NOT_FOUND_CODE, PROJECT_NOT_FOUND_MESSAGE
 from app.takeoff.router import router as takeoff_router
 
@@ -76,6 +77,7 @@ async def no_shared_caching(request: Request, call_next):
 
 app.include_router(auth_router)
 app.include_router(takeoff_router)
+app.include_router(takeoff_mutations_router)
 app.include_router(collab_router)
 
 

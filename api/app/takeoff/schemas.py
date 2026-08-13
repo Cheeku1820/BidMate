@@ -139,3 +139,89 @@ class SnapshotOut(BaseModel):
     totals: TotalsOut
     undo: UndoOut
     presence: list[PresenceOut]
+
+
+# --- Mutation response models (Task 13) ---
+#
+# Every mutation endpoint returns one of the models below rather than a
+# bare `{"label": ...}` dict -- task-13-brief.md, decision 3. The design
+# doc's client-port section is explicit that writes are not optimistic:
+# "the response carries updated state plus the action, and the client
+# renders that." A bare label leaves the client waiting on the next poll
+# (up to a few seconds) to see its own write land, and DESIGN.md's
+# autosave rhythm (Saving... -> Saved 2:41 PM) is built on the response
+# being authoritative.
+#
+# Two shapes, not one, because "updated state" means something different
+# depending on how many rows a mutation can touch:
+#
+# - A single-item mutation (approve/reject/unreject/edit/delete) returns
+#   `ItemMutationOut`: the label, the new version, and the one item that
+#   changed. Sending a whole snapshot back for a one-row change would be
+#   needless payload on the hottest write paths in the app.
+# - bulk-approve, scale, undo, and redo can each touch many rows in one
+#   action, and `snapshot.build()` already exists as the one shape the
+#   client renders -- reusing it here (`BulkApproveOut.snapshot`,
+#   `ScaleMutationOut.snapshot`, `UndoRedoOut.snapshot`) is simpler and
+#   provably consistent with what a poll would return, rather than
+#   inventing a second, narrower "what changed" shape for each of them.
+#
+# Every one of these carries (or embeds, via `snapshot.version`) the new
+# version string: without it, the client's very next poll could send the
+# ETag it already had and get a 304 against state it has not seen yet.
+
+
+class ItemMutationOut(BaseModel):
+    """Response for approve, reject, unreject, edit, and delete.
+
+    `item` is `None` only for delete, where there is no longer a row to
+    describe -- `label` and `version` still say what happened and let the
+    client's next poll stay in sync. Every other mutation returns the
+    item exactly as it now stands, so the client can render it
+    immediately instead of waiting for the next poll to catch up.
+    """
+
+    label: str
+    version: str
+    item: ItemOut | None = None
+
+
+class SkippedItemOut(BaseModel):
+    """One bulk-approve item that did not move, with the estimator-facing
+    copy for why (task-13-brief.md, decision 4) -- carried forward from
+    Task 8's note that the four skip codes ("not_in_project", "rejected",
+    "already_approved", "not_ready_to_review") had no recovery copy yet.
+    `code` travels alongside `message` so the client can branch on it
+    (grouping skipped items by reason, say) without parsing English, and
+    so the wording lives in exactly one place (`mutations._SKIP_COPY`)
+    rather than being re-invented per screen.
+    """
+
+    item_id: uuid.UUID
+    code: str
+    message: str
+
+
+class BulkApproveOut(BaseModel):
+    approved: list[uuid.UUID]
+    skipped: list[SkippedItemOut]
+    snapshot: SnapshotOut
+
+
+class ScaleMutationOut(BaseModel):
+    label: str
+    snapshot: SnapshotOut
+
+
+class UndoRedoOut(BaseModel):
+    """`performed` lets the client tell "nothing to undo" from "undone"
+    without inspecting a null label (task-13-brief.md, "Also required":
+    the sketch's `{"label": None}` with a 200 status makes those two
+    outcomes indistinguishable without a special-cased null check).
+    `label` and `snapshot` are populated only when `performed` is true;
+    there is nothing new for either to describe otherwise.
+    """
+
+    performed: bool
+    label: str | None = None
+    snapshot: SnapshotOut | None = None

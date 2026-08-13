@@ -113,6 +113,30 @@ def _item_out(item: Item, warnings: list[Warning], approved_by_name: str | None)
     )
 
 
+def item_out(db: DbSession, item: Item) -> ItemOut:
+    """Build one item's response shape -- for `mutations.py`'s
+    single-item endpoints (approve, reject, unreject, edit), which return
+    the item they just changed rather than a whole snapshot (Task 13,
+    decision 3). Reuses `_item_out()`'s field mapping so there remains
+    exactly one place that knows how an `Item` becomes an `ItemOut`; see
+    this module's docstring for why nothing here uses `**obj.__dict__`.
+
+    Queries `item`'s current warnings and approver name fresh, rather
+    than trusting whatever was loaded before the mutation ran -- a
+    mutation can create, clear, or leave untouched an item's warnings
+    (scale confirmation and edit both can), so the caller must not pass
+    in a warnings list computed before the mutation.
+    """
+    warnings = list(
+        db.scalars(select(Warning).where(Warning.item_id == item.id).order_by(Warning.reason, Warning.id))
+    )
+    approved_by_name = None
+    if item.approved_by_user_id is not None:
+        approver = db.get(User, item.approved_by_user_id)
+        approved_by_name = approver.name if approver is not None else None
+    return _item_out(item, warnings, approved_by_name)
+
+
 def build(db: DbSession, actor: User, project_id: uuid.UUID, version: str) -> SnapshotOut:
     """Everything the review workspace renders for `project_id`, as of
     right now, on `actor`'s behalf.

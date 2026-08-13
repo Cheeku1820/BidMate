@@ -1,7 +1,17 @@
 """Read endpoints: project list, project detail, the polling snapshot, and
-totals. Thin HTTP layer only -- `router -> service -> models`, per the
-design's structural rules. No mutation endpoints live here yet; those land
-in Task 13.
+totals -- plus the shared tenancy gates (`load_project`, `load_item`,
+`load_sheet`, `not_found`) that this module and `mutations.py` both import.
+Thin HTTP layer only -- `router -> service -> models`, per the design's
+structural rules.
+
+Task 13's mutation endpoints live in `mutations.py`, a separate module and
+a separate `APIRouter`, both included by `main.py` -- this file was 104
+lines after Task 11 and nine more endpoints plus their request/response
+models would have pushed it well past this project's ~300-line guideline
+(task-13-brief.md, correction 7). The tenancy gates stay here rather than
+moving, since `collab/router.py` already imports `load_project` from this
+module and there is no reason to disturb that import for a split that is
+about mutations, not reads.
 """
 
 import uuid
@@ -16,7 +26,7 @@ from app.db import get_db
 from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import snapshot as snapshot_module
-from app.takeoff.models import Project, Sheet
+from app.takeoff.models import Item, Project, Sheet
 from app.takeoff.schemas import ProjectDetailOut, ProjectOut, SnapshotOut, TotalsOut
 from app.takeoff.snapshot import sheet_out
 from app.takeoff.totals import approved_totals
@@ -52,6 +62,39 @@ def load_project(project_id: uuid.UUID, db: DbSession, user: User) -> Project:
     if project is None or project.org_id != user.org_id:
         raise not_found()
     return project
+
+
+def load_item(item_id: uuid.UUID, db: DbSession, user: User) -> Item:
+    """The tenancy gate for every item-scoped route.
+
+    Deliberately returns the row unlocked -- `review._apply_approve()`
+    and its siblings already re-read under `FOR UPDATE` with
+    `populate_existing=True` before mutating anything, so the service
+    owns locking (task-13-brief.md, correction 8: "do NOT fix load_item
+    returning an unlocked row"). This function's only job is to prove the
+    item exists and belongs to the caller's org before any service
+    function is ever called, delegating the actual org check to
+    `load_project` rather than duplicating it.
+    """
+    item = db.get(Item, item_id)
+    if item is None:
+        raise not_found()
+    load_project(item.project_id, db, user)
+    return item
+
+
+def load_sheet(sheet_id: uuid.UUID, db: DbSession, user: User) -> Sheet:
+    """The tenancy gate for the one sheet-scoped route (`POST
+    /sheets/{id}/scale`). Same shape as `load_item` above, for the same
+    reason: resolve the row, then defer to `load_project` for the org
+    check, so there remains exactly one function that decides whether a
+    project belongs to the caller.
+    """
+    sheet = db.get(Sheet, sheet_id)
+    if sheet is None:
+        raise not_found()
+    load_project(sheet.project_id, db, user)
+    return sheet
 
 
 @router.get("/projects", response_model=list[ProjectOut])

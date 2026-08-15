@@ -253,13 +253,7 @@ export default function BlueprintCanvas({
                     {remote && !sel && <circle r="17" fill="none" stroke={remote.color} strokeWidth="2" strokeDasharray="4 3" />}
                     <circle r="13" fill="#fff" opacity="0.85" />
                     <SymbolGlyph kind={it.symbol} color={meta.color} />
-                    {/* task-15-brief.md, decision 2: the contract exposes `warnings` as an
-                        array (never a singular `warning`), so a warning badge means "any
-                        warning present" rather than reading a single field. Until Task 16
-                        ports App.jsx onto the store, App.jsx still feeds this component
-                        data.js's old singular `warning` shape, so the badge is briefly
-                        dark under the unported app — see task-15-report.md. */}
-                    {it.warnings?.length > 0 && layers.warnings && (
+                    {it.warning && layers.warnings && (
                       <g transform="translate(9 -9)">
                         <circle r="6" fill={STATUS[it.status].color} stroke="#fff" strokeWidth="1.6" />
                         <text y="0.5" fill="#fff" fontSize="9" fontWeight="700" textAnchor="middle" dominantBaseline="central">

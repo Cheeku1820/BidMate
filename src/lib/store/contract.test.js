@@ -8,6 +8,7 @@
 
 import { describe, expect, it, beforeEach } from "vitest";
 import { createSeedStore } from "./seed.js";
+import { storageWrite } from "./local-transport.js";
 
 const METHODS = [
   "me", "getSnapshot", "subscribe", "setPresence",
@@ -76,6 +77,39 @@ describe("seed store", () => {
     // value (it-01 qty 1 + it-08 qty 38, the fixture's two approved
     // items) so a regression back to strings fails loudly here.
     expect(totals.approvedUnits).toBe(39);
+  });
+
+  it("presence entries carry seenAt as epoch milliseconds, not the API's ISO-8601 string", async () => {
+    // getSnapshot()'s presence excludes the caller's own identity
+    // (activePresence's `exclude`, mirroring api/app/collab/service.py's
+    // active_presence()), so an entry has to come from someone else --
+    // write one directly, the way a second reviewer's heartbeat would
+    // land in the same localStorage a real browser tab would share.
+    storageWrite("presence:u_other", {
+      userId: "u_other",
+      name: "Riley Ashworth",
+      color: "#6b3fa0",
+      sheetId: "E2.1",
+      itemId: "it-03",
+      seenAt: Date.now(),
+    });
+    storageWrite("presence-index", ["u_other"]);
+
+    const { presence } = await store.getSnapshot();
+    expect(presence).toHaveLength(1);
+    const [entry] = presence;
+    expect(entry).toMatchObject({
+      userId: "u_other",
+      name: "Riley Ashworth",
+      color: "#6b3fa0",
+      sheetId: "E2.1",
+      itemId: "it-03",
+    });
+    // The type this pins: a number (epoch ms), never a string. An
+    // ISO-8601 string here would make activePresence()'s
+    // `now - p.seenAt < ACTIVE_WINDOW_MS` comparison NaN silently --
+    // no throw, the entry just never expires or never shows up.
+    expect(typeof entry.seenAt).toBe("number");
   });
 
   it("refuses to approve a missing information item", async () => {
@@ -179,8 +213,15 @@ describe("seed store", () => {
     const readyItem = snap.items.find((i) => i.status === "ready");
     const anotherReadyItem = snap.items.filter((i) => i.status === "ready")[1];
     const sheet = snap.sheets[0];
+    const originalScale = sheet.scale;
+    const scaleValue = sheet.scaleOptions[0] ?? "nts";
 
-    await expect(store.me()).resolves.toMatchObject({ id: expect.any(String), name: expect.any(String), color: expect.any(String) });
+    await expect(store.me()).resolves.toMatchObject({
+      id: expect.any(String),
+      name: expect.any(String),
+      email: expect.any(String),
+      color: expect.any(String),
+    });
 
     const unsubscribe = store.subscribe(() => {});
     expect(typeof unsubscribe).toBe("function");
@@ -203,13 +244,38 @@ describe("seed store", () => {
     const deleteResult = await store.deleteItem(anotherReadyItem.id);
     expect(deleteResult.item).toBeNull();
 
-    const scaleResult = await store.setScale(sheet.id, sheet.scaleOptions[0] ?? "nts");
+    // Captured immediately before setScale, not from `snap` at the top of
+    // this test -- the mutations above touched other items, not this
+    // sheet, but reading fresh keeps this assertion honest either way.
+    const beforeScale = await store.getSnapshot();
+    const blockedBefore = beforeScale.items.filter((i) => i.sheetId === sheet.id && i.status === "missing");
+
+    const scaleResult = await store.setScale(sheet.id, scaleValue);
     expect(scaleResult.snapshot.version).toEqual(expect.any(String));
 
     const undoResult = await store.undo();
     expect(undoResult.performed).toBe(true);
+    // Full state, mirroring the "undo reverses a scale confirmation"
+    // test above -- performed === true alone would also pass a redo
+    // branch that merged the wrong snapshot back onto the wrong items.
+    const afterUndo = await store.getSnapshot();
+    const sheetAfterUndo = afterUndo.sheets.find((s) => s.id === sheet.id);
+    expect(sheetAfterUndo.scale).toBe(originalScale);
+    const stillMissingAfterUndo = afterUndo.items.filter((i) => i.sheetId === sheet.id && i.status === "missing");
+    expect(stillMissingAfterUndo.map((i) => i.id).sort()).toEqual(blockedBefore.map((i) => i.id).sort());
 
     const redoResult = await store.redo();
     expect(redoResult.performed).toBe(true);
+    // Same standard applied to redo: the scale change and every released
+    // item's status/warnings must actually be back the way setScale left
+    // them, not merely "some snapshot object was returned."
+    const afterRedo = await store.getSnapshot();
+    const sheetAfterRedo = afterRedo.sheets.find((s) => s.id === sheet.id);
+    expect(sheetAfterRedo.scale).toBe(scaleValue);
+    for (const releasedId of blockedBefore.map((i) => i.id)) {
+      const released = afterRedo.items.find((i) => i.id === releasedId);
+      expect(released.status).toBe("ready");
+      expect(released.warnings).toEqual([]);
+    }
   });
 });

@@ -88,9 +88,18 @@ export function identity() {
   const existing = storageRead("me", null);
   if (existing) return existing;
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  const first = pick(FIRST);
+  const last = pick(LAST);
   const me = {
     id: "u_" + Math.random().toString(36).slice(2, 9),
-    name: pick(FIRST) + " " + pick(LAST),
+    name: first + " " + last,
+    // api/app/auth/schemas.py's UserOut carries id/name/email/color — the
+    // seed identity has no real credential to read an email from, but
+    // Task 16 wires real auth and a login screen where the signed-in
+    // account's email is the obvious thing to want, so this is included
+    // now rather than left for Task 16 to discover as a gap. The domain
+    // matches api/app/seed.py's org, "Meridian Electric".
+    email: `${first}.${last}@meridianelectric.example`.toLowerCase(),
     color: pick(COLORS),
   };
   storageWrite("me", me);
@@ -116,6 +125,17 @@ export function writePresence(sheetId, itemId) {
     color: me.color,
     sheetId: sheetId ?? null,
     itemId: itemId ?? null,
+    // Epoch milliseconds (a number), not the API's ISO-8601 string
+    // (api/app/collab/schemas.py's PresenceOut.seen_at, a `datetime`
+    // serialized to a string over the wire). Same class of decision as
+    // quantity/totals' Decimal->number conversion (seed.js's module
+    // docstring): arithmetic-ready, and it is what activePresence()
+    // below actually does arithmetic on (`now - p.seenAt`) — an
+    // ISO string there would make that NaN silently, never throwing,
+    // rather than fail loudly. api.js (Task 16) must convert at the
+    // boundary via Date.parse(seen_at), the same way it must parse
+    // Decimal strings into numbers, since the seed store never produces
+    // the string form to begin with.
     seenAt: Date.now(),
   });
 }

@@ -23,7 +23,10 @@
    quantities/totals as JS numbers (the API's Decimal fields arrive as
    strings; api.js, not this file, does that conversion for the real
    backend — this module simply never introduces Decimal-as-string in
-   the first place, since it computes everything in JS).
+   the first place, since it computes everything in JS). Presence's
+   `seenAt` (local-transport.js) is the same class of decision: epoch
+   milliseconds, not the API's ISO-8601 string, so it stays
+   arithmetic-ready and api.js must convert it at the boundary too.
 
    The client never does arithmetic on totals in production (invariant
    1: totals are computed in exactly one place, the server). This

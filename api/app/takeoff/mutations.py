@@ -22,7 +22,7 @@ import re
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy.orm import Session as DbSession
 
@@ -70,7 +70,7 @@ class EditIn(BaseModel):
     sent" from "sent as null" via `model_fields_set`, rather than
     `body.model_dump(exclude_none=True)` (the sketch's approach,
     correction 2) -- `exclude_none=True` strips an explicit `notes: null`
-    before `review._validate_edit()` ever sees it, turning its "notes
+    before `edit_validation.validate_edit()` ever sees it, turning its "notes
     cannot be removed entirely" refusal into a silent no-op success.
 
     `quantity` accepts a JSON *string* only ("184.55"), never a bare JSON
@@ -80,7 +80,7 @@ class EditIn(BaseModel):
     runs. It also matches the string against `_QUANTITY_LITERAL` (a
     second review finding: a syntactically "valid" `Decimal` string can
     still silently change the number -- see that pattern's comment).
-    `review._validate_edit()` still does its own parsing and
+    `edit_validation.validate_edit()` still does its own parsing and
     finiteness/sign/magnitude/scale checks downstream; this validator
     only narrows the wire format, it doesn't replace that validation.
     """
@@ -114,6 +114,27 @@ class BulkApproveIn(BaseModel):
 
 class ScaleIn(BaseModel):
     value: str
+
+
+def require_expected_version(
+    if_match: int = Header(
+        alias="If-Match",
+        description="The Item.version the client last saw for this item, so a stale write can be refused.",
+    ),
+) -> int:
+    """Header, not a body field, for all five single-item mutations
+    (task-13b-report.md has the full reasoning): this API already runs
+    the read half of RFC 7232's conditional-request family
+    (`GET /snapshot`'s `ETag`/`If-None-Match`, in `router.py`), so
+    `If-Match` on writes extends one idiom instead of inventing a second
+    "expected version" convention that only some endpoints carry. It
+    also applies uniformly regardless of whether an endpoint already had
+    a body (`PATCH`) or never did (`approve`/`reject`/`unreject`/
+    `DELETE`), sidestepping httpx's refusal to send a JSON body on
+    `Client.delete()`. Required, not optional: FastAPI returns 422 on
+    its own when the header is missing or not an integer.
+    """
+    return if_match
 
 
 # Estimator-facing copy for bulk.py's skip codes (correction 4, carried
@@ -183,35 +204,54 @@ def _item_mutation_response(db: DbSession, project_id: uuid.UUID, action, item) 
 
 
 @router.post("/items/{item_id}/approve", response_model=ItemMutationOut)
-def approve(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> ItemMutationOut:
+def approve(
+    item_id: uuid.UUID,
+    expected_version: int = Depends(require_expected_version),
+    user: User = Depends(current_user),
+    db: DbSession = Depends(get_db),
+) -> ItemMutationOut:
     item = load_item(item_id, db, user)
     project_id = item.project_id
-    action = review.approve_item(db, user, item)
+    action = review.approve_item(db, user, item, expected_version)
     db.commit()
     return _item_mutation_response(db, project_id, action, item)
 
 
 @router.post("/items/{item_id}/reject", response_model=ItemMutationOut)
-def reject(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> ItemMutationOut:
+def reject(
+    item_id: uuid.UUID,
+    expected_version: int = Depends(require_expected_version),
+    user: User = Depends(current_user),
+    db: DbSession = Depends(get_db),
+) -> ItemMutationOut:
     item = load_item(item_id, db, user)
     project_id = item.project_id
-    action = review.reject_item(db, user, item)
+    action = review.reject_item(db, user, item, expected_version)
     db.commit()
     return _item_mutation_response(db, project_id, action, item)
 
 
 @router.post("/items/{item_id}/unreject", response_model=ItemMutationOut)
-def unreject(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> ItemMutationOut:
+def unreject(
+    item_id: uuid.UUID,
+    expected_version: int = Depends(require_expected_version),
+    user: User = Depends(current_user),
+    db: DbSession = Depends(get_db),
+) -> ItemMutationOut:
     item = load_item(item_id, db, user)
     project_id = item.project_id
-    action = review.unreject_item(db, user, item)
+    action = review.unreject_item(db, user, item, expected_version)
     db.commit()
     return _item_mutation_response(db, project_id, action, item)
 
 
 @router.patch("/items/{item_id}", response_model=ItemMutationOut)
 def edit(
-    item_id: uuid.UUID, body: EditIn, user: User = Depends(current_user), db: DbSession = Depends(get_db)
+    item_id: uuid.UUID,
+    body: EditIn,
+    expected_version: int = Depends(require_expected_version),
+    user: User = Depends(current_user),
+    db: DbSession = Depends(get_db),
 ) -> ItemMutationOut:
     item = load_item(item_id, db, user)
     project_id = item.project_id
@@ -230,16 +270,21 @@ def edit(
             "no_changes_to_apply",
             "This edit has no changes. Include at least one field to update, such as quantity or notes.",
         )
-    action = review.edit_item(db, user, item, changes)
+    action = review.edit_item(db, user, item, changes, expected_version)
     db.commit()
     return _item_mutation_response(db, project_id, action, item)
 
 
 @router.delete("/items/{item_id}", response_model=ItemMutationOut)
-def delete(item_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> ItemMutationOut:
+def delete(
+    item_id: uuid.UUID,
+    expected_version: int = Depends(require_expected_version),
+    user: User = Depends(current_user),
+    db: DbSession = Depends(get_db),
+) -> ItemMutationOut:
     item = load_item(item_id, db, user)
     project_id = item.project_id
-    action = review.delete_item(db, user, item)
+    action = review.delete_item(db, user, item, expected_version)
     db.commit()
     return _item_mutation_response(db, project_id, action, None)
 

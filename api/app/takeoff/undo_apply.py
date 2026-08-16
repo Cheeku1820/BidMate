@@ -151,6 +151,15 @@ def _apply_item_state(db: DbSession, item_id: uuid.UUID | None, state: dict) -> 
     the shared restore path for `approve`/`reject`/`unreject`/`edit`,
     which record only the columns they touched. Never a full-row
     restore, so an unrelated concurrent edit to another field survives.
+
+    Bumps `item.version` after applying the snapshot -- undo and redo
+    are themselves mutations (task-13b-brief.md), so a client holding a
+    version from before the undo must not be able to write again just
+    because the row's fields happened to move back to values that
+    version once described. The snapshot itself never carries a
+    `"version"` key (concurrency.py's module docstring), so this bump is
+    always relative to whatever the row currently holds, never a value
+    read back out of the action log.
     """
     if not state or item_id is None:
         return
@@ -163,6 +172,7 @@ def _apply_item_state(db: DbSession, item_id: uuid.UUID | None, state: dict) -> 
 
     for key, value in decode_snapshot(state, ITEM_SNAPSHOT_TYPES).items():
         setattr(item, key, value)
+    item.version += 1
 
 
 def _apply_bulk_approve(db: DbSession, state: dict) -> None:
@@ -172,6 +182,10 @@ def _apply_bulk_approve(db: DbSession, state: dict) -> None:
     against a concurrent bulk approval or a second undo. An item missing
     from the database (deleted since the batch was recorded) is skipped
     rather than failing the whole reversal.
+
+    Each item actually touched gets its `version` bumped too -- see
+    `_apply_item_state()`'s docstring for why undo/redo always move the
+    counter forward rather than restoring whatever it held before.
     """
     rows = state.get(ITEMS_SNAPSHOT_KEY, [])
     if not rows:
@@ -191,6 +205,7 @@ def _apply_bulk_approve(db: DbSession, state: dict) -> None:
             continue
         for key, value in fields.items():
             setattr(item, key, value)
+        item.version += 1
 
 
 def _apply_scale(db: DbSession, action: Action, direction: str) -> None:
@@ -256,6 +271,11 @@ def _apply_scale(db: DbSession, action: Action, direction: str) -> None:
             else:
                 _delete_row_if_present(db, Warning, warning_fields["id"])
 
+        # Every item this loop reaches had its status and/or warnings
+        # touched -- see _apply_item_state()'s docstring for why undo/redo
+        # bump the counter forward rather than restoring a snapshotted one.
+        item.version += 1
+
 
 def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
     """Restore a deleted item and its warnings (undo), or remove it again
@@ -272,6 +292,13 @@ def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
     if direction == "before":
         state = action.before
         item_fields = {key: value for key, value in state.items() if key != "warnings"}
+        # No "version" key reaches here: review._apply_delete() pops it
+        # from the snapshot before it is ever recorded, deliberately, so
+        # the reconstructed row below gets the ordinary column default
+        # (1) rather than resurrecting a pre-delete counter value --
+        # nothing between deletion and restoration could have held a
+        # valid reference to this row anyway, so starting a fresh version
+        # lineage at 1 is both simplest and safe.
         decoded = decode_snapshot(item_fields, ITEM_SNAPSHOT_TYPES)
         _restore_row_if_missing(db, Item, decoded)
         for encoded_warning in state.get("warnings", []):

@@ -195,7 +195,15 @@ def bulk_approve(
         elif item.status is ReviewStatus.MISSING:
             result.skipped[item_id] = MISSING_INFORMATION
         elif item.status is ReviewStatus.READY:
-            before_fields, after_fields = _apply_approve(db, actor, item)
+            # expected_version=None: bulk approval is deliberately out of
+            # scope for the per-item optimistic-concurrency contract
+            # (task-13b-brief.md -- a version per id is a clumsy contract
+            # for a batch, and already_approved already covers the
+            # common collision honestly). _apply_approve() still bumps
+            # Item.version for every row it touches regardless, so the
+            # counter a later single-item mutation checks against is
+            # never wrong just because a batch moved the row instead.
+            before_fields, after_fields = _apply_approve(db, actor, item, None)
             items_before.append(encode_snapshot({"id": item.id, **before_fields}))
             items_after.append(encode_snapshot({"id": item.id, **after_fields}))
             result.approved.append(item_id)

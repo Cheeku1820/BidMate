@@ -73,7 +73,7 @@ def test_the_version_changes_after_a_mutation(client, db, dana, project, sheet, 
     _sign_in(client)
     etag = client.get(f"/api/projects/{project.id}/snapshot").headers["etag"]
 
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
 
     again = client.get(f"/api/projects/{project.id}/snapshot", headers={"If-None-Match": etag})
@@ -194,7 +194,7 @@ def test_undo_reflects_real_state_after_an_approve_and_after_an_undo(client, db,
     before = client.get(f"/api/projects/{project.id}/snapshot").json()
     assert before["undo"]["can_undo"] is False
 
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
 
     after_approve = client.get(f"/api/projects/{project.id}/snapshot").json()
@@ -293,7 +293,7 @@ def test_an_item_with_two_live_warnings_returns_both_in_a_stable_order(client, d
 
 
 def test_approved_item_carries_the_approving_users_name_and_rejected_defaults_false(client, db, dana, project, sheet, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
 
     _sign_in(client)

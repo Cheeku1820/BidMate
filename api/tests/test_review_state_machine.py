@@ -13,7 +13,7 @@ from app.takeoff import snapshots
 
 
 def test_approving_records_who_approved_it(db, dana, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
 
     assert item.status is ReviewStatus.APPROVED
@@ -26,7 +26,7 @@ def test_a_missing_information_item_cannot_be_approved(db, dana, item):
     db.flush()
 
     with pytest.raises(DomainError) as caught:
-        review.approve_item(db, dana, item)
+        review.approve_item(db, dana, item, item.version)
 
     assert caught.value.code == "missing_information_blocks_approval"
     assert item.status is ReviewStatus.MISSING
@@ -36,7 +36,7 @@ def test_a_needs_attention_item_can_be_approved(db, dana, item):
     item.status = ReviewStatus.ATTENTION
     db.flush()
 
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
 
     assert item.status is ReviewStatus.APPROVED
 
@@ -45,7 +45,7 @@ def test_rejecting_leaves_the_review_status_intact(db, dana, item):
     item.status = ReviewStatus.ATTENTION
     db.flush()
 
-    review.reject_item(db, dana, item)
+    review.reject_item(db, dana, item, item.version)
     db.flush()
 
     assert item.rejected_at is not None
@@ -54,10 +54,10 @@ def test_rejecting_leaves_the_review_status_intact(db, dana, item):
 
 def test_unrejecting_restores_the_item_without_guessing_a_status(db, dana, item):
     item.status = ReviewStatus.ATTENTION
-    review.reject_item(db, dana, item)
+    review.reject_item(db, dana, item, item.version)
     db.flush()
 
-    review.unreject_item(db, dana, item)
+    review.unreject_item(db, dana, item, item.version)
     db.flush()
 
     assert item.rejected_at is None
@@ -69,7 +69,7 @@ def test_editing_an_unclassified_item_moves_it_to_ready(db, dana, item):
     item.category = "Unclassified"
     db.flush()
 
-    review.edit_item(db, dana, item, {"category": "Devices"})
+    review.edit_item(db, dana, item, {"category": "Devices"}, item.version)
     db.flush()
 
     assert item.status is ReviewStatus.READY
@@ -77,7 +77,7 @@ def test_editing_an_unclassified_item_moves_it_to_ready(db, dana, item):
 
 def test_editing_rejects_a_field_that_is_not_editable(db, dana, item):
     with pytest.raises(DomainError) as caught:
-        review.edit_item(db, dana, item, {"status": "approved"})
+        review.edit_item(db, dana, item, {"status": "approved"}, item.version)
 
     assert caught.value.code == "field_not_editable"
 
@@ -102,6 +102,7 @@ def test_approve_item_rechecks_status_under_a_row_lock_not_a_stale_read(db, dana
     state, so this is safe.
     """
     db.commit()
+    original_version = item.version
 
     other_engine = create_engine(settings.test_database_url)
     OtherSession = sessionmaker(bind=other_engine, expire_on_commit=False)
@@ -119,7 +120,7 @@ def test_approve_item_rechecks_status_under_a_row_lock_not_a_stale_read(db, dana
     assert item.status is ReviewStatus.READY
 
     with pytest.raises(DomainError) as caught:
-        review.approve_item(db, dana, item)
+        review.approve_item(db, dana, item, original_version)
 
     assert caught.value.code == "missing_information_blocks_approval"
     assert item.status is ReviewStatus.MISSING, "the row lock must refresh the stale in-memory read"
@@ -129,23 +130,23 @@ def test_approve_item_rechecks_status_under_a_row_lock_not_a_stale_read(db, dana
 
 
 def test_a_rejected_item_cannot_be_approved(db, dana, item):
-    review.reject_item(db, dana, item)
+    review.reject_item(db, dana, item, item.version)
     db.flush()
 
     with pytest.raises(DomainError) as caught:
-        review.approve_item(db, dana, item)
+        review.approve_item(db, dana, item, item.version)
 
     assert caught.value.code == "rejected_item_cannot_be_approved"
     assert item.status is ReviewStatus.READY, "the refusal must not touch review status either"
 
 
 def test_unrejecting_then_approving_succeeds(db, dana, item):
-    review.reject_item(db, dana, item)
+    review.reject_item(db, dana, item, item.version)
     db.flush()
-    review.unreject_item(db, dana, item)
+    review.unreject_item(db, dana, item, item.version)
     db.flush()
 
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
 
     assert item.status is ReviewStatus.APPROVED
 
@@ -167,7 +168,7 @@ def test_deleting_an_item_snapshots_its_warnings_before_cascade_removes_them(db,
     db.flush()
     warning_id = warning.id
 
-    action = review.delete_item(db, dana, item)
+    action = review.delete_item(db, dana, item, item.version)
     db.flush()
     db.expire(action)
 
@@ -186,7 +187,7 @@ def test_deleting_an_item_snapshots_its_warnings_before_cascade_removes_them(db,
 
 def test_decode_snapshot_reconstructs_a_deleted_items_typed_fields(db, dana, item):
     item_id = item.id
-    action = review.delete_item(db, dana, item)
+    action = review.delete_item(db, dana, item, item.version)
     db.flush()
     db.expire(action)
 
@@ -208,7 +209,7 @@ def test_decode_snapshot_raises_for_a_field_with_no_type_given():
 
 def test_editing_category_to_a_blank_string_is_refused(db, dana, item):
     with pytest.raises(DomainError) as caught:
-        review.edit_item(db, dana, item, {"category": "   "})
+        review.edit_item(db, dana, item, {"category": "   "}, item.version)
 
     assert caught.value.code == "field_cannot_be_empty"
     assert item.category == "Devices", "a refused edit must not have mutated the item"
@@ -216,14 +217,14 @@ def test_editing_category_to_a_blank_string_is_refused(db, dana, item):
 
 def test_editing_quantity_to_a_non_numeric_value_is_a_domain_error_not_a_500(db, dana, item):
     with pytest.raises(DomainError) as caught:
-        review.edit_item(db, dana, item, {"quantity": "fourteen"})
+        review.edit_item(db, dana, item, {"quantity": "fourteen"}, item.version)
 
     assert caught.value.code == "invalid_quantity"
 
 
 def test_editing_notes_to_null_is_refused(db, dana, item):
     with pytest.raises(DomainError) as caught:
-        review.edit_item(db, dana, item, {"notes": None})
+        review.edit_item(db, dana, item, {"notes": None}, item.version)
 
     assert caught.value.code == "field_cannot_be_empty"
 
@@ -232,7 +233,7 @@ def test_editing_notes_to_null_is_refused(db, dana, item):
 
 
 def test_editing_quantity_to_a_fraction_round_trips_as_an_exact_decimal_string(db, dana, item):
-    action = review.edit_item(db, dana, item, {"quantity": "12.55"})
+    action = review.edit_item(db, dana, item, {"quantity": "12.55"}, item.version)
     db.flush()
     db.expire(action)
     db.expire(item)
@@ -250,7 +251,7 @@ def test_editing_quantity_to_a_fraction_round_trips_as_an_exact_decimal_string(d
 @pytest.mark.parametrize("bad_value", ["NaN", "nan", "Infinity", "-Infinity", "inf"])
 def test_editing_quantity_to_a_non_finite_value_is_refused(db, dana, item, bad_value):
     with pytest.raises(DomainError) as caught:
-        review.edit_item(db, dana, item, {"quantity": bad_value})
+        review.edit_item(db, dana, item, {"quantity": bad_value}, item.version)
 
     assert caught.value.code == "invalid_quantity"
     assert item.quantity == Decimal("14.00"), "a refused edit must not have mutated the item"
@@ -262,7 +263,7 @@ def test_editing_quantity_to_a_negative_value_is_refused(db, dana, item):
     negative value is not a valid edit rather than a value the estimator
     might legitimately want."""
     with pytest.raises(DomainError) as caught:
-        review.edit_item(db, dana, item, {"quantity": "-1"})
+        review.edit_item(db, dana, item, {"quantity": "-1"}, item.version)
 
     assert caught.value.code == "invalid_quantity"
     assert item.quantity == Decimal("14.00")
@@ -272,7 +273,7 @@ def test_editing_quantity_to_zero_is_accepted(db, dana, item):
     """Zero is not negative -- an item counted at zero is a legitimate
     intermediate state (a run still being traced, say), distinct from a
     value nobody would legitimately enter."""
-    action = review.edit_item(db, dana, item, {"quantity": "0"})
+    action = review.edit_item(db, dana, item, {"quantity": "0"}, item.version)
     db.flush()
 
     assert item.quantity == Decimal("0")
@@ -286,14 +287,14 @@ def test_editing_quantity_to_zero_is_accepted(db, dana, item):
 
 def test_editing_quantity_beyond_the_column_bound_is_refused(db, dana, item):
     with pytest.raises(DomainError) as caught:
-        review.edit_item(db, dana, item, {"quantity": "1E+15"})
+        review.edit_item(db, dana, item, {"quantity": "1E+15"}, item.version)
 
     assert caught.value.code == "invalid_quantity"
     assert item.quantity == Decimal("14.00"), "a refused edit must not have mutated the item"
 
 
 def test_editing_quantity_at_the_column_bound_is_accepted(db, dana, item):
-    action = review.edit_item(db, dana, item, {"quantity": "9999999999.99"})
+    action = review.edit_item(db, dana, item, {"quantity": "9999999999.99"}, item.version)
     db.flush()
 
     assert item.quantity == Decimal("9999999999.99")
@@ -312,6 +313,7 @@ def test_approving_an_item_deleted_by_a_concurrent_reviewer_is_a_domain_error(db
     should refuse with a DomainError naming what happened.
     """
     db.commit()
+    original_version = item.version
 
     other_engine = create_engine(settings.test_database_url)
     OtherSession = sessionmaker(bind=other_engine, expire_on_commit=False)
@@ -325,6 +327,6 @@ def test_approving_an_item_deleted_by_a_concurrent_reviewer_is_a_domain_error(db
         other_engine.dispose()
 
     with pytest.raises(DomainError) as caught:
-        review.approve_item(db, dana, item)
+        review.approve_item(db, dana, item, original_version)
 
     assert caught.value.code == "item_no_longer_exists"

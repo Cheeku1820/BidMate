@@ -59,7 +59,7 @@ def test_another_org_cannot_read_your_snapshot(client, dana, rival, project, she
 def test_another_org_cannot_approve_your_item(client, dana, rival, project, sheet, item, db):
     _sign_in_as(client, "rival@example.com", "hunter2")
 
-    response = client.post(f"/api/items/{item.id}/approve")
+    response = client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)})
 
     assert response.status_code == 404
     # A fresh read of the actual row, not the fixture's in-session
@@ -75,7 +75,7 @@ def test_another_org_cannot_approve_your_item(client, dana, rival, project, shee
 
 def test_another_org_cannot_undo_your_action(client, dana, rival, project, sheet, item):
     _sign_in_as(client, "dana@example.com", "correct-horse")
-    client.post(f"/api/items/{item.id}/approve")
+    client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)})
     client.post("/api/auth/logout")
 
     _sign_in_as(client, "rival@example.com", "hunter2")
@@ -95,37 +95,51 @@ def test_a_project_from_another_org_is_absent_from_your_list(client, rival, proj
 # test below, to match against `app.routes`. `path` builds the real URL
 # for this test's fixtures.
 
+# A fifth column, `headers_fn`, carries the `If-Match` header the five
+# single-item mutations now require (task-13b-brief.md) -- without it, a
+# rival-org or unauthenticated request to one of those five would fail
+# FastAPI's own header validation (422) before ever reaching the tenancy
+# gate this table exists to prove, which would silently stop testing
+# what these rows are actually for. `i.version` is a placeholder value on
+# every row here: the fixture item always starts at version 1, and these
+# requests are expected to be refused by tenancy or auth before the
+# service layer ever compares it against anything.
 TENANCY_TABLE = [
     ("GET", "/api/projects/{project_id}",
-     lambda p, s, i: f"/api/projects/{p.id}", None),
+     lambda p, s, i: f"/api/projects/{p.id}", None, None),
     ("GET", "/api/projects/{project_id}/snapshot",
-     lambda p, s, i: f"/api/projects/{p.id}/snapshot", None),
+     lambda p, s, i: f"/api/projects/{p.id}/snapshot", None, None),
     ("GET", "/api/projects/{project_id}/totals",
-     lambda p, s, i: f"/api/projects/{p.id}/totals", None),
+     lambda p, s, i: f"/api/projects/{p.id}/totals", None, None),
     ("PATCH", "/api/items/{item_id}",
-     lambda p, s, i: f"/api/items/{i.id}", lambda p, s, i: {"notes": "test"}),
+     lambda p, s, i: f"/api/items/{i.id}", lambda p, s, i: {"notes": "test"},
+     lambda p, s, i: {"If-Match": str(i.version)}),
     ("POST", "/api/items/{item_id}/approve",
-     lambda p, s, i: f"/api/items/{i.id}/approve", None),
+     lambda p, s, i: f"/api/items/{i.id}/approve", None,
+     lambda p, s, i: {"If-Match": str(i.version)}),
     ("POST", "/api/items/{item_id}/reject",
-     lambda p, s, i: f"/api/items/{i.id}/reject", None),
+     lambda p, s, i: f"/api/items/{i.id}/reject", None,
+     lambda p, s, i: {"If-Match": str(i.version)}),
     ("POST", "/api/items/{item_id}/unreject",
-     lambda p, s, i: f"/api/items/{i.id}/unreject", None),
+     lambda p, s, i: f"/api/items/{i.id}/unreject", None,
+     lambda p, s, i: {"If-Match": str(i.version)}),
     ("DELETE", "/api/items/{item_id}",
-     lambda p, s, i: f"/api/items/{i.id}", None),
+     lambda p, s, i: f"/api/items/{i.id}", None,
+     lambda p, s, i: {"If-Match": str(i.version)}),
     ("POST", "/api/projects/{project_id}/items/bulk-approve",
      lambda p, s, i: f"/api/projects/{p.id}/items/bulk-approve",
-     lambda p, s, i: {"item_ids": [str(i.id)]}),
+     lambda p, s, i: {"item_ids": [str(i.id)]}, None),
     ("POST", "/api/sheets/{sheet_id}/scale",
-     lambda p, s, i: f"/api/sheets/{s.id}/scale", lambda p, s, i: {"value": "1/4\" = 1'-0\""}),
+     lambda p, s, i: f"/api/sheets/{s.id}/scale", lambda p, s, i: {"value": "1/4\" = 1'-0\""}, None),
     ("POST", "/api/projects/{project_id}/undo",
-     lambda p, s, i: f"/api/projects/{p.id}/undo", None),
+     lambda p, s, i: f"/api/projects/{p.id}/undo", None, None),
     ("POST", "/api/projects/{project_id}/redo",
-     lambda p, s, i: f"/api/projects/{p.id}/redo", None),
+     lambda p, s, i: f"/api/projects/{p.id}/redo", None, None),
     ("PUT", "/api/presence",
-     lambda p, s, i: "/api/presence", lambda p, s, i: {"project_id": str(p.id)}),
+     lambda p, s, i: "/api/presence", lambda p, s, i: {"project_id": str(p.id)}, None),
 ]
 
-TENANCY_IDS = [f"{method} {template}" for method, template, _, _ in TENANCY_TABLE]
+TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]
 
 # Routes that are deliberately not project-scoped, so the guard test
 # below must not demand a tenancy-table row for them. Not limited to
@@ -150,15 +164,16 @@ NON_PROJECT_SCOPED_ROUTES = {
 }
 
 
-@pytest.mark.parametrize("method, path_template, path_fn, body_fn", TENANCY_TABLE, ids=TENANCY_IDS)
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", TENANCY_TABLE, ids=TENANCY_IDS)
 def test_a_rival_org_gets_404_never_403_or_500_on_every_project_scoped_route(
-    client, dana, rival, project, sheet, item, method, path_template, path_fn, body_fn
+    client, dana, rival, project, sheet, item, method, path_template, path_fn, body_fn, headers_fn
 ):
     _sign_in_as(client, "rival@example.com", "hunter2")
     path = path_fn(project, sheet, item)
     body = body_fn(project, sheet, item) if body_fn else None
+    headers = headers_fn(project, sheet, item) if headers_fn else None
 
-    response = client.request(method, path, json=body)
+    response = client.request(method, path, json=body, headers=headers)
 
     assert response.status_code == 404, (
         f"{method} {path} leaked status {response.status_code} to a rival org, expected 404"
@@ -171,17 +186,18 @@ def test_a_rival_org_gets_404_never_403_or_500_on_every_project_scoped_route(
 # the nine mutation routes plus presence, per correction 5's "Also assert
 # the same for unauthenticated callers (401) on every mutation."
 MUTATION_TABLE = [row for row in TENANCY_TABLE if row[0] != "GET"]
-MUTATION_IDS = [f"{method} {template}" for method, template, _, _ in MUTATION_TABLE]
+MUTATION_IDS = [f"{method} {template}" for method, template, _, _, _ in MUTATION_TABLE]
 
 
-@pytest.mark.parametrize("method, path_template, path_fn, body_fn", MUTATION_TABLE, ids=MUTATION_IDS)
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", MUTATION_TABLE, ids=MUTATION_IDS)
 def test_an_unauthenticated_caller_gets_401_on_every_mutation_route(
-    client, project, sheet, item, method, path_template, path_fn, body_fn
+    client, project, sheet, item, method, path_template, path_fn, body_fn, headers_fn
 ):
     path = path_fn(project, sheet, item)
     body = body_fn(project, sheet, item) if body_fn else None
+    headers = headers_fn(project, sheet, item) if headers_fn else None
 
-    response = client.request(method, path, json=body)
+    response = client.request(method, path, json=body, headers=headers)
 
     assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
 
@@ -237,7 +253,7 @@ def test_every_project_scoped_route_is_covered_by_the_tenancy_table():
     endpoint has to make a deliberate choice, not get a green suite with
     an ungated route.
     """
-    covered = {(method, template) for method, template, _, _ in TENANCY_TABLE} | NON_PROJECT_SCOPED_ROUTES
+    covered = {(method, template) for method, template, _, _, _ in TENANCY_TABLE} | NON_PROJECT_SCOPED_ROUTES
     missing = _live_api_routes() - covered
 
     assert not missing, (
@@ -251,6 +267,6 @@ def test_the_tenancy_table_does_not_list_a_route_that_no_longer_exists():
     it was written for got renamed or removed.
     """
     live = _live_api_routes()
-    stale = {(method, template) for method, template, _, _ in TENANCY_TABLE} - live
+    stale = {(method, template) for method, template, _, _, _ in TENANCY_TABLE} - live
 
     assert not stale, f"tenancy-table rows with no matching live route: {sorted(stale)}"

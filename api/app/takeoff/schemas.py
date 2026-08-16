@@ -57,6 +57,14 @@ class ItemOut(BaseModel):
     quantity: Decimal
     unit: str
     status: str
+    # The optimistic-concurrency counter (task-13b-brief.md): the client
+    # sends this back on its next single-item mutation so a stale write
+    # is refused rather than silently clobbering a concurrent change. A
+    # plain int, not a Decimal-as-string -- this is a row generation
+    # counter, not a bid quantity, and has no rounding or precision
+    # concern the string-wire-format decision (decision 1, Task 13) was
+    # protecting against.
+    version: int
     approved_by: str | None = None
     rejected: bool = False
     x: int | None = None

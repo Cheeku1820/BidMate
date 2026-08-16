@@ -178,7 +178,7 @@ def test_a_domain_error_response_still_carries_a_request_id(client, dana, projec
 
     item.status = ReviewStatus.MISSING
 
-    response = client.post(f"/api/items/{item.id}/approve")
+    response = client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)})
 
     assert response.status_code == 409
     assert response.headers["x-request-id"]

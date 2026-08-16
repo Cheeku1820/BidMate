@@ -42,7 +42,7 @@ def test_approving_a_missing_information_item_is_refused_by_the_server(client, d
     db.flush()
     _sign_in(client)
 
-    response = client.post(f"/api/items/{item.id}/approve")
+    response = client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)})
 
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "missing_information_blocks_approval"
@@ -53,7 +53,7 @@ def test_the_refusal_copy_names_a_recovery_action(client, dana, project, sheet, 
     db.flush()
     _sign_in(client)
 
-    message = client.post(f"/api/items/{item.id}/approve").json()["detail"]["message"]
+    message = client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)}).json()["detail"]["message"]
 
     assert "Resolve the warning" in message
     assert "something went wrong" not in message.lower()
@@ -65,7 +65,7 @@ def test_the_refusal_copy_names_a_recovery_action(client, dana, project, sheet, 
 def test_approve_returns_the_action_label_the_new_version_and_the_updated_item(client, dana, project, sheet, item):
     _sign_in(client)
 
-    body = client.post(f"/api/items/{item.id}/approve").json()
+    body = client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)}).json()
 
     assert body["label"] == f"Approved {item.name}"
     assert body["version"]
@@ -79,7 +79,7 @@ def test_approve_response_version_matches_what_the_next_snapshot_poll_would_retu
 ):
     _sign_in(client)
 
-    approve_body = client.post(f"/api/items/{item.id}/approve").json()
+    approve_body = client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)}).json()
     snapshot = client.get(f"/api/projects/{project.id}/snapshot")
 
     # The mutation's own version is authoritative and current: polling
@@ -96,11 +96,13 @@ def test_approve_response_version_matches_what_the_next_snapshot_poll_would_retu
 def test_reject_and_unreject_round_trip_through_the_endpoint(client, dana, project, sheet, item):
     _sign_in(client)
 
-    rejected = client.post(f"/api/items/{item.id}/reject").json()
+    rejected = client.post(f"/api/items/{item.id}/reject", headers={"If-Match": str(item.version)}).json()
     assert rejected["item"]["rejected"] is True
     assert rejected["label"] == f"Rejected {item.name}"
 
-    restored = client.post(f"/api/items/{item.id}/unreject").json()
+    restored = client.post(
+        f"/api/items/{item.id}/unreject", headers={"If-Match": str(rejected["item"]["version"])}
+    ).json()
     assert restored["item"]["rejected"] is False
     assert restored["label"] == f"Restored {item.name}"
 
@@ -108,7 +110,7 @@ def test_reject_and_unreject_round_trip_through_the_endpoint(client, dana, proje
 def test_delete_returns_no_item_since_none_remains(client, dana, project, sheet, item):
     _sign_in(client)
 
-    body = client.delete(f"/api/items/{item.id}").json()
+    body = client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)}).json()
 
     assert body["item"] is None
     assert body["label"] == f"Deleted {item.name}"
@@ -124,7 +126,9 @@ def test_delete_returns_no_item_since_none_remains(client, dana, project, sheet,
 def test_editing_quantity_as_a_json_string_round_trips_exactly(client, dana, project, sheet, item):
     _sign_in(client)
 
-    body = client.patch(f"/api/items/{item.id}", json={"quantity": "184.55"}).json()
+    body = client.patch(
+        f"/api/items/{item.id}", json={"quantity": "184.55"}, headers={"If-Match": str(item.version)}
+    ).json()
 
     assert body["item"]["quantity"] == "184.55"
 
@@ -137,7 +141,9 @@ def test_editing_quantity_as_a_bare_json_number_is_refused(client, dana, project
     """
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"quantity": 184.55})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"quantity": 184.55}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 422
 
@@ -151,7 +157,9 @@ def test_editing_quantity_to_a_negative_string_is_refused_by_the_service(client,
     """
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"quantity": "-5"})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"quantity": "-5"}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "invalid_quantity"
@@ -161,7 +169,9 @@ def test_editing_quantity_to_a_negative_string_is_refused_by_the_service(client,
 def test_editing_quantity_as_a_bare_json_int_is_also_refused(client, dana, project, sheet, item):
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"quantity": 184})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"quantity": 184}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 422
 
@@ -169,7 +179,7 @@ def test_editing_quantity_as_a_bare_json_int_is_also_refused(client, dana, proje
 def test_a_rejected_quantity_edit_leaves_the_stored_row_untouched(client, dana, project, sheet, item, db):
     _sign_in(client)
 
-    client.patch(f"/api/items/{item.id}", json={"quantity": 184.55})
+    client.patch(f"/api/items/{item.id}", json={"quantity": 184.55}, headers={"If-Match": str(item.version)})
 
     row = db.execute(
         text("select quantity from items where id = :id"), {"id": str(item.id)}
@@ -185,7 +195,9 @@ def test_editing_notes_to_explicit_null_is_refused_by_the_service_not_silently_i
 ):
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"notes": None})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"notes": None}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "field_cannot_be_empty"
@@ -195,7 +207,9 @@ def test_editing_notes_to_explicit_null_is_refused_by_the_service_not_silently_i
 def test_editing_notes_to_an_empty_string_clears_it(client, dana, project, sheet, item):
     _sign_in(client)
 
-    body = client.patch(f"/api/items/{item.id}", json={"notes": ""}).json()
+    body = client.patch(
+        f"/api/items/{item.id}", json={"notes": ""}, headers={"If-Match": str(item.version)}
+    ).json()
 
     assert body["item"]["notes"] == ""
 
@@ -205,7 +219,9 @@ def test_omitting_notes_entirely_does_not_touch_it(client, dana, project, sheet,
     db.flush()
     _sign_in(client)
 
-    body = client.patch(f"/api/items/{item.id}", json={"system": "Lighting"}).json()
+    body = client.patch(
+        f"/api/items/{item.id}", json={"system": "Lighting"}, headers={"If-Match": str(item.version)}
+    ).json()
 
     assert body["item"]["notes"] == "existing note"
 
@@ -350,7 +366,7 @@ def test_undo_after_an_approve_reports_performed_true_with_a_label_and_a_snapsho
     client, dana, project, sheet, item
 ):
     _sign_in(client)
-    client.post(f"/api/items/{item.id}/approve")
+    client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)})
 
     body = client.post(f"/api/projects/{project.id}/undo").json()
 
@@ -372,7 +388,7 @@ def test_redo_with_nothing_to_redo_says_so_explicitly(client, dana, project, she
 
 def test_redo_after_an_undo_reapplies_the_action(client, dana, project, sheet, item):
     _sign_in(client)
-    client.post(f"/api/items/{item.id}/approve")
+    client.post(f"/api/items/{item.id}/approve", headers={"If-Match": str(item.version)})
     client.post(f"/api/projects/{project.id}/undo")
 
     body = client.post(f"/api/projects/{project.id}/redo").json()
@@ -392,7 +408,9 @@ def test_edit_response_reflects_a_status_change_caused_by_the_edit(client, dana,
     )
     _sign_in(client)
 
-    body = client.patch(f"/api/items/{unclassified.id}", json={"category": "Devices"}).json()
+    body = client.patch(
+        f"/api/items/{unclassified.id}", json={"category": "Devices"}, headers={"If-Match": str(unclassified.version)}
+    ).json()
 
     assert body["item"]["status"] == "ready"
 
@@ -441,7 +459,7 @@ def test_empty_patch_is_refused_rather_than_writing_a_phantom_action(client, dan
     _sign_in(client)
     before_count = _action_count(db, project.id)
 
-    response = client.patch(f"/api/items/{item.id}", json={})
+    response = client.patch(f"/api/items/{item.id}", json={}, headers={"If-Match": str(item.version)})
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "no_changes_to_apply"
@@ -458,7 +476,9 @@ def test_patch_with_only_unknown_fields_is_refused_not_silently_ignored(client, 
     _sign_in(client)
     before_count = _action_count(db, project.id)
 
-    response = client.patch(f"/api/items/{item.id}", json={"unit": "LF", "status": "approved"})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"unit": "LF", "status": "approved"}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 422
     assert _action_count(db, project.id) == before_count, "a refused patch must not write an action"
@@ -477,7 +497,9 @@ def test_a_mix_of_editable_and_unknown_fields_is_refused_wholesale(client, dana,
     db.commit()
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"quantity": "5.00", "unit": "LF"})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"quantity": "5.00", "unit": "LF"}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 422
     stored_quantity = _read_via_a_separate_session(
@@ -505,7 +527,9 @@ def test_editing_quantity_to_three_decimal_places_is_refused_not_silently_rounde
     db.commit()
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"quantity": "184.559"})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"quantity": "184.559"}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "invalid_quantity"
@@ -534,7 +558,9 @@ def test_quantity_with_pep515_underscore_grouping_is_refused(client, dana, proje
     db.commit()
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"quantity": "14_0"})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"quantity": "14_0"}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 422
     stored_quantity = _read_via_a_separate_session(
@@ -551,7 +577,9 @@ def test_quantity_with_surrounding_whitespace_is_refused(client, dana, project, 
     db.commit()
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"quantity": "  14 "})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"quantity": "  14 "}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 422
 
@@ -564,7 +592,9 @@ def test_quantity_in_scientific_notation_is_refused(client, dana, project, sheet
     db.commit()
     _sign_in(client)
 
-    response = client.patch(f"/api/items/{item.id}", json={"quantity": "1e-40"})
+    response = client.patch(
+        f"/api/items/{item.id}", json={"quantity": "1e-40"}, headers={"If-Match": str(item.version)}
+    )
 
     assert response.status_code == 422
     stored_quantity = _read_via_a_separate_session(
@@ -579,7 +609,9 @@ def test_quantity_as_a_plain_decimal_string_still_works(client, dana, project, s
     """
     _sign_in(client)
 
-    body = client.patch(f"/api/items/{item.id}", json={"quantity": "184.55"}).json()
+    body = client.patch(
+        f"/api/items/{item.id}", json={"quantity": "184.55"}, headers={"If-Match": str(item.version)}
+    ).json()
 
     assert body["item"]["quantity"] == "184.55"
 

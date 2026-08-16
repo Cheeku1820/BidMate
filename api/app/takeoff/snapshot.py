@@ -102,6 +102,7 @@ def _item_out(item: Item, warnings: list[Warning], approved_by_name: str | None)
         quantity=item.quantity,
         unit=item.unit,
         status=item.status.value,
+        version=item.version,
         approved_by=approved_by_name,
         rejected=item.rejected_at is not None,
         x=item.x,

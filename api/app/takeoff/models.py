@@ -116,6 +116,18 @@ class Item(Base):
     path: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Optimistic-concurrency counter for the five single-item mutations
+    # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
+    # is driven by `onupdate=func.now()` and therefore transaction-
+    # constant (Task 5's finding: two writes in the same transaction
+    # share a timestamp, so it cannot distinguish "before this write" from
+    # "after"), and deliberately not SQLAlchemy's `version_id_col` (it
+    # detects concurrent *database* races, but every write here already
+    # re-reads under `FOR UPDATE` with `populate_existing=True`, so the
+    # ORM would compare against the row it just refreshed and never see
+    # what the *client* last saw). Checked and incremented by hand in
+    # `app.takeoff.concurrency` and every module that mutates an `Item`.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

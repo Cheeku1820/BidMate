@@ -160,6 +160,13 @@ def set_scale(db: DbSession, actor: User, sheet: Sheet, value: str) -> Action:
         if not other_warnings:
             item.status = ReviewStatus.READY
         items_after.append(encode_snapshot({"id": item.id, "status": item.status}))
+        # Every item this loop reaches had at least one warning deleted,
+        # even when its status did not move (the mixed scale-and-legend
+        # case) -- its stored representation changed, so its optimistic-
+        # concurrency counter must too, or a client that later loads this
+        # item and edits it single-item would be checked against a
+        # version that never accounted for this scale confirmation.
+        item.version += 1
 
     prior_scale = locked_sheet.scale
     locked_sheet.scale = value

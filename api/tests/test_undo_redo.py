@@ -45,7 +45,7 @@ def _foreign_project(db):
 
 
 def test_undo_restores_the_previous_status(db, dana, project, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
 
     undo.undo(db, dana, project.id)
@@ -55,7 +55,7 @@ def test_undo_restores_the_previous_status(db, dana, project, item):
 
 
 def test_undo_appends_rather_than_deleting_history(db, dana, project, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
     undo.undo(db, dana, project.id)
     db.flush()
@@ -64,7 +64,7 @@ def test_undo_appends_rather_than_deleting_history(db, dana, project, item):
 
 
 def test_redo_reapplies_the_action(db, dana, project, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
     undo.undo(db, dana, project.id)
     db.flush()
@@ -78,9 +78,9 @@ def test_redo_reapplies_the_action(db, dana, project, item):
 def test_undo_merges_only_the_fields_the_action_touched(db, dana, project, item):
     """B undoing A's approval must not clobber an unrelated quantity edit,
     and undoing the edit first must not resurrect the approval."""
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
-    review.edit_item(db, dana, item, {"quantity": 99})
+    review.edit_item(db, dana, item, {"quantity": 99}, item.version)
     db.flush()
 
     # undo the edit, then the approval
@@ -186,7 +186,7 @@ def test_undoing_a_delete_restores_the_item_with_its_warnings(db, dana, project,
     original_quantity = item.quantity
     original_name = item.name
 
-    review.delete_item(db, dana, item)
+    review.delete_item(db, dana, item, item.version)
     db.flush()
     assert db.get(Item, item_id) is None
 
@@ -210,7 +210,7 @@ def test_undoing_a_delete_restores_the_item_with_its_warnings(db, dana, project,
 
 def test_redoing_a_delete_removes_the_restored_item_again(db, dana, project, item):
     item_id = item.id
-    review.delete_item(db, dana, item)
+    review.delete_item(db, dana, item, item.version)
     db.flush()
     undo.undo(db, dana, project.id)
     db.flush()
@@ -233,8 +233,8 @@ def test_undo_order_is_driven_by_seq_not_created_at(db, dana, project, sheet):
     db.add_all([first, second])
     db.flush()
 
-    action_a = review.approve_item(db, dana, first)
-    action_b = review.approve_item(db, dana, second)
+    action_a = review.approve_item(db, dana, first, first.version)
+    action_b = review.approve_item(db, dana, second, second.version)
     db.flush()
     # Both actions were written before any commit, so they share a
     # transaction timestamp -- created_at cannot order them.
@@ -274,14 +274,14 @@ def test_redoing_a_scale_action_redeletes_the_restored_warning(db, dana, project
 
 
 def test_redo_head_is_none_before_any_undo(db, dana, project, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
 
     assert undo.redo_head(db, dana, project.id) is None
 
 
 def test_undo_refuses_a_project_outside_the_actors_org(db, dana, project, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
     other_project = _foreign_project(db)
 
@@ -305,7 +305,7 @@ def test_undo_refuses_a_project_outside_the_actors_org(db, dana, project, item):
 
 
 def test_undo_redo_alternation_on_an_approve_action(db, dana, project, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
 
     undo.undo(db, dana, project.id)
@@ -368,7 +368,7 @@ def test_undo_redo_alternation_on_a_scale_action(db, dana, project, sheet):
 
 
 def test_concurrent_undo_of_the_same_action_is_a_domain_error_not_a_500(db, dana, project, item, monkeypatch):
-    action = review.approve_item(db, dana, item)
+    action = review.approve_item(db, dana, item, item.version)
     db.flush()
     db.commit()
 
@@ -394,7 +394,7 @@ def test_concurrent_undo_of_the_same_action_is_a_domain_error_not_a_500(db, dana
 
 
 def test_concurrent_redo_of_the_same_action_is_a_domain_error_not_a_500(db, dana, project, item, monkeypatch):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
     u1 = undo.undo(db, dana, project.id)
     db.commit()
@@ -478,7 +478,7 @@ def test_redoing_a_scale_action_after_the_item_was_since_deleted_does_not_raise(
     # Held deliberately -- see docstring.
     restored_warning = db.query(Warning).filter(Warning.item_id == blocked.id).first()
 
-    review.delete_item(db, dana, blocked)  # cascades the restored warning away
+    review.delete_item(db, dana, blocked, blocked.version)  # cascades the restored warning away
     db.flush()
 
     calls.clear()
@@ -501,7 +501,7 @@ def test_undoing_a_scale_action_whose_item_was_since_deleted_does_not_raise(db, 
     scale_action = scale_module.set_scale(db, dana, sheet, '1/8" = 1\'-0"')
     db.flush()
 
-    review.delete_item(db, dana, blocked)
+    review.delete_item(db, dana, blocked, blocked.version)
     db.flush()
 
     undo_apply.apply(db, scale_action, "before")
@@ -524,7 +524,7 @@ def test_undoing_a_delete_restores_a_missing_warning_even_when_the_item_was_alre
                        fix="Select the scale that applies to this sheet.", where_="E2.1 title block")
     db.add(warning)
     db.flush()
-    action = review.delete_item(db, dana, item)
+    action = review.delete_item(db, dana, item, item.version)
     db.flush()
 
     undo.undo(db, dana, project.id)
@@ -556,7 +556,7 @@ def test_redo_is_none_on_a_project_with_no_actions(db, dana, project):
 
 
 def test_redo_refuses_a_project_outside_the_actors_org(db, dana, project, item):
-    review.approve_item(db, dana, item)
+    review.approve_item(db, dana, item, item.version)
     db.flush()
     undo.undo(db, dana, project.id)
     db.flush()

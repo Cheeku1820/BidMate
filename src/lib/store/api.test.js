@@ -1,0 +1,186 @@
+/* ============================================================
+   api.test.js — fetch-stubbed unit tests for api.js's own conversion
+   layer (task-16-brief.md §5): the five behaviors a live server is
+   overkill to prove and that are cheap to pin as pure functions of a
+   response body. contract.test.js (extended in this task) is where the
+   full store interface is exercised end to end against a fake backend;
+   this file is narrower and stubs `fetch` directly.
+   ============================================================ */
+
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { createApiStore, login, PRESENCE_BEAT_MS } from "./api.js";
+
+function jsonResponse(body, init = {}) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+}
+
+const PROJECT = { id: "11111111-1111-1111-1111-111111111111", name: "Meridian Distribution Center", revision_set_label: "E1.1 Rev 3" };
+
+function snapshotBody(overrides = {}) {
+  return {
+    version: "v1",
+    sheets: [
+      { id: "s1", number: "E2.1", title: "Power plan", discipline: "Electrical", revision: "Rev 2", scale: "mixed", scale_options: ["1/8\" = 1'-0\""], plan: "warehouse", superseded: false },
+    ],
+    items: [
+      {
+        id: "it-01", sheet_id: "s1", symbol: "panel", name: "Panel LP-1", description: "desc",
+        system: "Distribution", category: "Panels", quantity: "184.55", unit: "LF", status: "ready",
+        version: 3, approved_by: null, rejected: false, x: 10, y: 20, path: null, notes: "",
+        evidence: null, warnings: [],
+      },
+    ],
+    totals: { by_system: { Distribution: "184.55" }, approved_count: 1, remaining_count: 2, attention_count: 1, missing_count: 1, approved_units: "39.00" },
+    undo: { can_undo: false, can_redo: false, undo_label: null, undo_by: null, redo_label: null },
+    presence: [],
+    ...overrides,
+  };
+}
+
+describe("api.js conversions", () => {
+  let fetchMock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("converts a Decimal string into a number", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(jsonResponse(snapshotBody()));
+
+    const store = createApiStore();
+    const snapshot = await store.getSnapshot();
+
+    expect(snapshot.items[0].quantity).toBe(184.55);
+    expect(typeof snapshot.items[0].quantity).toBe("number");
+    expect(snapshot.totals.approvedUnits).toBe(39);
+    expect(snapshot.totals.bySystem.Distribution).toBe(184.55);
+  });
+
+  it("converts presence's seen_at (ISO-8601) into epoch milliseconds", async () => {
+    const seenAt = "2026-08-15T12:00:00Z";
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          snapshotBody({
+            presence: [{ user_id: "u2", name: "Dana Whitfield", color: "#000", sheet_id: "s1", item_id: null, seen_at: seenAt }],
+          })
+        )
+      );
+
+    const store = createApiStore();
+    const snapshot = await store.getSnapshot();
+
+    expect(typeof snapshot.presence[0].seenAt).toBe("number");
+    expect(snapshot.presence[0].seenAt).toBe(Date.parse(seenAt));
+  });
+
+  it("a 304 with an empty body yields the previously cached snapshot, not a crash and not an empty one", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(jsonResponse(snapshotBody()));
+
+    const store = createApiStore();
+    const first = await store.getSnapshot();
+    expect(first.items).toHaveLength(1);
+
+    // A 304's body is genuinely empty -- Response with no body and a
+    // 304 status, mirroring Cache-Control: no-store's actual behavior
+    // (carry-forward 4), not a Response that merely omits a JSON body
+    // but could still be parsed.
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 304 }));
+
+    const second = await store.getSnapshot();
+    expect(second).toEqual(first);
+    expect(second.items).toHaveLength(1);
+
+    // The conditional request actually carried the version this module
+    // cached from the first call.
+    const secondCall = fetchMock.mock.calls[2];
+    expect(secondCall[1].headers["If-None-Match"]).toBe("v1");
+  });
+
+  it("a non-2xx response rejects with a {code, message} shape, matching the seed store", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ detail: { code: "not_signed_in", message: "Sign in to continue." } }, { status: 401 })
+    );
+
+    await expect(login("dana@meridianelectric.example", "wrong")).rejects.toMatchObject({
+      code: "not_signed_in",
+      message: "Sign in to continue.",
+    });
+  });
+
+  it("a FastAPI validation error (a list under detail) still rejects with a {code, message} shape", async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ detail: [{ type: "value_error", loc: ["body", "quantity"], msg: "quantity must be sent as a JSON string" }] }, { status: 422 })
+    );
+    fetchMock.mockResolvedValueOnce(jsonResponse([PROJECT]));
+
+    const store = createApiStore();
+    await expect(store.approveItem("it-01", 3)).rejects.toMatchObject({
+      code: "invalid_request",
+      message: "quantity must be sent as a JSON string",
+    });
+  });
+
+  it("sends If-Match carrying the item's version on the five single-item mutations", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(
+        jsonResponse({ label: "Approved Panel LP-1", version: "v2", item: { ...snapshotBody().items[0], status: "approved", approved_by: "Dana Whitfield", version: 4 } })
+      );
+
+    const store = createApiStore();
+    await store.approveItem("it-01", 3);
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/approve"));
+    expect(call[1].headers["If-Match"]).toBe("3");
+    expect(call[1].method).toBe("POST");
+  });
+
+  it("sends quantity as a string with at most two decimals on edit, never a bare number", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(jsonResponse({ label: "Edited Panel LP-1", version: "v2", item: snapshotBody().items[0] }));
+
+    const store = createApiStore();
+    await store.editItem("it-01", { system: "Power", quantity: 14.5, notes: "checked" }, 3);
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/items/it-01"));
+    const body = JSON.parse(call[1].body);
+    expect(body).toEqual({ system: "Power", quantity: "14.50", notes: "checked" });
+    expect(typeof body.quantity).toBe("string");
+  });
+
+  it("never round-trips an unknown field into a PATCH body", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(jsonResponse({ label: "Edited Panel LP-1", version: "v2", item: snapshotBody().items[0] }));
+
+    const store = createApiStore();
+    // Simulates a caller mistakenly spreading a whole item -- `id`,
+    // `sheetId`, `warnings`, and `version` must never reach the wire.
+    await store.editItem("it-01", { id: "it-01", sheetId: "s1", notes: "ok", warnings: [], version: 3 }, 3);
+
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/items/it-01"));
+    const body = JSON.parse(call[1].body);
+    expect(body).toEqual({ notes: "ok" });
+  });
+
+  it("presence beat is derived from and shorter than collab/service.py's ASSUMED_HEARTBEAT_INTERVAL (10s)", () => {
+    expect(PRESENCE_BEAT_MS).toBeLessThan(10_000);
+    expect(PRESENCE_BEAT_MS).toBe(5000);
+  });
+});

@@ -6,9 +6,11 @@
    never regress, mirrored client-side.
    ============================================================ */
 
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { createSeedStore } from "./seed.js";
+import { createApiStore } from "./api.js";
 import { storageWrite } from "./local-transport.js";
+import { installFakeApiBackend } from "./api.fakebackend.js";
 
 const METHODS = [
   "me", "getSnapshot", "subscribe", "setPresence",
@@ -16,11 +18,25 @@ const METHODS = [
   "deleteItem", "setScale", "undo", "redo",
 ];
 
-describe("seed store", () => {
+/* Every assertion below runs twice: once directly against
+   createSeedStore(), and once against createApiStore() with `fetch`
+   stubbed to api.fakebackend.js's translation of the same seed store
+   (task-16-brief.md §5, "extend the existing contract suite so both
+   stores run the shared shape assertions"). The seed store IS the
+   ground truth for these rules (concurrency, scale release, bulk
+   exclusion, the camelCase/array/number contract); running the same
+   assertions through api.js's request/response mapping is what proves
+   that mapping preserves them, rather than merely checking that
+   api.js's methods exist. */
+function defineContractSuite(label, setup) {
+describe(label, () => {
   let store;
   beforeEach(() => {
     localStorage.clear();
-    store = createSeedStore();
+    store = setup();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("implements every method in the store interface", () => {
@@ -360,4 +376,13 @@ describe("seed store", () => {
       expect(released.warnings).toEqual([]);
     }
   });
+});
+}
+
+defineContractSuite("seed store", () => createSeedStore());
+
+defineContractSuite("api store", () => {
+  const { fetchStub } = installFakeApiBackend();
+  vi.stubGlobal("fetch", fetchStub);
+  return createApiStore();
 });

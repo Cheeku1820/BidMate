@@ -54,11 +54,17 @@ Note that `docs/product-spec.md` §1, §6, and §12 predate this decision and re
 
 ```
 src/
-  App.jsx                    shell, sync, undo/redo, review actions, modals
+  App.jsx                    auth gate: login vs. workspace, nothing else
   styles.css                 design tokens and every component style
-  lib/data.js                seed sheets and items, status definitions
-  lib/sync.js                shared state, presence, identity
+  lib/
+    data.js                  seed fixture: sheets, items, status definitions
+    rules.js                 approval/totals/scale-release rules, mirrored from the API
+    useReviewStore.js        the snapshot hook: store subscription, poll, saves, mutations
+    store/                   the store interface — seed (localStorage) and api (fetch) behind it
   components/
+    Workspace.jsx            the review workspace: selection, filters, modals, shortcuts
+    Login.jsx                sign-in screen (api store only)
+    TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx, modals
     BlueprintCanvas.jsx      pan/zoom viewport, markers, measurements, minimap
     PlanDrawing.jsx          architectural plan geometry per sheet
     Symbols.jsx              electrical symbol glyphs
@@ -71,7 +77,7 @@ Marker rendering keeps three channels independent: **glyph** = item type, **ring
 ## Conventions
 
 - Plain CSS with tokens at the top of `styles.css`. No Tailwind, no CSS-in-JS. Add new colors as tokens, never as inline hex.
-- React function components with hooks. No state library — shared state lives in `lib/sync.js`.
+- React function components with hooks. No state library — shared state comes from the store (`lib/store/`, seed or api) through `lib/useReviewStore.js`.
 - `lucide-react` for interface icons. Electrical symbols are hand-drawn SVG in `Symbols.jsx`, following standard drafting convention.
 - Tabular numerals (`className="tabular"`) on every quantity, count, and total.
 - Sentence case for all interface copy. No exclamation marks, no "successfully," no "please."

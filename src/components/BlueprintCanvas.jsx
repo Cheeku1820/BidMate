@@ -253,7 +253,7 @@ export default function BlueprintCanvas({
                     {remote && !sel && <circle r="17" fill="none" stroke={remote.color} strokeWidth="2" strokeDasharray="4 3" />}
                     <circle r="13" fill="#fff" opacity="0.85" />
                     <SymbolGlyph kind={it.symbol} color={meta.color} />
-                    {it.warning && layers.warnings && (
+                    {it.warnings?.length > 0 && layers.warnings && (
                       <g transform="translate(9 -9)">
                         <circle r="6" fill={STATUS[it.status].color} stroke="#fff" strokeWidth="1.6" />
                         <text y="0.5" fill="#fff" fontSize="9" fontWeight="700" textAnchor="middle" dominantBaseline="central">

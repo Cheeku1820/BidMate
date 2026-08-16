@@ -115,7 +115,7 @@ describe("seed store", () => {
   it("refuses to approve a missing information item", async () => {
     const { items } = await store.getSnapshot();
     const blocked = items.find((i) => i.status === "missing");
-    await expect(store.approveItem(blocked.id)).rejects.toMatchObject({
+    await expect(store.approveItem(blocked.id, blocked.version)).rejects.toMatchObject({
       code: "missing_information_blocks_approval",
     });
   });
@@ -124,9 +124,71 @@ describe("seed store", () => {
     const before = (await store.getSnapshot()).totals.approvedUnits;
     const { items } = await store.getSnapshot();
     const approved = items.find((i) => i.status === "approved");
-    await store.rejectItem(approved.id);
+    await store.rejectItem(approved.id, approved.version);
     const after = (await store.getSnapshot()).totals.approvedUnits;
     expect(after).toBeLessThan(before);
+  });
+
+  it("items carry a numeric version for optimistic concurrency, starting at 1", async () => {
+    const { items } = await store.getSnapshot();
+    for (const i of items) {
+      expect(typeof i.version).toBe("number");
+      expect(i.version).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("refuses a stale version with the same code the API uses (task-13b-brief.md)", async () => {
+    const { items } = await store.getSnapshot();
+    const readyItem = items.find((i) => i.status === "ready");
+
+    await expect(store.approveItem(readyItem.id, readyItem.version + 1)).rejects.toMatchObject({
+      code: "stale_item_version",
+    });
+
+    // Refused, so nothing actually moved -- proving the refusal short-
+    // circuits before mutation, not after.
+    const after = await store.getSnapshot();
+    const stillThere = after.items.find((i) => i.id === readyItem.id);
+    expect(stillThere.status).toBe("ready");
+    expect(stillThere.version).toBe(readyItem.version);
+  });
+
+  it("a correct version succeeds and the response carries the new version, so a client can chain writes without refetching", async () => {
+    const { items } = await store.getSnapshot();
+    const readyItem = items.find((i) => i.status === "ready");
+
+    const first = await store.editItem(readyItem.id, { notes: "first" }, readyItem.version);
+    expect(first.item.version).toBe(readyItem.version + 1);
+
+    // Chained directly off the previous result, never off a fresh
+    // getSnapshot() -- the point of returning the new version at all.
+    const second = await store.editItem(readyItem.id, { notes: "second" }, first.item.version);
+    expect(second.item.notes).toBe("second");
+    expect(second.item.version).toBe(first.item.version + 1);
+  });
+
+  it("undo bumps a reverted item's version forward rather than restoring the old one", async () => {
+    const { items } = await store.getSnapshot();
+    const readyItem = items.find((i) => i.status === "ready");
+    const originalVersion = readyItem.version;
+
+    const approveResult = await store.approveItem(readyItem.id, originalVersion);
+    const versionAfterApprove = approveResult.item.version;
+    expect(versionAfterApprove).toBe(originalVersion + 1);
+
+    await store.undo();
+
+    const afterUndo = await store.getSnapshot();
+    const reverted = afterUndo.items.find((i) => i.id === readyItem.id);
+    expect(reverted.status).toBe("ready");
+    expect(reverted.version).toBe(versionAfterApprove + 1);
+    expect(reverted.version).not.toBe(originalVersion);
+
+    // The concrete consequence: a version held from right after the
+    // approve is now stale, not merely different.
+    await expect(
+      store.rejectItem(readyItem.id, versionAfterApprove)
+    ).rejects.toMatchObject({ code: "stale_item_version" });
   });
 
   it("setting a scale releases the blocked items on that sheet only", async () => {
@@ -136,6 +198,21 @@ describe("seed store", () => {
     const updated = (await store.getSnapshot()).items;
     const onSheet = updated.filter((i) => i.sheetId === sheet.id);
     expect(onSheet.every((i) => i.status !== "missing")).toBe(true);
+  });
+
+  it("setScale is out of scope for the version CHECK but still bumps released items' version, so a later single-item edit is not fooled by a stale counter", async () => {
+    const before = await store.getSnapshot();
+    const sheet = before.sheets.find((s) => s.scale === "none");
+    const blockedBefore = before.items.filter((i) => i.sheetId === sheet.id && i.status === "missing");
+    const versionsBefore = Object.fromEntries(blockedBefore.map((i) => [i.id, i.version]));
+
+    await store.setScale(sheet.id, '1/8" = 1\'-0"');
+
+    const after = await store.getSnapshot();
+    for (const item of blockedBefore) {
+      const released = after.items.find((i) => i.id === item.id);
+      expect(released.version).toBe(versionsBefore[item.id] + 1);
+    }
   });
 
   it("setScale releases only scale-blocked items — an item blocked for a different reason on the same sheet stays blocked", async () => {
@@ -229,19 +306,24 @@ describe("seed store", () => {
 
     await store.setPresence({ sheetId: sheet.id, itemId: readyItem.id });
 
-    const approveResult = await store.approveItem(readyItem.id);
+    const approveResult = await store.approveItem(readyItem.id, readyItem.version);
     expect(approveResult.item.status).toBe("approved");
 
-    const rejectResult = await store.rejectItem(anotherReadyItem.id);
+    const rejectResult = await store.rejectItem(anotherReadyItem.id, anotherReadyItem.version);
     expect(rejectResult.item.rejected).toBe(true);
 
-    const unrejectResult = await store.unrejectItem(anotherReadyItem.id);
+    // Each call below chains off the previous result's returned version
+    // -- readyItem/anotherReadyItem's own `.version` is now stale, the
+    // same reason a real client must not refetch to keep going.
+    const unrejectResult = await store.unrejectItem(anotherReadyItem.id, rejectResult.item.version);
     expect(unrejectResult.item.rejected).toBe(false);
 
-    const editResult = await store.editItem(anotherReadyItem.id, { notes: "checked against E1.1" });
+    const editResult = await store.editItem(
+      anotherReadyItem.id, { notes: "checked against E1.1" }, unrejectResult.item.version
+    );
     expect(editResult.item.notes).toBe("checked against E1.1");
 
-    const deleteResult = await store.deleteItem(anotherReadyItem.id);
+    const deleteResult = await store.deleteItem(anotherReadyItem.id, editResult.item.version);
     expect(deleteResult.item).toBeNull();
 
     // Captured immediately before setScale, not from `snap` at the top of

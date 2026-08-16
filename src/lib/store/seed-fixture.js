@@ -67,6 +67,13 @@ export function seedItems() {
     notes: it.notes ?? "",
     evidence: it.evidence ?? null,
     warnings: toWarnings(it.id, it.warning),
+    // Optimistic-concurrency counter (task-13b-brief.md), mirroring
+    // Item.version's migration 0008 backfill: every row this fixture has
+    // ever produced predates the concurrency check, so 1 is correct for
+    // all of them, not an arbitrary placeholder. seed-review.js/
+    // seed-undo.js increment it on every mutation; rules.js's
+    // refusalToStaleVersion enforces the same refusal the API does.
+    version: 1,
   }));
 }
 

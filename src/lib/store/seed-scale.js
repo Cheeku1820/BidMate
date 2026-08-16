@@ -7,6 +7,15 @@
    seed-review.js for the same reason scale.py is split out of
    review.py — a sheet-level change plus a batch of item releases is a
    materially different act from a single item's review state.
+
+   setScale is out of scope for the per-item version CHECK task-13b-
+   brief.md adds to the five single-item mutations (sheet-scoped, and a
+   deliberate rare action rather than routine editing) — but every item
+   it touches still gets its `version` bumped, mirroring scale.py. Every
+   candidate here had at least one warning cleared, even when its status
+   didn't move (the mixed scale-and-legend case), so its stored shape
+   changed and the counter a later single-item edit checks against must
+   reflect that.
    ============================================================ */
 
 import { nonScaleWarnings, isScaleReleasable } from "../rules.js";
@@ -36,7 +45,9 @@ export function createScaleMethod({ readSheets, readItems, commitAction, identit
     }
     const itemsAfter = candidates.map((i) => ({ id: i.id, status: updates.get(i.id).status, warnings: updates.get(i.id).warnings }));
 
-    const nextItems = items.map((i) => (updates.has(i.id) ? { ...i, ...updates.get(i.id) } : i));
+    const nextItems = items.map((i) =>
+      updates.has(i.id) ? { ...i, ...updates.get(i.id), version: i.version + 1 } : i
+    );
     const nextSheets = sheets.map((s) => (s.id === sheetId ? { ...s, scale: value } : s));
 
     const actor = identity();

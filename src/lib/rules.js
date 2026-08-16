@@ -37,6 +37,28 @@ export const BLOCKED_BY_REJECTION = {
   message: "This item was rejected, so it cannot be approved as-is. Restore it, then approve it.",
 };
 
+// Optimistic concurrency on the five single-item mutations (task-13b-
+// brief.md), mirroring api/app/takeoff/concurrency.py's check_version():
+// the client sends the version it last saw, and a mismatch against the
+// item's current version is refused rather than silently clobbering
+// whatever a concurrent reviewer just wrote. The generic message here is
+// what a caller gets when it has nothing more specific to say; seed-
+// review.js (this store's "service layer", the way concurrency.py sits
+// alongside review.py on the server) may substitute a message naming the
+// reviewer whose change landed first, the same enrichment
+// concurrency.py's _stale_version_message() performs server-side.
+export const STALE_ITEM_VERSION = {
+  code: "stale_item_version",
+  message: "This item changed after you loaded it. Refresh the sheet to see the current value, then try again.",
+};
+
+/** Returns the refusal when `expectedVersion` (what the caller last saw)
+ *  does not match `item.version`, or null when the write may proceed. */
+export function refusalToStaleVersion(item, expectedVersion) {
+  if (item.version === expectedVersion) return null;
+  return { ...STALE_ITEM_VERSION };
+}
+
 /** Returns null when the item may be approved, or the refusal describing why not.
  *
  *  Checks Missing information before rejection, in that order — the same

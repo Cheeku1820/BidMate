@@ -10,12 +10,27 @@
 
    Every function here takes `deps` — the low-level read/write
    primitives seed.js assembles (readItems, commitAction, identity,
-   uid, readVersion) — rather than closing over module-level state, so
-   this module has no storage of its own and cannot drift from what
-   seed.js actually persists.
+   uid, readVersion, readHist) — rather than closing over module-level
+   state, so this module has no storage of its own and cannot drift
+   from what seed.js actually persists.
+
+   Each of the five now takes an `expectedVersion` argument (task-13b-
+   brief.md), mirroring the server's `If-Match` contract on the same
+   five mutations: the item's current `version` must match what the
+   caller last saw, or the write is refused with `stale_item_version`
+   rather than silently clobbering a concurrent change. There is no
+   server behind this store, so the check has to live here instead of
+   in a service the client merely calls — the same reason this store
+   already enforces refusalToApprove(). The reviewer-naming enrichment
+   (staleVersionRefusal() below) is this module's counterpart to
+   api/app/takeoff/concurrency.py's _stale_version_message(): rules.js
+   owns the plain equality check and its generic message, this module
+   layers on a name when the shared `hist` stack has one, the same
+   division of labor as review.py (the rule) vs concurrency.py (the
+   actor lookup) on the server.
    ============================================================ */
 
-import { refusalToApprove } from "../rules.js";
+import { refusalToApprove, refusalToStaleVersion } from "../rules.js";
 
 const ITEM_NO_LONGER_EXISTS = {
   code: "item_no_longer_exists",
@@ -59,7 +74,7 @@ function validateEdit(changes) {
   }
 }
 
-export function createReviewMethods({ readItems, commitAction, identity, uid, readVersion }) {
+export function createReviewMethods({ readItems, readHist, commitAction, identity, uid, readVersion }) {
   function findItemOrThrow(id) {
     const items = readItems();
     const item = items.find((i) => i.id === id);
@@ -67,26 +82,51 @@ export function createReviewMethods({ readItems, commitAction, identity, uid, re
     return { items, item };
   }
 
+  // The one extra lookup on the refusal path only (never on success),
+  // matching concurrency.py's _stale_version_message() -- names whoever
+  // the shared hist stack's most recent entry for this item credits,
+  // falling back to rules.js's generic message when there is none.
+  function staleVersionRefusal(item, expectedVersion) {
+    const refusal = refusalToStaleVersion(item, expectedVersion);
+    if (!refusal) return null;
+    const lastAction = [...readHist().undo].reverse().find((a) => a.itemId === item.id);
+    if (lastAction?.by) {
+      return {
+        code: refusal.code,
+        message: `${lastAction.by} changed this item after you loaded it. Refresh the sheet to see the current value, then try again.`,
+      };
+    }
+    return refusal;
+  }
+
   function mutationResult(action, nextItems, id) {
     commitAction(action, nextItems);
     return { label: action.label, version: String(readVersion()), item: nextItems.find((i) => i.id === id) };
   }
 
-  async function approveItem(id) {
+  async function approveItem(id, expectedVersion) {
     const { items, item } = findItemOrThrow(id);
+    const staleness = staleVersionRefusal(item, expectedVersion);
+    if (staleness) throw staleness;
     const refusal = refusalToApprove(item);
     if (refusal) throw refusal;
 
     const actor = identity();
     const before = { status: item.status, approvedBy: item.approvedBy };
     const after = { status: "approved", approvedBy: actor.name };
-    const nextItems = items.map((i) => (i.id === id ? { ...i, ...after } : i));
+    // The version bump is applied to nextItems directly, not folded into
+    // `after` -- `after` is what the recorded action replays on
+    // undo/redo, and the counter must never be part of that replay (see
+    // seed-undo.js: undo/redo bump it forward themselves instead).
+    const nextItems = items.map((i) => (i.id === id ? { ...i, ...after, version: i.version + 1 } : i));
     const action = { id: uid("a"), kind: "approve", itemId: id, before, after, by: actor.name, at: Date.now(), label: `Approved ${item.name}` };
     return mutationResult(action, nextItems, id);
   }
 
-  async function rejectItem(id) {
+  async function rejectItem(id, expectedVersion) {
     const { items, item } = findItemOrThrow(id);
+    const staleness = staleVersionRefusal(item, expectedVersion);
+    if (staleness) throw staleness;
     // Rejection is tracked separately from review status (review.py's
     // _apply_reject() never touches item.status) so unrejecting can
     // restore the item exactly as it was, without having to guess what
@@ -94,24 +134,28 @@ export function createReviewMethods({ readItems, commitAction, identity, uid, re
     const actor = identity();
     const before = { rejected: item.rejected };
     const after = { rejected: true };
-    const nextItems = items.map((i) => (i.id === id ? { ...i, ...after } : i));
+    const nextItems = items.map((i) => (i.id === id ? { ...i, ...after, version: i.version + 1 } : i));
     const action = { id: uid("a"), kind: "reject", itemId: id, before, after, by: actor.name, at: Date.now(), label: `Rejected ${item.name}` };
     return mutationResult(action, nextItems, id);
   }
 
-  async function unrejectItem(id) {
+  async function unrejectItem(id, expectedVersion) {
     const { items, item } = findItemOrThrow(id);
+    const staleness = staleVersionRefusal(item, expectedVersion);
+    if (staleness) throw staleness;
     const actor = identity();
     const before = { rejected: item.rejected };
     const after = { rejected: false };
-    const nextItems = items.map((i) => (i.id === id ? { ...i, ...after } : i));
+    const nextItems = items.map((i) => (i.id === id ? { ...i, ...after, version: i.version + 1 } : i));
     const action = { id: uid("a"), kind: "unreject", itemId: id, before, after, by: actor.name, at: Date.now(), label: `Restored ${item.name}` };
     return mutationResult(action, nextItems, id);
   }
 
-  async function editItem(id, changes) {
+  async function editItem(id, changes, expectedVersion) {
     const { items, item } = findItemOrThrow(id);
     validateEdit(changes);
+    const staleness = staleVersionRefusal(item, expectedVersion);
+    if (staleness) throw staleness;
 
     const actor = identity();
     const before = {};
@@ -129,13 +173,15 @@ export function createReviewMethods({ readItems, commitAction, identity, uid, re
       after.status = "ready";
     }
 
-    const nextItems = items.map((i) => (i.id === id ? { ...i, ...after } : i));
+    const nextItems = items.map((i) => (i.id === id ? { ...i, ...after, version: i.version + 1 } : i));
     const action = { id: uid("a"), kind: "edit", itemId: id, before, after, by: actor.name, at: Date.now(), label: `Edited ${item.name}` };
     return mutationResult(action, nextItems, id);
   }
 
-  async function deleteItem(id) {
+  async function deleteItem(id, expectedVersion) {
     const { items, item } = findItemOrThrow(id);
+    const staleness = staleVersionRefusal(item, expectedVersion);
+    if (staleness) throw staleness;
     const index = items.findIndex((i) => i.id === id);
     const actor = identity();
     const nextItems = items.filter((i) => i.id !== id);

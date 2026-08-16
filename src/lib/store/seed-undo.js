@@ -14,15 +14,26 @@
    matter, and DESIGN.md's compound-undo requirement (one undo reverses
    a whole scale confirmation) holds either way, because setScale
    already records the whole release as one hist entry.
+
+   Undo and redo bump each touched item's `version` forward rather than
+   restoring whatever it held before (task-13b-brief.md, mirroring
+   api/app/takeoff/undo_apply.py's discipline): undo/redo are themselves
+   mutations, so a client holding a version from before the undo must
+   not be able to write again just because the item's fields happened to
+   move back to values that version once described. `a.before`/`a.after`
+   never carry a `version` key in the first place (seed-review.js), so
+   this bump is always relative to whatever the item currently holds,
+   never a value read back out of the hist stack.
    ============================================================ */
 
-// Merges each entry's fields into the matching item by id — used to
-// restore (undo) or reapply (redo) a scale action's per-item snapshot,
-// which is why DESIGN.md's "replaying is a merge rather than a full-
-// state restore" holds even for this compound, multi-item action.
+// Merges each entry's fields into the matching item by id, bumping its
+// version — used to restore (undo) or reapply (redo) a scale action's
+// per-item snapshot, which is why DESIGN.md's "replaying is a merge
+// rather than a full-state restore" holds even for this compound,
+// multi-item action.
 function applyItemPartials(items, entries) {
   const m = Object.fromEntries(entries.map((x) => [x.id, x]));
-  return items.map((i) => (m[i.id] ? { ...i, ...m[i.id] } : i));
+  return items.map((i) => (m[i.id] ? { ...i, ...m[i.id], version: i.version + 1 } : i));
 }
 
 const FIELD_LEVEL_KINDS = new Set(["approve", "reject", "unreject", "edit"]);
@@ -37,10 +48,17 @@ export function createUndoMethods({ readItems, readSheets, readHist, storageWrit
     let sheets = readSheets();
 
     if (FIELD_LEVEL_KINDS.has(a.kind)) {
-      items = items.map((i) => (i.id === a.itemId ? { ...i, ...a.before } : i));
+      items = items.map((i) => (i.id === a.itemId ? { ...i, ...a.before, version: i.version + 1 } : i));
     } else if (a.kind === "delete") {
       items = items.slice();
-      items.splice(a.index, 0, a.snapshot);
+      // The restored item starts a fresh version lineage at 1, never the
+      // pre-delete value the snapshot happens to carry -- nothing could
+      // have held a valid reference to this row while it did not exist,
+      // so resetting is both simplest and safe (mirrors
+      // undo_apply.py's _apply_delete(), which gets the same outcome for
+      // free from Item.version's column default once the snapshot's
+      // "version" key is excluded).
+      items.splice(a.index, 0, { ...a.snapshot, version: 1 });
     } else if (a.kind === "scale") {
       sheets = sheets.map((s) => (s.id === a.sheetId ? { ...s, scale: a.before.scale } : s));
       items = applyItemPartials(items, a.before.items);
@@ -62,7 +80,7 @@ export function createUndoMethods({ readItems, readSheets, readHist, storageWrit
     let sheets = readSheets();
 
     if (FIELD_LEVEL_KINDS.has(a.kind)) {
-      items = items.map((i) => (i.id === a.itemId ? { ...i, ...a.after } : i));
+      items = items.map((i) => (i.id === a.itemId ? { ...i, ...a.after, version: i.version + 1 } : i));
     } else if (a.kind === "delete") {
       items = items.filter((i) => i.id !== a.itemId);
     } else if (a.kind === "scale") {

@@ -56,13 +56,14 @@ Nothing in this track exists. It is the majority of the engineering.
 
 The single largest omission from the previous version of this document. The README lists "no takeoff is actually computed" as a limitation, which undersells it: this is the product. Everything else is chrome around it.
 
-- **PDF ingestion** — vector-native drawings and scanned raster drawings behave completely differently and need separate paths. Assume both, in the same set.
+- **PDF ingestion** — vector-native drawings and scanned raster drawings behave completely differently and need separate paths. Assume both, in the same set. Sets arrive in three tiers, and the tier decides the method: vector with reusable symbol definitions, vector with exploded geometry, and raster. See [`docs/mvp-approach.md`](docs/mvp-approach.md) §1.
 - **Page rendering and tiling** so the client never fetches a 300 MB file
 - **Sheet classification and title-block parsing** — sheet number, title, discipline, revision, date, scale
 - **Legend and schedule extraction** — the conflict flow in the prototype depends on an E0.1 luminaire schedule existing as structured data, not as a picture
 - **Scale detection**, including sheets with two scale labels (the E2.1 case) and sheets with none (the E1.1 case)
-- **Symbol detection and classification** against the set's own legend
-- **Conduit and homerun tracing** for measured runs
+- **Symbol detection** — the **Counting** agent. A geometry problem rather than a vision one: on a vector sheet the placements and their coordinates are in the file; extract them, do not estimate them. A marker whose position came from a model's guess sits slightly off the symbol, and one visibly wrong marker costs the estimator's trust in every other marker on the page. Counting emits an *unlabelled cluster* — 47 identical shapes at 47 coordinates — and does not know what any of them are. It is tested against known counts, never tuned.
+- **Symbol classification** — the **Classification** agent, and this one *is* a language problem: reading the legend, matching a plan tag to a schedule row, normalizing a source description into a catalog item. It labels the cluster Counting produced, which is why one correction resolves every instance. Keep the two separated: geometry finds and counts, models interpret. Full boundaries in [`docs/superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md`](docs/superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md) §2.
+- **Conduit and homerun measurement**, which is only partly extractable. The drawing shows a homerun arrow, not a route — the run length is an estimator's judgment from ceiling height and building geometry, and it is not in the file for anyone to read. Produce a length where the geometry supports one; elsewhere ask, carrying the firm's own feet-per-device rule as the starting point. Wire and conduit are a large share of material cost, so this is the largest single threat to a defensible total.
 - **Item normalization** — a shared Division 26 taxonomy so "20A duplex receptacle" means one thing across every customer and every drawing set. This catalog is a long-lived asset and needs an owner.
 - **An extensible taxonomy.** Healthcare, industrial, education, and multifamily sets carry items a warehouse never does — isolated power panels, nurse call, patient headwalls, gear at fault currents that change the item entirely. The catalog has to absorb new item classes without a schema migration, because the pilot will produce them weekly.
 - **A per-firm symbol library.** Drafting conventions vary by architect, by GC, and by region. When an estimator classifies an unfamiliar symbol once, that resolution should apply to the rest of the set immediately and to that firm's future sets by default. This is the compounding asset in the product and the main reason breadth is affordable — see [2.6](#26-the-conversation-layer) for how the resolution gets captured.
@@ -115,6 +116,8 @@ This is what makes broad building coverage viable at MVP. An engine that meets a
 - **Every question is also answerable elsewhere.** A question about an unclassified symbol is the same *Needs attention* item that already sits in the review queue, surfaced conversationally. It is not a second inbox competing with the first.
 - **The assistant never approves.** It can propose classifications, quantities, and scale; a person confirms every one. Approval is the legal firewall and the one act that cannot be delegated.
 
+**The panel is a surface over the Conversation agent, and that agent routes rather than answers.** An anchor tells you what the estimator pointed at, not what they meant — "ignore this wing, it's existing to remain" is a scope exclusion, "ceiling's 14 feet in here" feeds measuring, "we're not doing site lighting" touches the project record and several sheets at once. Resolving intent, referents, and domain is real interpretation and gets its own boundary. But it hands the actual work to the owning agent: given "these six are all type F," Conversation resolves *which six* and *which field*, then Classification produces the label. It never classifies itself. Two paths to a classification means two classifiers, and when they drift every per-agent accuracy number stops meaning anything.
+
 **What gets built**
 
 - Conversation service with threads scoped to project, sheet, and item, and shared across the reviewers on a project
@@ -140,6 +143,7 @@ Replaces `sync.js` entirely.
 ### 2.8 Export and integrations
 
 - Excel generation that reconciles exactly with approved totals, including source sheet references
+- **Spreadsheet import at project start.** Estimators already keep their takeoff in Excel; letting them bring it in means value on day one without trusting the engine first. Imported rows carry their own provenance — the evidence is a person's judgment, not a sheet — and are honest about it rather than borrowing the credibility of a drawing-linked row. Import at the **start** of a project is onboarding; re-import **after** review would overwrite the audit trail and is a different, worse feature. Doubles as the benchmark corpus, see [3.4](#34-go-to-market-foundations).
 - **Export into the tools estimators already use** — Accubid, ConEst, McCormick, Trimble. Excel is table stakes; landing directly in their pricing database is what displaces the incumbent workflow.
 - Document sources — Procore, BuildingConnected, SmartBid, Dropbox, Box. Estimators receive bid invitations there, and manual re-upload is friction at exactly the wrong moment.
 - A versioned public API and webhooks
@@ -186,7 +190,7 @@ Replaces `sync.js` entirely.
 
 - Onboarding that works without a call, eventually
 - Documentation, in-product help, support tooling and SLA
-- **A benchmark corpus.** Screen I compares against an "estimator-approved reference," and that reference is an ongoing data operation — labeled drawing sets across building types — not a screen. Without it, accuracy claims are unsupportable and the screen cannot ship.
+- **A benchmark corpus.** Screen I compares against an "estimator-approved reference," and that reference is an ongoing data operation — labeled drawing sets across building types — not a screen. Without it, accuracy claims are unsupportable and the screen cannot ship. **Spreadsheet import is the cheapest way to build it**: a firm's finished takeoff plus the drawings it came from is a graded answer key, produced as a side effect of onboarding rather than as a data operation. Subject to the bid confidentiality obligations in [3.3](#33-legal-and-risk) — an NDA'd set does not become training data because it arrived through an import button.
 
 ---
 
@@ -278,6 +282,8 @@ These are the rules that break silently when a new service is added by someone w
 9. **The conversation layer proposes; it never writes.** Every change it produces goes through the same action path as a manual edit, attributed to the person who applied it. There is no code path from a message to a quantity that skips a human.
 10. **No workflow requires the panel.** Anything sayable in conversation is doable through the structured interface, and every question raised there also exists in the review queue. This is testable: a full review completed with the panel closed must reach the same end state.
 11. **Extracted document text is data, never instruction.** Content lifted from an uploaded PDF must not be able to steer a proposal, and proposals are constrained to the item schema rather than to arbitrary actions.
+12. **Agents hand off typed records, never prose.** No agent reads another agent's reasoning. Passing context forward compounds errors invisibly — one agent hedges, the next inherits the hedge as fact — and it invalidates every downstream eval set whenever an upstream agent changes, which makes per-agent measurement impossible. A typed record also enforces invariant 11 by shape rather than by vigilance.
+13. **The agents stop at total direct cost.** Markup, overhead, profit, bond, and tax are an estimator-owned layer. No agent proposes a markup number, for the same reason none of them approves: the spread between cost and bid is the judgment a contractor is legally bound by.
 
 ### What the prototype maps to
 

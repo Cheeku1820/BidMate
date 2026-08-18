@@ -74,6 +74,28 @@ Sheet space is a 1000 x 750 unit coordinate system. Item positions are in sheet 
 
 Marker rendering keeps three channels independent: **glyph** = item type, **ring color** = review status, **badge** = warning present. Never collapse two of these into one.
 
+## The engine is five agents
+
+Nothing in `src/` implements these yet. They are the settled boundaries the pipeline gets built against — full design in [`docs/superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md`](docs/superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md).
+
+| Agent | Nature | Produces |
+|---|---|---|
+| Documents | Language, over a deterministic shell | Sheets, discipline, revision, scale, legend, schedules |
+| Counting | Deterministic geometry | Clusters of identical shapes with exact coordinates |
+| Classification | Language | Catalog item per cluster, with status and warning |
+| Pricing | Lookup, plus a quote-line matcher | Assemblies, material cost, labour hours |
+| Conversation | Language | Intent, target records, routed proposals |
+
+Each has exactly one nature, because that is what makes them separately measurable. **Counting is tested, not trained** — it reads placements out of the file rather than estimating them, so it gets asserted counts on known sets. Tuning it like a model is how exact work quietly becomes approximate.
+
+Rules that are easy to break here:
+
+- **Agents share a store, not a transcript.** Handoffs are typed records. No agent reads another's prose — that compounds errors invisibly, invalidates every downstream eval whenever an upstream agent changes, and turns extracted document text into an injection surface.
+- **Counting does not know what anything is.** It emits an unlabelled cluster of 47 shapes; Classification names it. This is what makes "find every one like this" a consequence of the architecture rather than a feature built on top.
+- **Conversation routes; it does not answer.** It resolves *which items* and *which field*, then hands to the owning agent. Two paths to a classification means two classifiers that will drift.
+- **Agents stop at total direct cost.** Markup, overhead, profit, and tax are an estimator-owned layer. No agent proposes a markup number.
+- **Confidence never renders.** It decides the status and orders the review queue, server-side. A visible percentage invites arithmetic on trust, which is the reasoning path that produces a confidently wrong bid.
+
 ## Conventions
 
 - Plain CSS with tokens at the top of `styles.css`. No Tailwind, no CSS-in-JS. Add new colors as tokens, never as inline hex.

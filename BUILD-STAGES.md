@@ -44,10 +44,14 @@ The failure mode to design against is unchanged — a confidently wrong number a
 
 - Tenancy and auth — real from day one, because neither can be retrofitted. Email and password, one role, invitations.
 - Upload and ingestion (screen C), accepting broadly, with honest per-file failure copy
-- The engine across the full breadth: sheet classification, title-block and scale parsing, legend extraction, symbol detection, conduit tracing, item normalization, extensible taxonomy
+- The engine across the full breadth, built as **five agents** — Documents, Counting, Classification, Pricing, Conversation. Each has exactly one nature, which is what makes them separately measurable. See [`docs/superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md`](docs/superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md); the geometry-versus-language split behind it is [`docs/mvp-approach.md`](docs/mvp-approach.md) §1.
+- **A frozen eval set per agent**, from the first pilot set. Typed inputs, expected outputs, replayable. Without them "the engine got better" is an anecdote, and the separate-agent split buys nothing. **Counting is the exception: it is tested, not trained** — known sets, asserted counts, no tuning.
+- **Find every one like this** — the estimator classifies one symbol and every instance on the set resolves. The most valuable feature in the stage, because it works *when the engine is bad*: a symbol type missed entirely becomes thirty seconds of work rather than a dead end. It is also what fills the symbol library. It falls out of the Counting/Classification boundary rather than being built on top — Counting emits clusters, Classification labels clusters, so a correction lands on a cluster.
+- **Addendum comparison**, pulled forward from stage 2. Comparing two revisions is mechanical, painful, high-stakes, and something a computer does well on vector sheets. Missing an addendum change is how estimators lose money, so this is a wedge feature rather than a close-out one. The full revision *conflict* flow stays in stage 2 — comparison is not the same as resolution.
+- **Spreadsheet import at project start**, which delivers value before the engine is trusted and produces the benchmark corpus as a side effect
 - Per-sheet coverage outcomes, including an explicit unreadable result
 - Processing status (screen E) with per-sheet partial success
-- Review workspace (screen F) ported onto a real API, **with bulk handling built for density**
+- Review workspace (screen F) ported onto a real API, **with bulk handling built for density**, and with add / reject / delete so a person can close the gap the engine leaves
 - **The conversation layer** — anchored to the canvas, project context capture at intake, questions from pipeline gaps, proposals a person applies. Not an add-on here; it is the mechanism that makes broad coverage survivable.
 - **The per-firm symbol library**, written to by conversation resolutions
 - A **lean screen G** — flat table, no grouping, but with bulk approve on *Ready to review*. This is the difference between a four-hour review and a one-hour one, and review time is the metric the design partners will judge you on.
@@ -60,6 +64,8 @@ The failure mode to design against is unchanged — a confidently wrong number a
 **What is deliberately not built**
 
 Billing UI, SSO, public API, integrations, accuracy screen, settings screens, revision conflict flow, mobile anything, per-user undo, cross-project firm memory (the symbol library stays project-scoped until the propagation policy is decided).
+
+**Automatic conduit routing is deliberately out**, and this is a scope decision rather than a schedule one. The drawing shows a homerun arrow, not a route; the run length is judgment from ceiling height and building geometry and is not in the file for anyone to read. Measure where the geometry supports it, and elsewhere ask, carrying the firm's own feet-per-device rule as the starting point. Guessing a length silently is the confidently-wrong-number failure this whole product is built to prevent, and wire is too large a share of material cost to be wrong about quietly.
 
 **Concierge is acceptable here.** When the pipeline misses, someone on the team fixes the data by hand before the estimator sees it, and that gap becomes the engine backlog. Design partners know the product is early — that is what makes them design partners. The product itself never claims more than it delivers.
 
@@ -84,7 +90,7 @@ Billing UI, SSO, public API, integrations, accuracy screen, settings screens, re
 - Roles and approval authority — estimator, chief estimator, admin, read-only guest
 - Confirm-detected-drawings (screen D) and the settings screens (J, K) with the company-default → project-override resolution chain
 - Full screen G, and screen H hardened
-- Revision and addendum handling end to end, including the conflict flow
+- Revision and addendum handling end to end, including the conflict flow. Comparison itself shipped in stage 1; what lands here is resolution — whether approvals carry forward, how a superseded sheet stays browsable, and how a mid-review swap reaches a second reviewer already in the file.
 - **Raising the floor on the conditions stage 1 handled badly.** Breadth is already there; this is quality work aimed by the coverage telemetry, not new territory. Expect scanned-set OCR and a handful of building types to dominate the list.
 - **Cross-project firm memory**, once the propagation policy is settled — a symbol resolved on one project defaulting on the next, surfaced as *Ready to review* rather than silently pre-approved
 - Conversation layer maturity: shared-thread resolution policy, question ranking, answering from screens C, D, and G rather than F alone
@@ -142,6 +148,9 @@ The column-by-column view. Most rows are the same capability getting progressive
 | Capability | Stage 1 | Stage 2 | Stage 3 | Stage 4 |
 |---|---|---|---|---|
 | **Takeoff engine** | Broad coverage, uneven quality, gaps surfaced as questions | Floor raised where telemetry says it is lowest | Tuned per customer's drafting conventions | Divisions 27 and 28 |
+| **Agent evaluation** | Frozen eval set per agent; Counting tested, not trained | Correction telemetry aggregated across customers | Fine-tuning on consented sets only | Published methodology |
+| **Counting method** | Geometry on vector sheets; classification by language | Clustering for exploded vector; better raster | Trained detectors for scanned sets | Unchanged |
+| **Measured runs** | Where geometry supports it; elsewhere the firm's own rule, confirmed | Firm rules learned from history | Routing inference where drawings allow | Unchanged |
 | **Documents accepted** | Any commercial Division 26 set, vector or scanned | Same breadth, better results | Large sets, odd conventions, mixed disciplines | Any construction document |
 | **Coverage honesty** | Per-item status, per-sheet unreadable outcome | Coverage shown before review starts | Predicted at upload, before processing spends | Published methodology |
 | **Conversation layer** | Anchored to canvas and items, proposals a person applies | Available on C, D, G; ranked questions; shared-thread policy | Fewer questions per sheet as memory compounds | Available over the API |

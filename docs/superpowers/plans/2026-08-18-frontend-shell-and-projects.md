@@ -18,6 +18,7 @@ These come from `CLAUDE.md`, `docs/superpowers/specs/2026-08-16-bidmate-frontend
 - **Never surface model names, confidence percentages, or processing internals** anywhere in the interface.
 - **No save buttons.** Everything autosaves; save state lives in the top bar as `Saving…`, `Saved [time]`, or `Couldn't save — retrying`.
 - **Plain CSS with tokens at the top of `src/styles.css`.** No Tailwind, no CSS-in-JS. Add new colours as tokens, never as inline hex.
+- **Use the stylesheet's actual conventions.** There is **no spacing scale** — `src/styles.css` uses literal px, so `var(--space-N)` does not exist. Tokens are `--paper-0/1`, `--surface`, `--canvas`, `--sheet`; `--line-1/2/3` for borders; `--ink-1/2/3` for text; `--blue`, `--green`, `--amber`, `--red` each with `-tint` and `-line` variants; `--r-sm/md/lg` for radii. Buttons are `.btn` plus `.btn--primary`, `.btn--danger`, `.btn--block`. **`.field` is already the input element itself** — never redefine it as a wrapper; new form wrappers are `.formfield`. A global `:focus-visible` rule already applies the focus ring, so do not add per-component focus outlines. Body text is 13–13.5px, labels and secondary text 12.5px — not rem.
 - **React function components with hooks. No state library.** Shared state comes from the store through `src/lib/useReviewStore.js`.
 - **`lucide-react` for interface icons.**
 - **Tabular numerals** (`className="tabular"`) on every quantity, count, total, and date.
@@ -1486,7 +1487,7 @@ export default function NotFound() {
     <div className="empty-state">
       <h1>That page isn't available</h1>
       <p>The link may be out of date, or the project may have been archived.</p>
-      <Link className="button button-primary" to="/projects">
+      <Link className="btn btn--primary" to="/projects">
         Back to projects
       </Link>
     </div>
@@ -1575,14 +1576,14 @@ Append to `src/styles.css`, using existing tokens — no new hex values. Add any
 }
 
 .company-nav {
-  background: var(--surface-raised);
-  border-right: 1px solid var(--border);
-  padding: var(--space-4) var(--space-3);
+  background: var(--paper-1);
+  border-right: 1px solid var(--line-1);
+  padding: 16px 12px;
 }
 
 .company-nav-brand {
   font-weight: 600;
-  padding: 0 var(--space-3) var(--space-4);
+  padding: 0 12px 16px;
 }
 
 .company-nav-list { list-style: none; margin: 0; padding: 0; }
@@ -1590,18 +1591,20 @@ Append to `src/styles.css`, using existing tokens — no new hex values. Add any
 .company-nav-link {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: 10px;
   /* Spec §7 keeps touch targets at 40px minimum even on desktop. */
   min-height: 40px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-sm);
-  color: var(--ink);
+  padding: 0 12px;
+  font-size: 13.5px;
+  border-radius: var(--r-md);
+  color: var(--ink-1);
   text-decoration: none;
 }
 
-.company-nav-link:hover { background: var(--surface-sunken); }
-.company-nav-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.company-nav-link.is-active { background: var(--surface-sunken); font-weight: 600; }
+/* Focus is handled by the global :focus-visible rule at the top of this
+   file (2px solid var(--blue)); do not restate it per component. */
+.company-nav-link:hover { background: var(--paper-0); }
+.company-nav-link.is-active { background: var(--paper-0); font-weight: 600; }
 
 .app-shell-main { display: flex; flex-direction: column; min-width: 0; }
 
@@ -1609,24 +1612,24 @@ Append to `src/styles.css`, using existing tokens — no new hex values. Add any
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-5);
-  border-bottom: 1px solid var(--border);
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line-1);
 }
 
 .app-top-bar-identity { display: flex; flex-direction: column; min-width: 0; }
 .app-top-bar-title { font-weight: 600; }
-.app-top-bar-subtitle { color: var(--ink-muted); font-size: 0.875rem; }
-.app-top-bar-tools { display: flex; align-items: center; gap: var(--space-3); }
+.app-top-bar-subtitle { color: var(--ink-2); font-size: 12.5px; }
+.app-top-bar-tools { display: flex; align-items: center; gap: 10px; }
 
 .empty-state {
-  margin: var(--space-7) auto;
+  margin: 48px auto;
   max-width: 34rem;
   text-align: center;
 }
 ```
 
-Check the token names in `src/styles.css`'s `:root` block and use the ones that exist. Do not introduce `--surface-raised` or `--focus` if the file already names them something else.
+**Style conventions this file already uses — follow them, do not invent alternatives.** There is no spacing scale: `src/styles.css` uses literal px throughout, so `var(--space-N)` does not exist. The tokens are `--paper-0`, `--paper-1`, `--surface`, `--canvas`, `--sheet`; `--line-1/2/3` for borders; `--ink-1/2/3` for text; `--blue`, `--green`, `--amber`, `--red` plus `-tint` and `-line` variants; `--r-sm/md/lg` for radii. Buttons are `.btn` with `.btn--primary`, `.btn--danger`, `.btn--block`. A global `:focus-visible` rule already applies the focus ring — do not add per-component focus outlines. Body text in the existing sheet is 13–13.5px, not rem.
 
 - [ ] **Step 9: Run the tests and the build**
 
@@ -1822,13 +1825,13 @@ const SORTS = [
 export default function ProjectsFilters({ search, onSearch, filter, onFilter, sort, onSort }) {
   return (
     <div className="projects-filters">
-      <div className="field">
-        <label className="field-label" htmlFor="projects-search">
+      <div className="formfield">
+        <label className="formfield-label" htmlFor="projects-search">
           Search projects
         </label>
         <input
           id="projects-search"
-          className="field-input"
+          className="field"
           type="search"
           value={search}
           placeholder="Name, number, or customer"
@@ -1850,13 +1853,13 @@ export default function ProjectsFilters({ search, onSearch, filter, onFilter, so
         ))}
       </div>
 
-      <div className="field">
-        <label className="field-label" htmlFor="projects-sort">
+      <div className="formfield">
+        <label className="formfield-label" htmlFor="projects-sort">
           Sort by
         </label>
         <select
           id="projects-sort"
-          className="field-input"
+          className="field"
           value={sort}
           onChange={(event) => onSort(event.target.value)}
         >
@@ -1960,7 +1963,7 @@ export default function ProjectsDashboard({ store }) {
   }, [projects, search, filter, sort]);
 
   const newProjectLink = (
-    <Link className="button button-primary" to="/projects/new">
+    <Link className="btn btn--primary" to="/projects/new">
       New project
     </Link>
   );
@@ -1975,7 +1978,7 @@ export default function ProjectsDashboard({ store }) {
         {error ? (
           <div className="notice notice-blocking" role="alert">
             <p>{error}</p>
-            <button type="button" className="button" onClick={() => window.location.reload()}>
+            <button type="button" className="btn" onClick={() => window.location.reload()}>
               Reload the page
             </button>
           </div>
@@ -2006,7 +2009,7 @@ export default function ProjectsDashboard({ store }) {
               <div className="empty-state">
                 <h2>No projects match</h2>
                 <p>Try a different search or filter.</p>
-                <button type="button" className="button" onClick={() => setSearch("")}>
+                <button type="button" className="btn" onClick={() => setSearch("")}>
                   Clear search
                 </button>
               </div>
@@ -2078,45 +2081,50 @@ Append to `src/styles.css`, reusing existing tokens:
 
 ```css
 /* ---- Projects dashboard (spec §5.1) ---- */
-.page { padding: var(--space-5); }
-.page-heading { margin: 0 0 var(--space-4); }
+.page { padding: 20px; }
+.page-heading { margin: 0 0 16px; }
 
 .projects-filters {
   display: flex;
   align-items: flex-end;
-  gap: var(--space-4);
+  gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: var(--space-4);
+  margin-bottom: 16px;
 }
 
-.filter-chips { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .chip {
   min-height: 40px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
+  padding: 0 13px;
+  font-size: 13.5px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
   background: var(--surface);
+  color: var(--ink-1);
   cursor: pointer;
 }
 
-.chip.is-active { background: var(--surface-sunken); font-weight: 600; }
-.chip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.chip:hover { background: var(--paper-1); border-color: var(--line-3); }
+.chip.is-active { background: var(--paper-0); font-weight: 600; }
 
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table th, .data-table td {
   text-align: left;
-  padding: var(--space-3);
-  border-bottom: 1px solid var(--border);
+  padding: 10px;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--line-1);
   vertical-align: top;
 }
-.data-table thead th { font-size: 0.8125rem; color: var(--ink-muted); }
-.row-secondary { display: block; color: var(--ink-muted); font-size: 0.8125rem; }
+.data-table thead th { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.row-secondary { display: block; color: var(--ink-3); font-size: 12.5px; }
 
 /* Warning count carries an icon as well as a hue, per CLAUDE.md's rule
    that status is never colour alone. */
-.warning-count { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--attention); }
+.warning-count { display: inline-flex; align-items: center; gap: 6px; color: var(--amber); }
 ```
+
+Same style conventions as Task 6 apply: literal px, the real token names, `.btn` variants, and no per-component focus rules.
 
 - [ ] **Step 6: Run the tests and the build**
 
@@ -2430,13 +2438,13 @@ export default function NewProject({ store }) {
             onChange={set("bidDueDate")}
           />
 
-          <div className="field">
-            <label className="field-label" htmlFor="project-type">
+          <div className="formfield">
+            <label className="formfield-label" htmlFor="project-type">
               Construction type
             </label>
             <select
               id="project-type"
-              className="field-input"
+              className="field"
               value={values.constructionType}
               onChange={set("constructionType")}
             >
@@ -2449,10 +2457,10 @@ export default function NewProject({ store }) {
           </div>
 
           <div className="form-actions">
-            <button type="submit" className="button button-primary" disabled={submitting}>
+            <button type="submit" className="btn btn--primary" disabled={submitting}>
               {submitting ? "Creating…" : "Create project"}
             </button>
-            <Link className="button" to="/projects">
+            <Link className="btn" to="/projects">
               Cancel
             </Link>
           </div>
@@ -2466,19 +2474,19 @@ function Field({ id, label, hint, error, required, type = "text", value, onChang
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   return (
-    <div className="field">
-      <label className="field-label" htmlFor={id}>
+    <div className="formfield">
+      <label className="formfield-label" htmlFor={id}>
         {label}
-        {required ? <span className="field-required"> (required)</span> : null}
+        {required ? <span className="formfield-required"> (required)</span> : null}
       </label>
       {hint ? (
-        <p className="field-hint" id={hintId}>
+        <p className="formfield-hint" id={hintId}>
           {hint}
         </p>
       ) : null}
       <input
         id={id}
-        className={error ? "field-input has-error" : "field-input"}
+        className={error ? "field field--error" : "field"}
         type={type}
         value={value}
         onChange={onChange}
@@ -2487,7 +2495,7 @@ function Field({ id, label, hint, error, required, type = "text", value, onChang
       />
       {/* Spec §8 keeps the message adjacent to the field it belongs to. */}
       {error ? (
-        <p className="field-error" id={errorId}>
+        <p className="formfield-error" id={errorId}>
           {error}
         </p>
       ) : null}
@@ -2615,7 +2623,7 @@ export default function ProjectOverview({ store }) {
       <div className="empty-state">
         <h1>That project isn't available</h1>
         <p>It may have been archived, or the link may be out of date.</p>
-        <Link className="button button-primary" to="/projects">
+        <Link className="btn btn--primary" to="/projects">
           Back to projects
         </Link>
       </div>
@@ -2630,7 +2638,7 @@ export default function ProjectOverview({ store }) {
         title={project.name}
         subtitle={project.revisionSetLabel || "No drawing set yet"}
         primaryAction={
-          <Link className="button button-primary" to={`/projects/${project.id}/takeoff`}>
+          <Link className="btn btn--primary" to={`/projects/${project.id}/takeoff`}>
             Continue review
           </Link>
         }
@@ -2700,61 +2708,57 @@ Append to `src/styles.css`, reusing existing tokens:
 ```css
 /* ---- Forms and project overview (spec §6) ---- */
 .page-narrow { max-width: 40rem; }
-.form-column { display: flex; flex-direction: column; gap: var(--space-4); }
-.field { display: flex; flex-direction: column; gap: var(--space-2); }
-.field-label { font-weight: 600; font-size: 0.875rem; }
-.field-required { font-weight: 400; color: var(--ink-muted); }
-.field-hint { margin: 0; color: var(--ink-muted); font-size: 0.8125rem; }
+.form-column { display: flex; flex-direction: column; gap: 16px; }
 
-.field-input {
-  min-height: 40px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-}
+/* NOTE: `.field` is already taken -- it is the input element itself,
+   used across the review workspace. The wrapper is `.formfield`, and the
+   inputs in these forms reuse the existing `.field` class rather than
+   defining a second input style. */
+.formfield { display: flex; flex-direction: column; gap: 5px; }
+.formfield-label { font-weight: 600; font-size: 12.5px; }
+.formfield-required { font-weight: 400; color: var(--ink-3); }
+.formfield-hint { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+.formfield-error { margin: 0; color: var(--red); font-size: 12.5px; }
 
-.field-input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-.field-input.has-error { border-color: var(--blocking); }
-.field-error { margin: 0; color: var(--blocking); font-size: 0.8125rem; }
+/* The error state is a border colour plus the adjacent message plus
+   aria-invalid -- never the colour alone (CLAUDE.md). */
+.field--error { border-color: var(--red); }
 
-.form-actions { display: flex; gap: var(--space-3); }
+.form-actions { display: flex; gap: 10px; }
 
-.project-nav { border-bottom: 1px solid var(--border); padding: 0 var(--space-5); }
-.project-nav-list { display: flex; gap: var(--space-1); list-style: none; margin: 0; padding: 0; overflow-x: auto; }
+.project-nav { border-bottom: 1px solid var(--line-1); padding: 0 20px; }
+.project-nav-list { display: flex; gap: 2px; list-style: none; margin: 0; padding: 0; overflow-x: auto; }
 
 .project-nav-link {
   display: inline-flex;
   align-items: center;
   min-height: 40px;
-  padding: 0 var(--space-3);
-  color: var(--ink);
+  padding: 0 10px;
+  font-size: 13.5px;
+  color: var(--ink-1);
   text-decoration: none;
   white-space: nowrap;
   border-bottom: 2px solid transparent;
 }
 
-.project-nav-link.is-active { border-bottom-color: var(--accent); font-weight: 600; }
-.project-nav-link.is-unavailable { color: var(--ink-muted); cursor: default; }
-.project-nav-link:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.project-nav-link.is-active { border-bottom-color: var(--blue); font-weight: 600; }
+.project-nav-link.is-unavailable { color: var(--ink-3); cursor: default; }
 
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
-  gap: var(--space-4);
+  gap: 16px;
 }
 
-.card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); }
-.card h2 { margin: 0 0 var(--space-3); font-size: 1rem; }
+.card { border: 1px solid var(--line-1); border-radius: var(--r-md); padding: 16px; background: var(--surface); }
+.card h2 { margin: 0 0 10px; font-size: 14px; }
 
-.detail-list { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-4); margin: 0; }
-.detail-list dt { color: var(--ink-muted); font-size: 0.875rem; }
+.detail-list { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; margin: 0; font-size: 13.5px; }
+.detail-list dt { color: var(--ink-2); }
 .detail-list dd { margin: 0; }
 ```
 
-Use the token names that actually exist in `src/styles.css`. `--accent`, `--blocking`, and `--attention` are placeholders for whatever the file already calls blueprint blue, red, and amber.
+Same style conventions as Task 6 apply. Note especially that the form inputs use the **existing** `.field` class from `src/styles.css` — this task adds no second input style.
 
 - [ ] **Step 7: Run the tests and the build**
 

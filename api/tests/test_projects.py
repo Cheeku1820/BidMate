@@ -71,6 +71,7 @@ def test_projects_list_returns_counts_in_one_query(client, seeded_org, capture_q
     assert row["customer"] == "Bellweather Construction"
     assert row["location"] == "Stockton, CA"
     assert row["stage"] == "review"
+    assert row["estimatorName"] == "Dana Whitfield"
     assert row["itemsTotal"] == 12
     assert row["itemsApproved"] == 0
     assert row["missingInfo"] >= 1

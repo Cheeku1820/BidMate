@@ -6,13 +6,13 @@ the classic N+1 -- invisible against the one seeded project, quadratic
 against a firm with fifty live bids. So the counts are computed with
 correlated scalar subqueries in the same statement as the list.
 
-The counts deliberately mirror the item-level rules rather than
-reimplementing them: `items_approved` counts `status = ReviewStatus.APPROVED`,
-the same predicate totals.py's `_countable` uses, and a rejected item or one
-on a superseded sheet is excluded everywhere -- ROADMAP.md's "superseded
-sheets never contribute to totals" invariant applies to this dashboard
-count exactly as it applies to the totals query, so it is enforced inside
-`_live_items` rather than left to a caller to remember.
+The counts use `totals.countable_items()` -- the same exclusion predicate
+`approved_totals()` groups over -- rather than a second copy of it. That
+predicate already encodes "not rejected, not on a superseded sheet"
+(ROADMAP.md invariant 2), and ROADMAP.md invariant 1 wants totals computed
+in exactly one place; a hand-copied predicate here would be a second place
+for that rule to drift out of sync with the drawer totals the moment
+either one changes.
 """
 
 from __future__ import annotations
@@ -25,7 +25,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.identity.models import User
-from app.takeoff.models import Item, Project, ReviewStatus, Sheet
+from app.takeoff.models import Item, Project, ReviewStatus
+from app.takeoff.totals import countable_items
 
 
 @dataclasses.dataclass(frozen=True)
@@ -47,27 +48,17 @@ class ProjectRow:
     missing_info: int
 
 
-def _live_items(project_id_column):
-    """Items that belong to a project's current takeoff: not rejected, and
-    not on a superseded sheet. ROADMAP.md invariant 2 -- superseded sheets
-    never contribute -- applies to these counts exactly as it does to
-    totals, and enforcing it here rather than in the caller is the whole
-    reason that invariant is written down."""
-    return (
-        select(Item.id)
-        .join(Sheet, Sheet.id == Item.sheet_id)
-        .where(
-            Item.project_id == project_id_column,
-            Sheet.superseded_at.is_(None),
-            Item.rejected_at.is_(None),
-        )
-    )
-
-
 def list_projects(
     db: Session, org_id: uuid.UUID, *, include_archived: bool = False
 ) -> list[ProjectRow]:
-    live = _live_items(Project.id)
+    # Correlated against the outer `Project` row rather than a fixed id --
+    # `countable_items()` accepts a column expression exactly as it accepts
+    # a concrete uuid.UUID, since `Item.project_id == project_id` is a
+    # plain SQLAlchemy comparison either way. `.with_only_columns(Item.id)`
+    # narrows the `select(Item)` it returns to the one column each scalar
+    # subquery below actually needs, without touching the join or the
+    # where clause that predicate owns.
+    live = countable_items(Project.id).with_only_columns(Item.id)
 
     items_total = select(func.count()).select_from(live.subquery()).scalar_subquery()
     items_approved = (

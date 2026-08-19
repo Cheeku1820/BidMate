@@ -18,11 +18,24 @@ class TotalsResult:
     approved_units: Decimal = Decimal("0")
 
 
-def _countable(project_id: uuid.UUID):
-    """Every consumer of totals starts here.
+def countable_items(project_id):
+    """The one exclusion predicate every consumer of item counts starts
+    from: not on a superseded sheet, not rejected (ROADMAP.md invariant
+    2 -- "superseded sheets never contribute to totals," enforced here
+    rather than by callers remembering to filter).
 
-    Superseded sheets and rejected items are excluded inside this clause
-    rather than by callers remembering to filter.
+    Public rather than module-private because `projects.py`'s dashboard
+    counts (`items_total`, `items_approved`, `warnings_open`,
+    `missing_info`) are also "consumers of totals" in exactly the sense
+    this docstring means -- ROADMAP.md invariant 1 wants totals computed
+    in one place, and a second, hand-copied predicate there is how the
+    dashboard and the drawer quietly disagree the day this clause changes.
+
+    `project_id` accepts a column expression (e.g. `Project.id`) as
+    readily as a concrete `uuid.UUID` -- SQLAlchemy's `==` builds a
+    column-to-column comparison either way -- which is what lets
+    `projects.py` call this correlated against the outer `Project` row
+    rather than a fixed id.
     """
     return (
         select(Item)
@@ -33,7 +46,7 @@ def _countable(project_id: uuid.UUID):
 
 def approved_totals(db: DbSession, project_id: uuid.UUID) -> TotalsResult:
     rows = db.execute(
-        _countable(project_id)
+        countable_items(project_id)
         .with_only_columns(Item.system, Item.status, func.sum(Item.quantity), func.count())
         .group_by(Item.system, Item.status)
     ).all()

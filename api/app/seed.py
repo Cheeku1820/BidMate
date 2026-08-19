@@ -56,7 +56,7 @@ back to.
 
 import os
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session as DbSession
 
@@ -251,8 +251,21 @@ def run(db: DbSession, email: str, password: str) -> Project:
         db.add(user)
     db.flush()
 
-    project = Project(id=PROJECT_ID, org_id=org.id, name="Meridian Distribution Center",
-                       revision_set_label="E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1")
+    project = Project(
+        id=PROJECT_ID,
+        org_id=org.id,
+        name="Meridian Distribution Center",
+        number="26-0207",
+        customer="Bellweather Construction",
+        location="Stockton, CA",
+        # Relative to today rather than a fixed literal, so the seed stays
+        # honest about how far out the bid is however long after seeding
+        # it's opened -- a hardcoded date silently becomes a project that
+        # was due last year.
+        bid_due_date=date.today() + timedelta(days=21),
+        stage="review",
+        revision_set_label="E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1",
+    )
     db.add(project)
     db.flush()
 

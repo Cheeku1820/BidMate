@@ -70,7 +70,28 @@ class Project(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(300))
     revision_set_label: Mapped[str] = mapped_column(String(300), default="")
+    # Spec §5.1's dashboard columns. Text columns default to "" rather than
+    # NULL so the table never has to render a null guard per cell; the two
+    # genuinely optional facts (bid date, assigned estimator) stay nullable
+    # because spec §6.1 makes both optional at creation and a fabricated
+    # date would read as real.
+    number: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    customer: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    location: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    bid_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    estimator_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # The workflow position from spec §1's workspace list, collapsed to the
+    # filter set spec §5.1 names. Not a status label -- the four review
+    # labels describe items, this describes a project, and conflating them
+    # is how a fifth status gets invented.
+    stage: Mapped[str] = mapped_column(String(50), default="setup", server_default="setup")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Sheet(Base):

@@ -26,42 +26,9 @@ import { AlertCircle, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectsFilters from "./ProjectsFilters.jsx";
 import { matchesFilter, reviewProgress, stageLabel } from "../../lib/projectStage.js";
+import { formatCalendarDate, formatTimestamp } from "../../lib/format.js";
 
 const NOT_SET = "Not set";
-
-/** `bidDueDate` is a calendar date with no time component
- *  ("2026-09-14") -- it has to read as the same date for every viewer
- *  regardless of their timezone, the way a deadline printed on a bid
- *  form would. `new Date(iso)` on a date-only string parses as UTC
- *  midnight per the ECMAScript spec, so formatting that instant in the
- *  viewer's local zone with no `timeZone` override renders it a day
- *  early in every zone behind UTC -- every US timezone, and therefore
- *  this product's whole user base. Anchoring the formatter itself to
- *  UTC keeps the calendar date stable no matter where the browser is.
- *  Do not fold this back into formatTimestamp below to "simplify" it —
- *  a timestamp needs the opposite behavior. */
-function formatCalendarDate(iso) {
-  if (!iso) return NOT_SET;
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-/** `updatedAt` is a full timestamp ("2026-08-17T18:00:00Z"), an actual
- *  instant rather than a calendar date -- it should render in the
- *  viewer's own local zone, so no `timeZone` override here, on
- *  purpose. */
-function formatTimestamp(iso) {
-  if (!iso) return NOT_SET;
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 function compare(a, b, sort) {
   switch (sort) {

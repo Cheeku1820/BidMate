@@ -16,6 +16,15 @@
    that 404s into copy about an out-of-date link or an archived project,
    which would be actively misleading for a destination that was simply
    never built.
+
+   Accessible-name fix, applied identically here and in ProjectNav.jsx so
+   the two navs never drift: `aria-label` on a bare `<span>` with no ARIA
+   role is commonly dropped by assistive technology, because a span has
+   no implicit role for the label to attach to -- when the nav is
+   collapsed these items announced as nothing at all. `role="link"` gives
+   the label somewhere to attach; `aria-disabled="true"` plus
+   `tabIndex={-1}` keep it out of the tab order and read as unavailable
+   rather than actionable.
    ============================================================ */
 
 import { useEffect, useState } from "react";
@@ -86,6 +95,7 @@ export default function CompanyNav() {
             <li key={to}>
               <span
                 className="company-nav-link is-unavailable"
+                role="link"
                 aria-disabled="true"
                 tabIndex={-1}
                 aria-label={`${label} — not built yet`}

@@ -1371,3 +1371,54 @@ button {
 .warning-summary__row { display: inline-flex; align-items: center; gap: 4px; }
 .warning-summary__row--missing { color: var(--red); }
 .warning-summary__row--attention { color: var(--amber); }
+
+/* ---- New project form (spec §6.1) ---- */
+
+.page-narrow { max-width: 544px; }
+.form-column { display: flex; flex-direction: column; gap: 16px; }
+
+/* .formfield and .formfield-label already exist above (Projects
+   dashboard's search/sort fields) -- these add the pieces the guided
+   form needs without redefining either. */
+.formfield-required { font-weight: 400; color: var(--ink-3); }
+.formfield-hint { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+.formfield-error { margin: 0; color: var(--red); font-size: 12.5px; }
+
+/* The error state is a border colour plus the adjacent message plus
+   aria-invalid -- never the colour alone (CLAUDE.md). */
+.field--error { border-color: var(--red); }
+
+.form-actions { display: flex; gap: 10px; }
+
+/* ---- Project navigation and overview (spec §4.2, §6.2) ---- */
+
+.project-nav { border-bottom: 1px solid var(--line-1); padding: 0 20px; }
+.project-nav-list { display: flex; gap: 2px; list-style: none; margin: 0; padding: 0; overflow-x: auto; }
+
+.project-nav-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: 13.5px;
+  color: var(--ink-1);
+  text-decoration: none;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+
+.project-nav-link.is-active { border-bottom-color: var(--blue); font-weight: 600; }
+.project-nav-link.is-unavailable { color: var(--ink-3); cursor: default; }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(288px, 1fr));
+  gap: 16px;
+}
+
+.card { border: 1px solid var(--line-1); border-radius: var(--r-md); padding: 16px; background: var(--surface); }
+.card h2 { margin: 0 0 10px; font-size: 14px; }
+
+.detail-list { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; margin: 0; font-size: 13.5px; }
+.detail-list dt { color: var(--ink-2); }
+.detail-list dd { margin: 0; }

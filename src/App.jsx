@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter, Routes } from "react-router-dom";
+import { HashRouter, Routes } from "react-router-dom";
 import { createStore } from "./lib/store/index.js";
 import Login from "./components/Login.jsx";
 import { appRoutes } from "./routes.jsx";
@@ -38,9 +38,23 @@ export default function App() {
   if (!checked) return null;
   if (!me) return <Login onSignedIn={setMe} />;
 
+  // HashRouter, not BrowserRouter — deliberately, not a preference to
+  // "clean up" later. vite.config.js sets base: "./" because this app
+  // ships two ways the README documents: .github/workflows/deploy.yml
+  // publishes dist/ to GitHub Pages under a /takeoff-review/ subpath,
+  // and demo/index.html is a committed single-file build meant to be
+  // opened directly from disk (file://). BrowserRouter matches
+  // window.location.pathname verbatim — on Pages that's
+  // "/takeoff-review/", which matches none of routes.jsx's absolute
+  // paths and falls straight to the catch-all NotFound route, making
+  // the whole app unreachable; from file:// the pathname is a
+  // filesystem path and <Link> navigation cannot work at all.
+  // HashRouter routes on the URL fragment instead ("/#/projects"),
+  // which is unaffected by either the serving subpath or the file://
+  // origin, and needs no basename configuration to match.
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>{appRoutes({ store, me, onSignedOut: () => setMe(null) })}</Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }

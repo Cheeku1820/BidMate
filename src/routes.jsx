@@ -2,10 +2,15 @@
    routes.jsx — one place that knows what URLs exist.
 
    Adding a workspace is a row here plus a component, not a change in
-   four files. Screens that spec §1 lists but that are not built yet
-   deliberately do not appear: a nav entry leading to an empty page is
-   worse than one that is not there, and spec §20 requires error copy to
-   name a recovery action.
+   four files. Screens that spec §1 lists but that are not routed here
+   yet (accuracy, company library, integrations, company settings, help)
+   still appear in CompanyNav.jsx — spec §4.1 wants the product's full
+   shape legible even before every screen is built — but render there as
+   disabled with a reason rather than getting a route that would only
+   land on NotFound. A route table entry pointing at nothing is worse
+   than a nav item that says plainly it isn't built yet, and spec §20
+   requires error copy to name a recovery action, which "not built yet"
+   is not one of.
    ============================================================ */
 
 import { Navigate, Route } from "react-router-dom";

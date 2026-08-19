@@ -1173,22 +1173,63 @@ button {
 }
 
 /* ---- Application shell (spec §4) ---- */
+/* Column 1 is "auto", not a fixed px, so it tracks whatever width
+   .company-nav itself declares below — that's what lets the collapsed
+   state shrink the column without this rule needing to know about it. */
 .app-shell {
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: auto 1fr;
   min-height: 100vh;
 }
 
 .company-nav {
+  width: 232px;
   background: var(--paper-1);
   border-right: 1px solid var(--line-1);
   padding: 16px 12px;
+  transition: width var(--dur);
 }
+
+/* Collapsed on the takeoff route by default (CompanyNav.jsx): at the
+   1024px floor the "too narrow" guard treats as supported, .sheets
+   (248px) + .detail (330px) + this column at its full 232px leaves the
+   canvas narrower than the detail panel, which fails spec §12's "the
+   blueprint stays the largest element" criterion. 56px is enough for an
+   18px icon plus this nav's existing 12px horizontal padding on each
+   side, matching .sheets--collapsed's own icon-rail width (52px) in
+   spirit rather than to the pixel, since the two rails' padding differs
+   slightly. */
+.company-nav.is-collapsed { width: 56px; }
+
+.company-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 16px;
+}
+
+.company-nav.is-collapsed .company-nav-head { justify-content: center; padding: 0 0 16px; }
 
 .company-nav-brand {
   font-weight: 600;
-  padding: 0 12px 16px;
 }
+
+/* A real button, not a div with a click handler — spec §7's 40px
+   minimum touch target applies here same as anywhere else, and .iconbtn
+   (34px) is sized for denser in-workspace toolbars, not this. */
+.company-nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+}
+.company-nav-toggle:hover { background: var(--paper-0); color: var(--ink-1); }
 
 .company-nav-list { list-style: none; margin: 0; padding: 0; }
 
@@ -1205,10 +1246,23 @@ button {
   text-decoration: none;
 }
 
+.company-nav.is-collapsed .company-nav-link { justify-content: center; padding: 0; }
+
 /* Focus is handled by the global :focus-visible rule at the top of this
    file (2px solid var(--blue)); do not restate it per component. */
 .company-nav-link:hover { background: var(--paper-0); }
 .company-nav-link.is-active { background: var(--paper-0); font-weight: 600; }
+
+/* Visible but non-interactive: the five spec §4.1 destinations nothing
+   routes to yet. Dimmed text (which dims the icon too, via
+   currentColor) and a not-allowed cursor read as "not available" rather
+   than as a broken link — the opposite of NotFound.jsx's copy, which
+   would wrongly suggest something used to exist here. */
+.company-nav-link.is-unavailable {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+.company-nav-link.is-unavailable:hover { background: transparent; }
 
 .app-shell-main { display: flex; flex-direction: column; min-width: 0; }
 

@@ -21,7 +21,10 @@ export default function AppTopBar({ title, subtitle, saveState, children, primar
       </div>
       <div className="app-top-bar-tools">
         {saveState ? (
-          <span className="save-state" role="status" aria-live="polite">
+          // .savestate (no hyphen) is the stylesheet's actual class,
+          // shared with TopBar.jsx — .save-state doesn't exist in
+          // styles.css and would render unstyled.
+          <span className="savestate tabular" role="status" aria-live="polite">
             {saveState}
           </span>
         ) : null}

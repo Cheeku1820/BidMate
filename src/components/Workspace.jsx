@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { SYSTEMS } from "../lib/data.js";
 import { useReviewStore } from "../lib/useReviewStore.js";
@@ -10,14 +10,29 @@ import SummaryDrawer from "./SummaryDrawer.jsx";
 import FinishReviewModal from "./FinishReviewModal.jsx";
 import { ScaleModal, EvidenceModal, DeleteModal, HelpModal, DoneModal } from "./MiscModals.jsx";
 
+/** Route-level wrapper: reads :projectId and keys the real workspace by
+ *  it. Keying on projectId, rather than letting WorkspaceForProject
+ *  notice the param changed and patch itself up, is what makes a
+ *  same-route project switch (no Task 7/8 screen links to one yet, but
+ *  the route already permits it) behave exactly like a fresh mount:
+ *  React tears the old WorkspaceForProject down and mounts a new one,
+ *  so useReviewStore's snapshot state starts back at null — never the
+ *  previous project's items rendered under the new project's id while
+ *  the fetch is in flight, which a targeted "clear this one field"
+ *  patch would have to re-derive by hand and could get wrong. This also
+ *  means the ordering guarantee below (id set before first fetch) holds
+ *  on every project switch, not only the very first one. */
+export default function Workspace({ store, me, onSignedOut }) {
+  const { projectId } = useParams();
+  return <WorkspaceForProject key={projectId} projectId={projectId} store={store} me={me} onSignedOut={onSignedOut} />;
+}
+
 /** The review workspace itself (spec §5, screen F) — everything between
  *  signing in and Finish review. Owns local UI state only (selection,
  *  filters, modals, the in-progress edit draft); every piece of review
  *  data comes from useReviewStore(store), which owns the store
  *  subscription, save state, and mutation wrappers. */
-export default function Workspace({ store, me, onSignedOut }) {
-  const { projectId } = useParams();
-
+function WorkspaceForProject({ store, me, onSignedOut, projectId }) {
   // Sets the id every store method resolves against before this
   // component's first snapshot fetch. This has to be a plain useEffect
   // declared ahead of the useReviewStore(store, ...) call below rather
@@ -37,25 +52,6 @@ export default function Workspace({ store, me, onSignedOut }) {
     itemError, clearItemError, setPresenceTarget, refresh,
     approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
   } = useReviewStore(store, { onSignedOut });
-
-  // useReviewStore's own fetch effect only depends on `store` and
-  // `refresh`, neither of which changes when the route's :projectId
-  // does (same store instance, memoized refresh) — so navigating from
-  // one project's workspace straight to another's (no Task 7/8 screen
-  // exists yet to do this, but the route itself already permits it)
-  // would otherwise keep showing the first project's snapshot until the
-  // next poll tick. This effect is the one place that catches a
-  // projectId change after the initial mount and asks for a fresh
-  // snapshot explicitly; it deliberately skips the first render, since
-  // the effect above plus useReviewStore's own mount effect already
-  // cover that case.
-  const lastProjectId = useRef(projectId);
-  useEffect(() => {
-    if (lastProjectId.current !== projectId) {
-      lastProjectId.current = projectId;
-      refresh();
-    }
-  }, [projectId, refresh]);
 
   const [sheetId, setSheetId] = useState(null);
   const [selId, setSelId] = useState(null);

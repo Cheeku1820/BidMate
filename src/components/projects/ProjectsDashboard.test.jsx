@@ -6,6 +6,7 @@
 // here: without the fix, the assertion below sees "Sep 13, 2026".
 process.env.TZ = "America/Denver";
 
+import { StrictMode } from "react";
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -257,5 +258,30 @@ describe("ProjectsDashboard sorting", () => {
       "Midtown Office Tower",
       "Zephyr Logistics Hub",
     ]);
+  });
+});
+
+describe("ProjectsDashboard under StrictMode", () => {
+  // src/main.jsx renders the whole app inside <React.StrictMode>, which
+  // in development double-invokes every mount effect synchronously
+  // (run, cleanup, run again) before any pending promise settles. A
+  // mounted-ness guard that only sets itself back to true when first
+  // created -- rather than re-arming at the top of the effect body on
+  // every invocation -- gets permanently tripped by that cleanup, and
+  // listProjects()'s later resolution is silently dropped: the
+  // dashboard hangs on "Loading projects..." forever. None of the
+  // other tests in this file catch this, because none of them render
+  // under StrictMode -- this is the one that has to.
+  it("still loads project rows after StrictMode's simulated double-mount", async () => {
+    render(
+      <StrictMode>
+        <MemoryRouter>
+          <ProjectsDashboard store={store} me={{ id: "u1" }} />
+        </MemoryRouter>
+      </StrictMode>,
+    );
+
+    expect(await screen.findByText("Riverside Medical Center - Bldg C")).toBeTruthy();
+    expect(screen.queryByText("Loading projects…")).toBeNull();
   });
 });

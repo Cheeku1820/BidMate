@@ -95,8 +95,21 @@ export default function ProjectsDashboard({ store }) {
   // closure-per-call guard would only ever protect the mount-time call,
   // letting a retry that resolves after unmount set state on a dead
   // component.
+  //
+  // The re-arm on the first line is not redundant, even though the ref
+  // already starts `true`. src/main.jsx renders the app inside
+  // <React.StrictMode>, which in development deliberately double-invokes
+  // every mount effect -- run, cleanup, run again -- synchronously,
+  // before any pending promise has settled. Without re-arming here, the
+  // first run's cleanup sets mountedRef.current = false and the second
+  // run's body never sets it back to true, so it stays false forever
+  // and listProjects()'s eventual resolution is silently dropped: the
+  // dashboard hangs on "Loading projects..." under `npm run dev` even
+  // though the fetch succeeded. Do not delete this line to "simplify"
+  // it back to a plain useRef(true) initializer.
   const mountedRef = useRef(true);
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };

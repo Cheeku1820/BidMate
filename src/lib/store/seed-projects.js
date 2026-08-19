@@ -3,9 +3,11 @@
 
    The seed fixture is one project (src/lib/store/seed-fixture.js), and
    before this file the seed store had no concept of a project at all.
-   Rather than invent a second fixture, the seeded project is derived
-   from the snapshot that already exists, so its counts cannot drift
-   from what the review workspace shows for the same project.
+   Rather than invent a second fixture, the seeded project's counts are
+   derived from the snapshot that already exists, through the same
+   countsTowardTotals() predicate seed.js's computeTotals() calls
+   (rules.js, "written once") -- so the dashboard and the review
+   workspace's drawer totals can never disagree about the same project.
 
    Projects created here live in localStorage alongside the rest of seed
    state. They have no sheets and no items, which is honest: seed mode
@@ -13,10 +15,12 @@
 
    Imports nothing from api.js or api-mapping.js -- deleting seed mode
    must stay a matter of deleting these files (CLAUDE.md, "Sync is
-   single-machine").
+   single-machine"). rules.js is shared client logic, not the API path,
+   so importing it here does not cross that boundary.
    ============================================================ */
 
 import { storageRead, storageWrite } from "./local-transport.js";
+import { countsTowardTotals } from "../rules.js";
 
 const CREATED_KEY = "projects";
 const SEED_PROJECT_ID = "seed-project";
@@ -31,10 +35,15 @@ function emptyCounts() {
 }
 
 /** The one fixture project, with its counts read off the live snapshot so
- *  the dashboard and the review workspace can never disagree. Mirrors
- *  api/app/takeoff/totals.py's countable_items() predicate: not rejected. */
+ *  the dashboard and the review workspace can never disagree. Uses
+ *  rules.js's countsTowardTotals() -- not a hand-copied `!item.rejected`
+ *  filter -- so a superseded sheet's items are excluded here exactly as
+ *  they are from seed.js's computeTotals() and the API's
+ *  countable_items(), rather than a second, incomplete copy of that rule
+ *  drifting out of sync with it. */
 function fixtureProject(snapshot) {
-  const live = snapshot.items.filter((item) => !item.rejected);
+  const sheetsById = Object.fromEntries(snapshot.sheets.map((s) => [s.id, s]));
+  const live = snapshot.items.filter((item) => countsTowardTotals(item, sheetsById));
   return {
     id: SEED_PROJECT_ID,
     name: "Meridian Distribution Center",
@@ -89,8 +98,13 @@ export function createSeedProjects({ getSnapshot }) {
       revisionSetLabel: "",
       archivedAt: null,
       updatedAt: new Date().toISOString(),
+      // estimatorUserId is accepted (contract parity with the API's
+      // createProject) but not stored -- seed mode has no user directory
+      // to resolve it against, so estimatorName stays null the way the
+      // fixture project's does, rather than carrying a field the other
+      // two Project shapes (fixtureProject, api-mapping.js's mapProject)
+      // don't have.
       estimatorName: null,
-      estimatorUserId,
       ...emptyCounts(),
     };
     storageWrite(CREATED_KEY, [...readCreated(), project]);

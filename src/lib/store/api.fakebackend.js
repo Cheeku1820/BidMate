@@ -44,8 +44,12 @@ const STATUS_BY_CODE = {
   field_cannot_be_empty: 422,
   invalid_quantity: 422,
   no_changes_to_apply: 400,
+  // Only invalid_request appears here, not estimator_not_found: the seed
+  // store's createProject() has no estimator-org check to throw that
+  // code, and this file's own stated scope is "just enough surface for
+  // every endpoint api.js actually calls" -- a status for a code nothing
+  // throws is speculative, not surface.
   invalid_request: 422,
-  estimator_not_found: 404,
 };
 
 function toWireWarning(w) {

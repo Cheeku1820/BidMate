@@ -404,6 +404,31 @@ describe(label, () => {
       expect(project.bidDueDate === null || typeof project.bidDueDate === "string").toBe(true);
     });
 
+    it("excludes items on a superseded sheet from its counts, not just rejected items", async () => {
+      // E2.1 (data.js) carries 7 of the fixture's 12 items, including
+      // both of its "attention" items (it-04, it-07) -- superseding it
+      // and only it isolates the sheet-exclusion half of
+      // countsTowardTotals() from the rejected-item half, which "counts
+      // never exceed the total" above cannot do (rejected and superseded
+      // overlap in every other fixture state). A `!item.rejected`-only
+      // filter would leave warningsOpen at 2 after this write; the
+      // correct predicate drops it to 0.
+      const before = (await store.listProjects()).find((p) => p.itemsTotal > 0);
+      const { sheets, items } = await store.getSnapshot();
+      const target = sheets.find((s) => s.id === "E2.1");
+      const onTarget = items.filter((i) => i.sheetId === target.id && !i.rejected);
+      expect(onTarget.length).toBeGreaterThan(0);
+
+      // Written directly to storage, mirroring the presence test above --
+      // no store mutation exposes "supersede a sheet" yet, and this test
+      // only needs the read side (countsTowardTotals) to react correctly.
+      storageWrite("sheets", sheets.map((s) => (s.id === target.id ? { ...s, superseded: true } : s)));
+
+      const after = (await store.listProjects()).find((p) => p.id === before.id);
+      expect(after.itemsTotal).toBe(before.itemsTotal - onTarget.length);
+      expect(after.warningsOpen).toBe(0);
+    });
+
     it("counts never exceed the total", async () => {
       for (const project of await store.listProjects()) {
         expect(project.itemsApproved).toBeLessThanOrEqual(project.itemsTotal);

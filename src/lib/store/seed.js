@@ -135,6 +135,13 @@ export function createSeedStore() {
     return identity();
   }
 
+  // No-op (task-6-brief.md's ambiguity resolution 2): seed mode has
+  // exactly one fixture project and no route-supplied id of its own, so
+  // there is nothing here for Workspace.jsx's store.useProject(id) call
+  // to do. It still has to exist, since Workspace.jsx calls it
+  // unconditionally regardless of which store implementation is active.
+  function useProject() {}
+
   async function getSnapshot() {
     const items = readItems();
     const sheets = readSheets();
@@ -173,6 +180,7 @@ export function createSeedStore() {
 
   return {
     me,
+    useProject,
     getSnapshot,
     subscribe,
     setPresence,

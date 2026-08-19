@@ -1171,3 +1171,65 @@ button {
   border: 1px solid var(--red-line);
   border-radius: var(--r-md);
 }
+
+/* ---- Application shell (spec §4) ---- */
+.app-shell {
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 100vh;
+}
+
+.company-nav {
+  background: var(--paper-1);
+  border-right: 1px solid var(--line-1);
+  padding: 16px 12px;
+}
+
+.company-nav-brand {
+  font-weight: 600;
+  padding: 0 12px 16px;
+}
+
+.company-nav-list { list-style: none; margin: 0; padding: 0; }
+
+.company-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Spec §7 keeps touch targets at 40px minimum even on desktop. */
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 13.5px;
+  border-radius: var(--r-md);
+  color: var(--ink-1);
+  text-decoration: none;
+}
+
+/* Focus is handled by the global :focus-visible rule at the top of this
+   file (2px solid var(--blue)); do not restate it per component. */
+.company-nav-link:hover { background: var(--paper-0); }
+.company-nav-link.is-active { background: var(--paper-0); font-weight: 600; }
+
+.app-shell-main { display: flex; flex-direction: column; min-width: 0; }
+
+.app-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.app-top-bar-identity { display: flex; flex-direction: column; min-width: 0; }
+.app-top-bar-title { font-weight: 600; }
+.app-top-bar-subtitle { color: var(--ink-2); font-size: 12.5px; }
+.app-top-bar-tools { display: flex; align-items: center; gap: 10px; }
+
+.empty-state {
+  margin: 48px auto;
+  /* 544px, not 34rem — this file has no spacing scale and uses literal
+     px throughout (34rem at the 16px root size is the same value). */
+  max-width: 544px;
+  text-align: center;
+}

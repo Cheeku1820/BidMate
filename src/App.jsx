@@ -1,17 +1,14 @@
 import { useEffect, useState } from "react";
+import { BrowserRouter, Routes } from "react-router-dom";
 import { createStore } from "./lib/store/index.js";
 import Login from "./components/Login.jsx";
-import Workspace from "./components/Workspace.jsx";
+import { appRoutes } from "./routes.jsx";
 
 /* ============================================================
-   App.jsx — composition and routing between login and workspace, and
-   nothing else (task-16-brief.md §1's suggested split). The store is
-   created once, outside React state, since neither implementation's
-   identity should change across renders. me() is the one call this
-   file makes directly: the seed store's always resolves; the api
-   store's rejects with `not_signed_in` when there is no session
-   cookie, which is the entire login gate — Login.jsx is never rendered
-   in seed mode for exactly that reason.
+   App.jsx — the auth gate, and nothing else. Once a user is present it
+   hands off to the route table in routes.jsx; before this task it handed
+   off to a single workspace, which is the change that lets a second
+   screen exist at all.
    ============================================================ */
 
 const store = createStore();
@@ -39,10 +36,11 @@ export default function App() {
   }, []);
 
   if (!checked) return null;
+  if (!me) return <Login onSignedIn={setMe} />;
 
-  if (!me) {
-    return <Login onSignedIn={setMe} />;
-  }
-
-  return <Workspace store={store} me={me} onSignedOut={() => setMe(null)} />;
+  return (
+    <BrowserRouter>
+      <Routes>{appRoutes({ store, me, onSignedOut: () => setMe(null) })}</Routes>
+    </BrowserRouter>
+  );
 }

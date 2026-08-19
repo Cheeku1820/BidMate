@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import { SYSTEMS } from "../lib/data.js";
 import { useReviewStore } from "../lib/useReviewStore.js";
 import TopBar from "./TopBar.jsx";
@@ -15,11 +16,46 @@ import { ScaleModal, EvidenceModal, DeleteModal, HelpModal, DoneModal } from "./
  *  data comes from useReviewStore(store), which owns the store
  *  subscription, save state, and mutation wrappers. */
 export default function Workspace({ store, me, onSignedOut }) {
+  const { projectId } = useParams();
+
+  // Sets the id every store method resolves against before this
+  // component's first snapshot fetch. This has to be a plain useEffect
+  // declared ahead of the useReviewStore(store, ...) call below rather
+  // than, say, a layout effect or a call during render: React runs a
+  // fiber's passive effects in the order the corresponding useEffect
+  // calls happened during render, and useReviewStore's own mount effect
+  // (the one that calls refresh()) is a hook registered *inside* that
+  // call — so declaring this one first is what guarantees
+  // store.useProject(projectId) has already run by the time that
+  // refresh() fires, rather than a race that happens to work today.
+  useEffect(() => {
+    store.useProject(projectId);
+  }, [store, projectId]);
+
   const {
     snapshot, loading, loadError, saved, toast, dismissToast,
     itemError, clearItemError, setPresenceTarget, refresh,
     approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
   } = useReviewStore(store, { onSignedOut });
+
+  // useReviewStore's own fetch effect only depends on `store` and
+  // `refresh`, neither of which changes when the route's :projectId
+  // does (same store instance, memoized refresh) — so navigating from
+  // one project's workspace straight to another's (no Task 7/8 screen
+  // exists yet to do this, but the route itself already permits it)
+  // would otherwise keep showing the first project's snapshot until the
+  // next poll tick. This effect is the one place that catches a
+  // projectId change after the initial mount and asks for a fresh
+  // snapshot explicitly; it deliberately skips the first render, since
+  // the effect above plus useReviewStore's own mount effect already
+  // cover that case.
+  const lastProjectId = useRef(projectId);
+  useEffect(() => {
+    if (lastProjectId.current !== projectId) {
+      lastProjectId.current = projectId;
+      refresh();
+    }
+  }, [projectId, refresh]);
 
   const [sheetId, setSheetId] = useState(null);
   const [selId, setSelId] = useState(null);

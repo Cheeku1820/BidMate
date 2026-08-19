@@ -113,10 +113,14 @@ export async function login(email, password) {
 }
 
 export function createApiStore() {
-  // This prototype is single-project (matches the seed store, which has
-  // no concept of a project at all) — the first project the signed-in
-  // account can see is resolved once and cached for the life of the
-  // store, the same way identity() caches "me" for the seed store.
+  // The route owns the project id now (task-6-brief.md Step 7):
+  // Workspace.jsx calls store.useProject(projectId) from a useEffect
+  // keyed on the route param, before its first snapshot fetch. `null`
+  // here just means "nothing has set one yet" — ensureProjectId() below
+  // still falls back to "the first project the signed-in account can
+  // see" for any caller that hasn't been given one, which after this
+  // task is nothing on the review path, but keeps this store usable
+  // from a REPL or a future single-project caller without a route.
   let projectId = null;
 
   // getSnapshot()'s own cache, keyed by the version string this module
@@ -149,6 +153,21 @@ export function createApiStore() {
   function invalidateCache() {
     cachedVersion = null;
     cachedSnapshot = null;
+  }
+
+  // Sets the id the rest of this store's methods resolve against.
+  // Synchronous and side-effect-only on purpose: Workspace.jsx calls
+  // this from a useEffect keyed on useParams().projectId, and that
+  // effect has to run — and this assignment has to land — before the
+  // same render's data-fetching effect in useReviewStore.js fires its
+  // first getSnapshot(). Both effects are declared in the same
+  // component; effects run in declaration order, so calling
+  // store.useProject(id) ahead of useReviewStore(store) in Workspace's
+  // body is what keeps this from racing the first fetch, not anything
+  // async here.
+  function useProject(id) {
+    projectId = id;
+    invalidateCache();
   }
 
   async function ensureProjectId() {
@@ -308,6 +327,7 @@ export function createApiStore() {
 
   return {
     me,
+    useProject,
     getSnapshot,
     subscribe,
     setPresence,

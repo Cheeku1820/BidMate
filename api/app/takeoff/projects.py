@@ -24,6 +24,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff.models import Item, Project, ReviewStatus
 from app.takeoff.totals import countable_items
@@ -117,6 +118,22 @@ def list_projects(
     return rows
 
 
+def _estimator_not_found() -> DomainError:
+    # 404, not 422: `users.id` is globally unique, so an FK alone would
+    # happily accept another org's user, and a 422 that distinguished "no
+    # such user" from "that user is not yours" would itself be a small
+    # cross-tenant disclosure -- it would let a caller probe which ids
+    # exist at all, just in a different org. Answering the same 404 either
+    # way mirrors router.py's `not_found()` for projects, which exists for
+    # the identical reason: never let a caller use the status code to
+    # confirm something exists under an id it guessed.
+    return DomainError(
+        "estimator_not_found",
+        "That estimator is not available to your account. Choose someone from your own organization.",
+        status=404,
+    )
+
+
 def create_project(
     db: Session,
     org_id: uuid.UUID,
@@ -131,7 +148,22 @@ def create_project(
     """Creates a project in the caller's org. Stage starts at 'setup'
     because no document has been uploaded yet -- spec §1's workspace order
     starts at Overview, and a project claiming to be in review before it
-    has a sheet would misreport on the dashboard."""
+    has a sheet would misreport on the dashboard.
+
+    `estimator_user_id`, when given, is checked against the caller's own
+    org before the project is created -- not merely a foreign-key
+    reference, since `users.id` is globally unique and a bare FK would
+    accept any org's user. Left unchecked, a caller could assign another
+    org's user as estimator and that user's name would then surface in
+    `list_projects()`'s `outerjoin(User, ...)` above, a cross-tenant
+    identity leak. Checked here, inside the service function, rather than
+    only in the router handler, so a future second caller of
+    `create_project` cannot skip it by construction."""
+    if estimator_user_id is not None:
+        estimator = db.get(User, estimator_user_id)
+        if estimator is None or estimator.org_id != org_id:
+            raise _estimator_not_found()
+
     project = Project(
         org_id=org_id,
         name=name,

@@ -151,10 +151,13 @@ NON_PROJECT_SCOPED_ROUTES = {
     ("POST", "/api/auth/logout"),
     ("GET", "/api/auth/me"),
     # Org-scoped by the caller's session, not by a project id in the
-    # path or body -- there is nothing to probe with a rival project id.
-    # Creation is the same shape as the list: it writes into the caller's
-    # own org (task-3-brief.md), never an existing project a rival id
-    # could target.
+    # path or body -- neither route takes a project id, so there is no
+    # rival project id for this table's probe to target. This exemption
+    # is about the *path*, not the body: POST /api/projects still takes
+    # tenant-sensitive fields in its body (estimator_user_id), and that
+    # is covered separately -- test_projects.py's
+    # test_create_project_rejects_a_foreign_estimator, not this table,
+    # since the thing being probed there is a user id, not a project id.
     ("GET", "/api/projects"),
     ("POST", "/api/projects"),
     # FastAPI's own framework routes -- docs UI, its OAuth2 redirect

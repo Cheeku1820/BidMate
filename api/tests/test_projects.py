@@ -5,6 +5,9 @@ projects table renders. task-1-brief.md.
 import datetime
 import uuid
 
+import pytest
+from sqlalchemy import select
+
 from app.takeoff.models import Item, Project, Sheet
 
 
@@ -181,7 +184,13 @@ def test_create_project_accepts_camel_case_keys(client, signed_in_user):
     bidDueDate and estimatorUserId, not their snake_case names.
     test_create_project_requires_only_name_and_location above only posts
     name/location, which are spelled identically in both conventions and
-    would pass even if ProjectCreateIn only accepted snake_case."""
+    would pass even if ProjectCreateIn only accepted snake_case.
+
+    This also doubles as the "same-org estimatorUserId is accepted"
+    case: `signed_in_user` is in the caller's own org, and `estimatorName`
+    coming back proves the id round-tripped rather than being silently
+    dropped. See test_create_project_rejects_a_foreign_estimator below
+    for the cross-org case."""
     res = client.post(
         "/api/projects",
         json={
@@ -196,3 +205,50 @@ def test_create_project_accepts_camel_case_keys(client, signed_in_user):
     body = res.json()
     assert body["bidDueDate"] == "2026-09-14"
     assert body["estimatorName"] == signed_in_user.name
+
+
+@pytest.fixture
+def foreign_estimator(db):
+    """A user in a different org than `signed_in_user`'s -- for proving
+    POST /api/projects rejects a cross-org estimator_user_id rather than
+    accepting it on the strength of the foreign key alone. `users.id` is
+    globally unique, so the FK by itself would happily accept this user;
+    only an explicit org check (projects.py::create_project) catches it.
+    Local to this file rather than conftest.py because
+    test_tenancy.py's `rival` fixture already covers the same shape for
+    project/item/sheet probes and there was no shared need for a third
+    copy until this test."""
+    from app.auth.passwords import hash_password
+    from app.identity.models import Org, User
+
+    other_org = Org(name="Ferrovia Electric")
+    db.add(other_org)
+    db.flush()
+    user = User(
+        org_id=other_org.id, email="foreign-estimator@example.com",
+        password_hash=hash_password("hunter2"), name="Foreign Estimator", color="#a8412c",
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+def test_create_project_rejects_a_foreign_estimator(client, signed_in_user, db, foreign_estimator):
+    """A caller who supplies another org's user id as estimator must be
+    refused, not silently ignored -- and no project should be left behind
+    half-created. 404, matching create_project's `_estimator_not_found()`:
+    the same status whether the id doesn't exist at all or belongs to
+    another org, so the response can't be used to confirm a guessed id
+    exists somewhere else."""
+    res = client.post(
+        "/api/projects",
+        json={
+            "name": "Oakview High School",
+            "location": "Modesto, CA",
+            "estimatorUserId": str(foreign_estimator.id),
+        },
+    )
+
+    assert res.status_code == 404
+    assert res.json()["detail"]["code"] == "estimator_not_found"
+    assert db.scalars(select(Project).where(Project.name == "Oakview High School")).first() is None

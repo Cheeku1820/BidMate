@@ -27,6 +27,7 @@ from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import snapshot as snapshot_module
 from app.takeoff.models import Item, Project, Sheet
+from app.takeoff.projects import list_projects
 from app.takeoff.schemas import ProjectDetailOut, ProjectOut, SnapshotOut, TotalsOut
 from app.takeoff.snapshot import sheet_out
 from app.takeoff.totals import approved_totals
@@ -98,8 +99,13 @@ def load_sheet(sheet_id: uuid.UUID, db: DbSession, user: User) -> Sheet:
 
 
 @router.get("/projects", response_model=list[ProjectOut])
-def list_projects(user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> list[Project]:
-    return list(db.scalars(select(Project).where(Project.org_id == user.org_id).order_by(Project.created_at)))
+def get_projects(
+    includeArchived: bool = False,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(current_user),
+) -> list[ProjectOut]:
+    rows = list_projects(db, user.org_id, include_archived=includeArchived)
+    return [ProjectOut.model_validate(row, from_attributes=True) for row in rows]
 
 
 @router.get("/projects/{project_id}", response_model=ProjectDetailOut)

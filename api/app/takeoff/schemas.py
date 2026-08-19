@@ -16,9 +16,11 @@ user's display name, not their id).
 """
 
 import uuid
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
+from pydantic.alias_generators import to_camel
 
 from app.collab.schemas import PresenceOut
 
@@ -98,14 +100,36 @@ class SheetOut(BaseModel):
 
 
 class ProjectOut(BaseModel):
-    """The row shape for `GET /projects` -- a project list, not a project's
-    full detail."""
+    """The row shape for `GET /projects` -- spec §5.1's dashboard columns,
+    plus the counts that back the review-progress and warnings columns.
+    Deliberately not the project's full detail; that is ProjectDetailOut.
+
+    Unlike every other schema in this file, this one carries its own
+    camelCase alias generator rather than relying on the client's
+    api-mapping.js to translate snake_case on the way in. MODEL_CONFIG
+    itself stays untouched -- adding the alias generator there would
+    change the wire shape of every other response (ItemOut, SheetOut,
+    SnapshotOut, ...) and the client-side mapping that already exists for
+    them.
+    """
 
     id: uuid.UUID
     name: str
+    number: str
+    customer: str
+    location: str
+    bid_due_date: date | None
+    stage: str
     revision_set_label: str
+    archived_at: datetime | None
+    updated_at: datetime
+    estimator_name: str | None
+    items_total: int
+    items_approved: int
+    warnings_open: int
+    missing_info: int
 
-    model_config = MODEL_CONFIG
+    model_config = {**MODEL_CONFIG, "alias_generator": to_camel, "populate_by_name": True}
 
 
 class ProjectDetailOut(BaseModel):

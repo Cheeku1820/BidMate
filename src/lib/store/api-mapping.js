@@ -105,3 +105,29 @@ export function mapSnapshot(s) {
 export function mapUser(u) {
   return { id: u.id, name: u.name, email: u.email, color: u.color };
 }
+
+/** Wire shape -> store shape for a project row. ProjectOut is the one
+ *  schema in schemas.py that carries its own camelCase alias generator
+ *  (schemas.py's CAMEL_MODEL_CONFIG comment), so this is a field
+ *  allow-list rather than a snake_case rename: it keeps a field the API
+ *  adds later from silently reaching the client before anything is
+ *  designed to render it. */
+export function mapProject(raw) {
+  return {
+    id: raw.id,
+    name: raw.name,
+    number: raw.number ?? "",
+    customer: raw.customer ?? "",
+    location: raw.location ?? "",
+    bidDueDate: raw.bidDueDate ?? null,
+    stage: raw.stage,
+    revisionSetLabel: raw.revisionSetLabel ?? "",
+    archivedAt: raw.archivedAt ?? null,
+    updatedAt: raw.updatedAt,
+    estimatorName: raw.estimatorName ?? null,
+    itemsTotal: Number(raw.itemsTotal ?? 0),
+    itemsApproved: Number(raw.itemsApproved ?? 0),
+    warningsOpen: Number(raw.warningsOpen ?? 0),
+    missingInfo: Number(raw.missingInfo ?? 0),
+  };
+}

@@ -41,6 +41,7 @@ import { seedItems, seedSheets } from "./seed-fixture.js";
 import { createReviewMethods } from "./seed-review.js";
 import { createScaleMethod } from "./seed-scale.js";
 import { createUndoMethods } from "./seed-undo.js";
+import { createSeedProjects } from "./seed-projects.js";
 
 /* --- reads, materializing the seed on first access ----------------------- */
 
@@ -168,6 +169,7 @@ export function createSeedStore() {
   const review = createReviewMethods(deps);
   const scale = createScaleMethod(deps);
   const undoing = createUndoMethods(deps);
+  const projects = createSeedProjects({ getSnapshot });
 
   return {
     me,
@@ -177,5 +179,6 @@ export function createSeedStore() {
     ...review,
     ...scale,
     ...undoing,
+    ...projects,
   };
 }

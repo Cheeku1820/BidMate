@@ -16,6 +16,7 @@ const METHODS = [
   "me", "getSnapshot", "subscribe", "setPresence",
   "approveItem", "rejectItem", "unrejectItem", "editItem",
   "deleteItem", "setScale", "undo", "redo",
+  "listProjects", "createProject",
 ];
 
 /* Every assertion below runs twice: once directly against
@@ -375,6 +376,56 @@ describe(label, () => {
       expect(released.status).toBe("ready");
       expect(released.warnings).toEqual([]);
     }
+  });
+
+  describe("projects", () => {
+    it("lists projects with camelCase fields and numeric counts", async () => {
+      const projects = await store.listProjects();
+
+      expect(Array.isArray(projects)).toBe(true);
+      expect(projects.length).toBeGreaterThan(0);
+
+      const project = projects[0];
+      expect(typeof project.id).toBe("string");
+      expect(typeof project.name).toBe("string");
+      expect(typeof project.number).toBe("string");
+      expect(typeof project.customer).toBe("string");
+      expect(typeof project.location).toBe("string");
+      expect(typeof project.stage).toBe("string");
+      // Counts are numbers, not strings. The dashboard does arithmetic on
+      // them (approved / total) and a string here produces "012" rather
+      // than a percentage.
+      expect(typeof project.itemsTotal).toBe("number");
+      expect(typeof project.itemsApproved).toBe("number");
+      expect(typeof project.warningsOpen).toBe("number");
+      expect(typeof project.missingInfo).toBe("number");
+      // Null, never a fabricated date -- an invented bid deadline is worse
+      // than a blank cell.
+      expect(project.bidDueDate === null || typeof project.bidDueDate === "string").toBe(true);
+    });
+
+    it("counts never exceed the total", async () => {
+      for (const project of await store.listProjects()) {
+        expect(project.itemsApproved).toBeLessThanOrEqual(project.itemsTotal);
+        expect(project.warningsOpen).toBeLessThanOrEqual(project.itemsTotal);
+        expect(project.missingInfo).toBeLessThanOrEqual(project.itemsTotal);
+      }
+    });
+
+    it("creates a project that then appears in the list", async () => {
+      const created = await store.createProject({
+        name: "Oakview High School",
+        location: "Modesto, CA",
+      });
+
+      expect(created.id).toBeTruthy();
+      expect(created.name).toBe("Oakview High School");
+      expect(created.stage).toBe("setup");
+      expect(created.itemsTotal).toBe(0);
+
+      const names = (await store.listProjects()).map((p) => p.name);
+      expect(names).toContain("Oakview High School");
+    });
   });
 });
 }

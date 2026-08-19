@@ -28,9 +28,6 @@
 
 import { createSeedStore } from "./seed.js";
 
-const PROJECT_ID = "fake-project-1";
-const PROJECT = { id: PROJECT_ID, name: "Meridian Distribution Center", revision_set_label: "E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1" };
-
 // api/app/errors.py's DomainError carries its own `status`; this module's
 // seed store methods throw plain {code, message} without one (rules.js /
 // seed-review.js are HTTP-agnostic), so the status a real endpoint would
@@ -47,6 +44,8 @@ const STATUS_BY_CODE = {
   field_cannot_be_empty: 422,
   invalid_quantity: 422,
   no_changes_to_apply: 400,
+  invalid_request: 422,
+  estimator_not_found: 404,
 };
 
 function toWireWarning(w) {
@@ -112,6 +111,33 @@ function toWirePresence(p) {
   return { user_id: p.userId, name: p.name, color: p.color, sheet_id: p.sheetId, item_id: p.itemId, seen_at: new Date(p.seenAt).toISOString() };
 }
 
+// ProjectOut is the one schema in schemas.py that carries its own
+// camelCase alias generator (CAMEL_MODEL_CONFIG), so unlike every other
+// toWire* helper in this file, this one isn't a snake_case rename -- the
+// wire shape and the store shape already agree on field names. Kept as an
+// explicit allow-list anyway, matching mapProject's own reasoning in
+// api-mapping.js: a field the store adds later shouldn't silently reach
+// the wire before anything is designed to send it.
+function toWireProject(project) {
+  return {
+    id: project.id,
+    name: project.name,
+    number: project.number,
+    customer: project.customer,
+    location: project.location,
+    bidDueDate: project.bidDueDate,
+    stage: project.stage,
+    revisionSetLabel: project.revisionSetLabel,
+    archivedAt: project.archivedAt,
+    updatedAt: project.updatedAt,
+    estimatorName: project.estimatorName,
+    itemsTotal: project.itemsTotal,
+    itemsApproved: project.itemsApproved,
+    warningsOpen: project.warningsOpen,
+    missingInfo: project.missingInfo,
+  };
+}
+
 function toWireSnapshot(snapshot) {
   return {
     version: snapshot.version,
@@ -153,8 +179,16 @@ export function installFakeApiBackend() {
         return jsonResponse(await seed.me());
       }
 
-      if (method === "GET" && path === "/api/projects") {
-        return jsonResponse([PROJECT]);
+      const projectsMatch = path.match(/^\/api\/projects(?:\?(.*))?$/);
+      if (method === "GET" && projectsMatch) {
+        const params = new URLSearchParams(projectsMatch[1] ?? "");
+        const includeArchived = params.get("includeArchived") === "true";
+        const projects = await seed.listProjects({ includeArchived });
+        return jsonResponse(projects.map(toWireProject));
+      }
+      if (method === "POST" && path === "/api/projects") {
+        const created = await seed.createProject(body ?? {});
+        return jsonResponse(toWireProject(created), 201);
       }
 
       const snapshotMatch = path.match(/^\/api\/projects\/([^/]+)\/snapshot$/);

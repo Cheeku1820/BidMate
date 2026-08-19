@@ -20,7 +20,7 @@
    task's stated ambiguity resolution.
    ============================================================ */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { AlertCircle, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
@@ -29,7 +29,32 @@ import { matchesFilter, reviewProgress, stageLabel } from "../../lib/projectStag
 
 const NOT_SET = "Not set";
 
-function formatDate(iso) {
+/** `bidDueDate` is a calendar date with no time component
+ *  ("2026-09-14") -- it has to read as the same date for every viewer
+ *  regardless of their timezone, the way a deadline printed on a bid
+ *  form would. `new Date(iso)` on a date-only string parses as UTC
+ *  midnight per the ECMAScript spec, so formatting that instant in the
+ *  viewer's local zone with no `timeZone` override renders it a day
+ *  early in every zone behind UTC -- every US timezone, and therefore
+ *  this product's whole user base. Anchoring the formatter itself to
+ *  UTC keeps the calendar date stable no matter where the browser is.
+ *  Do not fold this back into formatTimestamp below to "simplify" it —
+ *  a timestamp needs the opposite behavior. */
+function formatCalendarDate(iso) {
+  if (!iso) return NOT_SET;
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** `updatedAt` is a full timestamp ("2026-08-17T18:00:00Z"), an actual
+ *  instant rather than a calendar date -- it should render in the
+ *  viewer's own local zone, so no `timeZone` override here, on
+ *  purpose. */
+function formatTimestamp(iso) {
   if (!iso) return NOT_SET;
   return new Date(iso).toLocaleDateString(undefined, {
     year: "numeric",
@@ -64,25 +89,36 @@ export default function ProjectsDashboard({ store }) {
   const [filter, setFilter] = useState("active");
   const [sort, setSort] = useState("updated");
 
+  // A single mounted-ness guard shared by every call to load(), not a
+  // per-call `cancelled` closure wired only into the mount effect's
+  // cleanup: the "Try again" retry button calls load() directly, and a
+  // closure-per-call guard would only ever protect the mount-time call,
+  // letting a retry that resolves after unmount set state on a dead
+  // component.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const load = useCallback(() => {
-    let cancelled = false;
     setError(null);
     store
       .listProjects({ includeArchived: true })
       .then((rows) => {
-        if (!cancelled) setProjects(rows);
+        if (mountedRef.current) setProjects(rows);
       })
       .catch((err) => {
-        if (!cancelled) {
+        if (mountedRef.current) {
           setError(err?.message || "The project list couldn't be loaded. Try again.");
         }
       });
-    return () => {
-      cancelled = true;
-    };
   }, [store]);
 
-  useEffect(() => load(), [load]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const visible = useMemo(() => {
     if (!projects) return [];
@@ -185,7 +221,7 @@ export default function ProjectsDashboard({ store }) {
                         </th>
                         <td>{project.customer || NOT_SET}</td>
                         <td>{project.location || NOT_SET}</td>
-                        <td className="tabular">{formatDate(project.bidDueDate)}</td>
+                        <td className="tabular">{formatCalendarDate(project.bidDueDate)}</td>
                         <td>{project.estimatorName || NOT_SET}</td>
                         <td>{stageLabel(project.stage)}</td>
                         <td className="tabular">
@@ -215,7 +251,7 @@ export default function ProjectsDashboard({ store }) {
                             </div>
                           )}
                         </td>
-                        <td className="tabular">{formatDate(project.updatedAt)}</td>
+                        <td className="tabular">{formatTimestamp(project.updatedAt)}</td>
                       </tr>
                     );
                   })}

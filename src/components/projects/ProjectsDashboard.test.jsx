@@ -1,5 +1,13 @@
+// Pin a timezone behind UTC before anything else in this file runs.
+// "2026-09-14" (a date-only, no-time ISO string) parses as UTC
+// midnight per the ECMAScript spec; in any zone behind UTC — every US
+// timezone — formatting that instant with no `timeZone` override
+// renders it a day early. America/Denver makes that regression visible
+// here: without the fix, the assertion below sees "Sep 13, 2026".
+process.env.TZ = "America/Denver";
+
 import { describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ProjectsDashboard from "./ProjectsDashboard.jsx";
@@ -72,6 +80,18 @@ describe("ProjectsDashboard", () => {
     expect(screen.getAllByText("Not set").length).toBeGreaterThan(0);
   });
 
+  it("renders a date-only bid due date as the same calendar date in every timezone", async () => {
+    // Regression coverage for the UTC-midnight-parsing bug: this file
+    // runs under TZ=America/Denver (set above), a zone behind UTC. A
+    // formatter that does `new Date("2026-09-14").toLocaleDateString()`
+    // with no `timeZone` override renders "Sep 13, 2026" here — a day
+    // early. Asserting the correct date, and that the wrong one is
+    // absent, is what makes this test fail honestly if that regresses.
+    renderDashboard();
+    expect(await screen.findByText("Sep 14, 2026")).toBeTruthy();
+    expect(screen.queryByText("Sep 13, 2026")).toBeNull();
+  });
+
   it("does not render progress as a percentage alone", async () => {
     // Status is never colour alone and a bare bar is not a label: the
     // count has to be readable as text (CLAUDE.md).
@@ -140,5 +160,102 @@ describe("ProjectsDashboard", () => {
 
     await screen.findByText("Riverside Medical Center - Bldg C");
     expect(calls).toBe(2);
+  });
+});
+
+describe("ProjectsDashboard sorting", () => {
+  // Three rows, all visible under the default "Active" filter: two with
+  // distinct bid dates plus one with none, so the null-handling branch
+  // in compare() is actually exercised rather than merely present.
+  const sortProjects = [
+    {
+      id: "s1",
+      name: "Zephyr Logistics Hub",
+      number: "26-0700",
+      customer: "Acme Builders",
+      location: "Fresno, CA",
+      bidDueDate: "2026-09-20",
+      stage: "review",
+      archivedAt: null,
+      updatedAt: "2026-08-01T00:00:00Z",
+      estimatorName: null,
+      itemsTotal: 0,
+      itemsApproved: 0,
+      warningsOpen: 0,
+      missingInfo: 0,
+    },
+    {
+      id: "s2",
+      name: "Anchor Point Clinic",
+      number: "26-0701",
+      customer: "Acme Builders",
+      location: "Fresno, CA",
+      bidDueDate: "2026-09-05",
+      stage: "review",
+      archivedAt: null,
+      updatedAt: "2026-08-02T00:00:00Z",
+      estimatorName: null,
+      itemsTotal: 0,
+      itemsApproved: 0,
+      warningsOpen: 0,
+      missingInfo: 0,
+    },
+    {
+      id: "s3",
+      name: "Midtown Office Tower",
+      number: "26-0702",
+      customer: "Acme Builders",
+      location: "Fresno, CA",
+      bidDueDate: null,
+      stage: "review",
+      archivedAt: null,
+      updatedAt: "2026-08-03T00:00:00Z",
+      estimatorName: null,
+      itemsTotal: 0,
+      itemsApproved: 0,
+      warningsOpen: 0,
+      missingInfo: 0,
+    },
+  ];
+
+  const sortStore = { listProjects: async () => sortProjects };
+
+  const renderForSort = () =>
+    render(
+      <MemoryRouter>
+        <ProjectsDashboard store={sortStore} me={{ id: "u1" }} />
+      </MemoryRouter>,
+    );
+
+  function rowOrder() {
+    return screen
+      .getAllByRole("rowheader")
+      .map((cell) => within(cell).getByRole("link").textContent);
+  }
+
+  it("sorts by bid due date with unset dates last, not first", async () => {
+    renderForSort();
+    await screen.findByText("Zephyr Logistics Hub");
+
+    await userEvent.selectOptions(screen.getByLabelText(/sort by/i), "bidDate");
+
+    expect(rowOrder()).toEqual([
+      "Anchor Point Clinic", // 2026-09-05
+      "Zephyr Logistics Hub", // 2026-09-20
+      "Midtown Office Tower", // no bid date — last, not first
+    ]);
+  });
+
+  it("sorts alphabetically by project name", async () => {
+    renderForSort();
+    await screen.findByText("Zephyr Logistics Hub");
+
+    await userEvent.selectOptions(screen.getByLabelText(/sort by/i), "name");
+
+    expect(rowOrder()).toEqual([
+      "Anchor Point Clinic",
+      "Midtown Office Tower",
+      "Zephyr Logistics Hub",
+    ]);
   });
 });

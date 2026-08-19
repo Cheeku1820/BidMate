@@ -1287,3 +1287,87 @@ button {
   max-width: 544px;
   text-align: center;
 }
+
+/* ---- Projects dashboard (spec §5.1) ---- */
+
+.page { padding: 20px; }
+.page-heading { margin: 0 0 16px; }
+.muted { color: var(--ink-2); }
+
+.load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--red-line);
+  border-radius: var(--r-md);
+  background: var(--red-tint);
+  color: var(--red);
+}
+.load-error p { margin: 0; }
+
+.projects-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+/* .formfield is the label-plus-input wrapper. .field is already the
+   input element itself (see the top of this file) — never redefine it
+   as a wrapper, and never give a form field an unlabelled input. */
+.formfield { display: flex; flex-direction: column; gap: 4px; }
+.formfield-label { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+
+.filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* A distinct class from the sheets rail's own `.chip` (SheetsRail.jsx),
+   which is sized for a narrow 24px-tall sidebar row and would leave
+   these below the 40px touch-target minimum. Active state reads off
+   aria-pressed, the same convention `.chip[aria-pressed="true"]`
+   already uses, so the two chip styles stay visually distinct but
+   behaviourally consistent. */
+.filter-chip {
+  min-height: 40px;
+  padding: 0 13px;
+  font-size: 13.5px;
+  font-weight: 600;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-1);
+  cursor: pointer;
+  transition: background var(--dur), border-color var(--dur), color var(--dur);
+}
+
+.filter-chip:hover { background: var(--paper-1); border-color: var(--line-3); }
+
+.filter-chip[aria-pressed="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td {
+  text-align: left;
+  padding: 10px;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--line-1);
+  vertical-align: top;
+}
+.data-table thead th { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.row-secondary { display: block; color: var(--ink-3); font-size: 12.5px; }
+
+/* Warnings column keeps "missing information" (red, blocking) and
+   "needs attention" (amber, acknowledgeable) as two separate rows
+   rather than one merged count — status is never colour alone, and
+   blending the two vocabularies would hide which projects carry
+   blocking issues (CLAUDE.md). */
+.warning-summary { display: flex; flex-direction: column; gap: 3px; }
+.warning-summary__row { display: inline-flex; align-items: center; gap: 4px; }
+.warning-summary__row--missing { color: var(--red); }
+.warning-summary__row--attention { color: var(--amber); }

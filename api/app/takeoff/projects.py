@@ -115,3 +115,43 @@ def list_projects(
             )
         )
     return rows
+
+
+def create_project(
+    db: Session,
+    org_id: uuid.UUID,
+    *,
+    name: str,
+    location: str,
+    number: str = "",
+    customer: str = "",
+    bid_due_date: datetime.date | None = None,
+    estimator_user_id: uuid.UUID | None = None,
+) -> Project:
+    """Creates a project in the caller's org. Stage starts at 'setup'
+    because no document has been uploaded yet -- spec §1's workspace order
+    starts at Overview, and a project claiming to be in review before it
+    has a sheet would misreport on the dashboard."""
+    project = Project(
+        org_id=org_id,
+        name=name,
+        location=location,
+        number=number,
+        customer=customer,
+        bid_due_date=bid_due_date,
+        estimator_user_id=estimator_user_id,
+        stage="setup",
+    )
+    db.add(project)
+    db.flush()
+    return project
+
+
+def project_row(db: Session, org_id: uuid.UUID, project_id: uuid.UUID) -> ProjectRow:
+    """A single row in the same shape the list returns, so creation can
+    respond with exactly what the dashboard will later render rather than a
+    second, subtly different project shape."""
+    for row in list_projects(db, org_id, include_archived=True):
+        if row.id == project_id:
+            return row
+    raise LookupError(project_id)

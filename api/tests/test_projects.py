@@ -3,6 +3,7 @@ projects table renders. task-1-brief.md.
 """
 
 import datetime
+import uuid
 
 from app.takeoff.models import Item, Project, Sheet
 
@@ -131,3 +132,67 @@ def test_projects_list_counts_ignore_superseded_sheets_and_rejected_items(db, or
 
     assert len(rows) == 1
     assert rows[0].items_total == 1
+
+
+# --- POST /api/projects: creation from the guided form (task-3-brief.md) ---
+#
+# `client` alone is not signed in -- POST /api/projects sits behind
+# `current_user` like every other takeoff route, so each test below also
+# takes `signed_in_user` to log the client in first. The brief's draft
+# tests only listed `client`, which conftest.py's actual current_user
+# dependency (cookie-or-401) would fail; `signed_in_user` is the fixture
+# task-2-brief.md's own list tests already use for the same reason.
+
+
+def test_create_project_requires_only_name_and_location(client, signed_in_user):
+    """Spec §6.1: name and address required, everything else optional.
+    A form that demands a bid date before an estimator has one is a form
+    they route around."""
+    res = client.post("/api/projects", json={"name": "Oakview High School", "location": "Modesto, CA"})
+
+    assert res.status_code == 201
+    body = res.json()
+    assert body["name"] == "Oakview High School"
+    assert body["stage"] == "setup"
+    assert body["number"] == ""
+    assert body["bidDueDate"] is None
+    assert body["itemsTotal"] == 0
+
+
+def test_create_project_rejects_blank_name(client, signed_in_user):
+    res = client.post("/api/projects", json={"name": "   ", "location": "Modesto, CA"})
+    assert res.status_code == 422
+
+
+def test_created_project_belongs_to_the_callers_org(client, signed_in_user, db):
+    res = client.post("/api/projects", json={"name": "Oakview High School", "location": "Modesto, CA"})
+    created = db.get(Project, uuid.UUID(res.json()["id"]))
+    assert created.org_id == signed_in_user.org_id
+
+
+def test_created_project_appears_in_the_list(client, signed_in_user):
+    client.post("/api/projects", json={"name": "Oakview High School", "location": "Modesto, CA"})
+    names = {row["name"] for row in client.get("/api/projects").json()}
+    assert "Oakview High School" in names
+
+
+def test_create_project_accepts_camel_case_keys(client, signed_in_user):
+    """ProjectOut is camelCase-native on the wire, so the client sends
+    bidDueDate and estimatorUserId, not their snake_case names.
+    test_create_project_requires_only_name_and_location above only posts
+    name/location, which are spelled identically in both conventions and
+    would pass even if ProjectCreateIn only accepted snake_case."""
+    res = client.post(
+        "/api/projects",
+        json={
+            "name": "Oakview High School",
+            "location": "Modesto, CA",
+            "bidDueDate": "2026-09-14",
+            "estimatorUserId": str(signed_in_user.id),
+        },
+    )
+
+    assert res.status_code == 201
+    body = res.json()
+    assert body["bidDueDate"] == "2026-09-14"
+    assert body["estimatorName"] == signed_in_user.name

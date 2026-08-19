@@ -27,8 +27,8 @@ from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import snapshot as snapshot_module
 from app.takeoff.models import Item, Project, Sheet
-from app.takeoff.projects import list_projects
-from app.takeoff.schemas import ProjectDetailOut, ProjectOut, SnapshotOut, TotalsOut
+from app.takeoff.projects import create_project, list_projects, project_row
+from app.takeoff.schemas import ProjectCreateIn, ProjectDetailOut, ProjectOut, SnapshotOut, TotalsOut
 from app.takeoff.snapshot import sheet_out
 from app.takeoff.totals import approved_totals
 
@@ -106,6 +106,27 @@ def get_projects(
 ) -> list[ProjectOut]:
     rows = list_projects(db, user.org_id, include_archived=includeArchived)
     return [ProjectOut.model_validate(row, from_attributes=True) for row in rows]
+
+
+@router.post("/projects", response_model=ProjectOut, status_code=201)
+def post_project(
+    payload: ProjectCreateIn,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ProjectOut:
+    project = create_project(
+        db,
+        user.org_id,
+        name=payload.name,
+        location=payload.location,
+        number=payload.number,
+        customer=payload.customer,
+        bid_due_date=payload.bid_due_date,
+        estimator_user_id=payload.estimator_user_id,
+    )
+    db.commit()
+    row = project_row(db, user.org_id, project.id)
+    return ProjectOut.model_validate(row, from_attributes=True)
 
 
 @router.get("/projects/{project_id}", response_model=ProjectDetailOut)

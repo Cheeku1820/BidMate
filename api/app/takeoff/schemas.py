@@ -19,12 +19,18 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 from app.collab.schemas import PresenceOut
 
 MODEL_CONFIG = {"from_attributes": True}
+# Shared by every schema that is camelCase-native on the wire (ProjectOut,
+# ProjectCreateIn) so the two conventions can't drift apart -- an input
+# schema that only accepted snake_case while its own response used
+# camelCase would be a form the client has to translate for one direction
+# and not the other.
+CAMEL_MODEL_CONFIG = {**MODEL_CONFIG, "alias_generator": to_camel, "populate_by_name": True}
 
 
 class WarningOut(BaseModel):
@@ -129,7 +135,41 @@ class ProjectOut(BaseModel):
     warnings_open: int
     missing_info: int
 
-    model_config = {**MODEL_CONFIG, "alias_generator": to_camel, "populate_by_name": True}
+    model_config = CAMEL_MODEL_CONFIG
+
+
+class ProjectCreateIn(BaseModel):
+    """Spec §6.1's guided form. Advanced labor and pricing settings are
+    deliberately absent -- the spec excludes them from creation, and a
+    field here is a field an estimator has to answer before they can start.
+
+    Camel-cased on the wire via CAMEL_MODEL_CONFIG, the same config
+    ProjectOut carries -- the client already sends bidDueDate and
+    estimatorUserId to match what ProjectOut returns, and an input schema
+    that demanded snake_case for those two fields while every response is
+    camelCase would be an inconsistency the client has to work around.
+    """
+
+    name: str = Field(min_length=1, max_length=300)
+    location: str = Field(min_length=1, max_length=300)
+    number: str = Field(default="", max_length=100)
+    customer: str = Field(default="", max_length=300)
+    bid_due_date: date | None = None
+    estimator_user_id: uuid.UUID | None = None
+    # Accepted and ignored: spec §6.1 lists a building-type field with a
+    # "Not sure" option, and taking it from the first version means the
+    # form's shape doesn't change when it later gains a real column.
+    construction_type: str = Field(default="", max_length=100)
+
+    @field_validator("name", "location")
+    @classmethod
+    def not_only_whitespace(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be blank")
+        return stripped
+
+    model_config = CAMEL_MODEL_CONFIG
 
 
 class ProjectDetailOut(BaseModel):

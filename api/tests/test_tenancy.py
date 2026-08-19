@@ -152,7 +152,11 @@ NON_PROJECT_SCOPED_ROUTES = {
     ("GET", "/api/auth/me"),
     # Org-scoped by the caller's session, not by a project id in the
     # path or body -- there is nothing to probe with a rival project id.
+    # Creation is the same shape as the list: it writes into the caller's
+    # own org (task-3-brief.md), never an existing project a rival id
+    # could target.
     ("GET", "/api/projects"),
+    ("POST", "/api/projects"),
     # FastAPI's own framework routes -- docs UI, its OAuth2 redirect
     # target, the OpenAPI schema, and ReDoc. None of these take a
     # project id or touch tenant data; they exist the moment `FastAPI()`

@@ -11,9 +11,16 @@
    bidDueDate -- a second, locally-defined formatDate() here would
    reintroduce the UTC-midnight-parses-a-day-early bug that formatter
    exists to fix, for the same date-only field.
+
+   Two failure states, kept apart. A `listProjects()` network failure and
+   a genuinely absent project are different facts and read differently:
+   nothing was archived when the request simply failed, so the two get
+   distinct copy and only the load failure gets a retry -- mirroring
+   ProjectsDashboard.jsx's own error/empty split, which this screen did
+   not originally have (task-8 review finding 2).
    ============================================================ */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectNav from "../shell/ProjectNav.jsx";
@@ -24,6 +31,7 @@ export default function ProjectOverview({ store }) {
   const { projectId } = useParams();
   const [project, setProject] = useState(null);
   const [state, setState] = useState("loading");
+  const [errorMessage, setErrorMessage] = useState(null);
 
   // Re-armed at the top of the effect body, not just initialised once --
   // see ProjectsDashboard.jsx's identical comment. src/main.jsx renders
@@ -43,8 +51,12 @@ export default function ProjectOverview({ store }) {
     };
   }, []);
 
-  useEffect(() => {
+  // A stable callback, not inlined in the effect, so the "Try again"
+  // button below can call the exact same load path a mount does --
+  // ProjectsDashboard.jsx's load()/retry pattern.
+  const load = useCallback(() => {
     setState("loading");
+    setErrorMessage(null);
     store
       .listProjects({ includeArchived: true })
       .then((rows) => {
@@ -53,12 +65,31 @@ export default function ProjectOverview({ store }) {
         setProject(found ?? null);
         setState(found ? "ready" : "missing");
       })
-      .catch(() => {
-        if (mountedRef.current) setState("error");
+      .catch((err) => {
+        if (!mountedRef.current) return;
+        setErrorMessage(err?.message || "The project couldn't be loaded. Try again.");
+        setState("error");
       });
   }, [store, projectId]);
 
+  useEffect(() => {
+    load();
+  }, [load]);
+
   if (state === "loading") return <p className="muted page">Loading project…</p>;
+
+  if (state === "error") {
+    return (
+      <div className="page">
+        <div className="load-error" role="alert">
+          <p>{errorMessage}</p>
+          <button type="button" className="btn" onClick={load}>
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (state !== "ready" || !project) {
     return (
@@ -73,6 +104,17 @@ export default function ProjectOverview({ store }) {
   }
 
   const progress = reviewProgress(project);
+  // A project with no items has no takeoff to continue reviewing --
+  // "Continue review" (or the review-progress card's own link below)
+  // would otherwise be the single most prominent thing to click right
+  // after creating a project, and following it lands on a workspace with
+  // markers and a scale banner belonging to a *different* project (seed
+  // mode's single fixture snapshot today; a real ingestion pipeline
+  // tomorrow, before its first sheet finishes processing). That is a
+  // fabricated quantity presented as this project's evidence. Upload
+  // isn't built yet either, so the honest replacement says that plainly
+  // rather than linking somewhere that pretends otherwise.
+  const hasTakeoff = progress.total > 0;
 
   return (
     <>
@@ -80,9 +122,13 @@ export default function ProjectOverview({ store }) {
         title={project.name}
         subtitle={project.revisionSetLabel || "No drawing set yet"}
         primaryAction={
-          <Link className="btn btn--primary" to={`/projects/${project.id}/takeoff`}>
-            Continue review
-          </Link>
+          hasTakeoff ? (
+            <Link className="btn btn--primary" to={`/projects/${project.id}/takeoff`}>
+              Continue review
+            </Link>
+          ) : (
+            <span className="muted">Document upload isn't built yet</span>
+          )
         }
       />
       <ProjectNav projectId={project.id} />
@@ -115,7 +161,9 @@ export default function ProjectOverview({ store }) {
                 : `${progress.approved} of ${progress.total} approved`}
             </p>
             <p className="muted">Current stage: {stageLabel(project.stage)}</p>
-            <Link to={`/projects/${project.id}/takeoff`}>Open the blueprint takeoff</Link>
+            {hasTakeoff ? (
+              <Link to={`/projects/${project.id}/takeoff`}>Open the blueprint takeoff</Link>
+            ) : null}
           </section>
 
           <section className="card">

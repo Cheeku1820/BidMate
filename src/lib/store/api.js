@@ -310,6 +310,12 @@ export function createApiStore() {
     customer = "",
     bidDueDate = null,
     estimatorUserId = null,
+    // Forwarded, not stored server-side yet: ProjectCreateIn.construction_type
+    // (schemas.py) accepts and ignores it by design until a real column
+    // lands -- but that only holds if the client actually sends it. Dropping
+    // it here, after NewProject.jsx collects it, would make the estimator's
+    // answer vanish with no trace instead of merely going unused.
+    constructionType = "",
   }) {
     const raw = await request("/api/projects", {
       method: "POST",
@@ -320,6 +326,7 @@ export function createApiStore() {
         customer,
         bidDueDate,
         estimatorUserId,
+        constructionType,
       },
     });
     return mapProject(raw);

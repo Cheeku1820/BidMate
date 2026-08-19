@@ -41,7 +41,7 @@ import { seedItems, seedSheets } from "./seed-fixture.js";
 import { createReviewMethods } from "./seed-review.js";
 import { createScaleMethod } from "./seed-scale.js";
 import { createUndoMethods } from "./seed-undo.js";
-import { createSeedProjects } from "./seed-projects.js";
+import { createSeedProjects, SEED_PROJECT_ID } from "./seed-projects.js";
 
 /* --- reads, materializing the seed on first access ----------------------- */
 
@@ -107,6 +107,27 @@ function computeTotals(items, sheetsById) {
   return { bySystem, approvedCount, remainingCount, attentionCount, missingCount, approvedUnits };
 }
 
+/** The honest answer for any project id that isn't the fixture: no
+ *  sheets, no items, nothing to undo. Workspace.jsx already renders
+ *  "This project has no sheets yet." for an empty-but-successful
+ *  snapshot (its `loadError || !sheet` branch), so this needs no new UI
+ *  path -- it only has to stop seed mode from serving the fixture's
+ *  twelve items under a project that never had them (task-8 review
+ *  finding 1b). `version` is a literal "0" rather than the shared
+ *  version counter: that counter tracks the fixture's own mutation
+ *  history, and reusing it here would claim a revision history this
+ *  project doesn't have. */
+function emptySnapshot() {
+  return {
+    version: "0",
+    sheets: [],
+    items: [],
+    totals: { bySystem: {}, approvedCount: 0, remainingCount: 0, attentionCount: 0, missingCount: 0, approvedUnits: 0 },
+    undo: { canUndo: false, canRedo: false, undoLabel: null, undoBy: null, redoLabel: null },
+    presence: activePresence(identity().id),
+  };
+}
+
 function buildUndoOut(hist) {
   const lastUndo = hist.undo[hist.undo.length - 1] ?? null;
   const lastRedo = hist.redo[hist.redo.length - 1] ?? null;
@@ -135,14 +156,26 @@ export function createSeedStore() {
     return identity();
   }
 
-  // No-op (task-6-brief.md's ambiguity resolution 2): seed mode has
-  // exactly one fixture project and no route-supplied id of its own, so
-  // there is nothing here for Workspace.jsx's store.useProject(id) call
-  // to do. It still has to exist, since Workspace.jsx calls it
-  // unconditionally regardless of which store implementation is active.
-  function useProject() {}
+  // Records the id Workspace.jsx's routed :projectId last asked for, the
+  // same way api.js's useProject(id) records it into its own `projectId`
+  // closure variable -- mirrored here (task-8 review finding 1b) so
+  // getSnapshot() below can tell the one fixture project apart from every
+  // other id the same way the real backend already can. `null` (nothing
+  // asked yet) defaults to the fixture in getSnapshot(), matching api.js's
+  // ensureProjectId() falling back to "the first project" when nothing
+  // has called useProject() yet -- contract.test.js's shared suite relies
+  // on exactly that fallback for both stores.
+  let activeProjectId = null;
+  function useProject(projectId) {
+    activeProjectId = projectId;
+  }
 
-  async function getSnapshot() {
+  // Unconditional: seed mode's one fixture project's real data,
+  // regardless of which project is currently active. This is what
+  // seed-projects.js's listProjects() calls (see its own comment) so the
+  // dashboard's fixture row never goes empty just because the workspace
+  // last had a different project open.
+  async function computeFixtureSnapshot() {
     const items = readItems();
     const sheets = readSheets();
     const hist = readHist();
@@ -155,6 +188,18 @@ export function createSeedStore() {
       undo: buildUndoOut(hist),
       presence: activePresence(identity().id),
     };
+  }
+
+  // The public, useProject()-gated snapshot the store interface exposes.
+  // Seed mode has exactly one fixture project's worth of sheets and
+  // items in storage -- serving them under a *different* project's id
+  // would be presenting one project's evidence as another's, which is
+  // exactly the failure task-8 review finding 1 flagged. A project id
+  // that isn't the fixture's genuinely has no sheets yet, so it gets the
+  // honest empty snapshot instead.
+  async function getSnapshot() {
+    if (activeProjectId && activeProjectId !== SEED_PROJECT_ID) return emptySnapshot();
+    return computeFixtureSnapshot();
   }
 
   function subscribe(handler) {
@@ -176,7 +221,7 @@ export function createSeedStore() {
   const review = createReviewMethods(deps);
   const scale = createScaleMethod(deps);
   const undoing = createUndoMethods(deps);
-  const projects = createSeedProjects({ getSnapshot });
+  const projects = createSeedProjects({ getSnapshot: computeFixtureSnapshot });
 
   return {
     me,

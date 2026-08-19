@@ -57,6 +57,7 @@ describe("NewProject", () => {
     await userEvent.type(screen.getByLabelText(/project name/i), "Oakview High School");
     await userEvent.type(screen.getByLabelText(/project address/i), "Modesto, CA");
     await userEvent.type(screen.getByLabelText(/customer/i), "Swinerton");
+    await userEvent.selectOptions(screen.getByLabelText(/construction type/i), "Education");
     await userEvent.click(screen.getByRole("button", { name: /create project/i }));
 
     expect(createProject).toHaveBeenCalledWith(
@@ -64,6 +65,10 @@ describe("NewProject", () => {
         name: "Oakview High School",
         location: "Modesto, CA",
         customer: "Swinerton",
+        // Review finding 3: collected by the <select> but previously
+        // never included in the createProject() call -- the estimator's
+        // answer vanished with no trace.
+        constructionType: "Education",
       }),
     );
   });

@@ -56,6 +56,11 @@ export default function NewProject({ store }) {
         number: values.number.trim(),
         customer: values.customer.trim(),
         bidDueDate: values.bidDueDate || null,
+        // Collected above (the <select>) but was silently dropped here --
+        // the estimator typed a value and it vanished with no trace.
+        // ProjectCreateIn.construction_type (schemas.py) already accepts
+        // and ignores it, by design, until a real column lands.
+        constructionType: values.constructionType,
       });
       navigate(`/projects/${created.id}`);
     } catch (err) {

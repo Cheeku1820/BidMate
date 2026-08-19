@@ -6,6 +6,7 @@ process.env.TZ = "America/Denver";
 
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ProjectOverview from "./ProjectOverview.jsx";
 
@@ -73,5 +74,51 @@ describe("ProjectOverview", () => {
   it("names a recovery action when the project isn't found", async () => {
     renderOverview({ listProjects: async () => [] });
     expect(await screen.findByRole("link", { name: /back to projects/i })).toBeTruthy();
+    // The "not found" copy must not also be shown for a load failure --
+    // see the dedicated error-state test below.
+    expect(screen.queryByText(/network unreachable/i)).toBeNull();
+  });
+
+  it("names what actually happened and offers a retry when the project fails to load, distinct from a missing project", async () => {
+    // Review finding 2: a listProjects() network failure and a genuinely
+    // absent project must not render the same "may have been archived"
+    // copy -- that copy is simply false when nothing was archived and the
+    // request just failed. This mirrors ProjectsDashboard.test.jsx's own
+    // "names a recovery action ... when the list fails to load" case.
+    let calls = 0;
+    const flaky = {
+      listProjects: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("network unreachable");
+        return [project];
+      },
+    };
+    renderOverview(flaky);
+
+    const retry = await screen.findByRole("button", { name: /try again/i });
+    expect(screen.getByText(/network unreachable/i)).toBeTruthy();
+    expect(screen.queryByText(/may have been archived/i)).toBeNull();
+    expect(screen.queryByRole("link", { name: /back to projects/i })).toBeNull();
+
+    await userEvent.click(retry);
+
+    expect(await screen.findByRole("heading", { name: /riverside medical center/i })).toBeTruthy();
+    expect(calls).toBe(2);
+  });
+
+  it("does not offer to continue review when the project has no items yet", async () => {
+    // Review finding 1(a): a project with itemsTotal === 0 has no
+    // takeoff to continue. "Continue review" is the screen's primary
+    // action and the single most likely thing to click right after
+    // creating a project -- offering it here would follow through to a
+    // workspace showing a different project's items, which is a
+    // fabricated quantity presented as this project's evidence.
+    const empty = { ...project, itemsTotal: 0, itemsApproved: 0, warningsOpen: 0, missingInfo: 0 };
+    renderOverview({ listProjects: async () => [empty] });
+
+    await screen.findByRole("heading", { name: /riverside medical center/i });
+    expect(screen.queryByRole("link", { name: /continue review/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /open the blueprint takeoff/i })).toBeNull();
+    expect(screen.getByText(/upload isn't built yet/i)).toBeTruthy();
   });
 });

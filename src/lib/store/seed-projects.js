@@ -23,7 +23,10 @@ import { storageRead, storageWrite } from "./local-transport.js";
 import { countsTowardTotals } from "../rules.js";
 
 const CREATED_KEY = "projects";
-const SEED_PROJECT_ID = "seed-project";
+// Exported so seed.js can tell the one fixture project apart from every
+// id createProject() hands out below, without seed.js having to
+// hard-code this literal a second time.
+export const SEED_PROJECT_ID = "seed-project";
 
 function readCreated() {
   const raw = storageRead(CREATED_KEY, []);
@@ -64,6 +67,14 @@ function fixtureProject(snapshot) {
 }
 
 export function createSeedProjects({ getSnapshot }) {
+  // `getSnapshot` here must always resolve to the fixture project's own
+  // data, regardless of which project the review workspace currently has
+  // active -- seed.js passes its unconditional computeFixtureSnapshot(),
+  // not the public, useProject()-gated getSnapshot() the store exposes.
+  // The dashboard lists every project on every visit, including whichever
+  // one a previous workspace visit last activated, so this call cannot
+  // depend on that ambient state without the fixture row's own totals
+  // going wrong the next time the dashboard renders.
   async function listProjects({ includeArchived = false } = {}) {
     const snapshot = await getSnapshot();
     const created = readCreated().filter((p) => includeArchived || !p.archivedAt);
@@ -77,6 +88,11 @@ export function createSeedProjects({ getSnapshot }) {
     customer = "",
     bidDueDate = null,
     estimatorUserId = null,
+    // Accepted for contract parity with the API's createProject (and
+    // schemas.py's own "accepted and ignored" construction_type field)
+    // but not stored -- the seed Project shape has no field for it yet,
+    // same as estimatorUserId below.
+    constructionType = "",
   }) {
     // Mirrors ProjectCreateIn's not_only_whitespace validator (schemas.py)
     // so a blank name/location is refused the same way here and there,

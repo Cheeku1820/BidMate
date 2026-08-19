@@ -79,4 +79,16 @@ describe("matchesFilter", () => {
     const clear = project({ stage: "export", itemsApproved: 12, itemsTotal: 12, missingInfo: 0 });
     expect(matchesFilter(clear, "readyToExport")).toBe(true);
   });
+
+  it("does not count zero-item projects as needing review or ready to export", () => {
+    // A freshly created project with no processed items must not report as
+    // ready to export. Without the `total > 0` guard in fullyApproved, the
+    // test `0 === 0` evaluates true, and with missingInfo: 0 the project
+    // would appear ready to export on the dashboard—a project not yet
+    // processed, sitting under "Ready to export." The guard exists to
+    // prevent this silent, misleading failure.
+    const unprocessed = project({ itemsTotal: 0, itemsApproved: 0, missingInfo: 0 });
+    expect(matchesFilter(unprocessed, "needsReview")).toBe(false);
+    expect(matchesFilter(unprocessed, "readyToExport")).toBe(false);
+  });
 });

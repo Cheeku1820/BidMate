@@ -37,6 +37,33 @@ function emptyCounts() {
   return { itemsTotal: 0, itemsApproved: 0, warningsOpen: 0, missingInfo: 0 };
 }
 
+// Mirrors api/app/seed.py's _APPROVED_AT -- the same fixed moment the
+// two pre-approved seed items were approved. Seed mode has no real
+// database row behind the fixture project, so there is no genuine
+// created_at/updated_at to read; this is the most honest stand-in
+// available, and reusing the API's own constant keeps the two seeds
+// describing the same fictional history rather than inventing a second,
+// unrelated date.
+const FIXTURE_CREATED_AT = "2026-06-05T14:30:00.000Z";
+
+/** api/app/takeoff/projects.py's list_projects() computes the "Updated"
+ *  column as the later of the project row's own updated_at and its most
+ *  recent action's created_at (final-review fix 2) -- never
+ *  `Date.now()` at read time, which used to make the fixture read as
+ *  touched "right now" on every dashboard render regardless of whether
+ *  anyone had done anything. This mirrors that on the seed side: `hist`
+ *  is the same shared action stack seed-undo.js already treats as this
+ *  browser's action log, so its most recent entry's `.at` (a genuine
+ *  mutation timestamp stamped once, at commit time, by seed-review.js /
+ *  seed-scale.js -- never recomputed later) is the honest answer once
+ *  any review activity has happened, falling back to the fixture's own
+ *  fixed "created" moment when it hasn't. */
+function effectiveUpdatedAt(hist) {
+  const lastAction = hist.undo[hist.undo.length - 1];
+  if (!lastAction) return FIXTURE_CREATED_AT;
+  return new Date(Math.max(Date.parse(FIXTURE_CREATED_AT), lastAction.at)).toISOString();
+}
+
 /** The one fixture project, with its counts read off the live snapshot so
  *  the dashboard and the review workspace can never disagree. Uses
  *  rules.js's countsTowardTotals() -- not a hand-copied `!item.rejected`
@@ -44,7 +71,7 @@ function emptyCounts() {
  *  they are from seed.js's computeTotals() and the API's
  *  countable_items(), rather than a second, incomplete copy of that rule
  *  drifting out of sync with it. */
-function fixtureProject(snapshot) {
+function fixtureProject(snapshot, hist) {
   const sheetsById = Object.fromEntries(snapshot.sheets.map((s) => [s.id, s]));
   const live = snapshot.items.filter((item) => countsTowardTotals(item, sheetsById));
   return {
@@ -57,7 +84,7 @@ function fixtureProject(snapshot) {
     stage: "review",
     revisionSetLabel: "E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1",
     archivedAt: null,
-    updatedAt: new Date().toISOString(),
+    updatedAt: effectiveUpdatedAt(hist),
     estimatorName: null,
     itemsTotal: live.length,
     itemsApproved: live.filter((item) => item.status === "approved").length,
@@ -66,7 +93,7 @@ function fixtureProject(snapshot) {
   };
 }
 
-export function createSeedProjects({ getSnapshot }) {
+export function createSeedProjects({ getSnapshot, readHist }) {
   // `getSnapshot` here must always resolve to the fixture project's own
   // data, regardless of which project the review workspace currently has
   // active -- seed.js passes its unconditional computeFixtureSnapshot(),
@@ -74,11 +101,14 @@ export function createSeedProjects({ getSnapshot }) {
   // The dashboard lists every project on every visit, including whichever
   // one a previous workspace visit last activated, so this call cannot
   // depend on that ambient state without the fixture row's own totals
-  // going wrong the next time the dashboard renders.
+  // going wrong the next time the dashboard renders. `readHist` is the
+  // same reason: it's seed.js's own readHist(), not a second copy of it,
+  // so effectiveUpdatedAt() above reads the one real action stack rather
+  // than a shadow of it.
   async function listProjects({ includeArchived = false } = {}) {
     const snapshot = await getSnapshot();
     const created = readCreated().filter((p) => includeArchived || !p.archivedAt);
-    return [fixtureProject(snapshot), ...created];
+    return [fixtureProject(snapshot, readHist()), ...created];
   }
 
   async function createProject({

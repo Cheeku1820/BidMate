@@ -235,7 +235,7 @@ export function createSeedStore() {
   const review = createReviewMethods(deps);
   const scale = createScaleMethod(deps);
   const undoing = createUndoMethods(deps);
-  const projects = createSeedProjects({ getSnapshot: computeFixtureSnapshot });
+  const projects = createSeedProjects({ getSnapshot: computeFixtureSnapshot, readHist });
 
   return {
     me,

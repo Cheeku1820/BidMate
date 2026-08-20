@@ -252,3 +252,72 @@ def test_create_project_rejects_a_foreign_estimator(client, signed_in_user, db, 
     assert res.status_code == 404
     assert res.json()["detail"]["code"] == "estimator_not_found"
     assert db.scalars(select(Project).where(Project.name == "Oakview High School")).first() is None
+
+
+# --- "Updated" column: final-review fix 2 -----------------------------
+#
+# Project.updated_at only moves when the `projects` row itself is
+# UPDATEd (its `onupdate=func.now()`), and nothing in the review flow
+# ever writes that row -- approvals, edits, and every other mutation
+# write `items` and `actions` instead. Left alone, GET /api/projects'
+# "Updated" column (and its default sort) freezes at project-creation
+# time the moment review actually starts. list_projects() is expected to
+# report the later of the project row's own updated_at and its most
+# recent action's created_at, so the column reflects real activity.
+
+
+def test_projects_list_updated_at_reflects_latest_action_not_just_the_project_row(db, org, dana):
+    """A project whose row has not been touched since creation, but which
+    has since had review activity recorded in the append-only action log,
+    must report that activity's timestamp -- not the stale creation-time
+    value Project.updated_at is stuck at."""
+    from app.takeoff.models import Action
+    from app.takeoff.projects import list_projects
+
+    project = Project(org_id=org.id, name="Riverside Medical Center", revision_set_label="")
+    db.add(project)
+    db.flush()
+    stale_row_updated_at = project.updated_at
+
+    later = stale_row_updated_at + datetime.timedelta(hours=3)
+    db.add(Action(
+        project_id=project.id, kind="approve", actor_user_id=dana.id, label="Approved 20A duplex receptacle",
+        before={}, after={}, created_at=later,
+    ))
+    db.flush()
+
+    rows = list_projects(db, org.id)
+    row = next(r for r in rows if r.id == project.id)
+
+    assert row.updated_at == later
+    assert row.updated_at > stale_row_updated_at
+
+
+def test_projects_list_sorts_by_latest_activity_including_actions(db, org, dana):
+    """The default sort (most recently active project first) must follow
+    the same derived timestamp the column shows, not the project row's
+    own updated_at alone -- otherwise the column and the sort it drives
+    would disagree about what "most recent" means."""
+    from app.takeoff.models import Action
+    from app.takeoff.projects import list_projects
+
+    older_project = Project(org_id=org.id, name="Older bid, but active today", revision_set_label="")
+    newer_project = Project(org_id=org.id, name="Newer bid, untouched since creation", revision_set_label="")
+    db.add(older_project)
+    db.add(newer_project)
+    db.flush()
+    # Force a real ordering between the two rows' own updated_at, since
+    # both would otherwise share the same func.now() from this flush.
+    older_project.updated_at = newer_project.updated_at - datetime.timedelta(days=2)
+    db.flush()
+
+    db.add(Action(
+        project_id=older_project.id, kind="approve", actor_user_id=dana.id, label="Approved something",
+        before={}, after={}, created_at=newer_project.updated_at + datetime.timedelta(hours=1),
+    ))
+    db.flush()
+
+    rows = list_projects(db, org.id)
+    ids_in_order = [r.id for r in rows]
+
+    assert ids_in_order.index(older_project.id) < ids_in_order.index(newer_project.id)

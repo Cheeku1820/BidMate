@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.errors import DomainError
 from app.identity.models import User
-from app.takeoff.models import Item, Project, ReviewStatus
+from app.takeoff.models import Action, Item, Project, ReviewStatus
 from app.takeoff.totals import countable_items
 
 
@@ -78,6 +78,34 @@ def list_projects(
         .scalar_subquery()
     )
 
+    # Project.updated_at only advances when the `projects` row itself is
+    # UPDATEd, and nothing in the review flow touches that row -- an
+    # approval writes `items` and `actions`, not `projects`. Left as
+    # Project.updated_at alone, the "Updated" column (and this query's
+    # default sort) would freeze at creation time for the entire life of
+    # a project under active review, which is a fabricated-freshness
+    # claim on one side of the seam (final-review fix 2) to match the
+    # equally dishonest `Date.now()`-at-read-time the seed store used to
+    # make up on the other side.
+    #
+    # `actions` is append-only and already carries a timestamp on every
+    # mutation (ROADMAP.md: "the action log ... becomes ... the audit
+    # trail"), so the honest "last touched" moment is the later of the
+    # project row's own updated_at and its most recent action -- a
+    # correlated scalar subquery in the same shape as items_total etc.
+    # above, so this composes with the existing structure rather than
+    # adding a second kind of query to the function. Postgres's
+    # GREATEST() ignores NULL arguments (a project with no actions yet)
+    # and only returns NULL if every argument is NULL, so a brand-new
+    # project with zero actions still reports its own updated_at rather
+    # than NULL.
+    last_action_at = (
+        select(func.max(Action.created_at))
+        .where(Action.project_id == Project.id)
+        .scalar_subquery()
+    )
+    effective_updated_at = func.greatest(Project.updated_at, last_action_at).label("effective_updated_at")
+
     stmt = (
         select(
             Project,
@@ -86,16 +114,17 @@ def list_projects(
             items_approved.label("items_approved"),
             warnings_open.label("warnings_open"),
             missing_info.label("missing_info"),
+            effective_updated_at,
         )
         .outerjoin(User, User.id == Project.estimator_user_id)
         .where(Project.org_id == org_id)
-        .order_by(Project.updated_at.desc())
+        .order_by(effective_updated_at.desc())
     )
     if not include_archived:
         stmt = stmt.where(Project.archived_at.is_(None))
 
     rows = []
-    for project, estimator_name, total, approved, attention, missing in db.execute(stmt):
+    for project, estimator_name, total, approved, attention, missing, updated_at in db.execute(stmt):
         rows.append(
             ProjectRow(
                 id=project.id,
@@ -107,7 +136,7 @@ def list_projects(
                 stage=project.stage,
                 revision_set_label=project.revision_set_label,
                 archived_at=project.archived_at,
-                updated_at=project.updated_at,
+                updated_at=updated_at,
                 estimator_name=estimator_name,
                 items_total=total,
                 items_approved=approved,

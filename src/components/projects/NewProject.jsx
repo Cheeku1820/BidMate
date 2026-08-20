@@ -76,7 +76,14 @@ export default function NewProject({ store }) {
 
   return (
     <>
-      <AppTopBar title="New project" subtitle="Step 1 of 6 · Project details" />
+      {/* No subtitle here (final-review fix 3): a "Step 1 of 6" claim
+          described a six-step progress indicator this branch never
+          built. ProjectNav.jsx lists thirteen workspaces and
+          projectStage.js defines seven stage values -- a third,
+          invented count belongs in neither, and removing the claim
+          entirely is correct rather than reconciling it to a number
+          that would still disagree with the other two. */}
+      <AppTopBar title="New project" />
 
       <div className="page page-narrow">
         <h1 className="page-heading">New project</h1>

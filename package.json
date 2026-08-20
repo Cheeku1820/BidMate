@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:demo": "VITE_DATA_SOURCE= vite build --config vite.demo.config.js",
     "preview": "vite preview --port 4173",
     "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run"
   },
@@ -23,6 +24,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "jsdom": "^25.0.1",
     "vite": "^5.3.4",
+    "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^2.1.8"
   }
 }

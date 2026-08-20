@@ -10,7 +10,9 @@ This is screen F of a larger specification. It was built first because every oth
 
 ## Take a look
 
-**Fastest — no install.** Open [`demo/index.html`](demo/index.html) directly in a browser. It's a single self-contained file with everything inlined. Download the repo as a ZIP, double-click that file, done.
+**Fastest — no install.** Open [`demo/index.html`](demo/index.html) directly in a browser. It's a single self-contained file with everything inlined — JS, CSS, no separate requests, so it works straight off the filesystem. Download the repo as a ZIP, double-click that file, done.
+
+This file is a build output, produced by `npm run build:demo` (`vite.demo.config.js`, via [`vite-plugin-singlefile`](https://www.npmjs.com/package/vite-plugin-singlefile)) and committed so it's runnable without a build step. It always runs in seed mode against `localStorage` — there is no backend to reach from a `file://` page — and it reflects whatever was committed the last time someone ran `npm run build:demo`, which can lag behind the latest source. Regenerate it after a client change you want the demo to show.
 
 **Run the dev server.**
 

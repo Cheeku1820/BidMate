@@ -38,8 +38,16 @@ function applyItemPartials(items, entries) {
 
 const FIELD_LEVEL_KINDS = new Set(["approve", "reject", "unreject", "edit"]);
 
-export function createUndoMethods({ readItems, readSheets, readHist, storageWrite, bumpVersion, getSnapshot }) {
+export function createUndoMethods({ readItems, readSheets, readHist, storageWrite, bumpVersion, getSnapshot, isFixtureProjectActive }) {
   async function undo() {
+    // seed.js's getSnapshot() already refuses to serve the fixture's
+    // sheets/items under a different project's id (task-8 review
+    // finding 1b); this is the same rule applied to the shared
+    // items/sheets/hist keys these two mutations touch. A project that
+    // isn't the fixture has no history of its own to undo, so the
+    // honest answer is "nothing happened" — never popping the
+    // fixture's stack out from under it (final-review fix 1).
+    if (!isFixtureProjectActive()) return { performed: false };
     const hist = readHist();
     if (!hist.undo.length) return { performed: false };
     const a = hist.undo[hist.undo.length - 1];
@@ -72,6 +80,9 @@ export function createUndoMethods({ readItems, readSheets, readHist, storageWrit
   }
 
   async function redo() {
+    // Same rule as undo() above, and for the same reason: no fixture,
+    // no shared history to replay.
+    if (!isFixtureProjectActive()) return { performed: false };
     const hist = readHist();
     if (!hist.redo.length) return { performed: false };
     const a = hist.redo[hist.redo.length - 1];

@@ -170,6 +170,20 @@ export function createSeedStore() {
     activeProjectId = projectId;
   }
 
+  // Same test getSnapshot() already applies (line ~201) — the fixture is
+  // active by default (nothing has called useProject() yet) or once it
+  // has been named explicitly. Handed to seed-undo.js so undo()/redo()
+  // can refuse to touch the shared items/sheets/hist keys while a
+  // *different*, sheet-less project is open (final-review fix 1):
+  // those keys hold only the fixture project's history, and every other
+  // project id is honestly empty, so there is nothing of theirs to
+  // undo. Without this, a keystroke on an empty project pops the
+  // fixture's shared undo stack and can silently reverse an approval —
+  // the one thing this product cannot do by accident.
+  function isFixtureProjectActive() {
+    return !activeProjectId || activeProjectId === SEED_PROJECT_ID;
+  }
+
   // Unconditional: seed mode's one fixture project's real data,
   // regardless of which project is currently active. This is what
   // seed-projects.js's listProjects() calls (see its own comment) so the
@@ -216,7 +230,7 @@ export function createSeedStore() {
   // dependencies rather than those modules closing over this file's own
   // state — see seed-review.js / seed-scale.js / seed-undo.js's own
   // header comments for why each is its own file.
-  const deps = { readItems, readSheets, readHist, readVersion, bumpVersion, commitAction, storageWrite, identity, uid, getSnapshot };
+  const deps = { readItems, readSheets, readHist, readVersion, bumpVersion, commitAction, storageWrite, identity, uid, getSnapshot, isFixtureProjectActive };
 
   const review = createReviewMethods(deps);
   const scale = createScaleMethod(deps);

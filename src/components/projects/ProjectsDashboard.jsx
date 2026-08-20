@@ -26,9 +26,7 @@ import { AlertCircle, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectsFilters from "./ProjectsFilters.jsx";
 import { matchesFilter, reviewProgress, stageLabel } from "../../lib/projectStage.js";
-import { formatCalendarDate, formatTimestamp } from "../../lib/format.js";
-
-const NOT_SET = "Not set";
+import { formatCalendarDate, formatTimestamp, NOT_SET } from "../../lib/format.js";
 
 function compare(a, b, sort) {
   switch (sort) {

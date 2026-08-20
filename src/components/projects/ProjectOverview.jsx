@@ -25,7 +25,7 @@ import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectNav from "../shell/ProjectNav.jsx";
 import { reviewProgress, stageLabel } from "../../lib/projectStage.js";
-import { formatCalendarDate } from "../../lib/format.js";
+import { formatCalendarDate, NOT_SET } from "../../lib/format.js";
 
 export default function ProjectOverview({ store }) {
   const { projectId } = useParams();
@@ -141,15 +141,15 @@ export default function ProjectOverview({ store }) {
             <h2>Project details</h2>
             <dl className="detail-list">
               <dt>Customer</dt>
-              <dd>{project.customer || "Not set"}</dd>
+              <dd>{project.customer || NOT_SET}</dd>
               <dt>Location</dt>
-              <dd>{project.location || "Not set"}</dd>
+              <dd>{project.location || NOT_SET}</dd>
               <dt>Internal number</dt>
-              <dd className="tabular">{project.number || "Not set"}</dd>
+              <dd className="tabular">{project.number || NOT_SET}</dd>
               <dt>Bid due</dt>
               <dd className="tabular">{formatCalendarDate(project.bidDueDate)}</dd>
               <dt>Assigned estimator</dt>
-              <dd>{project.estimatorName || "Not assigned"}</dd>
+              <dd>{project.estimatorName || NOT_SET}</dd>
             </dl>
           </section>
 

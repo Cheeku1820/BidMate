@@ -11,7 +11,15 @@ export function initials(name) {
     .toUpperCase();
 }
 
-const NOT_SET = "Not set";
+// The one fallback string for an absent value across the projects
+// screens (final-review fix 5) -- ProjectsDashboard.jsx and
+// ProjectOverview.jsx previously each carried their own copy ("Not
+// set" here, a second local "Not set" in ProjectsDashboard.jsx, and
+// "Not assigned" for just the estimator field in ProjectOverview.jsx),
+// which is how the same absent-estimator fact ends up reading two
+// different ways depending which screen an estimator happens to be on.
+// Exported so both screens hold exactly one copy instead of three.
+export const NOT_SET = "Not set";
 
 /** `bidDueDate` is a calendar date with no time component
  *  ("2026-09-14") -- it has to read as the same date for every viewer

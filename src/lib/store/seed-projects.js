@@ -59,9 +59,19 @@ const FIXTURE_CREATED_AT = "2026-06-05T14:30:00.000Z";
  *  any review activity has happened, falling back to the fixture's own
  *  fixed "created" moment when it hasn't. */
 function effectiveUpdatedAt(hist) {
-  const lastAction = hist.undo[hist.undo.length - 1];
-  if (!lastAction) return FIXTURE_CREATED_AT;
-  return new Date(Math.max(Date.parse(FIXTURE_CREATED_AT), lastAction.at)).toISOString();
+  // Both stacks, not just `hist.undo`. Undo moves an entry from the undo
+  // stack to the redo stack, so reading only the undo stack's top made
+  // "Updated" travel backwards after an undo -- and back to the fixture's
+  // creation moment once everything was undone. The API side cannot do
+  // that: its log is append-only, so max(actions.created_at) only ever
+  // advances, and undoing there appends a compensating action rather than
+  // removing one. Taking the max across both stacks is what makes the two
+  // stores answer "when was this last touched" the same way.
+  const timestamps = [...hist.undo, ...hist.redo]
+    .map((action) => action.at)
+    .filter((at) => typeof at === "number");
+  if (timestamps.length === 0) return FIXTURE_CREATED_AT;
+  return new Date(Math.max(Date.parse(FIXTURE_CREATED_AT), ...timestamps)).toISOString();
 }
 
 /** The one fixture project, with its counts read off the live snapshot so

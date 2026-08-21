@@ -20,11 +20,21 @@
    from recorded activity" from "whatever time it is right now."
    ============================================================ */
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createSeedStore } from "./seed.js";
 import { SEED_PROJECT_ID } from "./seed-projects.js";
 
 describe("seed store fixture project updatedAt", () => {
+  // The seed store persists to localStorage, which outlives an individual
+  // test, so without this each case inherits the previous one's action
+  // stack. That is not merely untidy: it silently defeated the undo case
+  // below, which passed against the very bug it was written to catch
+  // because a prior test's action was still sitting on the undo stack
+  // carrying the same timestamp.
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("is stable across reads at different points in time when nothing happened in between", async () => {
     vi.useFakeTimers();
     try {
@@ -57,6 +67,35 @@ describe("seed store fixture project updatedAt", () => {
       const after = (await store.listProjects()).find((p) => p.id === SEED_PROJECT_ID);
 
       expect(after.updatedAt).toBe(new Date("2026-06-10T02:00:00.000Z").toISOString());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not travel backwards when the action is undone", async () => {
+    // The API's log is append-only, so max(actions.created_at) only ever
+    // advances and an undo there appends a compensating action. Reading
+    // only the undo stack made the seed side disagree: undo pops the
+    // entry onto the redo stack, so "Updated" jumped back to the
+    // fixture's creation moment -- a project that had plainly been worked
+    // on reporting that nothing had ever happened to it.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-06-10T00:00:00.000Z"));
+      const store = createSeedStore();
+      const snapshot = await store.getSnapshot();
+      const target = snapshot.items.find((i) => i.status === "ready" && !i.rejected);
+      expect(target).toBeTruthy();
+
+      vi.setSystemTime(new Date("2026-06-10T02:00:00.000Z"));
+      await store.approveItem(target.id, target.version);
+      const afterApprove = (await store.listProjects()).find((p) => p.id === SEED_PROJECT_ID);
+
+      vi.setSystemTime(new Date("2026-06-10T03:00:00.000Z"));
+      await store.undo();
+      const afterUndo = (await store.listProjects()).find((p) => p.id === SEED_PROJECT_ID);
+
+      expect(afterUndo.updatedAt).toBe(afterApprove.updatedAt);
     } finally {
       vi.useRealTimers();
     }

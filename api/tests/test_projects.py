@@ -321,3 +321,28 @@ def test_projects_list_sorts_by_latest_activity_including_actions(db, org, dana)
     ids_in_order = [r.id for r in rows]
 
     assert ids_in_order.index(older_project.id) < ids_in_order.index(newer_project.id)
+
+
+def test_created_project_records_who_created_it(client, signed_in_user, db):
+    """ROADMAP.md invariant 8 -- every mutation is attributable. Project
+    creation is the one mutation with no home in the action log, because
+    that log is project-scoped and a creation has no project to belong to
+    yet, so the attribution lives on the row instead."""
+    response = client.post(
+        "/api/projects", json={"name": "Oakview High School", "location": "Modesto, CA"}
+    )
+    assert response.status_code == 201, response.text
+
+    created = db.get(Project, uuid.UUID(response.json()["id"]))
+    assert created.created_by_user_id == signed_in_user.id
+
+
+def test_create_project_cannot_be_called_unattributed(db, org):
+    """`created_by_user_id` is keyword-only with no default, so forgetting
+    it is a TypeError at the call site rather than a silently anonymous
+    project. The invariant is enforced by the signature rather than by
+    whoever writes the next caller remembering it."""
+    from app.takeoff.projects import create_project
+
+    with pytest.raises(TypeError):
+        create_project(db, org.id, name="Oakview High School", location="Modesto, CA")

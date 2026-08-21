@@ -89,6 +89,14 @@ class Project(Base):
     stage: Mapped[str] = mapped_column(String(50), default="setup", server_default="setup")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # ROADMAP.md invariant 8 -- every mutation is attributable. The action
+    # log is project-scoped, so a project's own creation has no project to
+    # belong to; attribution lives on the row instead. Nullable because
+    # rows predating this column have an owner nobody can now recover, and
+    # an honest NULL beats an invented one.
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

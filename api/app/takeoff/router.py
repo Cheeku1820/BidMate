@@ -123,6 +123,7 @@ def post_project(
         customer=payload.customer,
         bid_due_date=payload.bid_due_date,
         estimator_user_id=payload.estimator_user_id,
+        created_by_user_id=user.id,
     )
     db.commit()
     row = project_row(db, user.org_id, project.id)

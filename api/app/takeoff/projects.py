@@ -173,6 +173,7 @@ def create_project(
     customer: str = "",
     bid_due_date: datetime.date | None = None,
     estimator_user_id: uuid.UUID | None = None,
+    created_by_user_id: uuid.UUID,
 ) -> Project:
     """Creates a project in the caller's org. Stage starts at 'setup'
     because no document has been uploaded yet -- spec §1's workspace order
@@ -187,7 +188,11 @@ def create_project(
     `list_projects()`'s `outerjoin(User, ...)` above, a cross-tenant
     identity leak. Checked here, inside the service function, rather than
     only in the router handler, so a future second caller of
-    `create_project` cannot skip it by construction."""
+    `create_project` cannot skip it by construction.
+
+    `created_by_user_id` is keyword-only and has no default, so a caller
+    cannot create an unattributed project by forgetting it -- ROADMAP.md
+    invariant 8 enforced by the signature rather than by vigilance."""
     if estimator_user_id is not None:
         estimator = db.get(User, estimator_user_id)
         if estimator is None or estimator.org_id != org_id:
@@ -201,6 +206,7 @@ def create_project(
         customer=customer,
         bid_due_date=bid_due_date,
         estimator_user_id=estimator_user_id,
+        created_by_user_id=created_by_user_id,
         stage="setup",
     )
     db.add(project)

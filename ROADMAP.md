@@ -12,6 +12,8 @@ It is organized as **three tracks** rather than a single ordered list, because t
 
 Sequencing across tracks is in [`BUILD-STAGES.md`](BUILD-STAGES.md). This document is the inventory; that one is the order.
 
+One further document sits alongside these: [`docs/electrical-estimating-product-roadmap.md`](docs/electrical-estimating-product-roadmap.md) carries the accuracy policy, the core information model, the validation matrix, and the pilot operating model — the parts of the problem this document does not cover. Where the two disagree about scope or sequencing, this one governs; its own header says so.
+
 ---
 
 ## Where we are

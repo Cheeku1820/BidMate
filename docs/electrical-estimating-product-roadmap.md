@@ -8,6 +8,16 @@
 
 **Product principle:** The system may automate interpretation, but it must never hide uncertainty or invent scope. Every quantity, labor hour, and cost must be traceable to its source and remain subject to estimator approval.
 
+---
+
+> **How this relates to [`ROADMAP.md`](../ROADMAP.md).** Two roadmaps in one repository drift, so it is worth stating which does what rather than leaving the next reader to guess.
+>
+> [`ROADMAP.md`](../ROADMAP.md) is the **governing inventory** of work between the prototype and a shippable product, and [`BUILD-STAGES.md`](../BUILD-STAGES.md) is the order that work happens in. Where the two documents disagree about scope, sequencing, or what is built, those govern.
+>
+> This document is kept for what it carries that they do not: the **accuracy policy** (§4), the **core information model** (§5), the **validation matrix** (§6), and the **pilot operating model** (§7). Nothing else states how accuracy gets measured or what a validated result has to satisfy, and that is the part worth preserving.
+>
+> Its §1–§3 overlap with `ROADMAP.md`'s tracks and predate several settled decisions — the five-agent engine boundaries, the conversation layer's additive constraint, and the direct-cost output boundary. Read those sections as historical context, not as current direction.
+
 ## 1. Product Outcome
 
 The finished platform converts construction documents into an estimator-reviewed electrical bid:

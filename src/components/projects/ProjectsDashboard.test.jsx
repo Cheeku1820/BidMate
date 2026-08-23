@@ -284,4 +284,53 @@ describe("ProjectsDashboard under StrictMode", () => {
     expect(await screen.findByText("Riverside Medical Center - Bldg C")).toBeTruthy();
     expect(screen.queryByText("Loading projects…")).toBeNull();
   });
+
+  /* The warnings column keeps *Missing information* and *Needs attention*
+     as two separately labelled rows. That is a binding rule, not a
+     layout preference: the two have different consequences — missing
+     information blocks completion with no override, needs-attention may
+     proceed after an explicit acknowledgment — so a single merged count
+     tells an estimator "8 warnings" when what they need to know is that
+     2 of them will stop the bid and 6 will not.
+
+     The brief for this screen originally specified one merged count; it
+     was split during implementation for exactly this reason. Nothing
+     covered the split until now, so merging them back would have left
+     the suite green. */
+  describe("the warnings column", () => {
+    it("reports the two statuses separately, each with its own count and label", async () => {
+      renderDashboard();
+      await screen.findByText("Riverside Medical Center - Bldg C");
+
+      expect(screen.getByText(/missing information/i)).toBeTruthy();
+      expect(screen.getByText(/needs attention/i)).toBeTruthy();
+
+      // Never a merged total. 2 + 6 must not appear as "8".
+      const cell = screen.getByText(/missing information/i).closest("td");
+      expect(within(cell).getByText("2")).toBeTruthy();
+      expect(within(cell).getByText("6")).toBeTruthy();
+      expect(within(cell).queryByText("8")).toBeNull();
+    });
+
+    it("pairs each count with an icon, so the status never rests on colour alone", async () => {
+      renderDashboard();
+      await screen.findByText("Riverside Medical Center - Bldg C");
+
+      const cell = screen.getByText(/missing information/i).closest("td");
+      // Hue is carried by a class, the icon is an svg, and the words are
+      // the third channel. All three have to be present.
+      const rows = cell.querySelectorAll(".warning-summary__row");
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row.querySelector("svg")).toBeTruthy();
+        expect(row.textContent).toMatch(/[a-z]/i);
+      }
+    });
+
+    it("says so plainly when a project has neither", async () => {
+      renderDashboard();
+      const row = (await screen.findByText("Oakview High School")).closest("tr");
+      expect(within(row).getByText("None")).toBeTruthy();
+    });
+  });
 });

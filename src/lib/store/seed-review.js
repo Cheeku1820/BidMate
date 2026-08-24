@@ -30,7 +30,7 @@
    actor lookup) on the server.
    ============================================================ */
 
-import { refusalToApprove, refusalToStaleVersion } from "../rules.js";
+import { refusalToApprove, refusalToStaleVersion, approvableInBulk } from "../rules.js";
 
 const ITEM_NO_LONGER_EXISTS = {
   code: "item_no_longer_exists",
@@ -74,7 +74,7 @@ function validateEdit(changes) {
   }
 }
 
-export function createReviewMethods({ readItems, readHist, commitAction, identity, uid, readVersion }) {
+export function createReviewMethods({ readItems, readHist, commitAction, identity, uid, readVersion, getSnapshot }) {
   function findItemOrThrow(id) {
     const items = readItems();
     const item = items.find((i) => i.id === id);
@@ -190,5 +190,75 @@ export function createReviewMethods({ readItems, readHist, commitAction, identit
     return { label: action.label, version: String(readVersion()), item: null };
   }
 
-  return { approveItem, rejectItem, unrejectItem, editItem, deleteItem };
+  /** Mirrors api/app/takeoff/bulk.py's bulk_approve(): approve every
+   *  Ready to review item named, and report every other one with a
+   *  reason rather than dropping it. The reasons matter -- an estimator
+   *  who selects forty rows and sees thirty-four approve needs to know
+   *  why the other six did not, and "nothing happened" is the answer
+   *  that sends them hunting.
+   *
+   *  Uses approvableInBulk() from rules.js rather than re-deriving the
+   *  predicate: CLAUDE.md names bulk approval as easy to break by
+   *  accident, and a second copy of "only Ready to review" is exactly
+   *  how it breaks.
+   *
+   *  A compound action, like setScale -- one hist entry covers every
+   *  item that moved, so undoing a forty-row approval is one undo, not
+   *  forty (DESIGN.md, "Undo semantics"). before/after.items are the
+   *  same {id, ...fields} shape setScale already records, so seed-
+   *  undo.js's applyItemPartials() reverses/reapplies this the same way
+   *  it does a scale confirmation, with no new merge logic. */
+  async function bulkApprove(itemIds) {
+    const ids = Array.isArray(itemIds) ? itemIds : [];
+    const items = readItems();
+    const byId = Object.fromEntries(items.map((i) => [i.id, i]));
+
+    const named = ids.map((id) => byId[id]).filter(Boolean);
+    const approvableIds = new Set(approvableInBulk(named).map((i) => i.id));
+
+    const skipped = [];
+    for (const id of ids) {
+      if (approvableIds.has(id)) continue;
+      const item = byId[id];
+      if (!item) {
+        skipped.push({ itemId: id, code: "item_no_longer_exists", message: "This item was deleted by another reviewer. Refresh the sheet to see its current items." });
+      } else if (item.rejected) {
+        skipped.push({ itemId: id, code: "rejected_item_cannot_be_approved", message: "This item was rejected, so it cannot be approved as-is. Restore it, then approve it." });
+      } else if (item.status === "approved") {
+        skipped.push({ itemId: id, code: "already_approved", message: "This item is already approved." });
+      } else if (item.status === "missing") {
+        skipped.push({ itemId: id, code: "missing_information_blocks_approval", message: "This item is missing information it needs, such as a scale or a legend entry. Resolve the warning on its sheet before approving it." });
+      } else if (item.status === "attention") {
+        skipped.push({ itemId: id, code: "needs_attention", message: "This item needs attention -- review it individually before approving." });
+      } else {
+        skipped.push({ itemId: id, code: "not_ready", message: "This item is not ready to review." });
+      }
+    }
+
+    const approved = [...approvableIds];
+    if (approved.length === 0) {
+      return { approved: [], skipped, snapshot: await getSnapshot() };
+    }
+
+    const actor = identity();
+    const itemsBefore = approved.map((id) => ({ id, status: byId[id].status, approvedBy: byId[id].approvedBy ?? null }));
+    const itemsAfter = approved.map((id) => ({ id, status: "approved", approvedBy: actor.name }));
+
+    const nextItems = items.map((i) =>
+      approvableIds.has(i.id) ? { ...i, status: "approved", approvedBy: actor.name, version: i.version + 1 } : i
+    );
+
+    const label = `Approved ${approved.length} ${approved.length === 1 ? "item" : "items"}`;
+    const action = {
+      id: uid("a"), kind: "bulk-approve",
+      before: { items: itemsBefore },
+      after: { items: itemsAfter },
+      by: actor.name, at: Date.now(), label,
+    };
+    commitAction(action, nextItems);
+
+    return { approved, skipped, snapshot: await getSnapshot() };
+  }
+
+  return { approveItem, rejectItem, unrejectItem, editItem, deleteItem, bulkApprove };
 }

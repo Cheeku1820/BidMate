@@ -142,6 +142,10 @@ function toWireProject(project) {
   };
 }
 
+function toWireSkipped(s) {
+  return { item_id: s.itemId, code: s.code, message: s.message };
+}
+
 function toWireSnapshot(snapshot) {
   return {
     version: snapshot.version,
@@ -238,6 +242,12 @@ export function installFakeApiBackend() {
       if (method === "POST" && scaleMatch) {
         const r = await seed.setScale(scaleMatch[1], body.value);
         return jsonResponse({ label: r.label, snapshot: toWireSnapshot(r.snapshot) });
+      }
+
+      const bulkApproveMatch = path.match(/^\/api\/projects\/([^/]+)\/items\/bulk-approve$/);
+      if (method === "POST" && bulkApproveMatch) {
+        const r = await seed.bulkApprove(body?.item_ids ?? []);
+        return jsonResponse({ approved: r.approved, skipped: r.skipped.map(toWireSkipped), snapshot: toWireSnapshot(r.snapshot) });
       }
 
       const undoMatch = path.match(/^\/api\/projects\/([^/]+)\/undo$/);

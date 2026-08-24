@@ -70,6 +70,12 @@ export function createUndoMethods({ readItems, readSheets, readHist, storageWrit
     } else if (a.kind === "scale") {
       sheets = sheets.map((s) => (s.id === a.sheetId ? { ...s, scale: a.before.scale } : s));
       items = applyItemPartials(items, a.before.items);
+    } else if (a.kind === "bulk-approve") {
+      // Same shape as the compound scale action: one entry, many items,
+      // one undo. DESIGN.md's rule that an estimator who regrets a
+      // compound action gets one undo rather than fourteen applies here
+      // exactly as it does to a scale confirmation.
+      items = applyItemPartials(items, a.before.items);
     }
 
     storageWrite("items", items);
@@ -96,6 +102,8 @@ export function createUndoMethods({ readItems, readSheets, readHist, storageWrit
       items = items.filter((i) => i.id !== a.itemId);
     } else if (a.kind === "scale") {
       sheets = sheets.map((s) => (s.id === a.sheetId ? { ...s, scale: a.after.scale } : s));
+      items = applyItemPartials(items, a.after.items);
+    } else if (a.kind === "bulk-approve") {
       items = applyItemPartials(items, a.after.items);
     }
 

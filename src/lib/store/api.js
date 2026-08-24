@@ -289,6 +289,26 @@ export function createApiStore() {
     return { performed: true, label: raw.label ?? null, snapshot };
   }
 
+  // A compound action like setScale: the response IS a complete,
+  // authoritative snapshot (BulkApproveOut.snapshot), so it repopulates
+  // the cache directly. `skipped[].item_id` becomes `itemId` here, the
+  // same snake_case -> camelCase boundary every other wire shape crosses
+  // in this file.
+  async function bulkApprove(itemIds) {
+    const pid = await ensureProjectId();
+    const raw = await request(`/api/projects/${pid}/items/bulk-approve`, {
+      method: "POST",
+      body: { item_ids: itemIds },
+    });
+    const snapshot = mapSnapshot(raw.snapshot);
+    cacheSnapshot(snapshot);
+    return {
+      approved: raw.approved ?? [],
+      skipped: (raw.skipped ?? []).map((s) => ({ itemId: s.item_id, code: s.code, message: s.message })),
+      snapshot,
+    };
+  }
+
   async function undo() {
     return undoOrRedo("undo");
   }
@@ -344,6 +364,7 @@ export function createApiStore() {
     editItem,
     deleteItem,
     setScale,
+    bulkApprove,
     undo,
     redo,
     listProjects,

@@ -15,7 +15,7 @@ import { installFakeApiBackend } from "./api.fakebackend.js";
 const METHODS = [
   "me", "getSnapshot", "subscribe", "setPresence",
   "approveItem", "rejectItem", "unrejectItem", "editItem",
-  "deleteItem", "setScale", "undo", "redo",
+  "deleteItem", "setScale", "undo", "redo", "bulkApprove",
   "listProjects", "createProject",
 ];
 
@@ -376,6 +376,85 @@ describe(label, () => {
       expect(released.status).toBe("ready");
       expect(released.warnings).toEqual([]);
     }
+  });
+
+  describe("bulkApprove", () => {
+    it("approves Ready to review items and reports the rest as skipped", async () => {
+      const snapshot = await store.getSnapshot();
+      const ready = snapshot.items.filter((i) => i.status === "ready" && !i.rejected);
+      const attention = snapshot.items.filter((i) => i.status === "attention" && !i.rejected);
+      expect(ready.length).toBeGreaterThan(0);
+      expect(attention.length).toBeGreaterThan(0);
+
+      const result = await store.bulkApprove([...ready.map((i) => i.id), ...attention.map((i) => i.id)]);
+
+      expect(result.approved.sort()).toEqual(ready.map((i) => i.id).sort());
+      // Every non-ready item comes back with a reason, not silently dropped
+      // -- the estimator has to learn why 6 of 40 did not approve.
+      expect(result.skipped.map((s) => s.itemId).sort()).toEqual(attention.map((i) => i.id).sort());
+      for (const skip of result.skipped) {
+        expect(typeof skip.code).toBe("string");
+        expect(skip.message).toMatch(/\S/);
+      }
+    });
+
+    it("never approves a Missing information item, even when named explicitly", async () => {
+      // CLAUDE.md names this as easy to break by accident. Missing
+      // information blocks approval with no override, and "the caller
+      // asked for it" is not an override.
+      const snapshot = await store.getSnapshot();
+      const missing = snapshot.items.filter((i) => i.status === "missing" && !i.rejected);
+      expect(missing.length).toBeGreaterThan(0);
+
+      const result = await store.bulkApprove(missing.map((i) => i.id));
+
+      expect(result.approved).toEqual([]);
+      expect(result.skipped).toHaveLength(missing.length);
+
+      const after = await store.getSnapshot();
+      for (const item of missing) {
+        expect(after.items.find((i) => i.id === item.id).status).toBe("missing");
+      }
+    });
+
+    it("returns a snapshot that already reflects the approvals", async () => {
+      const snapshot = await store.getSnapshot();
+      const ready = snapshot.items.filter((i) => i.status === "ready" && !i.rejected);
+
+      const result = await store.bulkApprove(ready.map((i) => i.id));
+
+      for (const id of result.approved) {
+        expect(result.snapshot.items.find((i) => i.id === id).status).toBe("approved");
+      }
+    });
+
+    it("does nothing and reports nothing on an empty list", async () => {
+      const before = await store.getSnapshot();
+      const result = await store.bulkApprove([]);
+      expect(result.approved).toEqual([]);
+      expect(result.skipped).toEqual([]);
+      const after = await store.getSnapshot();
+      expect(after.items.filter((i) => i.status === "approved").length).toBe(
+        before.items.filter((i) => i.status === "approved").length,
+      );
+    });
+
+    it("is undone as one action, not one per item", async () => {
+      // DESIGN.md: a compound action reverses as a unit. An estimator who
+      // approves forty rows and immediately regrets it gets one undo.
+      const snapshot = await store.getSnapshot();
+      const ready = snapshot.items.filter((i) => i.status === "ready" && !i.rejected);
+      expect(ready.length).toBeGreaterThan(1);
+
+      await store.bulkApprove(ready.map((i) => i.id));
+      const undone = await store.undo();
+      expect(undone.performed).toBe(true);
+
+      const after = await store.getSnapshot();
+      for (const item of ready) {
+        expect(after.items.find((i) => i.id === item.id).status).toBe("ready");
+      }
+    });
   });
 
   describe("projects", () => {

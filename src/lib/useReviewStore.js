@@ -194,6 +194,30 @@ export function useReviewStore(store, { onSignedOut } = {}) {
     [store, runMutation, showToast, handleSignedOut]
   );
 
+  // Also a compound action, like setScale: it returns a whole
+  // authoritative snapshot rather than one item, because many rows move
+  // at once. Unlike setScale, the result is handed back to the caller
+  // as well as applied -- screen G needs `skipped` to tell the
+  // estimator which of the rows they selected did not approve and why,
+  // the same way the shared contract test insists a caller can never
+  // read that from silence alone.
+  const bulkApprove = useCallback(
+    async (itemIds) => {
+      try {
+        const res = await runMutation(() => store.bulkApprove(itemIds));
+        setSnapshot(res.snapshot);
+        if (res.approved.length > 0) {
+          showToast(`Approved ${res.approved.length} ${res.approved.length === 1 ? "item" : "items"}`);
+        }
+        return res;
+      } catch (err) {
+        handleSignedOut(err);
+        throw err;
+      }
+    },
+    [store, runMutation, showToast, handleSignedOut]
+  );
+
   const undo = useCallback(async () => {
     try {
       const res = await runMutation(() => store.undo());
@@ -241,6 +265,7 @@ export function useReviewStore(store, { onSignedOut } = {}) {
     editItem,
     deleteItem,
     setScale,
+    bulkApprove,
     undo,
     redo,
   };

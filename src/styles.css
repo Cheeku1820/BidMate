@@ -1422,3 +1422,40 @@ button {
 .detail-list { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; margin: 0; font-size: 13.5px; }
 .detail-list dt { color: var(--ink-2); }
 .detail-list dd { margin: 0; }
+
+/* ---- Takeoff spreadsheet (spec §10) ---- */
+.takeoff-table-scroll { overflow-x: auto; }
+.takeoff-table th, .takeoff-table td { padding: 7px 10px; }
+.takeoff-table thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.takeoff-table tbody tr.is-selected { background: var(--blue-tint); }
+.takeoff-sort {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.takeoff-columns { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* Controls row layout -- not given verbatim by the plan's CSS block,
+   but needed to lay out search, status filters, and the columns
+   toggle on one line the same way .projects-filters already does for
+   the dashboard. Kept as its own class rather than reusing
+   .projects-filters, since that name is scoped to screen A. */
+.takeoff-controls {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.takeoff-columns-toggle { position: relative; }
+.takeoff-columns-toggle .takeoff-columns {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}

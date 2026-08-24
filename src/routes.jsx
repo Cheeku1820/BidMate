@@ -20,6 +20,7 @@ import NewProject from "./components/projects/NewProject.jsx";
 import ProjectOverview from "./components/projects/ProjectOverview.jsx";
 import ProjectWorkspaceLayout from "./components/project/ProjectWorkspaceLayout.jsx";
 import Workspace from "./components/Workspace.jsx";
+import TakeoffSpreadsheet from "./components/takeoff/TakeoffSpreadsheet.jsx";
 import NotFound from "./components/shell/NotFound.jsx";
 
 export function appRoutes({ store, me, onSignedOut }) {
@@ -34,6 +35,7 @@ export function appRoutes({ store, me, onSignedOut }) {
         element={<ProjectWorkspaceLayout store={store} me={me} onSignedOut={onSignedOut} />}
       >
         <Route path="takeoff" element={<Workspace />} />
+        <Route path="spreadsheet" element={<TakeoffSpreadsheet />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Route>

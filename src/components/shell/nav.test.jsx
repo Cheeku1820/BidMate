@@ -147,7 +147,9 @@ describe("ProjectNav", () => {
     );
 
     const disabled = disabledItems(nav);
-    expect(disabled).toHaveLength(11);
+    // 13 workspaces total, minus overview, blueprint takeoff, and now the
+    // takeoff spreadsheet (task-3-brief.md Step 8 flips its built flag).
+    expect(disabled).toHaveLength(10);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
   });

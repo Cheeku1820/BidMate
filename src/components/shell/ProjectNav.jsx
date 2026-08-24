@@ -31,7 +31,7 @@ const WORKSPACES = [
   { slug: "documents", label: "Documents", built: false },
   { slug: "notes", label: "Notes & assumptions", built: false },
   { slug: "takeoff", label: "Blueprint takeoff", built: true },
-  { slug: "spreadsheet", label: "Takeoff spreadsheet", built: false },
+  { slug: "spreadsheet", label: "Takeoff spreadsheet", built: true },
   { slug: "assemblies", label: "Assemblies", built: false },
   { slug: "labor", label: "Labor", built: false },
   { slug: "pricing", label: "Material pricing", built: false },

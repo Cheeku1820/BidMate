@@ -82,7 +82,11 @@ describe("TakeoffSpreadsheet", () => {
   it("sorts by a column when its header is activated", async () => {
     renderSheet();
     await userEvent.click(screen.getByRole("button", { name: /sort by item/i }));
-    const names = screen.getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell")[1].textContent);
+    // The item name lives in the row's <th scope="row"> (WCAG 2.2 AA),
+    // which carries role "rowheader" rather than "cell" -- read it
+    // there rather than by cell index, which the rowheader doesn't
+    // occupy a slot in.
+    const names = screen.getAllByRole("row").slice(1).map((r) => within(r).getByRole("rowheader").textContent);
     expect(names).toEqual([...names].sort());
   });
 

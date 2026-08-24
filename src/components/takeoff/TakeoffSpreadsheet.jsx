@@ -15,25 +15,16 @@
    this file. Adding it early would make that guard test start green
    for the wrong reason.
 
-   A known, documented deviation: the plan and the WCAG bullet both ask
-   for `<th scope="row">` on the item-name cell. Empirically, a
-   scope="row" <th> is exposed to the accessibility tree as role
-   "rowheader", not "cell" (verified against this project's own
-   testing-library + jsdom versions), and is therefore excluded from
-   `within(row).getAllByRole("cell")`. The "sorts by a column" test
-   below reads `getAllByRole("cell")[1]` expecting the *item name* --
-   which only lines up with the "status, name, ..." column order this
-   file uses if the name cell is a plain `<td>`. No reordering of
-   COLUMNS fixes this: excluding the rowheader never shifts the
-   remaining <td> indices, so whichever column follows "status" always
-   lands at index 1, and only "name" in that slot produces already-
-   sorted output for every sort. Overriding role="cell" on the <th>
-   would satisfy the test's literal DOM shape but strips exactly the
-   row-header semantics scope="row" exists to provide -- functionally
-   identical to a plain <td>, just with misleading markup. Given that
-   choice, this file uses a plain <td> for the name cell and flags the
-   conflict for a ruling (see task-3-report.md) rather than silently
-   picking a side.
+   The item-name cell is a <th scope="row">, not a <td> -- it names
+   which item the row describes, and a screen-reader user stepping
+   cell-to-cell needs that association read out with every other value
+   in the row (WCAG 2.2 AA). A scope="row" <th> is exposed to the
+   accessibility tree as role "rowheader", not "cell", so it is
+   excluded from `within(row).getAllByRole("cell")`; the ruling on
+   task-3-report.md's flagged conflict was to fix the test's
+   cell-locating line to read the rowheader directly rather than to
+   drop the semantic markup -- see TakeoffSpreadsheet.test.jsx's
+   "sorts by a column" test and the report's fix-round section.
    ============================================================ */
 
 import { useMemo, useState } from "react";
@@ -254,6 +245,19 @@ export default function TakeoffSpreadsheet() {
                                 <td key={column.key}>
                                   <Pill status={displayStatus(item)} />
                                 </td>
+                              );
+                            }
+                            // The item-name cell names which item the row
+                            // describes, so it is the row's header rather
+                            // than an ordinary data cell -- a screen-reader
+                            // user stepping cell-to-cell needs that
+                            // association read out with every other value
+                            // in the row (WCAG 2.2 AA).
+                            if (column.key === "name") {
+                              return (
+                                <th key={column.key} scope="row">
+                                  {column.render(item, renderCtx)}
+                                </th>
                               );
                             }
                             return (

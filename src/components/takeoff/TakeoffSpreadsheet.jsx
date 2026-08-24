@@ -10,10 +10,10 @@
    would give them two independently-polled ideas of what the data is.
 
    Row selection (click a row, highlight the selected one, scroll it
-   into view) is deliberately not wired here -- that is Task 4's slice,
-   with its own guard test asserting it doesn't exist yet on top of
-   this file. Adding it early would make that guard test start green
-   for the wrong reason.
+   into view) reads and writes the layout's shared selectedItemId /
+   selectItem() (Task 4) rather than owning a second selection state --
+   the blueprint marker and this row are the same one field moving, per
+   DESIGN.md's "Blueprint and table synchronization".
 
    The item-name cell is a <th scope="row">, not a <td> -- it names
    which item the row describes, and a screen-reader user stepping
@@ -27,7 +27,7 @@
    "sorts by a column" test and the report's fix-round section.
    ============================================================ */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import Pill, { displayStatus } from "../Pill.jsx";
 import { STATUS } from "../../lib/data.js";
@@ -57,13 +57,22 @@ const FILTER_SHORT_LABEL = { ready: "Ready", attention: "Attention", missing: "M
 const LOCKED_COLUMNS = new Set(["status", "name"]);
 
 export default function TakeoffSpreadsheet() {
-  const { snapshot, loading, loadError, refresh } = useWorkspaceContext();
+  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem } = useWorkspaceContext();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(null);
   const [sort, setSort] = useState({ key: null, dir: "asc" });
   const [visible, setVisible] = useState(() => new Set(DEFAULT_VISIBLE));
   const [columnsOpen, setColumnsOpen] = useState(false);
+
+  const selectedRowRef = useRef(null);
+  useEffect(() => {
+    // Selecting a marker on the canvas has to bring its row into view
+    // here, or the two views agree about the selection while showing the
+    // estimator different things. scrollIntoView is unimplemented in
+    // jsdom (undefined there), hence the optional call.
+    selectedRowRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [selectedItemId]);
 
   const sheetsById = useMemo(() => {
     const map = {};
@@ -237,37 +246,54 @@ export default function TakeoffSpreadsheet() {
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((item) => (
-                        <tr key={item.id}>
-                          {visibleColumns.map((column) => {
-                            if (column.key === "status") {
+                      {rows.map((item) => {
+                        const isSelected = item.id === selectedItemId;
+                        const selectThisRow = () => selectItem(item.id);
+                        return (
+                          <tr
+                            key={item.id}
+                            ref={isSelected ? selectedRowRef : null}
+                            tabIndex={0}
+                            aria-selected={isSelected}
+                            className={isSelected ? "is-selected" : undefined}
+                            onClick={selectThisRow}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                if (event.key === " ") event.preventDefault();
+                                selectThisRow();
+                              }
+                            }}
+                          >
+                            {visibleColumns.map((column) => {
+                              if (column.key === "status") {
+                                return (
+                                  <td key={column.key}>
+                                    <Pill status={displayStatus(item)} />
+                                  </td>
+                                );
+                              }
+                              // The item-name cell names which item the row
+                              // describes, so it is the row's header rather
+                              // than an ordinary data cell -- a screen-reader
+                              // user stepping cell-to-cell needs that
+                              // association read out with every other value
+                              // in the row (WCAG 2.2 AA).
+                              if (column.key === "name") {
+                                return (
+                                  <th key={column.key} scope="row">
+                                    {column.render(item, renderCtx)}
+                                  </th>
+                                );
+                              }
                               return (
-                                <td key={column.key}>
-                                  <Pill status={displayStatus(item)} />
+                                <td key={column.key} className={column.align === "right" ? "tabular" : undefined}>
+                                  {column.render(item, renderCtx)}
                                 </td>
                               );
-                            }
-                            // The item-name cell names which item the row
-                            // describes, so it is the row's header rather
-                            // than an ordinary data cell -- a screen-reader
-                            // user stepping cell-to-cell needs that
-                            // association read out with every other value
-                            // in the row (WCAG 2.2 AA).
-                            if (column.key === "name") {
-                              return (
-                                <th key={column.key} scope="row">
-                                  {column.render(item, renderCtx)}
-                                </th>
-                              );
-                            }
-                            return (
-                              <td key={column.key} className={column.align === "right" ? "tabular" : undefined}>
-                                {column.render(item, renderCtx)}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
+                            })}
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

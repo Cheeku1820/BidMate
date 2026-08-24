@@ -18,6 +18,7 @@ import AppShell from "./components/shell/AppShell.jsx";
 import ProjectsDashboard from "./components/projects/ProjectsDashboard.jsx";
 import NewProject from "./components/projects/NewProject.jsx";
 import ProjectOverview from "./components/projects/ProjectOverview.jsx";
+import ProjectWorkspaceLayout from "./components/project/ProjectWorkspaceLayout.jsx";
 import Workspace from "./components/Workspace.jsx";
 import NotFound from "./components/shell/NotFound.jsx";
 
@@ -29,9 +30,11 @@ export function appRoutes({ store, me, onSignedOut }) {
       <Route path="/projects/new" element={<NewProject store={store} />} />
       <Route path="/projects/:projectId" element={<ProjectOverview store={store} me={me} />} />
       <Route
-        path="/projects/:projectId/takeoff"
-        element={<Workspace store={store} me={me} onSignedOut={onSignedOut} />}
-      />
+        path="/projects/:projectId"
+        element={<ProjectWorkspaceLayout store={store} me={me} onSignedOut={onSignedOut} />}
+      >
+        <Route path="takeoff" element={<Workspace />} />
+      </Route>
       <Route path="*" element={<NotFound />} />
     </Route>
   );

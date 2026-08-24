@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
 import { SYSTEMS } from "../lib/data.js";
-import { useReviewStore } from "../lib/useReviewStore.js";
+import { useWorkspaceContext } from "./project/useWorkspaceContext.js";
 import TopBar from "./TopBar.jsx";
 import SheetsRail from "./SheetsRail.jsx";
 import CanvasPane, { canvasCmd } from "./CanvasPane.jsx";
@@ -10,51 +9,20 @@ import SummaryDrawer from "./SummaryDrawer.jsx";
 import FinishReviewModal from "./FinishReviewModal.jsx";
 import { ScaleModal, EvidenceModal, DeleteModal, HelpModal, DoneModal } from "./MiscModals.jsx";
 
-/** Route-level wrapper: reads :projectId and keys the real workspace by
- *  it. Keying on projectId, rather than letting WorkspaceForProject
- *  notice the param changed and patch itself up, is what makes a
- *  same-route project switch (no Task 7/8 screen links to one yet, but
- *  the route already permits it) behave exactly like a fresh mount:
- *  React tears the old WorkspaceForProject down and mounts a new one,
- *  so useReviewStore's snapshot state starts back at null — never the
- *  previous project's items rendered under the new project's id while
- *  the fetch is in flight, which a targeted "clear this one field"
- *  patch would have to re-derive by hand and could get wrong. This also
- *  means the ordering guarantee below (id set before first fetch) holds
- *  on every project switch, not only the very first one. */
-export default function Workspace({ store, me, onSignedOut }) {
-  const { projectId } = useParams();
-  return <WorkspaceForProject key={projectId} projectId={projectId} store={store} me={me} onSignedOut={onSignedOut} />;
-}
-
 /** The review workspace itself (spec §5, screen F) — everything between
- *  signing in and Finish review. Owns local UI state only (selection,
- *  filters, modals, the in-progress edit draft); every piece of review
- *  data comes from useReviewStore(store), which owns the store
- *  subscription, save state, and mutation wrappers. */
-function WorkspaceForProject({ store, me, onSignedOut, projectId }) {
-  // Sets the id every store method resolves against before this
-  // component's first snapshot fetch. This has to be a plain useEffect
-  // declared ahead of the useReviewStore(store, ...) call below rather
-  // than, say, a layout effect or a call during render: React runs a
-  // fiber's passive effects in the order the corresponding useEffect
-  // calls happened during render, and useReviewStore's own mount effect
-  // (the one that calls refresh()) is a hook registered *inside* that
-  // call — so declaring this one first is what guarantees
-  // store.useProject(projectId) has already run by the time that
-  // refresh() fires, rather than a race that happens to work today.
-  useEffect(() => {
-    store.useProject(projectId);
-  }, [store, projectId]);
-
+ *  signing in and Finish review. Owns local UI state only (filters,
+ *  modals, the in-progress edit draft); the store subscription and the
+ *  cross-view selection now live in ProjectWorkspaceLayout, shared with
+ *  every other view of the same project (the takeoff spreadsheet is the
+ *  next one), reached here through useWorkspaceContext(). */
+export default function Workspace() {
   const {
     snapshot, loading, loadError, saved, toast, dismissToast,
     itemError, clearItemError, setPresenceTarget, refresh,
     approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
-  } = useReviewStore(store, { onSignedOut });
+    me, sheetId, setSheetId, selectedItemId, selectItem,
+  } = useWorkspaceContext();
 
-  const [sheetId, setSheetId] = useState(null);
-  const [selId, setSelId] = useState(null);
   const [filter, setFilter] = useState("all");
   const [sheetQuery, setSheetQuery] = useState("");
   const [railOpen, setRailOpen] = useState(true);
@@ -71,23 +39,17 @@ function WorkspaceForProject({ store, me, onSignedOut, projectId }) {
   const sheets = snapshot?.sheets ?? [];
   const items = snapshot?.items ?? [];
   const sheet = sheets.find((s) => s.id === sheetId) ?? sheets[0] ?? null;
-  const sel = items.find((i) => i.id === selId) ?? null;
+  const sel = items.find((i) => i.id === selectedItemId) ?? null;
 
   useEffect(() => {
-    if (sheets.length && (!sheetId || !sheets.some((s) => s.id === sheetId))) setSheetId(sheets[0].id);
-  }, [sheets, sheetId]);
-
-  useEffect(() => {
-    setPresenceTarget(sheetId, selId);
-  }, [sheetId, selId, setPresenceTarget]);
+    setPresenceTarget(sheetId, selectedItemId);
+  }, [sheetId, selectedItemId, setPresenceTarget]);
 
   const others = snapshot?.presence ?? [];
   const remoteSelections = others.filter((p) => p.sheetId === sheetId && p.itemId).map((p) => ({ itemId: p.itemId, color: p.color, name: p.name }));
 
   function select(id) {
-    const it = items.find((i) => i.id === id);
-    if (it) setSheetId(it.sheetId);
-    setSelId(id);
+    selectItem(id);
     setEdit(null);
     clearItemError();
   }
@@ -95,7 +57,7 @@ function WorkspaceForProject({ store, me, onSignedOut, projectId }) {
   function step(dir) {
     const list = items.filter((i) => i.sheetId === sheetId);
     if (!list.length) return;
-    const i = list.findIndex((x) => x.id === selId);
+    const i = list.findIndex((x) => x.id === selectedItemId);
     select(list[i === -1 ? 0 : (i + dir + list.length) % list.length].id);
   }
 
@@ -123,7 +85,7 @@ function WorkspaceForProject({ store, me, onSignedOut, projectId }) {
   async function confirmDelete(item) {
     const res = await deleteItem(item.id, item.version);
     if (res) {
-      if (selId === item.id) setSelId(null);
+      if (selectedItemId === item.id) selectItem(null);
       setModal(null);
     }
   }
@@ -219,7 +181,7 @@ function WorkspaceForProject({ store, me, onSignedOut, projectId }) {
   }).filter((r) => r.total);
   const overall = counts.missing ? "missing" : counts.attention ? "attention" : counts.ready ? "ready" : "approved";
   const itemsOnSheet = items.filter((i) => i.sheetId === sheetId);
-  const stepIndex = itemsOnSheet.findIndex((i) => i.id === selId) + 1;
+  const stepIndex = itemsOnSheet.findIndex((i) => i.id === selectedItemId) + 1;
 
   return (
     <div className="app">
@@ -254,7 +216,7 @@ function WorkspaceForProject({ store, me, onSignedOut, projectId }) {
         <CanvasPane
           sheet={sheet}
           items={items}
-          selId={selId}
+          selId={selectedItemId}
           onSelect={select}
           layers={layers}
           onLayersChange={setLayers}

@@ -29,6 +29,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import Workspace from "./Workspace.jsx";
+import ProjectWorkspaceLayout from "./project/ProjectWorkspaceLayout.jsx";
 import { createSeedStore } from "../lib/store/seed.js";
 import { SEED_PROJECT_ID } from "../lib/store/seed-projects.js";
 
@@ -37,9 +38,11 @@ function renderWorkspaceAt(store, path) {
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route
-          path="/projects/:projectId/takeoff"
-          element={<Workspace store={store} me={{ id: "u1", name: "Dana Whitfield" }} onSignedOut={() => {}} />}
-        />
+          path="/projects/:projectId"
+          element={<ProjectWorkspaceLayout store={store} me={{ id: "u1", name: "Dana Whitfield" }} onSignedOut={() => {}} />}
+        >
+          <Route path="takeoff" element={<Workspace />} />
+        </Route>
       </Routes>
     </MemoryRouter>,
   );

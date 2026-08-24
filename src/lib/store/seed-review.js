@@ -216,21 +216,34 @@ export function createReviewMethods({ readItems, readHist, commitAction, identit
     const named = ids.map((id) => byId[id]).filter(Boolean);
     const approvableIds = new Set(approvableInBulk(named).map((i) => i.id));
 
+    // These `code` values deliberately mirror api/app/takeoff/bulk.py's
+    // skip-reason constants (not_in_project, rejected, already_approved,
+    // needs_attention, missing_information) so a consumer sees one
+    // vocabulary regardless of which store is behind it -- the same
+    // reason the single-item refusals above reuse rules.js's codes
+    // rather than inventing their own. The `message` text is this
+    // store's own, not bulk.py's terser _skip_message() output: the
+    // code is the stable identifier a caller keys logic on, the message
+    // is display text, and there is no requirement that the two stores'
+    // prose match.
     const skipped = [];
     for (const id of ids) {
       if (approvableIds.has(id)) continue;
       const item = byId[id];
       if (!item) {
-        skipped.push({ itemId: id, code: "item_no_longer_exists", message: "This item was deleted by another reviewer. Refresh the sheet to see its current items." });
+        skipped.push({ itemId: id, code: "not_in_project", message: "This item was deleted by another reviewer. Refresh the sheet to see its current items." });
       } else if (item.rejected) {
-        skipped.push({ itemId: id, code: "rejected_item_cannot_be_approved", message: "This item was rejected, so it cannot be approved as-is. Restore it, then approve it." });
+        skipped.push({ itemId: id, code: "rejected", message: "This item was rejected, so it cannot be approved as-is. Restore it, then approve it." });
       } else if (item.status === "approved") {
         skipped.push({ itemId: id, code: "already_approved", message: "This item is already approved." });
       } else if (item.status === "missing") {
-        skipped.push({ itemId: id, code: "missing_information_blocks_approval", message: "This item is missing information it needs, such as a scale or a legend entry. Resolve the warning on its sheet before approving it." });
+        skipped.push({ itemId: id, code: "missing_information", message: "This item is missing information it needs, such as a scale or a legend entry. Resolve the warning on its sheet before approving it." });
       } else if (item.status === "attention") {
         skipped.push({ itemId: id, code: "needs_attention", message: "This item needs attention -- review it individually before approving." });
       } else {
+        // No bulk.py equivalent -- the four-status enum makes this branch
+        // unreachable in practice, kept only as a defensive seed-only
+        // fallback rather than a silent drop if a fifth status ever exists.
         skipped.push({ itemId: id, code: "not_ready", message: "This item is not ready to review." });
       }
     }

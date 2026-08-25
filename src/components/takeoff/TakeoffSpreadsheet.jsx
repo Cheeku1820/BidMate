@@ -30,6 +30,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import Pill, { displayStatus } from "../Pill.jsx";
+import BulkApproveBar from "./BulkApproveBar.jsx";
 import { STATUS } from "../../lib/data.js";
 import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
@@ -57,13 +58,20 @@ const FILTER_SHORT_LABEL = { ready: "Ready", attention: "Attention", missing: "M
 const LOCKED_COLUMNS = new Set(["status", "name"]);
 
 export default function TakeoffSpreadsheet() {
-  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem } = useWorkspaceContext();
+  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove } = useWorkspaceContext();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(null);
   const [sort, setSort] = useState({ key: null, dir: "asc" });
   const [visible, setVisible] = useState(() => new Set(DEFAULT_VISIBLE));
   const [columnsOpen, setColumnsOpen] = useState(false);
+
+  // Multi-row selection for bulk approve (Task 5). Held here rather than
+  // on individual rows because the bulk bar needs the whole set at once,
+  // and by id rather than by item reference so it survives a re-render
+  // producing new item objects from the store snapshot.
+  const [checked, setChecked] = useState(() => new Set());
+  const [bulkResult, setBulkResult] = useState(null);
 
   const selectedRowRef = useRef(null);
   useEffect(() => {
@@ -115,6 +123,53 @@ export default function TakeoffSpreadsheet() {
 
     return result;
   }, [allItems, statusFilter, search, sort, renderCtx]);
+
+  // The bar needs the actual item objects, looked up from the full list
+  // rather than `rows` -- a checked item must keep counting toward the
+  // bar even if a later search or filter change scrolls its row out of
+  // view, the same way layer toggles never change what's counted
+  // (CLAUDE.md).
+  const checkedItems = useMemo(() => allItems.filter((item) => checked.has(item.id)), [allItems, checked]);
+
+  const allVisibleChecked = rows.length > 0 && rows.every((item) => checked.has(item.id));
+
+  const toggleChecked = (id) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    // Select-all operates on the currently *visible* rows only -- not
+    // snapshot.items. Filtering to Needs attention and hitting
+    // select-all must not silently include the rows the filter hides.
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (allVisibleChecked) {
+        for (const item of rows) next.delete(item.id);
+      } else {
+        for (const item of rows) next.add(item.id);
+      }
+      return next;
+    });
+  };
+
+  const handleBulkApprove = async (ids) => {
+    const result = await bulkApprove(ids);
+    setBulkResult(result);
+    // Clear the checked set after a successful approval -- the rows that
+    // could be approved are gone from the outstanding-work list, and the
+    // ones that couldn't stay exactly as checkable as before.
+    setChecked(new Set());
+  };
+
+  const clearChecked = () => {
+    setChecked(new Set());
+    setBulkResult(null);
+  };
 
   const toggleSort = (key) => {
     setSort((prev) => (prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
@@ -223,6 +278,13 @@ export default function TakeoffSpreadsheet() {
                 </div>
               </div>
 
+              <BulkApproveBar
+                checkedItems={checkedItems}
+                onApprove={handleBulkApprove}
+                onClear={clearChecked}
+                result={bulkResult}
+              />
+
               {rows.length === 0 ? (
                 <div className="empty-state">
                   <h2>No items match</h2>
@@ -236,6 +298,14 @@ export default function TakeoffSpreadsheet() {
                   <table className="data-table takeoff-table">
                     <thead>
                       <tr>
+                        <th scope="col" className="bulk-select-cell">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all visible"
+                            checked={allVisibleChecked}
+                            onChange={toggleSelectAll}
+                          />
+                        </th>
                         {visibleColumns.map((column) => (
                           <th key={column.key} scope="col">
                             <button type="button" className="takeoff-sort" onClick={() => toggleSort(column.key)}>
@@ -264,6 +334,19 @@ export default function TakeoffSpreadsheet() {
                               }
                             }}
                           >
+                            <td className="bulk-select-cell">
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${item.name}`}
+                                checked={checked.has(item.id)}
+                                // A checkbox click must not also fire the row's
+                                // onClick and change the shared single-selection
+                                // -- checking a box and selecting an item are two
+                                // different actions that happen to share a row.
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={() => toggleChecked(item.id)}
+                              />
+                            </td>
                             {visibleColumns.map((column) => {
                               if (column.key === "status") {
                                 return (

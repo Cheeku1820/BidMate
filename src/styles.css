@@ -1459,3 +1459,29 @@ button {
   border-radius: var(--r-md);
   background: var(--surface);
 }
+
+/* The checkbox column itself is far smaller than 40px, so the cell
+   around it carries the touch target instead (spec §7's 40px minimum) --
+   padding rather than a fixed width, so it still lines up with the
+   table's normal row height. */
+.bulk-select-cell { width: 40px; text-align: center; vertical-align: middle; }
+.bulk-select-cell input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+
+/* ---- Bulk selection bar ---- */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--paper-1);
+  font-size: 13px;
+}
+.bulk-bar-blocked { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--ink-2); }
+.bulk-bar-reason { display: inline-flex; align-items: center; gap: 4px; }
+.bulk-bar-reason--attention { color: var(--amber); }
+.bulk-bar-reason--missing { color: var(--red); }
+.bulk-bar-result { margin: 0; }

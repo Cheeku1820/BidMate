@@ -22,25 +22,6 @@ import { AlertCircle, AlertTriangle } from "lucide-react";
 import { approvableInBulk } from "../../lib/rules.js";
 import { STATUS } from "../../lib/data.js";
 
-/** Splits a two-word status label ("Needs attention") into its first word
- *  and the rest. Every row already carries this exact label on its own
- *  status Pill elsewhere on the page, so this chip's label has to render
- *  the identical text without becoming a second element that independently
- *  contains it: @testing-library's getByText matches on an element's own
- *  direct-child text, and it does so for every element in the tree, so a
- *  chip whose label sits in one unbroken text node duplicates the row's
- *  Pill and turns "find the reason" into "found two of them, which one?"
- *  Moving the second word into a nested span keeps the two halves apart at
- *  the direct-child level people never notice -- it reads and sounds
- *  exactly the same, spoken by a screen reader or seen on screen, as one
- *  phrase, and it doesn't touch the row's own Pill markup, which is what
- *  the rest of the product still keys its accessible name off. */
-function splitLabelWord(label) {
-  const spaceAt = label.indexOf(" ");
-  if (spaceAt === -1) return [label, ""];
-  return [label.slice(0, spaceAt), label.slice(spaceAt + 1)];
-}
-
 export default function BulkApproveBar({ checkedItems, onApprove, onClear, result }) {
   if (checkedItems.length === 0 && !result) return null;
 
@@ -85,21 +66,16 @@ export default function BulkApproveBar({ checkedItems, onApprove, onClear, resul
               <span className="tabular">
                 {blocked.length} of the {checkedItems.length} selected can't be approved here:
               </span>
-              {Object.entries(byStatus).map(([status, count]) => {
-                const label = STATUS[status]?.label ?? status;
-                const [firstWord, restOfLabel] = splitLabelWord(label);
-                return (
-                  <span key={status} className={`bulk-bar-reason bulk-bar-reason--${status}`}>
-                    {status === "missing" ? (
-                      <AlertCircle size={13} aria-hidden="true" />
-                    ) : (
-                      <AlertTriangle size={13} aria-hidden="true" />
-                    )}
-                    <span className="tabular">{count}</span> {firstWord}{" "}
-                    <span>{restOfLabel}</span>
-                  </span>
-                );
-              })}
+              {Object.entries(byStatus).map(([status, count]) => (
+                <span key={status} className={`bulk-bar-reason bulk-bar-reason--${status}`}>
+                  {status === "missing" ? (
+                    <AlertCircle size={13} aria-hidden="true" />
+                  ) : (
+                    <AlertTriangle size={13} aria-hidden="true" />
+                  )}
+                  <span className="tabular">{count}</span> {STATUS[status]?.label ?? status}
+                </span>
+              ))}
             </span>
           ) : null}
 

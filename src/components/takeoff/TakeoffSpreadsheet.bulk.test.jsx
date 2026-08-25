@@ -4,7 +4,7 @@
    client-side guard. The server enforces the same rule independently. */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import TakeoffSpreadsheet from "./TakeoffSpreadsheet.jsx";
@@ -75,9 +75,14 @@ describe("bulk approve", () => {
     await userEvent.click(checkboxFor("High bay"));
     await userEvent.click(checkboxFor("Conduit run"));
 
-    expect(screen.getByText(/2 of the 2 selected can't be approved/i)).toBeTruthy();
-    expect(screen.getByText(/needs attention/i)).toBeTruthy();
-    expect(screen.getByText(/missing information/i)).toBeTruthy();
+    // Scoped to the bulk bar: "Needs attention" and "Missing information"
+    // also appear on the two checked rows' own status Pills elsewhere on
+    // the page, so an unscoped query is ambiguous about *which* occurrence
+    // it means. The bar is its own labelled region -- query inside it.
+    const bar = screen.getByRole("region", { name: /selected items/i });
+    expect(within(bar).getByText(/2 of the 2 selected can't be approved/i)).toBeTruthy();
+    expect(within(bar).getByText(/needs attention/i)).toBeTruthy();
+    expect(within(bar).getByText(/missing information/i)).toBeTruthy();
   });
 
   it("disables the approve action when nothing checked can be approved", async () => {

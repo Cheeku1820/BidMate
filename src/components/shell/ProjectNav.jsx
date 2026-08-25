@@ -38,7 +38,7 @@ const WORKSPACES = [
   { slug: "estimate", label: "Estimate summary", built: false },
   { slug: "revisions", label: "Revisions", built: false },
   { slug: "final-review", label: "Final review", built: false },
-  { slug: "export", label: "Export", built: false },
+  { slug: "export", label: "Export", built: true },
   { slug: "settings", label: "Project settings", built: false },
 ];
 

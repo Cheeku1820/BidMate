@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { SYSTEMS } from "../lib/data.js";
+import { useNavigate } from "react-router-dom";
 import { useWorkspaceContext } from "./project/useWorkspaceContext.js";
 import SampleBanner from "./documents/SampleBanner.jsx";
 import TopBar from "./TopBar.jsx";
@@ -8,7 +9,7 @@ import CanvasPane, { canvasCmd } from "./CanvasPane.jsx";
 import ItemDetailPanel from "./ItemDetailPanel.jsx";
 import SummaryDrawer from "./SummaryDrawer.jsx";
 import FinishReviewModal from "./FinishReviewModal.jsx";
-import { ScaleModal, EvidenceModal, DeleteModal, HelpModal, DoneModal } from "./MiscModals.jsx";
+import { ScaleModal, EvidenceModal, DeleteModal, HelpModal } from "./MiscModals.jsx";
 
 /** The review workspace itself (spec §5, screen F) — everything between
  *  signing in and Finish review. Owns local UI state only (filters,
@@ -21,8 +22,9 @@ export default function Workspace() {
     snapshot, loading, loadError, saved, toast, dismissToast,
     itemError, clearItemError, setPresenceTarget, refresh,
     approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
-    me, sheetId, setSheetId, selectedItemId, selectItem, project,
+    me, sheetId, setSheetId, selectedItemId, selectItem, project, projectId,
   } = useWorkspaceContext();
+  const navigate = useNavigate();
 
   const [filter, setFilter] = useState("all");
   const [sheetQuery, setSheetQuery] = useState("");
@@ -284,10 +286,15 @@ export default function Workspace() {
           onAckChange={setAck}
           onGoToItem={(item) => { setModal(null); select(item.id); }}
           onClose={() => setModal(null)}
-          onComplete={() => setModal({ kind: "done" })}
+          onComplete={() => {
+            // Finishing review leads to the export preview (spec §11
+            // path 5: resolve/acknowledge -> preview approved totals ->
+            // export), not a terminal confirmation dialog.
+            setModal(null);
+            navigate(`/projects/${projectId}/export`);
+          }}
         />
       )}
-      {modal?.kind === "done" && <DoneModal approvedCount={counts.approved} approvedUnits={totals.approvedUnits} onClose={() => setModal(null)} />}
     </div>
   );
 }

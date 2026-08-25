@@ -23,6 +23,7 @@ import ProcessingStatus from "./components/documents/ProcessingStatus.jsx";
 import ProjectWorkspaceLayout from "./components/project/ProjectWorkspaceLayout.jsx";
 import Workspace from "./components/Workspace.jsx";
 import TakeoffSpreadsheet from "./components/takeoff/TakeoffSpreadsheet.jsx";
+import ExportPreview from "./components/export/ExportPreview.jsx";
 import NotFound from "./components/shell/NotFound.jsx";
 
 export function appRoutes({ store, me, onSignedOut }) {
@@ -40,6 +41,7 @@ export function appRoutes({ store, me, onSignedOut }) {
       >
         <Route path="takeoff" element={<Workspace />} />
         <Route path="spreadsheet" element={<TakeoffSpreadsheet />} />
+        <Route path="export" element={<ExportPreview />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Route>

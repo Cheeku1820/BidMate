@@ -47,7 +47,7 @@ afterEach(() => vi.useRealTimers());
 describe("UploadDocuments", () => {
   it("settles a clean PDF to Uploaded and only then enables Start takeoff", () => {
     renderUpload();
-    const start = screen.getAllByRole("button", { name: /start takeoff/i })[0];
+    const start = screen.getAllByRole("button", { name: /review detected drawings/i })[0];
     expect(start).toBeDisabled();
 
     drop([pdf("E-sheets.pdf")]);
@@ -56,7 +56,7 @@ describe("UploadDocuments", () => {
 
     advance(800);
     expect(screen.getByText(/^uploaded$/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /start takeoff/i })[0]).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeEnabled();
   });
 
   it("flags a non-PDF as unsupported and never counts it toward starting", () => {
@@ -64,7 +64,7 @@ describe("UploadDocuments", () => {
     drop([new File(["x"], "notes.txt", { type: "text/plain" })]);
     advance(800);
     expect(screen.getByText(/not a pdf/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /start takeoff/i })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeDisabled();
   });
 
   it("flags a second identical file as a duplicate", () => {
@@ -80,7 +80,7 @@ describe("UploadDocuments", () => {
     drop([pdf("E1-protected.pdf")]);
     advance(800);
     expect(screen.getByText(/password protected/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /start takeoff/i })[0]).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeDisabled();
   });
 
   it("removes a file from the list", () => {

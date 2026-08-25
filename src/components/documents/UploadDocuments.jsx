@@ -98,9 +98,9 @@ export default function UploadDocuments() {
 
   const readyCount = files.filter((f) => f.status === "ready").length;
 
-  const startTakeoff = () => {
+  const reviewDetected = () => {
     if (readyCount === 0) return;
-    navigate(`/projects/${projectId}/processing`);
+    navigate(`/projects/${projectId}/documents/confirm`);
   };
 
   return (
@@ -108,8 +108,8 @@ export default function UploadDocuments() {
       <AppTopBar
         title="Documents"
         primaryAction={
-          <button type="button" className="btn btn--primary" disabled={readyCount === 0} onClick={startTakeoff}>
-            Start takeoff
+          <button type="button" className="btn btn--primary" disabled={readyCount === 0} onClick={reviewDetected}>
+            Review detected drawings
           </button>
         }
       />
@@ -209,8 +209,8 @@ export default function UploadDocuments() {
         )}
 
         <div className="form-actions">
-          <button type="button" className="btn btn--primary" disabled={readyCount === 0} onClick={startTakeoff}>
-            Start takeoff
+          <button type="button" className="btn btn--primary" disabled={readyCount === 0} onClick={reviewDetected}>
+            Review detected drawings
           </button>
           <Link className="btn" to={`/projects/${projectId}`}>
             Save and exit

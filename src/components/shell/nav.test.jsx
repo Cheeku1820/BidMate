@@ -71,10 +71,15 @@ describe("CompanyNav", () => {
   it("gives unbuilt destinations a name that survives, and keeps them unreachable", () => {
     renderCompanyNav();
     const nav = screen.getByRole("navigation", { name: /main/i });
+    // Projects, Accuracy, and Company settings are built now; the rest
+    // stay visible-but-disabled so the product's shape stays legible.
+    expect(within(nav).getByRole("link", { name: /accuracy/i })).toHaveAttribute("href", "/accuracy");
+    expect(within(nav).getByRole("link", { name: /company settings/i })).toHaveAttribute("href", "/settings");
+
     const disabled = disabledItems(nav);
 
-    // Five of six: only Projects is built.
-    expect(disabled).toHaveLength(5);
+    // Three of six remain unbuilt: Company library, Integrations, Help.
+    expect(disabled).toHaveLength(3);
 
     for (const item of disabled) {
       // A bare span with aria-label announces as nothing; role="link" is
@@ -99,8 +104,8 @@ describe("CompanyNav", () => {
     const before = disabledItems(nav).map((el) => el.getAttribute("aria-label"));
     await userEvent.click(screen.getByRole("button", { name: /collapse navigation/i }));
 
-    // Visible label text is gone...
-    expect(within(nav).queryByText("Accuracy")).toBeNull();
+    // Visible label text is gone... (Integrations is a still-disabled one)
+    expect(within(nav).queryByText("Integrations")).toBeNull();
     // ...but the accessible names are unchanged.
     expect(disabledItems(nav).map((el) => el.getAttribute("aria-label"))).toEqual(before);
     expect(screen.getByRole("link", { name: /accuracy/i })).toBeTruthy();
@@ -150,9 +155,10 @@ describe("ProjectNav", () => {
     expect(within(nav).getByRole("link", { name: /^export/i })).toHaveAttribute("href", "/projects/p1/export");
 
     const disabled = disabledItems(nav);
-    // 13 workspaces total, minus the five now built: overview, blueprint
-    // takeoff, takeoff spreadsheet, documents (intake), and export.
-    expect(disabled).toHaveLength(8);
+    // 13 workspaces total, minus the six now built: overview, blueprint
+    // takeoff, takeoff spreadsheet, documents (intake), export, and
+    // project settings.
+    expect(disabled).toHaveLength(7);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
   });

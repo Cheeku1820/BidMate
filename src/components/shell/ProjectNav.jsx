@@ -39,7 +39,7 @@ const WORKSPACES = [
   { slug: "revisions", label: "Revisions", built: false },
   { slug: "final-review", label: "Final review", built: false },
   { slug: "export", label: "Export", built: true },
-  { slug: "settings", label: "Project settings", built: false },
+  { slug: "settings", label: "Project settings", built: true },
 ];
 
 export default function ProjectNav({ projectId }) {

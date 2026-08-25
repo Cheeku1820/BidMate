@@ -19,11 +19,15 @@ import ProjectsDashboard from "./components/projects/ProjectsDashboard.jsx";
 import NewProject from "./components/projects/NewProject.jsx";
 import ProjectOverview from "./components/projects/ProjectOverview.jsx";
 import UploadDocuments from "./components/documents/UploadDocuments.jsx";
+import ConfirmDrawings from "./components/documents/ConfirmDrawings.jsx";
 import ProcessingStatus from "./components/documents/ProcessingStatus.jsx";
 import ProjectWorkspaceLayout from "./components/project/ProjectWorkspaceLayout.jsx";
 import Workspace from "./components/Workspace.jsx";
 import TakeoffSpreadsheet from "./components/takeoff/TakeoffSpreadsheet.jsx";
 import ExportPreview from "./components/export/ExportPreview.jsx";
+import CompanySettings from "./components/settings/CompanySettings.jsx";
+import ProjectSettings from "./components/settings/ProjectSettings.jsx";
+import Accuracy from "./components/accuracy/Accuracy.jsx";
 import NotFound from "./components/shell/NotFound.jsx";
 
 export function appRoutes({ store, me, onSignedOut }) {
@@ -31,9 +35,13 @@ export function appRoutes({ store, me, onSignedOut }) {
     <Route element={<AppShell />}>
       <Route index element={<Navigate to="/projects" replace />} />
       <Route path="/projects" element={<ProjectsDashboard store={store} me={me} onSignedOut={onSignedOut} />} />
+      <Route path="/accuracy" element={<Accuracy />} />
+      <Route path="/settings" element={<CompanySettings />} />
       <Route path="/projects/new" element={<NewProject store={store} />} />
       <Route path="/projects/:projectId" element={<ProjectOverview store={store} me={me} />} />
+      <Route path="/projects/:projectId/settings" element={<ProjectSettings store={store} />} />
       <Route path="/projects/:projectId/documents" element={<UploadDocuments />} />
+      <Route path="/projects/:projectId/documents/confirm" element={<ConfirmDrawings />} />
       <Route path="/projects/:projectId/processing" element={<ProcessingStatus store={store} />} />
       <Route
         path="/projects/:projectId"

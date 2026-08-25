@@ -32,8 +32,22 @@ import AppTopBar from "../shell/AppTopBar.jsx";
 import Pill, { displayStatus } from "../Pill.jsx";
 import BulkApproveBar from "./BulkApproveBar.jsx";
 import { STATUS } from "../../lib/data.js";
+import { timeOf } from "../../lib/format.js";
 import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
+
+/* Same three-state save copy the blueprint's TopBar renders
+   (TopBar.jsx), read off the same `saved` object from the one shared
+   store subscription -- a bulk approve here is a mutation like any
+   other, so this screen owes the estimator the same "did it save"
+   signal every other screen shows (DESIGN.md, "Autosave and save
+   status"). */
+function saveStateText(saved) {
+  if (!saved) return null;
+  if (saved.state === "saving") return "Saving…";
+  if (saved.state === "error") return "Couldn't save — retrying";
+  return "Saved " + timeOf(saved.at);
+}
 
 /* The four review labels, in the order CLAUDE.md's status table lists
    them. `rejected` is a boolean flag folded into display by
@@ -58,7 +72,8 @@ const FILTER_SHORT_LABEL = { ready: "Ready", attention: "Attention", missing: "M
 const LOCKED_COLUMNS = new Set(["status", "name"]);
 
 export default function TakeoffSpreadsheet() {
-  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove } = useWorkspaceContext();
+  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove, saved, toast, dismissToast, undo } =
+    useWorkspaceContext();
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(null);
@@ -189,7 +204,7 @@ export default function TakeoffSpreadsheet() {
 
   return (
     <>
-      <AppTopBar title="Takeoff" />
+      <AppTopBar title="Takeoff" saveState={saveStateText(saved)} />
 
       <div className="page">
         <h1 className="page-heading">Takeoff spreadsheet</h1>
@@ -385,6 +400,28 @@ export default function TakeoffSpreadsheet() {
           )
         ) : null}
       </div>
+
+      {/* The same undoable toast the blueprint shows after every action
+          (Workspace.jsx). bulkApprove already calls showToast on the
+          shared store; this is the on-screen surface for it on this
+          view, so an estimator who approves from the table gets the
+          five-second Undo they get everywhere else -- undo pulls from
+          the same shared stack, reversing the whole bulk approve as one
+          action (DESIGN.md, "Undo semantics"). */}
+      {toast ? (
+        <div className="toast" role="status">
+          {toast.text}
+          <button
+            type="button"
+            onClick={() => {
+              undo();
+              dismissToast();
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

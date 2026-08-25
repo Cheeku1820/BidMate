@@ -18,3 +18,50 @@ import { cleanup } from "@testing-library/react";
 afterEach(() => {
   cleanup();
 });
+
+// Node 25 ships an experimental global Web Storage that shadows jsdom's
+// localStorage and is missing the standard mutators (clear/key/length),
+// so every test that relies on `localStorage.clear()` for isolation
+// throws "localStorage.clear is not a function" under this runtime --
+// the seed store's whole contract suite among them. Install a complete
+// in-memory Storage whenever the host's localStorage is absent or
+// incomplete, so the suite is deterministic no matter which runtime it
+// runs on. Production is unaffected: real browsers provide a full
+// Storage, and local-transport.js's probe (setItem/removeItem) captures
+// whichever object is live here at module load, which now always has
+// the full API. Anchored to globalThis and window as the same instance
+// so a test clearing one clears both.
+class MemoryStorage {
+  #map = new Map();
+  get length() {
+    return this.#map.size;
+  }
+  key(i) {
+    return Array.from(this.#map.keys())[i] ?? null;
+  }
+  getItem(k) {
+    const key = String(k);
+    return this.#map.has(key) ? this.#map.get(key) : null;
+  }
+  setItem(k, v) {
+    this.#map.set(String(k), String(v));
+  }
+  removeItem(k) {
+    this.#map.delete(String(k));
+  }
+  clear() {
+    this.#map.clear();
+  }
+}
+
+if (typeof globalThis.localStorage === "undefined" || typeof globalThis.localStorage.clear !== "function") {
+  const storage = new MemoryStorage();
+  for (const target of [globalThis, typeof window !== "undefined" ? window : null]) {
+    if (!target) continue;
+    try {
+      Object.defineProperty(target, "localStorage", { value: storage, configurable: true, writable: true });
+    } catch {
+      target.localStorage = storage;
+    }
+  }
+}

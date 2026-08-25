@@ -156,13 +156,13 @@ export function createApiStore() {
   }
 
   // Sets the id the rest of this store's methods resolve against.
-  // Synchronous and side-effect-only on purpose: Workspace.jsx calls
-  // this from a useEffect keyed on useParams().projectId, and that
+  // Synchronous and side-effect-only on purpose: ProjectWorkspaceLayout
+  // calls this from a useEffect keyed on useParams().projectId, and that
   // effect has to run — and this assignment has to land — before the
   // same render's data-fetching effect in useReviewStore.js fires its
   // first getSnapshot(). Both effects are declared in the same
   // component; effects run in declaration order, so calling
-  // store.useProject(id) ahead of useReviewStore(store) in Workspace's
+  // store.useProject(id) ahead of useReviewStore(store) in the layout's
   // body is what keeps this from racing the first fetch, not anything
   // async here.
   function useProject(id) {

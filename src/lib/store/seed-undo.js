@@ -38,16 +38,16 @@ function applyItemPartials(items, entries) {
 
 const FIELD_LEVEL_KINDS = new Set(["approve", "reject", "unreject", "edit"]);
 
-export function createUndoMethods({ readItems, readSheets, readHist, storageWrite, bumpVersion, getSnapshot, isFixtureProjectActive }) {
+export function createUndoMethods({ readItems, readSheets, readHist, storageWrite, scopedKey, bumpVersion, getSnapshot }) {
   async function undo() {
-    // seed.js's getSnapshot() already refuses to serve the fixture's
-    // sheets/items under a different project's id (task-8 review
-    // finding 1b); this is the same rule applied to the shared
-    // items/sheets/hist keys these two mutations touch. A project that
-    // isn't the fixture has no history of its own to undo, so the
-    // honest answer is "nothing happened" — never popping the
-    // fixture's stack out from under it (final-review fix 1).
-    if (!isFixtureProjectActive()) return { performed: false };
+    // readHist/readItems/readSheets and scopedKey are all active-project
+    // scoped (seed.js), so undo operates on whichever project is open:
+    // the fixture's own stack, a sampled demo project's own stack, or --
+    // for a created project with no history at all -- an empty stack that
+    // yields "nothing happened" without ever touching another project's
+    // keys. That scoping is what makes reversing a colleague's approval
+    // by accident impossible across projects, the rule final-review fix 1
+    // first enforced with a coarser is-this-the-fixture guard.
     const hist = readHist();
     if (!hist.undo.length) return { performed: false };
     const a = hist.undo[hist.undo.length - 1];
@@ -78,17 +78,16 @@ export function createUndoMethods({ readItems, readSheets, readHist, storageWrit
       items = applyItemPartials(items, a.before.items);
     }
 
-    storageWrite("items", items);
-    storageWrite("sheets", sheets);
-    storageWrite("hist", { undo: hist.undo.slice(0, -1), redo: [...hist.redo, a] });
+    storageWrite(scopedKey("items"), items);
+    storageWrite(scopedKey("sheets"), sheets);
+    storageWrite(scopedKey("hist"), { undo: hist.undo.slice(0, -1), redo: [...hist.redo, a] });
     bumpVersion();
     return { performed: true, label: `Undid: ${a.label}`, snapshot: await getSnapshot() };
   }
 
   async function redo() {
-    // Same rule as undo() above, and for the same reason: no fixture,
-    // no shared history to replay.
-    if (!isFixtureProjectActive()) return { performed: false };
+    // Same active-project scoping as undo() above: replays the open
+    // project's own history and no one else's.
     const hist = readHist();
     if (!hist.redo.length) return { performed: false };
     const a = hist.redo[hist.redo.length - 1];
@@ -107,9 +106,9 @@ export function createUndoMethods({ readItems, readSheets, readHist, storageWrit
       items = applyItemPartials(items, a.after.items);
     }
 
-    storageWrite("items", items);
-    storageWrite("sheets", sheets);
-    storageWrite("hist", { undo: [...hist.undo, a], redo: hist.redo.slice(0, -1) });
+    storageWrite(scopedKey("items"), items);
+    storageWrite(scopedKey("sheets"), sheets);
+    storageWrite(scopedKey("hist"), { undo: [...hist.undo, a], redo: hist.redo.slice(0, -1) });
     bumpVersion();
     return { performed: true, label: `Redid: ${a.label}`, snapshot: await getSnapshot() };
   }

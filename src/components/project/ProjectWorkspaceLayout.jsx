@@ -50,6 +50,27 @@ function LayoutForProject({ store, me, onSignedOut, projectId }) {
 
   const review = useReviewStore(store, { onSignedOut });
 
+  // The project row, loaded once, so the workspace knows the project's
+  // name and whether it carries a sample takeoff (attachSampleTakeoff) --
+  // the latter drives the "sample data" banner. Defensive: some callers
+  // (and every unit test with a minimal store mock) have no
+  // listProjects, in which case there is simply no project row and no
+  // banner, which is the correct default.
+  const [project, setProject] = useState(null);
+  useEffect(() => {
+    if (typeof store.listProjects !== "function") return undefined;
+    let alive = true;
+    store
+      .listProjects({ includeArchived: true })
+      .then((rows) => {
+        if (alive) setProject(rows.find((p) => p.id === projectId) ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [store, projectId]);
+
   const [sheetId, setSheetId] = useState(null);
   const [selectedItemId, setSelectedItemId] = useState(null);
 
@@ -91,6 +112,7 @@ function LayoutForProject({ store, me, onSignedOut, projectId }) {
       context={{
         ...review,
         projectId,
+        project,
         me,
         sheetId,
         setSheetId,

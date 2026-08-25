@@ -28,7 +28,7 @@ import { NavLink } from "react-router-dom";
 
 const WORKSPACES = [
   { slug: "", label: "Overview", built: true },
-  { slug: "documents", label: "Documents", built: false },
+  { slug: "documents", label: "Documents", built: true },
   { slug: "notes", label: "Notes & assumptions", built: false },
   { slug: "takeoff", label: "Blueprint takeoff", built: true },
   { slug: "spreadsheet", label: "Takeoff spreadsheet", built: true },

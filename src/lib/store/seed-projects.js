@@ -58,7 +58,7 @@ const FIXTURE_CREATED_AT = "2026-06-05T14:30:00.000Z";
  *  seed-scale.js -- never recomputed later) is the honest answer once
  *  any review activity has happened, falling back to the fixture's own
  *  fixed "created" moment when it hasn't. */
-function effectiveUpdatedAt(hist) {
+function effectiveUpdatedAt(hist, floorIso = FIXTURE_CREATED_AT) {
   // Both stacks, not just `hist.undo`. Undo moves an entry from the undo
   // stack to the redo stack, so reading only the undo stack's top made
   // "Updated" travel backwards after an undo -- and back to the fixture's
@@ -70,8 +70,8 @@ function effectiveUpdatedAt(hist) {
   const timestamps = [...hist.undo, ...hist.redo]
     .map((action) => action.at)
     .filter((at) => typeof at === "number");
-  if (timestamps.length === 0) return FIXTURE_CREATED_AT;
-  return new Date(Math.max(Date.parse(FIXTURE_CREATED_AT), ...timestamps)).toISOString();
+  if (timestamps.length === 0) return floorIso;
+  return new Date(Math.max(Date.parse(floorIso), ...timestamps)).toISOString();
 }
 
 /** The one fixture project, with its counts read off the live snapshot so
@@ -103,7 +103,31 @@ function fixtureProject(snapshot, hist) {
   };
 }
 
-export function createSeedProjects({ getSnapshot, readHist }) {
+/** A created project that has had a sample takeoff attached
+ *  (seed.js's attachSampleTakeoff). Its counts are computed live off its
+ *  own scoped items/sheets through the same countsTowardTotals()
+ *  predicate as the fixture row -- so the dashboard, the project
+ *  overview, and the review workspace's drawer can never disagree about
+ *  the same demo project -- and it carries `sample: true`, the flag the
+ *  review workspace reads to show its "sample data, not derived from
+ *  your documents" banner. */
+function sampledProjectRow(project, readScopedTakeoff) {
+  const { items, sheets, hist } = readScopedTakeoff(project.id);
+  const sheetsById = Object.fromEntries(sheets.map((s) => [s.id, s]));
+  const live = items.filter((item) => countsTowardTotals(item, sheetsById));
+  return {
+    ...project,
+    stage: "review",
+    sample: true,
+    updatedAt: effectiveUpdatedAt(hist, project.updatedAt || FIXTURE_CREATED_AT),
+    itemsTotal: live.length,
+    itemsApproved: live.filter((item) => item.status === "approved").length,
+    warningsOpen: live.filter((item) => item.status === "attention").length,
+    missingInfo: live.filter((item) => item.status === "missing").length,
+  };
+}
+
+export function createSeedProjects({ getSnapshot, readHist, readScopedTakeoff }) {
   // `getSnapshot` here must always resolve to the fixture project's own
   // data, regardless of which project the review workspace currently has
   // active -- seed.js passes its unconditional computeFixtureSnapshot(),
@@ -117,8 +141,24 @@ export function createSeedProjects({ getSnapshot, readHist }) {
   // than a shadow of it.
   async function listProjects({ includeArchived = false } = {}) {
     const snapshot = await getSnapshot();
-    const created = readCreated().filter((p) => includeArchived || !p.archivedAt);
+    const created = readCreated()
+      .filter((p) => includeArchived || !p.archivedAt)
+      .map((p) => (p.sampled ? sampledProjectRow(p, readScopedTakeoff) : p));
     return [fixtureProject(snapshot, readHist()), ...created];
+  }
+
+  /** Flips a created project's stored row to carry a sample takeoff:
+   *  stage advances to "review" and the sample flag is set, so
+   *  listProjects() computes its counts live and the review workspace
+   *  shows the sample banner. seed.js's attachSampleTakeoff() calls this
+   *  after writing the project's scoped items/sheets. */
+  function markProjectSampled(projectId, { revisionSetLabel = "" } = {}) {
+    const rows = readCreated().map((p) =>
+      p.id === projectId
+        ? { ...p, stage: "review", sampled: true, revisionSetLabel, updatedAt: new Date().toISOString() }
+        : p,
+    );
+    storageWrite(CREATED_KEY, rows);
   }
 
   async function createProject({
@@ -167,5 +207,5 @@ export function createSeedProjects({ getSnapshot, readHist }) {
     return project;
   }
 
-  return { listProjects, createProject };
+  return { listProjects, createProject, markProjectSampled };
 }

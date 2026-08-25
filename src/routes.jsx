@@ -18,6 +18,8 @@ import AppShell from "./components/shell/AppShell.jsx";
 import ProjectsDashboard from "./components/projects/ProjectsDashboard.jsx";
 import NewProject from "./components/projects/NewProject.jsx";
 import ProjectOverview from "./components/projects/ProjectOverview.jsx";
+import UploadDocuments from "./components/documents/UploadDocuments.jsx";
+import ProcessingStatus from "./components/documents/ProcessingStatus.jsx";
 import ProjectWorkspaceLayout from "./components/project/ProjectWorkspaceLayout.jsx";
 import Workspace from "./components/Workspace.jsx";
 import TakeoffSpreadsheet from "./components/takeoff/TakeoffSpreadsheet.jsx";
@@ -30,6 +32,8 @@ export function appRoutes({ store, me, onSignedOut }) {
       <Route path="/projects" element={<ProjectsDashboard store={store} me={me} onSignedOut={onSignedOut} />} />
       <Route path="/projects/new" element={<NewProject store={store} />} />
       <Route path="/projects/:projectId" element={<ProjectOverview store={store} me={me} />} />
+      <Route path="/projects/:projectId/documents" element={<UploadDocuments />} />
+      <Route path="/projects/:projectId/processing" element={<ProcessingStatus store={store} />} />
       <Route
         path="/projects/:projectId"
         element={<ProjectWorkspaceLayout store={store} me={me} onSignedOut={onSignedOut} />}

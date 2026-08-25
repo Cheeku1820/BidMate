@@ -5,7 +5,24 @@ import { timeOf, initials } from "../lib/format.js";
 /** The persistent top bar (spec §5, screen F): back, project title and
  *  active set, the overall review-status pill, save state, presence,
  *  undo/redo, help, and Finish review. */
-export default function TopBar({ overall, saved, me, presence, undoState, onUndo, onRedo, onHelp, onFinish }) {
+export default function TopBar({
+  overall,
+  saved,
+  me,
+  presence,
+  undoState,
+  onUndo,
+  onRedo,
+  onHelp,
+  onFinish,
+  // The active project's name and revision set. Defaulted to the fixture
+  // project's own values so the blueprint workspace reads correctly even
+  // before the project row loads (and for the fixture itself); a sampled
+  // demo project passes its own name here, so the title never shows a
+  // different project's name than the one being reviewed.
+  title = "Meridian Distribution Center — Division 26",
+  subtitle = "Active set: E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1",
+}) {
   const avatars = [me, ...presence].slice(0, 5);
 
   // DESIGN.md, "Undo semantics": "The undo button's tooltip names the
@@ -21,8 +38,8 @@ export default function TopBar({ overall, saved, me, presence, undoState, onUndo
       <button className="iconbtn"><ArrowLeft size={16} /> Projects</button>
       <div className="topbar__rule" />
       <div className="topbar__title">
-        <strong>Meridian Distribution Center — Division 26</strong>
-        <span>Active set: E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1</span>
+        <strong>{title}</strong>
+        <span>{subtitle}</span>
       </div>
       <Pill status={overall} />
       <span className="savestate tabular">

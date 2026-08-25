@@ -146,10 +146,12 @@ describe("ProjectNav", () => {
       "/projects/p1/takeoff",
     );
 
+    expect(within(nav).getByRole("link", { name: /^documents/i })).toHaveAttribute("href", "/projects/p1/documents");
+
     const disabled = disabledItems(nav);
-    // 13 workspaces total, minus overview, blueprint takeoff, and now the
-    // takeoff spreadsheet (task-3-brief.md Step 8 flips its built flag).
-    expect(disabled).toHaveLength(10);
+    // 13 workspaces total, minus the four now built: overview, blueprint
+    // takeoff, takeoff spreadsheet, and documents (the intake path).
+    expect(disabled).toHaveLength(9);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
   });

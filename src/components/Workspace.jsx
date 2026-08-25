@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { SYSTEMS } from "../lib/data.js";
 import { useWorkspaceContext } from "./project/useWorkspaceContext.js";
+import SampleBanner from "./documents/SampleBanner.jsx";
 import TopBar from "./TopBar.jsx";
 import SheetsRail from "./SheetsRail.jsx";
 import CanvasPane, { canvasCmd } from "./CanvasPane.jsx";
@@ -20,7 +21,7 @@ export default function Workspace() {
     snapshot, loading, loadError, saved, toast, dismissToast,
     itemError, clearItemError, setPresenceTarget, refresh,
     approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
-    me, sheetId, setSheetId, selectedItemId, selectItem,
+    me, sheetId, setSheetId, selectedItemId, selectItem, project,
   } = useWorkspaceContext();
 
   const [filter, setFilter] = useState("all");
@@ -189,6 +190,8 @@ export default function Workspace() {
 
       <TopBar
         overall={overall}
+        {...(project?.name ? { title: project.name } : {})}
+        {...(project?.revisionSetLabel ? { subtitle: `Active set: ${project.revisionSetLabel}` } : {})}
         saved={saved}
         me={me}
         presence={others}
@@ -198,6 +201,8 @@ export default function Workspace() {
         onHelp={() => setModal({ kind: "help" })}
         onFinish={() => setModal({ kind: "finish" })}
       />
+
+      {project?.sample ? <SampleBanner /> : null}
 
       <div className="workspace">
         <SheetsRail

@@ -119,6 +119,9 @@ describe("ProjectOverview", () => {
     await screen.findByRole("heading", { name: /riverside medical center/i });
     expect(screen.queryByRole("link", { name: /continue review/i })).toBeNull();
     expect(screen.queryByRole("link", { name: /open the blueprint takeoff/i })).toBeNull();
-    expect(screen.getByText(/upload isn't built yet/i)).toBeTruthy();
+    // The honest recovery for an empty project is now to upload documents,
+    // not a dead-end "not built yet" message -- the intake path exists.
+    // Both the primary action and the review-progress card offer it.
+    expect(screen.getAllByRole("link", { name: /upload documents/i }).length).toBeGreaterThan(0);
   });
 });

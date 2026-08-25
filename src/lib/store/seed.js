@@ -43,6 +43,11 @@ import { createScaleMethod } from "./seed-scale.js";
 import { createUndoMethods } from "./seed-undo.js";
 import { createSeedProjects, SEED_PROJECT_ID } from "./seed-projects.js";
 
+// The revision label a sampled demo project reports, matching the
+// fixture project's own (seed-projects.js) since the sample IS the
+// fixture takeoff copied in.
+const SAMPLE_REVISION_LABEL = "E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1";
+
 /* --- reads, materializing the seed on first access ----------------------- */
 
 function readItems() {
@@ -143,13 +148,18 @@ function buildUndoOut(hist) {
 /* --- the store -------------------------------------------------------- */
 
 export function createSeedStore() {
+  // Writes go to the *active* project's own namespaced keys (scopedKey
+  // below), so a demo project's approvals never mutate the fixture's
+  // shared items/sheets/hist. For the fixture the keys are unchanged
+  // ("items"/"sheets"/"hist"), so every existing behaviour and the whole
+  // contract suite are untouched.
   function commitAction(action, nextItems, nextSheets) {
-    storageWrite("items", nextItems);
-    if (nextSheets) storageWrite("sheets", nextSheets);
-    const hist = readHist();
+    storageWrite(scopedKey("items"), nextItems);
+    if (nextSheets) storageWrite(scopedKey("sheets"), nextSheets);
+    const hist = readActiveHist();
     const nextHist = { undo: [...hist.undo, action].slice(-60), redo: [] };
-    storageWrite("hist", nextHist);
-    bumpVersion();
+    storageWrite(scopedKey("hist"), nextHist);
+    bumpActiveVersion();
   }
 
   async function me() {
@@ -184,6 +194,53 @@ export function createSeedStore() {
     return !activeProjectId || activeProjectId === SEED_PROJECT_ID;
   }
 
+  // The fixture reads and writes the bare keys ("items", "sheets", ...);
+  // every other project namespaces its own under `${base}:${id}`. This
+  // is the one place the two are distinguished -- the fixture's data and
+  // a demo project's sample takeoff are fully isolated stores that never
+  // share a key. `activeProjectId` null means "nothing asked yet", which
+  // is the fixture, so the default caller (and the contract suite) sees
+  // exactly today's behaviour.
+  const isFixtureId = (id) => !id || id === SEED_PROJECT_ID;
+  const scopedKey = (base) => (isFixtureId(activeProjectId) ? base : `${base}:${activeProjectId}`);
+
+  // Active-project-scoped reads, handed to the mutation modules as deps.
+  // For the fixture they resolve to the module-level readers (which
+  // materialise the seed on first access); for any other project they
+  // read that project's own keys, empty until attachSampleTakeoff()
+  // writes a sample into them -- so a created project with no takeoff is
+  // still honestly empty.
+  function readActiveItems() {
+    return isFixtureId(activeProjectId) ? readItems() : storageRead(scopedKey("items"), []);
+  }
+  function readActiveSheets() {
+    return isFixtureId(activeProjectId) ? readSheets() : storageRead(scopedKey("sheets"), []);
+  }
+  function readActiveHist() {
+    return isFixtureId(activeProjectId) ? readHist() : storageRead(scopedKey("hist"), { undo: [], redo: [] });
+  }
+  function readActiveVersion() {
+    return isFixtureId(activeProjectId) ? readVersion() : storageRead(scopedKey("version"), 0);
+  }
+  function bumpActiveVersion() {
+    if (isFixtureId(activeProjectId)) return bumpVersion();
+    const next = readActiveVersion() + 1;
+    storageWrite(scopedKey("version"), next);
+    return next;
+  }
+
+  // Reads any project's scoped takeoff by id, independent of which one is
+  // active -- seed-projects.js's listProjects() uses this to compute a
+  // sampled demo project's dashboard counts the same way the fixture
+  // row's are computed, so the two can never disagree.
+  function readScopedTakeoff(projectId) {
+    return {
+      items: storageRead(`items:${projectId}`, []),
+      sheets: storageRead(`sheets:${projectId}`, []),
+      hist: storageRead(`hist:${projectId}`, { undo: [], redo: [] }),
+    };
+  }
+
   // Unconditional: seed mode's one fixture project's real data,
   // regardless of which project is currently active. This is what
   // seed-projects.js's listProjects() calls (see its own comment) so the
@@ -212,8 +269,24 @@ export function createSeedStore() {
   // that isn't the fixture's genuinely has no sheets yet, so it gets the
   // honest empty snapshot instead.
   async function getSnapshot() {
-    if (activeProjectId && activeProjectId !== SEED_PROJECT_ID) return emptySnapshot();
-    return computeFixtureSnapshot();
+    if (isFixtureId(activeProjectId)) return computeFixtureSnapshot();
+    const items = readActiveItems();
+    const sheets = readActiveSheets();
+    // A created project with no sample attached genuinely has nothing --
+    // the honest empty snapshot, exactly as before. A sampled demo
+    // project has its own isolated sheets and items and gets a real
+    // snapshot computed off them.
+    if (!items.length && !sheets.length) return emptySnapshot();
+    const hist = readActiveHist();
+    const sheetsById = Object.fromEntries(sheets.map((s) => [s.id, s]));
+    return {
+      version: String(readActiveVersion()),
+      sheets,
+      items,
+      totals: computeTotals(items, sheetsById),
+      undo: buildUndoOut(hist),
+      presence: activePresence(identity().id),
+    };
   }
 
   function subscribe(handler) {
@@ -230,12 +303,45 @@ export function createSeedStore() {
   // dependencies rather than those modules closing over this file's own
   // state — see seed-review.js / seed-scale.js / seed-undo.js's own
   // header comments for why each is its own file.
-  const deps = { readItems, readSheets, readHist, readVersion, bumpVersion, commitAction, storageWrite, identity, uid, getSnapshot, isFixtureProjectActive };
+  const deps = {
+    readItems: readActiveItems,
+    readSheets: readActiveSheets,
+    readHist: readActiveHist,
+    readVersion: readActiveVersion,
+    bumpVersion: bumpActiveVersion,
+    commitAction,
+    storageWrite,
+    scopedKey,
+    identity,
+    uid,
+    getSnapshot,
+    isFixtureProjectActive,
+  };
 
   const review = createReviewMethods(deps);
   const scale = createScaleMethod(deps);
   const undoing = createUndoMethods(deps);
-  const projects = createSeedProjects({ getSnapshot: computeFixtureSnapshot, readHist });
+  const { markProjectSampled, ...projectApi } = createSeedProjects({
+    getSnapshot: computeFixtureSnapshot,
+    readHist,
+    readScopedTakeoff,
+  });
+
+  // Seed-only: stands in for the ingestion pipeline the real backend
+  // runs. Copies the fixture takeoff into a *created* project's own
+  // isolated keys and flags the project row as carrying sample data, so
+  // the review/export loop can be walked end to end without a real
+  // engine -- the review workspace shows a "sample data" banner off that
+  // flag, so nothing here is ever presented as derived from the
+  // estimator's own upload. Never touches the fixture's own storage.
+  async function attachSampleTakeoff(projectId) {
+    if (isFixtureId(projectId)) return;
+    storageWrite(`items:${projectId}`, seedItems());
+    storageWrite(`sheets:${projectId}`, seedSheets());
+    storageWrite(`hist:${projectId}`, { undo: [], redo: [] });
+    storageWrite(`version:${projectId}`, 1);
+    markProjectSampled(projectId, { revisionSetLabel: SAMPLE_REVISION_LABEL });
+  }
 
   return {
     me,
@@ -243,9 +349,10 @@ export function createSeedStore() {
     getSnapshot,
     subscribe,
     setPresence,
+    attachSampleTakeoff,
     ...review,
     ...scale,
     ...undoing,
-    ...projects,
+    ...projectApi,
   };
 }

@@ -31,6 +31,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import Pill, { displayStatus } from "../Pill.jsx";
 import BulkApproveBar from "./BulkApproveBar.jsx";
+import SampleBanner from "../documents/SampleBanner.jsx";
 import { STATUS } from "../../lib/data.js";
 import { timeOf } from "../../lib/format.js";
 import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
@@ -72,7 +73,7 @@ const FILTER_SHORT_LABEL = { ready: "Ready", attention: "Attention", missing: "M
 const LOCKED_COLUMNS = new Set(["status", "name"]);
 
 export default function TakeoffSpreadsheet() {
-  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove, saved, toast, dismissToast, undo } =
+  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove, saved, toast, dismissToast, undo, project } =
     useWorkspaceContext();
 
   const [search, setSearch] = useState("");
@@ -205,6 +206,7 @@ export default function TakeoffSpreadsheet() {
   return (
     <>
       <AppTopBar title="Takeoff" saveState={saveStateText(saved)} />
+      {project?.sample ? <SampleBanner /> : null}
 
       <div className="page">
         <h1 className="page-heading">Takeoff spreadsheet</h1>

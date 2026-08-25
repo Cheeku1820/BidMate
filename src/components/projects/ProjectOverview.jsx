@@ -105,15 +105,13 @@ export default function ProjectOverview({ store }) {
 
   const progress = reviewProgress(project);
   // A project with no items has no takeoff to continue reviewing --
-  // "Continue review" (or the review-progress card's own link below)
-  // would otherwise be the single most prominent thing to click right
-  // after creating a project, and following it lands on a workspace with
-  // markers and a scale banner belonging to a *different* project (seed
-  // mode's single fixture snapshot today; a real ingestion pipeline
-  // tomorrow, before its first sheet finishes processing). That is a
-  // fabricated quantity presented as this project's evidence. Upload
-  // isn't built yet either, so the honest replacement says that plainly
-  // rather than linking somewhere that pretends otherwise.
+  // "Continue review" would otherwise be the most prominent thing to
+  // click right after creating a project, and following it would land on
+  // a workspace belonging to a *different* project's data. So an empty
+  // project's primary action is to upload documents instead, and only a
+  // project that actually has items links into the review workspace. (A
+  // sampled demo project has real items via attachSampleTakeoff, so it
+  // takes the has-takeoff path and carries its own sample banner there.)
   const hasTakeoff = progress.total > 0;
 
   return (
@@ -127,7 +125,9 @@ export default function ProjectOverview({ store }) {
               Continue review
             </Link>
           ) : (
-            <span className="muted">Document upload isn't built yet</span>
+            <Link className="btn btn--primary" to={`/projects/${project.id}/documents`}>
+              Upload documents
+            </Link>
           )
         }
       />
@@ -163,7 +163,9 @@ export default function ProjectOverview({ store }) {
             <p className="muted">Current stage: {stageLabel(project.stage)}</p>
             {hasTakeoff ? (
               <Link to={`/projects/${project.id}/takeoff`}>Open the blueprint takeoff</Link>
-            ) : null}
+            ) : (
+              <Link to={`/projects/${project.id}/documents`}>Upload documents</Link>
+            )}
           </section>
 
           <section className="card">

@@ -94,6 +94,24 @@ describe("attachSampleTakeoff", () => {
     expect(after.items.find((i) => i.id === target.id).status).toBe("ready");
   });
 
+  it("is idempotent: re-attaching a sampled project never wipes review progress", async () => {
+    const store = createSeedStore();
+    const project = await store.createProject({ name: "Demo E", location: "Fresno, CA" });
+    await store.attachSampleTakeoff(project.id);
+
+    store.useProject(project.id);
+    const demo = await store.getSnapshot();
+    const target = demo.items.find((i) => i.status === "ready" && !i.rejected);
+    await store.approveItem(target.id, target.version);
+
+    // A second attach (a direct re-call, or a re-entry the UI guard
+    // missed) must not reset the project's items back to the seed.
+    await store.attachSampleTakeoff(project.id);
+
+    const after = await store.getSnapshot();
+    expect(after.items.find((i) => i.id === target.id).status).toBe("approved");
+  });
+
   it("never overwrites the fixture's own storage", async () => {
     const store = createSeedStore();
     const fixtureBefore = await fixtureSnapshot(store);

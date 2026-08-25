@@ -4,7 +4,7 @@
    ============================================================ */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CompanySettings from "./CompanySettings.jsx";
 import { getCompanySettings } from "../../lib/settingsStore.js";
@@ -24,9 +24,12 @@ describe("CompanySettings", () => {
     render(<CompanySettings />);
     await userEvent.click(screen.getByRole("tab", { name: /waste and markup/i }));
 
+    // A direct change (what selecting-all-and-typing produces) replaces
+    // the value in one event. Clearing to empty is intentionally a no-op:
+    // a markup field never persists as a blank, which Number("") would
+    // otherwise write as 0.
     const waste = screen.getByLabelText(/^waste$/i);
-    await userEvent.clear(waste);
-    await userEvent.type(waste, "7");
+    fireEvent.change(waste, { target: { value: "7" } });
 
     expect(getCompanySettings().wastePercent.value).toBe(7);
   });

@@ -126,7 +126,19 @@ export default function CompanySettings() {
                           type={f.type}
                           step={f.step}
                           value={entry.value}
-                          onChange={(e) => save(f.field, f.type === "number" ? Number(e.target.value) : e.target.value)}
+                          onChange={(e) => {
+                            if (f.type !== "number") {
+                              save(f.field, e.target.value);
+                              return;
+                            }
+                            // Don't persist an empty field as 0 -- Number("")
+                            // is 0, which would silently write a $0/hr rate or
+                            // a 0% markup. Only commit a real number.
+                            const raw = e.target.value;
+                            if (raw === "") return;
+                            const n = Number(raw);
+                            if (!Number.isNaN(n)) save(f.field, n);
+                          }}
                         />
                       )}
                       {f.suffix ? <span className="settings-affix">{f.suffix}</span> : null}

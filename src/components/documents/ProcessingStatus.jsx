@@ -138,7 +138,7 @@ export default function ProcessingStatus({ store }) {
             return (
               <li key={sheet.id} className="processing-row">
                 <span className="processing-icon" aria-hidden="true">
-                  {complete ? <CheckCircle2 size={18} className="ink-green" /> : <Loader2 size={18} className="spin" />}
+                  {complete ? <CheckCircle2 size={18} className="ink-blue" /> : <Loader2 size={18} className="spin" />}
                 </span>
                 <span className="processing-sheet tabular">{sheet.number}</span>
                 <span className="processing-title">{sheet.title}</span>

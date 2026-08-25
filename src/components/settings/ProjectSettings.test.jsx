@@ -47,8 +47,7 @@ describe("ProjectSettings", () => {
     // No restore control while the value is the company default.
     expect(screen.queryByRole("button", { name: /restore company default/i })).toBeNull();
 
-    await userEvent.clear(rate);
-    await userEvent.type(rate, "90");
+    await userEvent.type(rate, "{selectall}90");
 
     const restore = screen.getByRole("button", { name: /restore company default/i });
     expect(restore).toBeTruthy();

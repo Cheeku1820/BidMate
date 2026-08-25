@@ -21,6 +21,7 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
+import { countsTowardTotals } from "../../lib/rules.js";
 
 // The columns the workbook carries, in order. Kept as data so the
 // on-screen preview header and the generated file can never list
@@ -51,17 +52,19 @@ export default function ExportPreview() {
   const sheets = snapshot?.sheets ?? [];
   const totals = snapshot?.totals;
 
-  const sheetNumberById = useMemo(() => {
+  const sheetsById = useMemo(() => {
     const map = {};
-    for (const sheet of sheets) map[sheet.id] = sheet.number ?? sheet.id;
+    for (const sheet of sheets) map[sheet.id] = sheet;
     return map;
   }, [sheets]);
 
-  // Rejected items are out of scope entirely; a superseded sheet's items
-  // never count -- but the seed fixture has no superseded sheet, and the
-  // store's own totals already exclude both, so the by-system figures
-  // below come straight from totals rather than a re-filtered copy here.
-  const countable = items.filter((i) => !i.rejected);
+  // The by-system quantities read straight from the store's totals
+  // (invariant 1). These per-status buckets go through the same
+  // countsTowardTotals predicate the store's own totals use, rather than
+  // a hand-rolled `!rejected` filter -- so an item on a superseded sheet
+  // is excluded here exactly as it is from the totals, not left able to
+  // block the export while contributing nothing to it.
+  const countable = items.filter((i) => countsTowardTotals(i, sheetsById));
   const approved = countable.filter((i) => i.status === "approved");
   const allowances = countable.filter((i) => i.status === "attention");
   const blocking = countable.filter((i) => i.status === "missing");
@@ -78,7 +81,7 @@ export default function ExportPreview() {
     item.system ?? "",
     item.quantity ?? "",
     item.unit ?? "",
-    sheetNumberById[item.sheetId] ?? "",
+    sheetsById[item.sheetId]?.number ?? "",
     STATUS_TEXT[item.status] ?? item.status,
   ]);
 

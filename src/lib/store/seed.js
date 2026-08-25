@@ -336,6 +336,11 @@ export function createSeedStore() {
   // estimator's own upload. Never touches the fixture's own storage.
   async function attachSampleTakeoff(projectId) {
     if (isFixtureId(projectId)) return;
+    // Idempotent at the store level, not only behind the processing
+    // screen's own already-sampled check: a re-call must never overwrite
+    // a project that already has a takeoff, which would reset its history
+    // and wipe an estimator's review progress.
+    if (storageRead(`items:${projectId}`, []).length > 0) return;
     storageWrite(`items:${projectId}`, seedItems());
     storageWrite(`sheets:${projectId}`, seedSheets());
     storageWrite(`hist:${projectId}`, { undo: [], redo: [] });

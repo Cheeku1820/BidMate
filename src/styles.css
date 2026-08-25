@@ -337,6 +337,13 @@ button {
   color: var(--ink-2);
   border-color: var(--line-2);
 }
+/* A non-status marker (e.g. "Project override" on settings) -- neutral so
+   it never borrows a review-status hue outside the review context. */
+.pill--neutral {
+  background: var(--paper-0);
+  color: var(--ink-2);
+  border-color: var(--line-2);
+}
 
 .savestate {
   font-size: 12px;
@@ -1531,8 +1538,11 @@ button {
   color: var(--ink-2);
 }
 
+/* Blue, not green: a cleanly uploaded file is a success, but green is
+   reserved for estimator-approved content alone (CLAUDE.md). Blue is the
+   product's "done / ready" hue without implying approval. */
 .upload-status--ready {
-  color: var(--green);
+  color: var(--blue);
 }
 
 .upload-status--uploading {
@@ -1585,12 +1595,15 @@ button {
   font-size: 13px;
 }
 
+/* Blue, not green: a processed sheet is done, not estimator-approved --
+   green is reserved for approval alone (CLAUDE.md, "not on 'done
+   processing'"). */
 .processing-stage.is-complete {
-  color: var(--green);
+  color: var(--blue);
 }
 
-.ink-green {
-  color: var(--green);
+.ink-blue {
+  color: var(--blue);
 }
 
 .spin {

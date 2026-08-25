@@ -147,7 +147,15 @@ export default function ProjectSettings({ store }) {
                         type="number"
                         step={f.step}
                         value={entry.value}
-                        onChange={(e) => override(f.field, Number(e.target.value))}
+                        onChange={(e) => {
+                          // Don't write an empty field as a 0 override --
+                          // Number("") is 0, which would silently pin this
+                          // project's rate to $0/hr. Only commit a real number.
+                          const raw = e.target.value;
+                          if (raw === "") return;
+                          const n = Number(raw);
+                          if (!Number.isNaN(n)) override(f.field, n);
+                        }}
                       />
                       {f.suffix ? <span className="settings-affix">{f.suffix}</span> : null}
                     </div>
@@ -155,7 +163,7 @@ export default function ProjectSettings({ store }) {
                   <div className="settings-source">
                     {/* Never colour alone: the source is stated in words, and
                         the override case adds an explicit restore control. */}
-                    <span className={entry.overridden ? "pill pill--attention" : "muted"}>{entry.source}</span>
+                    <span className={entry.overridden ? "pill pill--neutral" : "muted"}>{entry.source}</span>
                     {entry.overridden ? (
                       <button type="button" className="linkbtn" onClick={() => restore(f.field)}>
                         Restore company default ({f.prefix ?? ""}

@@ -1843,3 +1843,19 @@ button {
   border: 1px solid var(--blue-line);
   border-radius: 999px;
 }
+
+/* document-type cell: the dropdown plus a "detected" hint */
+.doctype-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.doctype-detected {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-3);
+  padding: 1px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  white-space: nowrap;
+}

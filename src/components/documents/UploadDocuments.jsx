@@ -21,8 +21,7 @@ import { FileText, Upload, X } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectNav from "../shell/ProjectNav.jsx";
 import { setUploadedFiles } from "../../lib/uploadedFiles.js";
-
-const DOC_TYPES = ["Drawings", "Specifications", "Addendum", "Scope", "Other"];
+import { DOC_TYPES, detectDocType } from "../../lib/detectDocType.js";
 
 // A file is "ready" (counts toward starting a takeoff) only when it
 // uploaded cleanly. The other four are the spec §10 states, each with
@@ -70,7 +69,11 @@ export default function UploadDocuments() {
           id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
           name: file.name,
           size: file.size,
-          docType: DOC_TYPES[0],
+          // Pre-select the type from the filename; typeAuto tracks whether
+          // it's still the suggestion (shows a "detected" hint) or the
+          // estimator has since set it by hand.
+          docType: detectDocType(file.name),
+          typeAuto: true,
           status,
           file, // kept so the drawings can be sent to the engine on continue
         };
@@ -96,7 +99,10 @@ export default function UploadDocuments() {
   };
 
   const removeFile = (id) => setFiles((prev) => prev.filter((f) => f.id !== id));
-  const setDocType = (id, docType) => setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, docType } : f)));
+  // A manual change turns off the "detected" hint -- the estimator owns
+  // the value now.
+  const setDocType = (id, docType) =>
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, docType, typeAuto: false } : f)));
 
   const readyCount = files.filter((f) => f.status === "ready").length;
 
@@ -128,8 +134,8 @@ export default function UploadDocuments() {
       <div className="page">
         <h1 className="page-heading">Upload documents</h1>
         <p className="muted">
-          Add the drawing set, specifications, addenda, and scope documents as PDFs. You can change what each file is
-          after it uploads.
+          Add the drawing set, specifications, addenda, and scope documents as PDFs. Each file's type is detected from
+          its name — change any that's wrong before starting.
         </p>
 
         <div
@@ -185,18 +191,21 @@ export default function UploadDocuments() {
                     <label className="sr-only" htmlFor={`doctype-${file.id}`}>
                       Document type for {file.name}
                     </label>
-                    <select
-                      id={`doctype-${file.id}`}
-                      className="field field--compact"
-                      value={file.docType}
-                      onChange={(event) => setDocType(file.id, event.target.value)}
-                    >
-                      {DOC_TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {type}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="doctype-cell">
+                      <select
+                        id={`doctype-${file.id}`}
+                        className="field field--compact"
+                        value={file.docType}
+                        onChange={(event) => setDocType(file.id, event.target.value)}
+                      >
+                        {DOC_TYPES.map((type) => (
+                          <option key={type} value={type}>
+                            {type}
+                          </option>
+                        ))}
+                      </select>
+                      {file.typeAuto ? <span className="doctype-detected">Detected</span> : null}
+                    </div>
                   </td>
                   <td className="tabular">{formatSize(file.size)}</td>
                   <td>

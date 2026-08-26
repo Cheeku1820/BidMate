@@ -40,8 +40,7 @@ def health() -> dict:
     return {"ok": True, "llm_pricing": llm.available()}
 
 
-@app.post("/estimate")
-async def estimate_endpoint(file: UploadFile = File(...), location: str = Form("")):
+async def _run(file: UploadFile, location: str, fn):
     if not (file.filename or "").lower().endswith(".pdf"):
         return JSONResponse(status_code=400, content={"error": "Upload a PDF drawing set."})
     data = await file.read()
@@ -49,10 +48,30 @@ async def estimate_endpoint(file: UploadFile = File(...), location: str = Form("
         tmp.write(data)
         path = tmp.name
     try:
-        result = estimate_mod.estimate(path, location)
+        result = fn(path, location)
         result["filename"] = file.filename
         return result
     except Exception as exc:  # noqa: BLE001 -- surface a clean error to the UI
         return JSONResponse(status_code=500, content={"error": f"Couldn't read the drawings: {type(exc).__name__}."})
     finally:
         os.unlink(path)
+
+
+@app.post("/estimate")
+async def estimate_endpoint(file: UploadFile = File(...), location: str = Form("")):
+    """Consolidated estimate (one row per catalog item) for the Instant estimate page."""
+    return await _run(file, location, estimate_mod.estimate)
+
+
+@app.post("/estimate/full")
+async def estimate_full_endpoint(file: UploadFile = File(...), location: str = Form("")):
+    """Per-sheet takeoff with coordinates and page dimensions, for the full
+    review workflow (the frontend injects this into its store)."""
+    return await _run(file, location, estimate_mod.full_takeoff)
+
+
+@app.get("/sheet-image")
+def sheet_image_endpoint():
+    """Placeholder for Section 6 (rendered sheet PNG for the canvas).
+    Wired later so the frontend contract is stable."""
+    return JSONResponse(status_code=501, content={"error": "not implemented yet"})

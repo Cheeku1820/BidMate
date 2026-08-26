@@ -46,7 +46,10 @@ def _sheet_no(sheets, page_index) -> str:
     return "?"
 
 
-def estimate(path: str, location: str) -> dict:
+def _compute(path: str, location: str):
+    """Shared pipeline: returns (per-cluster rows, sheets, meta). Each row
+    carries coordinates and cost. Both the consolidated estimate and the
+    full per-sheet takeoff build on this."""
     sheets = documents.detect_sheets(path)
     clusters = counting.count(path, sheets)
 
@@ -86,31 +89,64 @@ def estimate(path: str, location: str) -> dict:
         for c, item in zip(clusters, classified):
             rows.append(_row_from_catalog(item, c, sheets, labor_rate, material_factor))
 
-    items = _consolidate(rows)
-    material_total = round(sum(r["material_cost"] for r in items), 2)
-    labor_hours_total = round(sum(r["labor_hours"] for r in items), 2)
-    labor_cost_total = round(sum(r["labor_cost"] for r in items), 2)
-    total = round(material_total + labor_cost_total, 2)
-
-    return {
+    meta = {
         "location": location,
         "location_note": location_note,
         "labor_rate": round(labor_rate, 2),
         "material_factor": round(material_factor, 3),
         "source": source,
+    }
+    return rows, sheets, meta
+
+
+def _totals(rows: list[dict]) -> dict:
+    material = round(sum(r["material_cost"] for r in rows), 2)
+    hours = round(sum(r["labor_hours"] for r in rows), 2)
+    labor = round(sum(r["labor_cost"] for r in rows), 2)
+    return {
+        "material": material,
+        "labor_hours": hours,
+        "labor_cost": labor,
+        "total_direct_cost": round(material + labor, 2),
+        "item_count": len(rows),
+        "attention_count": sum(1 for r in rows if r["status"] == "attention"),
+    }
+
+
+def estimate(path: str, location: str) -> dict:
+    """Consolidated estimate (one row per catalog item) for /estimate."""
+    rows, sheets, meta = _compute(path, location)
+    items = _consolidate(rows)
+    return {
+        **meta,
         "sheets": [
             {"number": s.number, "page": s.page_index + 1, "unreadable": s.unreadable_reason or None}
             for s in sheets
         ],
         "items": items,
-        "totals": {
-            "material": material_total,
-            "labor_hours": labor_hours_total,
-            "labor_cost": labor_cost_total,
-            "total_direct_cost": total,
-            "item_count": len(items),
-            "attention_count": sum(1 for r in items if r["status"] == "attention"),
-        },
+        "totals": _totals(items),
+    }
+
+
+def full_takeoff(path: str, location: str) -> dict:
+    """Per-cluster takeoff with coordinates and page dimensions, for
+    injecting into the review store (one reviewable item per device
+    group, positioned on its sheet)."""
+    rows, sheets, meta = _compute(path, location)
+    return {
+        **meta,
+        "sheets": [
+            {
+                "number": s.number,
+                "page": s.page_index + 1,
+                "width_pt": s.width_pt,
+                "height_pt": s.height_pt,
+                "unreadable": s.unreadable_reason or None,
+            }
+            for s in sheets
+        ],
+        "items": rows,
+        "totals": _totals(rows),
     }
 
 
@@ -125,11 +161,16 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
     return {
         "name": spec.get("name", f"Symbol {cluster.tag}"),
         "system": spec.get("system", "Unknown"),
+        "category": spec.get("category", "Devices"),
         "unit": spec.get("unit", "ea"),
         "quantity": qty,
         "status": status,
         "sheet": _sheet_no(sheets, cluster.sheet_page_index),
+        "page": cluster.sheet_page_index + 1,
         "tag": cluster.tag,
+        "x": cluster.placements[0].x if cluster.placements else 0,
+        "y": cluster.placements[0].y if cluster.placements else 0,
+        "placements": [[p.x, p.y] for p in cluster.placements],
         "material_cost": material,
         "labor_hours": hours,
         "labor_cost": labor,
@@ -148,11 +189,16 @@ def _row_from_catalog(item, cluster, sheets, labor_rate: float, material_factor:
     return {
         "name": item.name,
         "system": item.system,
+        "category": item.category,
         "unit": item.unit,
         "quantity": qty,
         "status": item.status,
         "sheet": _sheet_no(sheets, cluster.sheet_page_index),
+        "page": cluster.sheet_page_index + 1,
         "tag": item.source_tag,
+        "x": cluster.placements[0].x if cluster.placements else 0,
+        "y": cluster.placements[0].y if cluster.placements else 0,
+        "placements": [[p.x, p.y] for p in cluster.placements],
         "material_cost": material,
         "labor_hours": hours,
         "labor_cost": labor,

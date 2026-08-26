@@ -20,6 +20,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { FileText, Upload, X } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectNav from "../shell/ProjectNav.jsx";
+import { setUploadedDrawings } from "../../lib/uploadedFiles.js";
 
 const DOC_TYPES = ["Drawings", "Specifications", "Addendum", "Scope", "Other"];
 
@@ -71,6 +72,7 @@ export default function UploadDocuments() {
           size: file.size,
           docType: DOC_TYPES[0],
           status,
+          file, // kept so the drawings can be sent to the engine on continue
         };
         next = [...next, entry];
         // A cleanly-uploading file settles to "ready" after a beat, the
@@ -100,6 +102,11 @@ export default function UploadDocuments() {
 
   const reviewDetected = () => {
     if (readyCount === 0) return;
+    // Only the files typed "Drawings" are sent to the engine; specs and
+    // addenda are attached context, not parsed. Stash the real File
+    // objects for the processing screen to send.
+    const drawings = files.filter((f) => f.status === "ready" && f.docType === "Drawings").map((f) => f.file);
+    setUploadedDrawings(projectId, drawings);
     navigate(`/projects/${projectId}/documents/confirm`);
   };
 

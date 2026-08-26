@@ -103,22 +103,24 @@ function fixtureProject(snapshot, hist) {
   };
 }
 
-/** A created project that has had a sample takeoff attached
- *  (seed.js's attachSampleTakeoff). Its counts are computed live off its
- *  own scoped items/sheets through the same countsTowardTotals()
- *  predicate as the fixture row -- so the dashboard, the project
- *  overview, and the review workspace's drawer can never disagree about
- *  the same demo project -- and it carries `sample: true`, the flag the
- *  review workspace reads to show its "sample data, not derived from
- *  your documents" banner. */
-function sampledProjectRow(project, readScopedTakeoff) {
+/** A created project that has a takeoff attached to its scoped keys --
+ *  either a sample (attachSampleTakeoff) or real engine output
+ *  (attachEngineTakeoff). Its counts are computed live off its own scoped
+ *  items/sheets through the same countsTowardTotals() predicate as the
+ *  fixture row, so the dashboard, the project overview, and the review
+ *  drawer can never disagree. The `sample` flag is preserved from the
+ *  stored row (true only for demo sample data, which the workspace banners
+ *  as "not derived from your documents"). */
+function reviewableProjectRow(project, readScopedTakeoff) {
   const { items, sheets, hist } = readScopedTakeoff(project.id);
   const sheetsById = Object.fromEntries(sheets.map((s) => [s.id, s]));
   const live = items.filter((item) => countsTowardTotals(item, sheetsById));
   return {
     ...project,
     stage: "review",
-    sample: true,
+    // `sampled` is the stored flag for demo sample data; engine-ingested
+    // projects carry `hasTakeoff` instead, so they read sample: false.
+    sample: project.sampled === true,
     updatedAt: effectiveUpdatedAt(hist, project.updatedAt || FIXTURE_CREATED_AT),
     itemsTotal: live.length,
     itemsApproved: live.filter((item) => item.status === "approved").length,
@@ -143,8 +145,22 @@ export function createSeedProjects({ getSnapshot, readHist, readScopedTakeoff })
     const snapshot = await getSnapshot();
     const created = readCreated()
       .filter((p) => includeArchived || !p.archivedAt)
-      .map((p) => (p.sampled ? sampledProjectRow(p, readScopedTakeoff) : p));
+      .map((p) => (p.sampled || p.hasTakeoff ? reviewableProjectRow(p, readScopedTakeoff) : p));
     return [fixtureProject(snapshot, readHist()), ...created];
+  }
+
+  /** Marks a created project as carrying a real engine-ingested takeoff:
+   *  stage "review", a takeoff flag so listProjects computes its counts
+   *  live, and the pricing basis stored on the row for the review/export
+   *  screens. sample stays false -- this IS derived from the estimator's
+   *  documents. seed.js's attachEngineTakeoff() calls this. */
+  function markProjectIngested(projectId, patch = {}) {
+    const rows = readCreated().map((p) =>
+      p.id === projectId
+        ? { ...p, stage: "review", hasTakeoff: true, sample: false, updatedAt: new Date().toISOString(), ...patch }
+        : p,
+    );
+    storageWrite(CREATED_KEY, rows);
   }
 
   /** Flips a created project's stored row to carry a sample takeoff:
@@ -207,5 +223,5 @@ export function createSeedProjects({ getSnapshot, readHist, readScopedTakeoff })
     return project;
   }
 
-  return { listProjects, createProject, markProjectSampled };
+  return { listProjects, createProject, markProjectSampled, markProjectIngested };
 }

@@ -42,6 +42,7 @@ import { createReviewMethods } from "./seed-review.js";
 import { createScaleMethod } from "./seed-scale.js";
 import { createUndoMethods } from "./seed-undo.js";
 import { createSeedProjects, SEED_PROJECT_ID } from "./seed-projects.js";
+import { mapPayload } from "./seed-ingest.js";
 
 // The revision label a sampled demo project reports, matching the
 // fixture project's own (seed-projects.js) since the sample IS the
@@ -321,7 +322,7 @@ export function createSeedStore() {
   const review = createReviewMethods(deps);
   const scale = createScaleMethod(deps);
   const undoing = createUndoMethods(deps);
-  const { markProjectSampled, ...projectApi } = createSeedProjects({
+  const { markProjectSampled, markProjectIngested, ...projectApi } = createSeedProjects({
     getSnapshot: computeFixtureSnapshot,
     readHist,
     readScopedTakeoff,
@@ -334,6 +335,29 @@ export function createSeedStore() {
   // engine -- the review workspace shows a "sample data" banner off that
   // flag, so nothing here is ever presented as derived from the
   // estimator's own upload. Never touches the fixture's own storage.
+  // Writes a real engine takeoff (mapped from /estimate/full) into a
+  // created project's own isolated keys, and records the pricing basis on
+  // the project row. Same isolation as attachSampleTakeoff -- a project's
+  // takeoff lives under its own keys and never touches the fixture. Not
+  // idempotent-guarded: re-running processing intentionally replaces the
+  // takeoff (the processing screen guards against accidental re-entry).
+  async function attachEngineTakeoff(projectId, payload) {
+    if (isFixtureId(projectId)) return;
+    const { sheets, items } = mapPayload(payload);
+    storageWrite(`items:${projectId}`, items);
+    storageWrite(`sheets:${projectId}`, sheets);
+    storageWrite(`hist:${projectId}`, { undo: [], redo: [] });
+    storageWrite(`version:${projectId}`, 1);
+    markProjectIngested(projectId, {
+      location: payload.location || "",
+      laborRate: payload.labor_rate ?? null,
+      materialFactor: payload.material_factor ?? null,
+      pricingSource: payload.source || "deterministic",
+      locationNote: payload.location_note || "",
+      revisionSetLabel: sheets.map((s) => s.number).join(" · "),
+    });
+  }
+
   async function attachSampleTakeoff(projectId) {
     if (isFixtureId(projectId)) return;
     // Idempotent at the store level, not only behind the processing
@@ -355,6 +379,7 @@ export function createSeedStore() {
     subscribe,
     setPresence,
     attachSampleTakeoff,
+    attachEngineTakeoff,
     ...review,
     ...scale,
     ...undoing,

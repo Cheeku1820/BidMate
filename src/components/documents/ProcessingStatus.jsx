@@ -1,30 +1,27 @@
 /* ============================================================
-   ProcessingStatus.jsx — spec §5 screen E, the processing wait.
+   ProcessingStatus.jsx — spec §5 screen E, now driving the real engine.
 
-   In seed mode there is no engine, so this simulates the pipeline
-   walking each sheet through descriptive stages and then stands a sample
-   takeoff into the project (seed.js's attachSampleTakeoff). Spec §5's
-   rules that DO carry, engine or not:
+   If the estimator uploaded drawings, this posts them to the takeoff
+   engine (engineClient) and shows a genuine multi-stage loading sequence
+   while the request is in flight, then ingests the result into the
+   project's store (attachEngineTakeoff) and sends them to review. The
+   stage labels are indicative -- the engine runs as one request -- but
+   completion is real.
 
-     - Descriptive stages, never a fabricated precise time remaining.
-     - "You can leave this page" -- the work is saved.
-     - Completed sheets stay visible even if another sheet needs
-       attention; a per-sheet outcome is honest about that sheet alone.
-
-   Re-entering this screen for an already-processed project does not
-   re-run and wipe review progress: it detects the attached sample and
-   goes straight to the completed state.
+   With no upload (the sample demo path), it keeps the simulated per-sheet
+   animation and stands in a sample takeoff, so that path still works.
+   Re-entering a project that already has a takeoff never re-runs.
    ============================================================ */
 
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectNav from "../shell/ProjectNav.jsx";
+import { estimateFull } from "../../lib/engineClient.js";
+import { getUploadedDrawings, clearUploadedDrawings } from "../../lib/uploadedFiles.js";
 
-// The stage a sheet is in. Index 0..STAGES.length-1 while working, then
-// "complete". Descriptive, per spec §5 -- no percentage, no ETA.
-const STAGES = ["Waiting", "Reading sheet", "Finding electrical items", "Checking schedules"];
+const ENGINE_STAGES = ["Uploading drawings", "Reading sheets", "Counting devices", "Classifying and pricing"];
 
 const SAMPLE_SHEETS = [
   { id: "e11", number: "E1.1", title: "Level 1 power" },
@@ -32,91 +29,144 @@ const SAMPLE_SHEETS = [
   { id: "e31", number: "E3.1", title: "Roof and site" },
 ];
 
+const money = (n) => "$" + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+// Module-level so StrictMode's double-invoked effect (and its cleanup)
+// can't fire the engine twice: both invocations await the same in-flight
+// request, and only the one still mounted applies the result.
+const engineRuns = new Map(); // projectId -> Promise<payload>
+
+
 export default function ProcessingStatus({ store }) {
   const { projectId } = useParams();
-  const navigate = useNavigate();
 
-  // Per-sheet stage index; -1 means complete.
-  const [progress, setProgress] = useState(() => SAMPLE_SHEETS.map(() => 0));
-  const [done, setDone] = useState(false);
-  const attachedRef = useRef(false);
+  const [mode, setMode] = useState("checking"); // checking | engine | sample | done | error
+  const [engineStage, setEngineStage] = useState(0);
+  const [sampleProgress, setSampleProgress] = useState(() => SAMPLE_SHEETS.map(() => 0));
+  const [summary, setSummary] = useState(null);
+  const [reviewPath, setReviewPath] = useState("");
+  const [error, setError] = useState(null);
 
   useEffect(() => {
+    // `alive` is per-invocation and re-created here, so StrictMode's
+    // mount→cleanup→mount cycle leaves the final invocation with alive=true
+    // (the earlier one's cleanup only flips its own closure). The engine
+    // call itself is deduped module-side (engineRuns), so it fires once.
     let alive = true;
     const timers = [];
 
-    // If this project already carries a sample takeoff, re-processing
-    // would overwrite the estimator's review progress. Detect that and
-    // show the completed state instead of running again.
     (async () => {
-      let alreadySampled = false;
+      let project = null;
       try {
         const rows = (await store.listProjects?.({ includeArchived: true })) ?? [];
-        alreadySampled = rows.find((p) => p.id === projectId)?.sample === true;
+        project = rows.find((p) => p.id === projectId) ?? null;
       } catch {
-        alreadySampled = false;
+        project = null;
       }
       if (!alive) return;
 
-      if (alreadySampled) {
-        setProgress(SAMPLE_SHEETS.map(() => -1));
-        setDone(true);
+      // Already has a takeoff — show complete, never re-run.
+      if (project && (project.sample || project.hasTakeoff)) {
+        setReviewPath(`/projects/${projectId}/${project.sample ? "takeoff" : "spreadsheet"}`);
+        setMode("done");
         return;
       }
 
-      // Simulate each sheet advancing through the stages, staggered so
-      // they don't all move in lockstep.
+      const drawings = getUploadedDrawings(projectId);
+
+      if (drawings.length > 0) {
+        // --- real engine path ---
+        setMode("engine");
+        let stage = 0;
+        const iv = setInterval(() => {
+          if (!alive) return;
+          stage = Math.min(stage + 1, ENGINE_STAGES.length - 1);
+          setEngineStage(stage);
+        }, 2500);
+        timers.push(() => clearInterval(iv));
+        try {
+          // Dedupe the network call across StrictMode's double invoke.
+          let run = engineRuns.get(projectId);
+          if (!run) {
+            run = estimateFull(drawings[0], project?.location || "");
+            engineRuns.set(projectId, run);
+          }
+          const payload = await run;
+          engineRuns.delete(projectId);
+          if (!alive) return;
+          await store.attachEngineTakeoff(projectId, payload);
+          clearUploadedDrawings(projectId);
+          clearInterval(iv);
+          setSummary({
+            items: payload.totals.item_count,
+            total: payload.totals.total_direct_cost,
+            sheets: payload.sheets.length,
+            location: payload.location,
+            source: payload.source,
+          });
+          setReviewPath(`/projects/${projectId}/spreadsheet`);
+          setMode("done");
+        } catch (err) {
+          engineRuns.delete(projectId); // let a retry start fresh
+          if (!alive) return;
+          clearInterval(iv);
+          setError(err.message);
+          setMode("error");
+        }
+        return;
+      }
+
+      // --- sample fallback (no upload) ---
+      setMode("sample");
       SAMPLE_SHEETS.forEach((_, sheetIdx) => {
-        for (let stage = 1; stage <= STAGES.length; stage += 1) {
-          const at = 500 + sheetIdx * 300 + stage * 550;
+        for (let s = 1; s <= 3; s += 1) {
           timers.push(
             setTimeout(() => {
               if (!alive) return;
-              setProgress((prev) => {
+              setSampleProgress((prev) => {
                 const next = prev.slice();
-                next[sheetIdx] = stage >= STAGES.length ? -1 : stage;
+                next[sheetIdx] = s >= 3 ? -1 : s;
                 return next;
               });
-            }, at),
+            }, 400 + sheetIdx * 250 + s * 450),
           );
         }
       });
-
-      // When the last sheet finishes, attach the sample and reveal the
-      // continue action. Ref-guarded so StrictMode's double-invoke can't
-      // attach twice.
-      const finishAt = 500 + (SAMPLE_SHEETS.length - 1) * 300 + STAGES.length * 550 + 300;
       timers.push(
         setTimeout(async () => {
-          if (!alive || attachedRef.current) return;
-          attachedRef.current = true;
+          if (!alive) return;
           try {
             await store.attachSampleTakeoff?.(projectId);
           } catch {
-            // A failed attach is non-fatal here; the continue action
-            // below still routes to the workspace, which shows its own
-            // empty state honestly if nothing landed.
+            /* non-fatal */
           }
-          if (alive) setDone(true);
-        }, finishAt),
+          if (!alive) return;
+          setReviewPath(`/projects/${projectId}/takeoff`);
+          setMode("done");
+        }, 400 + SAMPLE_SHEETS.length * 250 + 3 * 450 + 300),
       );
     })();
 
     return () => {
       alive = false;
-      timers.forEach(clearTimeout);
+      timers.forEach((t) => (typeof t === "function" ? t() : clearTimeout(t)));
     };
   }, [store, projectId]);
 
-  const stageLabel = (idx) => (idx === -1 ? "Complete" : STAGES[idx]);
+  const heading =
+    mode === "done"
+      ? "Processing complete"
+      : mode === "error"
+        ? "Couldn't finish processing"
+        : "Reading your drawings";
 
   return (
     <>
       <AppTopBar
         title="Processing"
         primaryAction={
-          done ? (
-            <Link className="btn btn--primary" to={`/projects/${projectId}/takeoff`}>
+          mode === "done" && reviewPath ? (
+            <Link className="btn btn--primary" to={reviewPath}>
               Continue to review
             </Link>
           ) : null
@@ -125,38 +175,86 @@ export default function ProcessingStatus({ store }) {
       <ProjectNav projectId={projectId} />
 
       <div className="page">
-        <h1 className="page-heading">{done ? "Processing complete" : "Reading your drawings"}</h1>
-        <p className="muted">
-          {done
-            ? "Every sheet finished. Continue to review the takeoff."
-            : "This can take a few minutes on a large set. You can leave this page — your progress is saved."}
-        </p>
+        <h1 className="page-heading">{heading}</h1>
 
-        <ul className="processing-list">
-          {SAMPLE_SHEETS.map((sheet, idx) => {
-            const complete = progress[idx] === -1;
-            return (
-              <li key={sheet.id} className="processing-row">
-                <span className="processing-icon" aria-hidden="true">
-                  {complete ? <CheckCircle2 size={18} className="ink-blue" /> : <Loader2 size={18} className="spin" />}
-                </span>
-                <span className="processing-sheet tabular">{sheet.number}</span>
-                <span className="processing-title">{sheet.title}</span>
-                <span className={complete ? "processing-stage is-complete" : "processing-stage"}>{stageLabel(progress[idx])}</span>
-              </li>
-            );
-          })}
-        </ul>
-
-        {done ? (
-          <div className="form-actions">
-            <Link className="btn btn--primary" to={`/projects/${projectId}/takeoff`}>
-              Continue to review
-            </Link>
-            <Link className="btn" to={`/projects/${projectId}`}>
-              Back to project
+        {mode === "error" ? (
+          <div className="load-error" role="alert">
+            <p>{error}</p>
+            <Link className="btn" to={`/projects/${projectId}/documents`}>
+              Back to documents
             </Link>
           </div>
+        ) : null}
+
+        {mode === "engine" ? (
+          <>
+            <p className="muted">
+              This can take a moment on a large set — the last step reads the drawings with the model. You can leave
+              this page.
+            </p>
+            <ul className="processing-list">
+              {ENGINE_STAGES.map((label, idx) => {
+                const complete = idx < engineStage;
+                const active = idx === engineStage;
+                return (
+                  <li key={label} className="processing-row">
+                    <span className="processing-icon" aria-hidden="true">
+                      {complete ? (
+                        <CheckCircle2 size={18} className="ink-blue" />
+                      ) : active ? (
+                        <Loader2 size={18} className="spin" />
+                      ) : (
+                        <span className="processing-dot" />
+                      )}
+                    </span>
+                    <span className="processing-title">{label}</span>
+                    <span className="processing-stage">{complete ? "Done" : active ? "Working…" : "Waiting"}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        ) : null}
+
+        {mode === "sample" ? (
+          <>
+            <p className="muted">You can leave this page — your progress is saved.</p>
+            <ul className="processing-list">
+              {SAMPLE_SHEETS.map((sheet, idx) => {
+                const complete = sampleProgress[idx] === -1;
+                return (
+                  <li key={sheet.id} className="processing-row">
+                    <span className="processing-icon" aria-hidden="true">
+                      {complete ? <CheckCircle2 size={18} className="ink-blue" /> : <Loader2 size={18} className="spin" />}
+                    </span>
+                    <span className="processing-sheet tabular">{sheet.number}</span>
+                    <span className="processing-title">{sheet.title}</span>
+                    <span className={complete ? "processing-stage is-complete" : "processing-stage"}>
+                      {complete ? "Complete" : "Reading sheet"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        ) : null}
+
+        {mode === "done" ? (
+          <>
+            <p className="muted">
+              {summary
+                ? `${summary.sheets} electrical sheet${summary.sheets === 1 ? "" : "s"} read, ${summary.items} line items, ${money(summary.total)} total direct cost${summary.location ? " for " + summary.location : ""}. Continue to review.`
+                : "Every sheet finished. Continue to review the takeoff."}
+            </p>
+            <div className="form-actions">
+              <Link className="btn btn--primary" to={reviewPath || `/projects/${projectId}`}>
+                Continue to review
+              </Link>
+              <Link className="btn" to={`/projects/${projectId}`}>
+                Back to project
+              </Link>
+            </div>
+          </>
         ) : null}
       </div>
     </>

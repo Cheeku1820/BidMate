@@ -12,3 +12,5 @@ api/.env.*
 .enginevenv/
 __pycache__/
 *.pyc
+.venv/
+api/.venv/

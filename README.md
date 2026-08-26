@@ -10,7 +10,9 @@ This is screen F of a larger specification. It was built first because every oth
 
 ## Take a look
 
-**Fastest — no install.** Open [`demo/index.html`](demo/index.html) directly in a browser. It's a single self-contained file with everything inlined. Download the repo as a ZIP, double-click that file, done.
+**Fastest — no install.** Open [`demo/index.html`](demo/index.html) directly in a browser. It's a single self-contained file with everything inlined — JS, CSS, no separate requests, so it works straight off the filesystem. Download the repo as a ZIP, double-click that file, done.
+
+This file is a build output, produced by `npm run build:demo` (`vite.demo.config.js`, via [`vite-plugin-singlefile`](https://www.npmjs.com/package/vite-plugin-singlefile)) and committed so it's runnable without a build step. It always runs in seed mode against `localStorage` — there is no backend to reach from a `file://` page — and it reflects whatever was committed the last time someone ran `npm run build:demo`, which can lag behind the latest source. Regenerate it after a client change you want the demo to show.
 
 **Run the dev server.**
 
@@ -44,6 +46,38 @@ Open the app in **two browser windows side by side**, both pointed at `localhost
 - Press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd> in either window. Undo pulls from a **shared** history stack, so you can undo a teammate's action — and the tooltip on the undo button names what you're about to reverse.
 
 State syncs over `BroadcastChannel` + `localStorage`, which behaves like a real backend for demo purposes without needing one. See [Known limitations](#known-limitations) for what a production version would need instead.
+
+---
+
+## Run the full stack
+
+Everything above runs the client alone, against `localStorage` — no install beyond Node. There is also a real backend (`api/`): Postgres, a FastAPI service, and a login screen in front of the same review workspace. You need [Docker](https://www.docker.com/) for this path.
+
+```bash
+docker compose up -d postgres api
+docker compose run --rm api alembic upgrade head
+```
+
+Seed the demo project. The seed reads its login credential from the environment and refuses to run without one — there is no default password, so **choose your own** `SEED_EMAIL` and `SEED_PASSWORD` here:
+
+```bash
+docker compose run --rm \
+  -e SEED_EMAIL="you@example.com" \
+  -e SEED_PASSWORD="choose-a-password" \
+  api python -m app.seed
+```
+
+Then bring up the web container and open **http://localhost:5174** (not 5173 — that port is commonly already in use, so the containerised client publishes on 5174 instead):
+
+```bash
+docker compose up -d web
+```
+
+Sign in with the `SEED_EMAIL`/`SEED_PASSWORD` you chose above. From here, the multi-user walkthrough above works the same way, except the "backend" is now Postgres: open a second browser window, sign in, approve an item in one, and watch it — and the presence avatar — appear in the other within a few seconds.
+
+**`npm run dev` alone still runs the seed/`localStorage` mode**, API stopped or not — that's deliberate. The client picks its backend from `VITE_DATA_SOURCE`: unset (the default, including plain `npm run dev` on the host) means seed mode; `api` (set automatically inside the `web` container above) means the real backend. Seed mode never imports anything from the API path, which is what makes it possible to delete later without touching the rest of the client.
+
+If you're running `npm run dev` on the host **against** the containerised API (`docker compose up postgres api`, then `npm run dev` separately), it talks to `http://localhost:8000` automatically — no extra configuration needed.
 
 ---
 
@@ -96,12 +130,22 @@ Canvas controls: drag to pan, scroll to zoom toward the cursor, fit-to-page, a l
 
 ```
 src/
-  App.jsx                      shell, sync, undo/redo, review actions, modals
+  App.jsx                      auth gate: login vs. workspace, nothing else
   styles.css                   design tokens and every component style
   lib/
-    data.js                    seed sheets and takeoff items, status definitions
-    sync.js                    shared state, presence, identity
+    data.js                    seed fixture: sheets, items, status definitions
+    rules.js                   approval/totals/scale-release rules, mirrored from the API
+    format.js                  time and initials formatting
+    useReviewStore.js          the snapshot hook: store subscription, poll, saves, mutations
+    store/
+      index.js                 picks seed or api by VITE_DATA_SOURCE
+      seed.js + seed-*.js       the localStorage/BroadcastChannel store
+      api.js + api-mapping.js  the real backend store (fetch, caching, wire-shape mapping)
   components/
+    Workspace.jsx              the review workspace: selection, filters, modals, shortcuts
+    Login.jsx                  sign-in screen (api store only)
+    TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx
+    Modal.jsx, FinishReviewModal.jsx, MiscModals.jsx, Pill.jsx
     BlueprintCanvas.jsx        pan/zoom viewport, markers, measurements, minimap
     PlanDrawing.jsx            architectural plan geometry per sheet
     Symbols.jsx                electrical symbol glyphs
@@ -109,7 +153,7 @@ src/
 
 If you open this repo in Claude Code, [`CLAUDE.md`](CLAUDE.md) loads automatically and carries the design context — status vocabulary, the rules that are easy to break, and the decisions still open.
 
-Further reading: [`DESIGN.md`](DESIGN.md) covers the interaction rules — blueprint/table synchronization, autosave, undo semantics, revision handling, and the finish-review blocking logic — [`ROADMAP.md`](ROADMAP.md) lists the remaining screens, and [`docs/product-spec.md`](docs/product-spec.md) is the full eleven-screen specification.
+Further reading: [`DESIGN.md`](DESIGN.md) covers the interaction rules — blueprint/table synchronization, autosave, undo semantics, revision handling, and the finish-review blocking logic — [`ROADMAP.md`](ROADMAP.md) inventories the work between this prototype and a shippable product, [`BUILD-STAGES.md`](BUILD-STAGES.md) sequences that work from MVP to platform, and [`docs/product-spec.md`](docs/product-spec.md) is the full eleven-screen specification.
 
 ---
 
@@ -127,7 +171,7 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 
 This is a design prototype, not a product. Specifically:
 
-- **Sync is single-machine.** `BroadcastChannel` + `localStorage` demonstrates the interaction model across tabs. Real multi-user needs a server, and shared undo needs conflict resolution — either operational transforms or per-user undo stacks with a merge policy. That decision is still open.
+- **Two sync modes, neither production-grade.** The default `localStorage` + `BroadcastChannel` mode is single-machine, demonstrating the interaction model across tabs without a server. The optional `docker compose` mode (see "Run the full stack" above) is a real Postgres-backed API, but sync there is a three-second poll, not a push channel — real-time collaboration needs a WebSocket layer. Both modes share the same open question: undo is a single linear stack, so one reviewer can undo another's action from underneath them. Shared undo needs conflict resolution — either operational transforms or per-user undo stacks with a merge policy — and that decision is still open regardless of which sync mode is in front of it.
 - **The blueprint is drawn geometry, not a rendered PDF.** A production build would layer markers over `pdf.js` output.
 - **No takeoff is actually computed.** Items are seed data. There is no document ingestion, no detection, no export.
 - **Screens A–E and G–K are not built.** See [`ROADMAP.md`](ROADMAP.md).

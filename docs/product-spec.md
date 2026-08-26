@@ -6,7 +6,7 @@ Design a high-fidelity desktop web application for electrical subcontractors who
 
 The application converts uploaded construction documents into a machine-generated Division 26 electrical takeoff. An estimator must review every result, resolve important warnings, and approve the takeoff before export.
 
-Create a coherent product design—not a marketing site and not a chat interface. The blueprint review workspace is the primary experience.
+Create a coherent product design—not a marketing site, and not a product whose front door is a chat interface. The blueprint review workspace is the primary experience. A conversation panel sits alongside it on every screen, available whenever the estimator wants it, as an additional way to give and receive context rather than as the way the work gets done.
 
 ## 2. Users and Design Objective
 
@@ -60,16 +60,20 @@ Use a persistent left application navigation with text labels and icons:
 - Company settings
 - Help
 
-Within a project, use a clear six-step progress indicator:
+Within a project, the estimator must always see where they are, what is finished, and what the next primary action is. Do not hide required steps in menus.
 
-1. Project details
-2. Documents
-3. Confirm drawings
-4. Process takeoff
-5. Review
-6. Export
+**The six-step indicator this section originally specified has been superseded.** It read:
 
-Do not hide required steps in menus. A user should always see the current step, completed steps, and the next primary action.
+> 1. Project details 2. Documents 3. Confirm drawings 4. Process takeoff 5. Review 6. Export
+
+That was written before the workspace model in [`docs/superpowers/specs/2026-08-16-bidmate-frontend-product-design.md`](superpowers/specs/2026-08-16-bidmate-frontend-product-design.md) §4.2, which the product is now built against. Three incompatible enumerations of the same workflow briefly shipped together — a "step 1 of 6" subtitle, seven project stages in `src/lib/projectStage.js`, and thirteen workspaces in the project navigation — so an estimator was told they were on step 1 of 6, landed on a 13-tab nav, and read a stage name from a seven-value vocabulary.
+
+The subtitle was removed rather than reconciled, because inventing a sixth thing to make the number true would have been the wrong repair. What governs now:
+
+- **Thirteen workspaces** in the project navigation (frontend design spec §4.2) — the places an estimator can go.
+- **Seven project stages** in `src/lib/projectStage.js` — `setup`, `documents`, `processing`, `review`, `pricing`, `export`, `complete` — reported on the dashboard and the project overview as where the project *is*. This is a separate axis from the four review labels, which describe items rather than projects.
+
+A numbered progress indicator may return, but only once it counts something that exists.
 
 ## 5. Required Screens
 
@@ -359,6 +363,7 @@ Every override must offer “Restore company default.”
 - Do not allow a superseded sheet to contribute to current totals.
 - Allow unfamiliar symbols to remain unclassified and visible in the review queue.
 - Use contextual help panels, not disruptive tutorials or chat popups.
+- Provide a conversation panel the estimator can open on any screen, to supply context the drawings do not carry and to answer questions raised during review. It anchors to the current selection or to a point on the drawing. It proposes changes for a person to apply and never approves anything itself. Every action available in it is also available through the structured interface.
 
 ## 7. Visual Direction
 
@@ -479,7 +484,7 @@ Finish review → Resolve or acknowledge remaining issues → Preview approved t
 - The Excel export preview matches approved takeoff totals.
 - The design remains usable at 1280px without hiding required actions.
 - Screens include empty, loading, warning, partial-failure, and export states.
-- No critical workflow depends on a chat interface, hidden menu, unexplained icon, hover-only control, or unexplained confidence percentage.
+- No critical workflow *depends on* a chat interface, hidden menu, unexplained icon, hover-only control, or unexplained confidence percentage. The conversation panel is available on every screen and an estimator may work through it as much as they like — the requirement is that a structured path exists alongside it, so a review completed with the panel closed reaches the same end state.
 
 ## 13. Deliverables Requested From Claude Design
 

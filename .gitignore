@@ -3,3 +3,7 @@ dist
 .DS_Store
 *.local
 .vite
+.superpowers
+api/.env
+api/.env.*
+!api/.env.example

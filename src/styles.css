@@ -337,6 +337,13 @@ button {
   color: var(--ink-2);
   border-color: var(--line-2);
 }
+/* A non-status marker (e.g. "Project override" on settings) -- neutral so
+   it never borrows a review-status hue outside the review context. */
+.pill--neutral {
+  background: var(--paper-0);
+  color: var(--ink-2);
+  border-color: var(--line-2);
+}
 
 .savestate {
   font-size: 12px;
@@ -1124,4 +1131,606 @@ button {
   font-size: 13px;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+/* ============================================================
+   Login — the api store's sign-in gate (task-16-brief.md). Never shown
+   in seed mode, since createSeedStore()'s me() always resolves.
+   ============================================================ */
+
+.login {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper-0);
+  padding: 24px;
+}
+
+.login__card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-2);
+  padding: 28px 26px 24px;
+}
+
+.login__title {
+  margin: 0 0 4px;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.login__subtitle {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.login__error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  color: var(--red);
+  background: var(--red-tint);
+  border: 1px solid var(--red-line);
+  border-radius: var(--r-md);
+}
+
+/* ---- Application shell (spec §4) ---- */
+/* Column 1 is "auto", not a fixed px, so it tracks whatever width
+   .company-nav itself declares below — that's what lets the collapsed
+   state shrink the column without this rule needing to know about it. */
+.app-shell {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  min-height: 100vh;
+}
+
+.company-nav {
+  width: 232px;
+  background: var(--paper-1);
+  border-right: 1px solid var(--line-1);
+  padding: 16px 12px;
+  transition: width var(--dur);
+}
+
+/* Collapsed on the takeoff route by default (CompanyNav.jsx): at the
+   1024px floor the "too narrow" guard treats as supported, .sheets
+   (248px) + .detail (330px) + this column at its full 232px leaves the
+   canvas narrower than the detail panel, which fails spec §12's "the
+   blueprint stays the largest element" criterion. 56px is enough for an
+   18px icon plus this nav's existing 12px horizontal padding on each
+   side, matching .sheets--collapsed's own icon-rail width (52px) in
+   spirit rather than to the pixel, since the two rails' padding differs
+   slightly. */
+.company-nav.is-collapsed { width: 56px; }
+
+.company-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px 16px;
+}
+
+.company-nav.is-collapsed .company-nav-head { justify-content: center; padding: 0 0 16px; }
+
+.company-nav-brand {
+  font-weight: 600;
+}
+
+/* A real button, not a div with a click handler — spec §7's 40px
+   minimum touch target applies here same as anywhere else, and .iconbtn
+   (34px) is sized for denser in-workspace toolbars, not this. */
+.company-nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--ink-2);
+}
+.company-nav-toggle:hover { background: var(--paper-0); color: var(--ink-1); }
+
+.company-nav-list { list-style: none; margin: 0; padding: 0; }
+
+.company-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Spec §7 keeps touch targets at 40px minimum even on desktop. */
+  min-height: 40px;
+  padding: 0 12px;
+  font-size: 13.5px;
+  border-radius: var(--r-md);
+  color: var(--ink-1);
+  text-decoration: none;
+}
+
+.company-nav.is-collapsed .company-nav-link { justify-content: center; padding: 0; }
+
+/* Focus is handled by the global :focus-visible rule at the top of this
+   file (2px solid var(--blue)); do not restate it per component. */
+.company-nav-link:hover { background: var(--paper-0); }
+.company-nav-link.is-active { background: var(--paper-0); font-weight: 600; }
+
+/* Visible but non-interactive: the five spec §4.1 destinations nothing
+   routes to yet. Dimmed text (which dims the icon too, via
+   currentColor) and a not-allowed cursor read as "not available" rather
+   than as a broken link — the opposite of NotFound.jsx's copy, which
+   would wrongly suggest something used to exist here. */
+.company-nav-link.is-unavailable {
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+.company-nav-link.is-unavailable:hover { background: transparent; }
+
+.app-shell-main { display: flex; flex-direction: column; min-width: 0; }
+
+.app-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.app-top-bar-identity { display: flex; flex-direction: column; min-width: 0; }
+.app-top-bar-title { font-weight: 600; }
+.app-top-bar-subtitle { color: var(--ink-2); font-size: 12.5px; }
+.app-top-bar-tools { display: flex; align-items: center; gap: 10px; }
+
+.empty-state {
+  margin: 48px auto;
+  /* 544px, not 34rem — this file has no spacing scale and uses literal
+     px throughout (34rem at the 16px root size is the same value). */
+  max-width: 544px;
+  text-align: center;
+}
+
+/* ---- Projects dashboard (spec §5.1) ---- */
+
+.page { padding: 20px; }
+.page-heading { margin: 0 0 16px; }
+.muted { color: var(--ink-2); }
+
+.load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--red-line);
+  border-radius: var(--r-md);
+  background: var(--red-tint);
+  color: var(--red);
+}
+.load-error p { margin: 0; }
+
+.projects-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+/* .formfield is the label-plus-input wrapper. .field is already the
+   input element itself (see the top of this file) — never redefine it
+   as a wrapper, and never give a form field an unlabelled input. */
+.formfield { display: flex; flex-direction: column; gap: 4px; }
+.formfield-label { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+
+.filter-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* A distinct class from the sheets rail's own `.chip` (SheetsRail.jsx),
+   which is sized for a narrow 24px-tall sidebar row and would leave
+   these below the 40px touch-target minimum. Active state reads off
+   aria-pressed, the same convention `.chip[aria-pressed="true"]`
+   already uses, so the two chip styles stay visually distinct but
+   behaviourally consistent. */
+.filter-chip {
+  min-height: 40px;
+  padding: 0 13px;
+  font-size: 13.5px;
+  font-weight: 600;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-1);
+  cursor: pointer;
+  transition: background var(--dur), border-color var(--dur), color var(--dur);
+}
+
+.filter-chip:hover { background: var(--paper-1); border-color: var(--line-3); }
+
+.filter-chip[aria-pressed="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table th, .data-table td {
+  text-align: left;
+  padding: 10px;
+  font-size: 13.5px;
+  border-bottom: 1px solid var(--line-1);
+  vertical-align: top;
+}
+.data-table thead th { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
+.row-secondary { display: block; color: var(--ink-3); font-size: 12.5px; }
+
+/* Warnings column keeps "missing information" (red, blocking) and
+   "needs attention" (amber, acknowledgeable) as two separate rows
+   rather than one merged count — status is never colour alone, and
+   blending the two vocabularies would hide which projects carry
+   blocking issues (CLAUDE.md). */
+.warning-summary { display: flex; flex-direction: column; gap: 3px; }
+.warning-summary__row { display: inline-flex; align-items: center; gap: 4px; }
+.warning-summary__row--missing { color: var(--red); }
+.warning-summary__row--attention { color: var(--amber); }
+
+/* ---- New project form (spec §6.1) ---- */
+
+.page-narrow { max-width: 544px; }
+.form-column { display: flex; flex-direction: column; gap: 16px; }
+
+/* .formfield and .formfield-label already exist above (Projects
+   dashboard's search/sort fields) -- these add the pieces the guided
+   form needs without redefining either. */
+.formfield-required { font-weight: 400; color: var(--ink-3); }
+.formfield-hint { margin: 0; color: var(--ink-2); font-size: 12.5px; }
+.formfield-error { margin: 0; color: var(--red); font-size: 12.5px; }
+
+/* The error state is a border colour plus the adjacent message plus
+   aria-invalid -- never the colour alone (CLAUDE.md). */
+.field--error { border-color: var(--red); }
+
+.form-actions { display: flex; gap: 10px; }
+
+/* ---- Project navigation and overview (spec §4.2, §6.2) ---- */
+
+.project-nav { border-bottom: 1px solid var(--line-1); padding: 0 20px; }
+.project-nav-list { display: flex; gap: 2px; list-style: none; margin: 0; padding: 0; overflow-x: auto; }
+
+.project-nav-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: 13.5px;
+  color: var(--ink-1);
+  text-decoration: none;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+
+.project-nav-link.is-active { border-bottom-color: var(--blue); font-weight: 600; }
+.project-nav-link.is-unavailable { color: var(--ink-3); cursor: default; }
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(288px, 1fr));
+  gap: 16px;
+}
+
+.card { border: 1px solid var(--line-1); border-radius: var(--r-md); padding: 16px; background: var(--surface); }
+.card h2 { margin: 0 0 10px; font-size: 14px; }
+
+.detail-list { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; margin: 0; font-size: 13.5px; }
+.detail-list dt { color: var(--ink-2); }
+.detail-list dd { margin: 0; }
+
+/* ---- Takeoff spreadsheet (spec §10) ---- */
+.takeoff-table-scroll { overflow-x: auto; }
+.takeoff-table th, .takeoff-table td { padding: 7px 10px; }
+.takeoff-table thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.takeoff-table tbody tr.is-selected { background: var(--blue-tint); }
+.takeoff-sort {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.takeoff-columns { display: flex; flex-wrap: wrap; gap: 10px; }
+
+/* Controls row layout -- not given verbatim by the plan's CSS block,
+   but needed to lay out search, status filters, and the columns
+   toggle on one line the same way .projects-filters already does for
+   the dashboard. Kept as its own class rather than reusing
+   .projects-filters, since that name is scoped to screen A. */
+.takeoff-controls {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.takeoff-columns-toggle { position: relative; }
+.takeoff-columns-toggle .takeoff-columns {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+
+/* The checkbox column itself is far smaller than 40px, so the cell
+   around it carries the touch target instead (spec §7's 40px minimum) --
+   padding rather than a fixed width, so it still lines up with the
+   table's normal row height. */
+.bulk-select-cell { width: 40px; text-align: center; vertical-align: middle; }
+.bulk-select-cell input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+
+/* ---- Bulk selection bar ---- */
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--paper-1);
+  font-size: 13px;
+}
+.bulk-bar-blocked { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--ink-2); }
+.bulk-bar-reason { display: inline-flex; align-items: center; gap: 4px; }
+.bulk-bar-reason--attention { color: var(--amber); }
+.bulk-bar-reason--missing { color: var(--red); }
+.bulk-bar-result { margin: 0; }
+
+/* --- document intake (screens C, E) and the sample-data banner ---------- */
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 28px 16px;
+  margin: 16px 0;
+  border: 2px dashed var(--line-2);
+  border-radius: var(--r-md);
+  background: var(--paper-1);
+  color: var(--ink-2);
+  text-align: center;
+}
+
+.dropzone.is-dragging {
+  border-color: var(--blue);
+  background: var(--blue-tint);
+  color: var(--ink-1);
+}
+
+.dropzone p {
+  margin: 0;
+}
+
+.field--compact {
+  padding: 4px 8px;
+  height: auto;
+  min-height: 32px;
+}
+
+.upload-table .upload-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.upload-status {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+/* Blue, not green: a cleanly uploaded file is a success, but green is
+   reserved for estimator-approved content alone (CLAUDE.md). Blue is the
+   product's "done / ready" hue without implying approval. */
+.upload-status--ready {
+  color: var(--blue);
+}
+
+.upload-status--uploading {
+  color: var(--blue);
+}
+
+.upload-status--duplicate,
+.upload-status--unsupported,
+.upload-status--protected {
+  color: var(--red);
+}
+
+.processing-list {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.processing-row {
+  display: grid;
+  grid-template-columns: 24px 56px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--line-1);
+  background: var(--surface);
+}
+
+.processing-row:first-child {
+  border-top: none;
+}
+
+.processing-icon {
+  display: inline-flex;
+}
+
+.processing-sheet {
+  font-weight: 600;
+}
+
+.processing-title {
+  color: var(--ink-2);
+}
+
+.processing-stage {
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+/* Blue, not green: a processed sheet is done, not estimator-approved --
+   green is reserved for approval alone (CLAUDE.md, "not on 'done
+   processing'"). */
+.processing-stage.is-complete {
+  color: var(--blue);
+}
+
+.ink-blue {
+  color: var(--blue);
+}
+
+.spin {
+  animation: processing-spin 900ms linear infinite;
+}
+
+@keyframes processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sample-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--blue-line);
+  background: var(--blue-tint);
+  color: var(--ink-1);
+}
+
+.sample-banner p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.sample-banner strong {
+  color: var(--ink-1);
+}
+
+/* --- tabs, settings screens (J, K), and plain lists ---------------------- */
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  border-bottom: 1px solid var(--line-1);
+  margin: 8px 0 16px;
+}
+
+.tab {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 8px 12px;
+  font: inherit;
+  color: var(--ink-2);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+}
+
+.tab:hover {
+  color: var(--ink-1);
+  background: var(--paper-1);
+}
+
+.tab.is-active {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+  font-weight: 600;
+}
+
+.tabpanel {
+  padding-top: 4px;
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.settings-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-input {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-affix {
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+.field--number {
+  width: 8ch;
+}
+
+.settings-source {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 12.5px;
+  text-align: right;
+}
+
+.plain-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+}
+
+.plain-list li {
+  margin: 4px 0;
 }

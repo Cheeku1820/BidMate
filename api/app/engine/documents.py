@@ -104,6 +104,31 @@ def render_page_png(path: str, page_index: int, zoom: float = 2.0) -> bytes:
     return pix.tobytes("png")
 
 
+_CONTEXT_KEYWORDS = (
+    "LUMINAIRE", "FIXTURE", "SCHEDULE", "PANEL", "RECEPTACLE", "LIGHTING",
+    "DIVISION 26", "26 05", "26 24", "26 27", "26 51", "WATT", "CIRCUIT", "DISCONNECT",
+)
+
+
+def extract_context(pdf_bytes: bytes, max_chars: int = 6000) -> str:
+    """Pull the electrical-relevant text out of a spec/addendum PDF so the
+    classifier can read a fixture or panel schedule that lives outside the
+    drawings. Only pages that mention Division 26 topics are included, and
+    the total is capped -- untrusted document text is context for the
+    model, never an instruction, and it stays bounded."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    chunks: list[str] = []
+    total = 0
+    for page in doc:
+        text = page.get_text("text")
+        if any(k in text.upper() for k in _CONTEXT_KEYWORDS):
+            chunks.append(text.strip())
+            total += len(text)
+            if total > max_chars:
+                break
+    return "\n".join(chunks)[:max_chars]
+
+
 def render_page_png_bytes(pdf_bytes: bytes, page_index: int, zoom: float = 1.6) -> bytes:
     """Same, from the PDF bytes the service keeps in memory keyed by
     takeoff id (so the canvas can fetch one sheet image on demand without

@@ -103,6 +103,87 @@ async def estimate_full_endpoint(file: UploadFile = File(...), location: str = F
         os.unlink(path)
 
 
+def _totals(items: list[dict]) -> dict:
+    s = lambda f: round(sum(i.get(f, 0) or 0 for i in items), 2)  # noqa: E731
+    material, labor = s("material_cost"), s("labor_cost")
+    return {
+        "material": material,
+        "labor_hours": s("labor_hours"),
+        "labor_cost": labor,
+        "total_direct_cost": round(material + labor, 2),
+        "item_count": len(items),
+        "attention_count": sum(1 for i in items if i.get("status") == "attention"),
+    }
+
+
+@app.post("/estimate/project")
+async def estimate_project_endpoint(
+    files: list[UploadFile] = File(...),
+    types: list[str] = Form(...),
+    location: str = Form(""),
+):
+    """Process the whole document set: every Drawings PDF goes through the
+    engine (merged), and every other document (specs, addenda, scope) has
+    its electrical-relevant text extracted as context so the classifier can
+    read schedules that live outside the drawings. Each sheet keeps its own
+    takeoff_id, so the canvas fetches the right page image per drawing."""
+    drawings: list[tuple[str, str, str]] = []  # (takeoff_id, temp_path, filename)
+    context_parts: list[str] = []
+    try:
+        for f, t in zip(files, types):
+            data = await f.read()
+            name = (f.filename or "").lower()
+            if not name.endswith(".pdf"):
+                continue
+            if t == "Drawings":
+                takeoff_id = _remember_pdf(data)
+                fd, path = tempfile.mkstemp(suffix=".pdf")
+                with os.fdopen(fd, "wb") as tmp:
+                    tmp.write(data)
+                drawings.append((takeoff_id, path, f.filename))
+            else:
+                try:
+                    text = documents_mod.extract_context(data)
+                    if text:
+                        context_parts.append(f"[{f.filename}]\n{text}")
+                except Exception:  # noqa: BLE001 -- a doc we can't read is just skipped
+                    pass
+
+        if not drawings:
+            return JSONResponse(status_code=400, content={"error": "Include at least one file typed Drawings."})
+
+        context = "\n\n".join(context_parts)[:12000]
+
+        merged_sheets: list[dict] = []
+        merged_items: list[dict] = []
+        meta: dict | None = None
+        for takeoff_id, path, _fname in drawings:
+            payload = estimate_mod.full_takeoff(path, location, context)
+            if meta is None:
+                meta = {k: payload[k] for k in ("location", "location_note", "labor_rate", "material_factor", "source")}
+            for sheet in payload["sheets"]:
+                merged_sheets.append({**sheet, "id": f"{takeoff_id}:{sheet['id']}", "takeoff_id": takeoff_id})
+            for item in payload["items"]:
+                merged_items.append({**item, "sheet_id": f"{takeoff_id}:{item['sheet_id']}"})
+
+        return {
+            **(meta or {"location": location, "labor_rate": 78.0, "material_factor": 1.0, "source": "deterministic", "location_note": ""}),
+            "sheets": merged_sheets,
+            "items": merged_items,
+            "totals": _totals(merged_items),
+            "document_count": len(files),
+            "context_documents": len(context_parts),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=500, content={"error": f"Couldn't process the documents: {type(exc).__name__}."})
+    finally:
+        for _tid, path, _f in drawings:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+
 @app.get("/sheet-image")
 def sheet_image_endpoint(takeoff_id: str, page: int):
     """Rendered PNG of one sheet (1-based page), for the canvas background."""

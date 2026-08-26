@@ -10,16 +10,10 @@
 
 const BASE = "http://localhost:8100";
 
-/** POST a drawing PDF + location to /estimate/full, returning the
- *  per-sheet takeoff payload. Throws an Error with a readable message. */
-export async function estimateFull(file, location) {
-  const form = new FormData();
-  form.append("location", location || "");
-  form.append("file", file);
-
+async function post(path, form) {
   let res;
   try {
-    res = await fetch(`${BASE}/estimate/full`, { method: "POST", body: form });
+    res = await fetch(`${BASE}${path}`, { method: "POST", body: form });
   } catch {
     throw new Error(
       "Couldn't reach the estimate service. Start it in the api folder with: uvicorn estimate_service:app --port 8100",
@@ -31,6 +25,28 @@ export async function estimateFull(file, location) {
   } catch {
     throw new Error("The estimate service returned an unexpected response.");
   }
-  if (!res.ok) throw new Error(data.error || "The takeoff couldn't be produced from these drawings.");
+  if (!res.ok) throw new Error(data.error || "The takeoff couldn't be produced from these documents.");
   return data;
+}
+
+/** POST a single drawing PDF + location to /estimate/full (used by the
+ *  Instant estimate page). */
+export async function estimateFull(file, location) {
+  const form = new FormData();
+  form.append("location", location || "");
+  form.append("file", file);
+  return post("/estimate/full", form);
+}
+
+/** POST the whole document set (each `{ file, docType }`) + location to
+ *  /estimate/project: Drawings run the pipeline, everything else is read
+ *  as context. Returns the merged per-sheet takeoff payload. */
+export async function estimateProject(uploaded, location) {
+  const form = new FormData();
+  form.append("location", location || "");
+  for (const { file, docType } of uploaded) {
+    form.append("files", file);
+    form.append("types", docType || "Other");
+  }
+  return post("/estimate/project", form);
 }

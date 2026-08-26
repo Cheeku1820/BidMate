@@ -18,10 +18,10 @@ import { Link, useParams } from "react-router-dom";
 import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectNav from "../shell/ProjectNav.jsx";
-import { estimateFull } from "../../lib/engineClient.js";
-import { getUploadedDrawings, clearUploadedDrawings } from "../../lib/uploadedFiles.js";
+import { estimateProject } from "../../lib/engineClient.js";
+import { getUploadedFiles, clearUploadedFiles } from "../../lib/uploadedFiles.js";
 
-const ENGINE_STAGES = ["Uploading drawings", "Reading sheets", "Counting devices", "Classifying and pricing"];
+const ENGINE_STAGES = ["Uploading documents", "Reading drawings and specifications", "Counting devices", "Classifying and pricing"];
 
 const SAMPLE_SHEETS = [
   { id: "e11", number: "E1.1", title: "Level 1 power" },
@@ -72,9 +72,9 @@ export default function ProcessingStatus({ store }) {
         return;
       }
 
-      const drawings = getUploadedDrawings(projectId);
+      const uploaded = getUploadedFiles(projectId);
 
-      if (drawings.length > 0) {
+      if (uploaded.length > 0) {
         // --- real engine path ---
         setMode("engine");
         let stage = 0;
@@ -88,14 +88,14 @@ export default function ProcessingStatus({ store }) {
           // Dedupe the network call across StrictMode's double invoke.
           let run = engineRuns.get(projectId);
           if (!run) {
-            run = estimateFull(drawings[0], project?.location || "");
+            run = estimateProject(uploaded, project?.location || "");
             engineRuns.set(projectId, run);
           }
           const payload = await run;
           engineRuns.delete(projectId);
           if (!alive) return;
           await store.attachEngineTakeoff(projectId, payload);
-          clearUploadedDrawings(projectId);
+          clearUploadedFiles(projectId);
           clearInterval(iv);
           setSummary({
             items: payload.totals.item_count,

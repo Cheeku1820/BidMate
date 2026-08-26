@@ -31,7 +31,10 @@ function inferSymbol(name, system) {
 /** Maps the engine payload to `{ sheets, items }` in the store shape. */
 export function mapPayload(payload) {
   const sheets = (payload.sheets || []).map((s, i) => ({
-    id: `esheet-${i}`,
+    // The engine gives each sheet a globally unique id ("takeoffId:page");
+    // items reference it by sheet_id, so a merged multi-drawing set keeps
+    // its sheet references unambiguous.
+    id: s.id || `esheet-${i}`,
     number: s.number || `E${i + 1}`,
     title: "Electrical plan",
     discipline: "Electrical",
@@ -41,18 +44,16 @@ export function mapPayload(payload) {
     scaleOptions: [],
     plan: "",
     superseded: false,
-    // Section 6 uses these to place markers on the rendered page.
+    // Section 6 uses these to place markers on the rendered page, and
+    // takeoffId addresses which drawing file the page image comes from.
+    takeoffId: s.takeoff_id || payload.takeoff_id || null,
     widthPt: s.width_pt,
     heightPt: s.height_pt,
     pageIndex: s.page,
     unreadable: s.unreadable || null,
   }));
-  const sheetIdByNumber = {};
-  const dimsByNumber = {};
-  for (const s of sheets) {
-    sheetIdByNumber[s.number] = s.id;
-    dimsByNumber[s.number] = { w: s.widthPt || 1000, h: s.heightPt || 750 };
-  }
+  const dimsById = {};
+  for (const s of sheets) dimsById[s.id] = { w: s.widthPt || 1000, h: s.heightPt || 750 };
   const fallbackSheet = sheets[0]?.id ?? null;
 
   // The canvas works in a fixed 1000x750 space; the engine gives PDF
@@ -62,12 +63,13 @@ export function mapPayload(payload) {
   const SH = 750;
 
   const items = (payload.items || []).map((r) => {
-    const d = dimsByNumber[r.sheet] || { w: 1000, h: 750 };
+    const sheetId = r.sheet_id ?? fallbackSheet;
+    const d = dimsById[sheetId] || { w: 1000, h: 750 };
     const nx = (px) => Math.round((px / d.w) * SW);
     const ny = (py) => Math.round((py / d.h) * SH);
     return {
       id: crypto.randomUUID(),
-      sheetId: sheetIdByNumber[r.sheet] ?? fallbackSheet,
+      sheetId,
       symbol: inferSymbol(r.name, r.system),
       name: r.name,
       description: "",

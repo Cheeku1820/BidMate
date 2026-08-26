@@ -9,16 +9,16 @@
    a client-only demo (a real backend would have stored the file).
    ============================================================ */
 
-const drawings = new Map(); // projectId -> File[]
+const uploads = new Map(); // projectId -> [{ file, docType }]
 
-export function setUploadedDrawings(projectId, files) {
-  drawings.set(projectId, files);
+export function setUploadedFiles(projectId, files) {
+  uploads.set(projectId, files);
 }
 
-export function getUploadedDrawings(projectId) {
-  return drawings.get(projectId) || [];
+export function getUploadedFiles(projectId) {
+  return uploads.get(projectId) || [];
 }
 
-export function clearUploadedDrawings(projectId) {
-  drawings.delete(projectId);
+export function clearUploadedFiles(projectId) {
+  uploads.delete(projectId);
 }

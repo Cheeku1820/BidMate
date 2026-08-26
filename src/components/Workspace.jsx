@@ -224,8 +224,8 @@ export default function Workspace() {
           sheet={sheet}
           items={items}
           sheetImageUrl={
-            project?.takeoffId && sheet?.pageIndex
-              ? `http://localhost:8100/sheet-image?takeoff_id=${project.takeoffId}&page=${sheet.pageIndex}`
+            sheet?.takeoffId && sheet?.pageIndex
+              ? `http://localhost:8100/sheet-image?takeoff_id=${sheet.takeoffId}&page=${sheet.pageIndex}`
               : null
           }
           selId={selectedItemId}

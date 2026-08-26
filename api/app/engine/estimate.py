@@ -46,20 +46,24 @@ def _sheet_no(sheets, page_index) -> str:
     return "?"
 
 
-def _compute(path: str, location: str):
+def _compute(path: str, location: str, context: str = ""):
     """Shared pipeline: returns (per-cluster rows, sheets, meta). Each row
-    carries coordinates and cost. Both the consolidated estimate and the
-    full per-sheet takeoff build on this."""
+    carries coordinates and cost. `context` is extra text pulled from the
+    other project documents (specs, addenda) so the classifier can read a
+    fixture or panel schedule that lives outside the drawings."""
     sheets = documents.detect_sheets(path)
     clusters = counting.count(path, sheets)
 
     # Aggregate tag counts across sheets for the classifier, and gather the
-    # schedule text the LLM interprets fixture types from.
+    # schedule text the LLM interprets fixture types from -- the drawings'
+    # own schedule text plus whatever the other documents contributed.
     tag_counts: dict[str, int] = defaultdict(int)
     for c in clusters:
         tag_counts[c.tag] += c.count
     tags = [{"tag": t, "count": n} for t, n in sorted(tag_counts.items(), key=lambda kv: -kv[1])]
     schedule_text = "\n\n".join(s.schedule_text for s in sheets if s.schedule_text)
+    if context:
+        schedule_text = (schedule_text + "\n\n=== From project specifications and addenda ===\n\n" + context)[:16000]
 
     rows: list[dict] = []
     source = "deterministic"
@@ -128,15 +132,18 @@ def estimate(path: str, location: str) -> dict:
     }
 
 
-def full_takeoff(path: str, location: str) -> dict:
+def full_takeoff(path: str, location: str, context: str = "") -> dict:
     """Per-cluster takeoff with coordinates and page dimensions, for
     injecting into the review store (one reviewable item per device
-    group, positioned on its sheet)."""
-    rows, sheets, meta = _compute(path, location)
+    group, positioned on its sheet). Each sheet carries an `id` (unique
+    within this file, by page) that items reference, so a merge across
+    several drawing files can keep sheet references unambiguous."""
+    rows, sheets, meta = _compute(path, location, context)
     return {
         **meta,
         "sheets": [
             {
+                "id": str(s.page_index),
                 "number": s.number,
                 "page": s.page_index + 1,
                 "width_pt": s.width_pt,
@@ -167,6 +174,7 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
         "status": status,
         "sheet": _sheet_no(sheets, cluster.sheet_page_index),
         "page": cluster.sheet_page_index + 1,
+        "sheet_id": str(cluster.sheet_page_index),
         "tag": cluster.tag,
         "x": cluster.placements[0].x if cluster.placements else 0,
         "y": cluster.placements[0].y if cluster.placements else 0,
@@ -195,6 +203,7 @@ def _row_from_catalog(item, cluster, sheets, labor_rate: float, material_factor:
         "status": item.status,
         "sheet": _sheet_no(sheets, cluster.sheet_page_index),
         "page": cluster.sheet_page_index + 1,
+        "sheet_id": str(cluster.sheet_page_index),
         "tag": item.source_tag,
         "x": cluster.placements[0].x if cluster.placements else 0,
         "y": cluster.placements[0].y if cluster.placements else 0,

@@ -64,7 +64,9 @@ Return ONLY a JSON object, no prose, of this exact shape:
 
 Rules:
 - Include every tag. If a tag is clearly not a device (a note, a grid label, a panel-schedule header like VA/CKT/AMP), set system "Unknown", category "Unclassified", material_cost 0, labor_hours 0, confidence "low".
-- Fixture-type letters (A-H) are luminaires; use the schedule to name them, else "Luminaire type X" with confidence "medium".
+- Confidence "high" for standard, unambiguous devices whose tag maps cleanly to one catalog item — receptacles, switches, junction boxes, data/telecom outlets, disconnects. These are counted the same way regardless of schedule.
+- Confidence "medium" for fixture-type letters (A-H): count them as luminaires, name them from the schedule when the text supports it, else "Luminaire type X" — the exact fixture still needs a person to confirm against the luminaire schedule.
+- Confidence "low" only for genuinely unrecognized or non-device tags.
 - Do not include markup, overhead, profit, or tax. Material and labor only."""
 
 

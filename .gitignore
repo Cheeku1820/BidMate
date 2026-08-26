@@ -7,3 +7,8 @@ dist
 api/.env
 api/.env.*
 !api/.env.example
+
+# local engine dev venv
+.enginevenv/
+__pycache__/
+*.pyc

@@ -102,3 +102,13 @@ def render_page_png(path: str, page_index: int, zoom: float = 2.0) -> bytes:
     page = doc[page_index]
     pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
     return pix.tobytes("png")
+
+
+def render_page_png_bytes(pdf_bytes: bytes, page_index: int, zoom: float = 1.6) -> bytes:
+    """Same, from the PDF bytes the service keeps in memory keyed by
+    takeoff id (so the canvas can fetch one sheet image on demand without
+    the whole set living in the browser)."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[page_index]
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+    return pix.tobytes("png")

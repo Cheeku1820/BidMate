@@ -223,6 +223,11 @@ export default function Workspace() {
         <CanvasPane
           sheet={sheet}
           items={items}
+          sheetImageUrl={
+            project?.takeoffId && sheet?.pageIndex
+              ? `http://localhost:8100/sheet-image?takeoff_id=${project.takeoffId}&page=${sheet.pageIndex}`
+              : null
+          }
           selId={selectedItemId}
           onSelect={select}
           layers={layers}

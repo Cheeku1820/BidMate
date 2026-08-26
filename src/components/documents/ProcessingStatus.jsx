@@ -67,7 +67,7 @@ export default function ProcessingStatus({ store }) {
 
       // Already has a takeoff — show complete, never re-run.
       if (project && (project.sample || project.hasTakeoff)) {
-        setReviewPath(`/projects/${projectId}/${project.sample ? "takeoff" : "spreadsheet"}`);
+        setReviewPath(`/projects/${projectId}/takeoff`);
         setMode("done");
         return;
       }
@@ -104,7 +104,7 @@ export default function ProcessingStatus({ store }) {
             location: payload.location,
             source: payload.source,
           });
-          setReviewPath(`/projects/${projectId}/spreadsheet`);
+          setReviewPath(`/projects/${projectId}/takeoff`);
           setMode("done");
         } catch (err) {
           engineRuns.delete(projectId); // let a retry start fresh

@@ -20,7 +20,7 @@ export const canvasCmd = (type) => window.dispatchEvent(new CustomEvent("canvas-
  *  place that adapts the item shape for it (task-16-brief.md, "If a
  *  prop shape no longer matches, adapt it in App.jsx"). */
 export default function CanvasPane({
-  sheet, items, selId, onSelect, layers, onLayersChange, tool, onToolChange,
+  sheet, items, sheetImageUrl, selId, onSelect, layers, onLayersChange, tool, onToolChange,
   canvasQuery, onCanvasQuery, showFind, onToggleFind, menu, onToggleMenu,
   remoteSelections, onCalibrate,
 }) {
@@ -69,6 +69,7 @@ export default function CanvasPane({
       <BlueprintCanvas
         sheet={sheet}
         items={canvasItems}
+        sheetImageUrl={sheetImageUrl}
         selectedId={selId}
         onSelect={onSelect}
         layers={layers}

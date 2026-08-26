@@ -48,32 +48,47 @@ export function mapPayload(payload) {
     unreadable: s.unreadable || null,
   }));
   const sheetIdByNumber = {};
-  for (const s of sheets) sheetIdByNumber[s.number] = s.id;
+  const dimsByNumber = {};
+  for (const s of sheets) {
+    sheetIdByNumber[s.number] = s.id;
+    dimsByNumber[s.number] = { w: s.widthPt || 1000, h: s.heightPt || 750 };
+  }
   const fallbackSheet = sheets[0]?.id ?? null;
 
-  const items = (payload.items || []).map((r) => ({
-    id: crypto.randomUUID(),
-    sheetId: sheetIdByNumber[r.sheet] ?? fallbackSheet,
-    symbol: inferSymbol(r.name, r.system),
-    name: r.name,
-    description: "",
-    system: r.system,
-    category: r.category || "",
-    quantity: r.quantity,
-    unit: r.unit,
-    status: r.status, // "ready" | "attention"
-    x: r.x,
-    y: r.y,
-    placements: r.placements || [],
-    rejected: false,
-    warnings: r.warning ? [r.warning] : [],
-    version: 1,
-    // cost, carried through for the spreadsheet and export
-    materialCost: r.material_cost ?? 0,
-    laborHours: r.labor_hours ?? 0,
-    laborCost: r.labor_cost ?? 0,
-    totalCost: r.total_cost ?? 0,
-  }));
+  // The canvas works in a fixed 1000x750 space; the engine gives PDF
+  // points. Normalize here so markers land on the rendered page image
+  // (which fills the same space) with no change to the canvas math.
+  const SW = 1000;
+  const SH = 750;
+
+  const items = (payload.items || []).map((r) => {
+    const d = dimsByNumber[r.sheet] || { w: 1000, h: 750 };
+    const nx = (px) => Math.round((px / d.w) * SW);
+    const ny = (py) => Math.round((py / d.h) * SH);
+    return {
+      id: crypto.randomUUID(),
+      sheetId: sheetIdByNumber[r.sheet] ?? fallbackSheet,
+      symbol: inferSymbol(r.name, r.system),
+      name: r.name,
+      description: "",
+      system: r.system,
+      category: r.category || "",
+      quantity: r.quantity,
+      unit: r.unit,
+      status: r.status, // "ready" | "attention"
+      x: nx(r.x),
+      y: ny(r.y),
+      placements: (r.placements || []).map(([px, py]) => [nx(px), ny(py)]),
+      rejected: false,
+      warnings: r.warning ? [r.warning] : [],
+      version: 1,
+      // cost, carried through for the spreadsheet and export
+      materialCost: r.material_cost ?? 0,
+      laborHours: r.labor_hours ?? 0,
+      laborCost: r.labor_cost ?? 0,
+      totalCost: r.total_cost ?? 0,
+    };
+  });
 
   return { sheets, items };
 }

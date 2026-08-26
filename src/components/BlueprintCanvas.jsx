@@ -26,6 +26,7 @@ function pathLength(points) {
 export default function BlueprintCanvas({
   sheet,
   items,
+  sheetImageUrl,
   selectedId,
   onSelect,
   layers,
@@ -183,7 +184,15 @@ export default function BlueprintCanvas({
       >
         <div className="sheetpaper" style={{ width: SHEET_W, height: SHEET_H }}>
           <svg width={SHEET_W} height={SHEET_H} viewBox={`0 0 ${SHEET_W} ${SHEET_H}`}>
-            <PlanDrawing sheet={sheet} />
+            {/* Real projects render the actual rendered PDF page behind the
+                markers (item coordinates were normalized to this space at
+                ingest, so preserveAspectRatio="none" keeps them aligned).
+                The seed fixture falls back to the drawn geometry. */}
+            {sheetImageUrl ? (
+              <image href={sheetImageUrl} x={0} y={0} width={SHEET_W} height={SHEET_H} preserveAspectRatio="none" />
+            ) : (
+              <PlanDrawing sheet={sheet} />
+            )}
 
             {/* measured runs */}
             {layers.measurements &&

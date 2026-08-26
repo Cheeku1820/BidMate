@@ -355,6 +355,9 @@ export function createSeedStore() {
       pricingSource: payload.source || "deterministic",
       locationNote: payload.location_note || "",
       revisionSetLabel: sheets.map((s) => s.number).join(" · "),
+      // Addresses the source PDF the estimate service kept, so the canvas
+      // can fetch each sheet's rendered image.
+      takeoffId: payload.takeoff_id || null,
     });
   }
 

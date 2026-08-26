@@ -14,6 +14,7 @@ still works, using the deterministic classifier and regional pricing.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 import uuid
@@ -116,6 +117,26 @@ def _totals(items: list[dict]) -> dict:
     }
 
 
+def _render_and_read(pdf_bytes: bytes, page: int, number: str) -> dict:
+    png = documents_mod.render_vision_png_bytes(pdf_bytes, page - 1)
+    return llm.read_sheet_image(png, number)
+
+
+async def _read_sheets_with_vision(sheets: list[dict]) -> None:
+    if not llm.available():
+        return
+    targets = [s for s in sheets if not s.get("unreadable") and _PDF_STORE.get(s.get("takeoff_id"))]
+    if not targets:
+        return
+    results = await asyncio.gather(
+        *[asyncio.to_thread(_render_and_read, _PDF_STORE[s["takeoff_id"]], s["page"], s.get("number") or f"page {s['page']}") for s in targets],
+        return_exceptions=True,
+    )
+    for sheet, res in zip(targets, results):
+        if isinstance(res, dict) and res.get("devices"):
+            sheet["ai_reading"] = res
+
+
 @app.post("/estimate/project")
 async def estimate_project_endpoint(
     files: list[UploadFile] = File(...),
@@ -165,6 +186,12 @@ async def estimate_project_endpoint(
                 merged_sheets.append({**sheet, "id": f"{takeoff_id}:{sheet['id']}", "takeoff_id": takeoff_id})
             for item in payload["items"]:
                 merged_items.append({**item, "sheet_id": f"{takeoff_id}:{item['sheet_id']}"})
+
+        # Vision pass: Claude reads each readable sheet's rendered image and
+        # reports the devices it sees, attached to the sheet as `ai_reading`.
+        # Purely additive enrichment -- run in parallel, and any failure just
+        # leaves a sheet without a reading rather than failing the takeoff.
+        await _read_sheets_with_vision(merged_sheets)
 
         return {
             **(meta or {"location": location, "labor_rate": 78.0, "material_factor": 1.0, "source": "deterministic", "location_note": ""}),

@@ -247,6 +247,7 @@ export default function Workspace() {
         <ItemDetailPanel
           sel={sel}
           sheets={sheets}
+          currentSheet={sheet}
           edit={edit}
           onStartEdit={startEdit}
           onChangeEdit={setEdit}

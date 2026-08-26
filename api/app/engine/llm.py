@@ -16,10 +16,65 @@ transient error never breaks the estimate.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 
 MODEL = "claude-opus-5"
+
+
+def _parse_json(text: str):
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1].removeprefix("json").strip()
+    return json.loads(text)
+
+
+_VISION_PROMPT = """This is an electrical construction drawing sheet ({number}). Look at the drawing itself and identify the Division 26 electrical devices and fixtures shown on it (receptacles, switches, lighting fixtures/luminaires by type, junction boxes, panels, disconnects, data/telecom outlets, exit/emergency lighting, etc.).
+
+Return ONLY JSON:
+{{"summary": "<one sentence on what this sheet shows>",
+  "devices": [{{"name": "<device or fixture type>", "count": <approximate integer you can see>, "confidence": "high|medium|low"}}]}}
+
+Approximate counts are fine. Only include electrical devices actually visible on this drawing. If it is a schedule or legend sheet rather than a plan, summarize what it defines and list the item types it names."""
+
+
+def read_sheet_image(png_bytes: bytes, sheet_number: str) -> dict:
+    """Claude reads one rendered drawing sheet (vision) and reports the
+    electrical devices it sees. Returns {} on any failure, so the vision
+    pass is purely additive -- the deterministic takeoff never depends on
+    it. Extracted image content is treated as data, never instruction."""
+    if not available():
+        return {}
+    from anthropic import Anthropic
+
+    try:
+        client = Anthropic()
+        msg = client.messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            output_config={"effort": "low"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": base64.standard_b64encode(png_bytes).decode(),
+                            },
+                        },
+                        {"type": "text", "text": _VISION_PROMPT.format(number=sheet_number or "electrical sheet")},
+                    ],
+                }
+            ],
+        )
+        text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text")
+        return _parse_json(text)
+    except Exception:  # noqa: BLE001 -- vision is best-effort enrichment
+        return {}
 
 
 def available() -> bool:

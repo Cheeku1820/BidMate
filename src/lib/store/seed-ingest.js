@@ -51,6 +51,8 @@ export function mapPayload(payload) {
     heightPt: s.height_pt,
     pageIndex: s.page,
     unreadable: s.unreadable || null,
+    // What Claude read off this sheet's image (vision pass): { summary, devices }.
+    aiReading: s.ai_reading || null,
   }));
   const dimsById = {};
   for (const s of sheets) dimsById[s.id] = { w: s.widthPt || 1000, h: s.heightPt || 750 };

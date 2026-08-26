@@ -1800,3 +1800,33 @@ button {
   color: var(--blue);
   letter-spacing: -0.01em;
 }
+
+/* "Read by AI" panel — the vision reading of the current sheet */
+.ai-reading {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-1);
+}
+.ai-reading-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.ai-reading-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.ai-reading-count {
+  min-width: 34px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--blue);
+}
+.ai-reading-note {
+  font-size: 12px;
+  font-style: italic;
+}

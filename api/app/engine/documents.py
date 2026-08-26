@@ -129,6 +129,16 @@ def extract_context(pdf_bytes: bytes, max_chars: int = 6000) -> str:
     return "\n".join(chunks)[:max_chars]
 
 
+def render_vision_png_bytes(pdf_bytes: bytes, page_index: int, long_edge_px: int = 1500) -> bytes:
+    """Render a sheet sized for a vision model to read -- the long edge
+    around 1500px, which is where Claude reads a drawing well without the
+    cost of a full-resolution image."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    page = doc[page_index]
+    zoom = long_edge_px / max(page.rect.width, page.rect.height)
+    return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom)).tobytes("png")
+
+
 def render_page_png_bytes(pdf_bytes: bytes, page_index: int, zoom: float = 1.6) -> bytes:
     """Same, from the PDF bytes the service keeps in memory keyed by
     takeoff id (so the canvas can fetch one sheet image on demand without

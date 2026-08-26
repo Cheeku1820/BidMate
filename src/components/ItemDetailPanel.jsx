@@ -11,11 +11,12 @@ import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/data.js";
  *  recover, right next to the evidence it concerns (DESIGN.md; task-
  *  16-brief.md §4). */
 export default function ItemDetailPanel({
-  sel, sheets, edit, onStartEdit, onChangeEdit, onSaveEdit, onCancelEdit,
+  sel, sheets, currentSheet, edit, onStartEdit, onChangeEdit, onSaveEdit, onCancelEdit,
   onApprove, onReject, onRequestDelete, onShowEvidence, onStep, stepIndex, stepCount,
   itemError, onRefreshItem, onDismissItemError,
   counts, itemsTotal, onNextIssue,
 }) {
+  const aiReading = currentSheet?.aiReading;
   if (!sel) {
     return (
       <aside className="detail" aria-label="Selected item">
@@ -47,8 +48,28 @@ export default function ItemDetailPanel({
             <p className="value" style={{ marginTop: 16, color: "var(--green)", fontWeight: 600 }}>Every item has been reviewed.</p>
           )}
 
-          <p className="label">On this sheet</p>
-          <p className="value value--muted">Select a symbol on the drawing to review its details, or press J to step through items.</p>
+          {aiReading ? (
+            <div className="ai-reading">
+              <p className="label">Read by AI · {currentSheet?.number}</p>
+              <p className="value value--muted">{aiReading.summary}</p>
+              <ul className="ai-reading-list">
+                {aiReading.devices.map((d, i) => (
+                  <li key={i}>
+                    <span className="tabular ai-reading-count">{d.count}</span>
+                    <span>{d.name}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="value value--muted ai-reading-note">
+                What the model read from the drawing itself — cross-check against the counted takeoff.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="label">On this sheet</p>
+              <p className="value value--muted">Select a symbol on the drawing to review its details, or press J to step through items.</p>
+            </>
+          )}
         </div>
       </aside>
     );

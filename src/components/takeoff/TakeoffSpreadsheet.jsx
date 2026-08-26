@@ -110,6 +110,15 @@ export default function TakeoffSpreadsheet() {
 
   const allItems = snapshot?.items ?? [];
 
+  // Running estimate total, from the engine's per-item cost (real projects
+  // carry it; the seed fixture doesn't, so the strip only shows when there
+  // is cost to show). Rejected items are out of scope.
+  const costItems = allItems.filter((i) => !i.rejected && i.totalCost != null);
+  const estimateTotal = costItems.reduce((sum, i) => sum + (i.totalCost || 0), 0);
+  const laborHoursTotal = costItems.reduce((sum, i) => sum + (i.laborHours || 0), 0);
+  const attentionCount = costItems.filter((i) => i.status === "attention").length;
+  const hasCost = costItems.length > 0;
+
   const rows = useMemo(() => {
     // Rejected is a flag, not a status (CLAUDE.md) -- it is excluded
     // from the default view the same way a superseded sheet is
@@ -230,6 +239,21 @@ export default function TakeoffSpreadsheet() {
             </div>
           ) : (
             <>
+              {hasCost ? (
+                <div className="estimate-strip">
+                  <div>
+                    <span className="estimate-strip__label">Estimated total direct cost</span>
+                    <span className="estimate-strip__total tabular">
+                      ${Math.round(estimateTotal).toLocaleString()}
+                    </span>
+                  </div>
+                  <span className="muted tabular">
+                    {costItems.length} items · {Math.round(laborHoursTotal)} labor hrs · {attentionCount} need review ·
+                    material and labor only
+                  </span>
+                </div>
+              ) : null}
+
               <div className="takeoff-controls">
                 <div className="formfield">
                   <label className="formfield-label" htmlFor="takeoff-search">

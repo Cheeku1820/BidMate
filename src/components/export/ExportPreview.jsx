@@ -26,7 +26,7 @@ import { countsTowardTotals } from "../../lib/rules.js";
 // The columns the workbook carries, in order. Kept as data so the
 // on-screen preview header and the generated file can never list
 // different columns.
-const EXPORT_COLUMNS = ["Item", "Description", "System", "Quantity", "Unit", "Sheet", "Status"];
+const EXPORT_COLUMNS = ["Item", "Description", "System", "Quantity", "Unit", "Sheet", "Status", "Material", "Labor hrs", "Total"];
 
 const STATUS_TEXT = {
   approved: "Estimator approved",
@@ -83,7 +83,20 @@ export default function ExportPreview() {
     item.unit ?? "",
     sheetsById[item.sheetId]?.number ?? "",
     STATUS_TEXT[item.status] ?? item.status,
+    item.materialCost != null ? Math.round(item.materialCost) : "",
+    item.laborHours != null ? item.laborHours : "",
+    item.totalCost != null ? Math.round(item.totalCost) : "",
   ]);
+
+  // Estimate cost over the whole takeoff (engine-priced items carry cost;
+  // the seed fixture doesn't, so the card only shows when there is cost).
+  const cost = (list, field) => list.reduce((sum, i) => sum + (i[field] || 0), 0);
+  const hasCost = countable.some((i) => i.totalCost != null);
+  const materialTotal = cost(countable, "materialCost");
+  const laborHoursTotal = cost(countable, "laborHours");
+  const laborCostTotal = cost(countable, "laborCost");
+  const directTotal = cost(countable, "totalCost");
+  const dollars = (n) => "$" + Math.round(n).toLocaleString();
 
   const onExport = () => {
     // A client-side download of the estimator's own approved takeoff.
@@ -157,10 +170,36 @@ export default function ExportPreview() {
                   <dd>{project?.name ?? "This project"}</dd>
                   <dt>Revision set</dt>
                   <dd>{project?.revisionSetLabel || "—"}</dd>
+                  {project?.location ? (
+                    <>
+                      <dt>Location</dt>
+                      <dd>{project.location}</dd>
+                    </>
+                  ) : null}
                   <dt>File name</dt>
                   <dd className="tabular">{fileName}</dd>
                 </dl>
               </section>
+
+              {hasCost ? (
+                <section className="card estimate-headline">
+                  <h2>Estimated total direct cost</h2>
+                  <p className="estimate-total tabular">{dollars(directTotal)}</p>
+                  <dl className="detail-list">
+                    <dt>Material</dt>
+                    <dd className="tabular">{dollars(materialTotal)}</dd>
+                    <dt>Labor</dt>
+                    <dd className="tabular">
+                      {Math.round(laborHoursTotal)} hrs{project?.laborRate ? ` @ $${project.laborRate}/hr` : ""} ·{" "}
+                      {dollars(laborCostTotal)}
+                    </dd>
+                  </dl>
+                  <p className="muted">
+                    Material and labor only — markup, overhead, and profit are your layer.
+                    {project?.pricingSource === "llm" ? " Priced automatically for the location." : ""}
+                  </p>
+                </section>
+              ) : null}
 
               <section className="card">
                 <h2>Approved totals by system</h2>

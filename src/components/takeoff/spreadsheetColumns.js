@@ -23,6 +23,8 @@ import { STATUS } from "../../lib/data.js";
  *  cell reads as an oversight. */
 const NONE = "—";
 
+const money = (n) => "$" + Math.round(Number(n)).toLocaleString();
+
 export const COLUMNS = [
   {
     key: "status",
@@ -58,6 +60,28 @@ export const COLUMNS = [
     render: (item, { sheetsById }) => sheetsById[item.sheetId]?.number ?? NONE,
   },
   { key: "notes", label: "Notes", align: "left", render: (item) => item.notes || NONE },
+  // Cost columns are populated for engine-ingested items (which carry
+  // materialCost / laborHours / totalCost); the seed fixture has no cost
+  // field, so it shows a dash rather than a fabricated $0 -- the same
+  // absent-vs-empty rule the columns above follow.
+  {
+    key: "materialCost",
+    label: "Material",
+    align: "right",
+    render: (item) => (item.materialCost != null ? money(item.materialCost) : NONE),
+  },
+  {
+    key: "laborHours",
+    label: "Labor hrs",
+    align: "right",
+    render: (item) => (item.laborHours != null ? item.laborHours : NONE),
+  },
+  {
+    key: "totalCost",
+    label: "Total",
+    align: "right",
+    render: (item) => (item.totalCost != null ? money(item.totalCost) : NONE),
+  },
 ];
 
 /** Description and notes are long and push the numeric columns off the

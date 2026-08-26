@@ -110,6 +110,10 @@ export default function ItemDetailPanel({
             <h2>{sel.name}</h2>
             <p className="value value--muted" style={{ margin: "6px 0 0" }}>{sel.description}</p>
 
+            {sel.aiConfirmed ? (
+              <p className="ai-confirmed">✓ Identified by the AI reading of the drawing</p>
+            ) : null}
+
             <p className="label">Quantity</p>
             <p className="qty tabular">
               {sel.quantity.toLocaleString()}

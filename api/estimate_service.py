@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import tempfile
 import uuid
 from collections import OrderedDict
@@ -122,6 +123,47 @@ def _render_and_read(pdf_bytes: bytes, page: int, number: str) -> dict:
     return llm.read_sheet_image(png, number)
 
 
+_TAG_IN_NAME = re.compile(r"\btype\s+([A-Z]\d?)\b|\(([A-Z]{1,2}\d?)\)", re.I)
+
+
+def _tag_of(device_name: str) -> str | None:
+    m = _TAG_IN_NAME.search(device_name or "")
+    if not m:
+        return None
+    return (m.group(1) or m.group(2)).upper()
+
+
+def _reconcile_vision(sheets: list[dict], items: list[dict]) -> None:
+    """Feed the vision reading back into the counted takeoff: where Claude
+    identified the fixture behind a counted tag (e.g. it read "Type A
+    recessed luminaire" for the sheet's A tags), adopt that richer name and,
+    since the drawing itself confirmed the type, move the item from Needs
+    attention to Ready and clear its fixture-needs-confirmation warning.
+    The count and position stay exactly as the deterministic reader found
+    them -- vision resolves *what* it is, not *how many*."""
+    reading_by_sheet = {s["id"]: s.get("ai_reading") for s in sheets if s.get("ai_reading")}
+    for item in items:
+        reading = reading_by_sheet.get(item.get("sheet_id"))
+        if not reading:
+            continue
+        tag = (item.get("tag") or "").upper()
+        if not tag:
+            continue
+        for dev in reading.get("devices", []):
+            if _tag_of(dev.get("name", "")) == tag:
+                item["ai_confirmed"] = True  # the AI saw this device on the drawing
+                # Only let vision RENAME + resolve an item the counter was
+                # unsure about (a fixture awaiting its schedule). An item the
+                # deterministic classifier was already confident about keeps
+                # its name -- vision can misread a symbol, and it should not
+                # overwrite a good classification, only rescue an uncertain one.
+                if item.get("status") == "attention":
+                    item["name"] = dev["name"]
+                    item["status"] = "ready"
+                    item["warning"] = None
+                break
+
+
 async def _read_sheets_with_vision(sheets: list[dict]) -> None:
     if not llm.available():
         return
@@ -192,6 +234,7 @@ async def estimate_project_endpoint(
         # Purely additive enrichment -- run in parallel, and any failure just
         # leaves a sheet without a reading rather than failing the takeoff.
         await _read_sheets_with_vision(merged_sheets)
+        _reconcile_vision(merged_sheets, merged_items)
 
         return {
             **(meta or {"location": location, "labor_rate": 78.0, "material_factor": 1.0, "source": "deterministic", "location_note": ""}),

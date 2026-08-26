@@ -1830,3 +1830,16 @@ button {
   font-size: 12px;
   font-style: italic;
 }
+
+/* item confirmed by the AI's visual reading of the drawing */
+.ai-confirmed {
+  display: inline-block;
+  margin: 8px 0 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--blue);
+  background: var(--blue-tint);
+  border: 1px solid var(--blue-line);
+  border-radius: 999px;
+}

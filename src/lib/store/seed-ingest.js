@@ -86,6 +86,9 @@ export function mapPayload(payload) {
       rejected: false,
       warnings: r.warning ? [r.warning] : [],
       version: 1,
+      // Set when Claude's visual reading of the drawing confirmed this
+      // item's type (seed-ingest carries it; the detail panel shows it).
+      aiConfirmed: r.ai_confirmed || false,
       // cost, carried through for the spreadsheet and export
       materialCost: r.material_cost ?? 0,
       laborHours: r.labor_hours ?? 0,

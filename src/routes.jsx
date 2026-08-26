@@ -28,6 +28,7 @@ import ExportPreview from "./components/export/ExportPreview.jsx";
 import CompanySettings from "./components/settings/CompanySettings.jsx";
 import ProjectSettings from "./components/settings/ProjectSettings.jsx";
 import Accuracy from "./components/accuracy/Accuracy.jsx";
+import EstimateDemo from "./components/estimate/EstimateDemo.jsx";
 import NotFound from "./components/shell/NotFound.jsx";
 
 export function appRoutes({ store, me, onSignedOut }) {
@@ -36,6 +37,7 @@ export function appRoutes({ store, me, onSignedOut }) {
       <Route index element={<Navigate to="/projects" replace />} />
       <Route path="/projects" element={<ProjectsDashboard store={store} me={me} onSignedOut={onSignedOut} />} />
       <Route path="/accuracy" element={<Accuracy />} />
+      <Route path="/estimate" element={<EstimateDemo />} />
       <Route path="/settings" element={<CompanySettings />} />
       <Route path="/projects/new" element={<NewProject store={store} />} />
       <Route path="/projects/:projectId" element={<ProjectOverview store={store} me={me} />} />

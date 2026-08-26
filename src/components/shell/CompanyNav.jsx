@@ -29,10 +29,11 @@
 
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { BookOpen, HelpCircle, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plug, Settings, Target } from "lucide-react";
+import { BookOpen, HelpCircle, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plug, Settings, Target, Zap } from "lucide-react";
 
 const DESTINATIONS = [
   { to: "/projects", label: "Projects", Icon: LayoutGrid, available: true },
+  { to: "/estimate", label: "Instant estimate", Icon: Zap, available: true },
   { to: "/accuracy", label: "Accuracy", Icon: Target, available: true },
   { to: "/library", label: "Company library", Icon: BookOpen, available: false },
   { to: "/integrations", label: "Integrations", Icon: Plug, available: false },

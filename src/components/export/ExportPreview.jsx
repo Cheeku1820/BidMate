@@ -125,14 +125,6 @@ export default function ExportPreview() {
           </button>
         }
       />
-      {project?.sample ? (
-        <div className="sample-banner" role="note">
-          <span>
-            <strong>Sample takeoff.</strong> This export reflects sample data for demonstration — it isn't derived from
-            your uploaded documents.
-          </span>
-        </div>
-      ) : null}
 
       <div className="page">
         <h1 className="page-heading">Export preview</h1>

@@ -33,7 +33,7 @@ function makeContext(over = {}) {
     loadError: null,
     refresh: vi.fn(),
     projectId: "p1",
-    project: { id: "p1", name: "Cedar Ridge Warehouse", revisionSetLabel: "E1.1 Rev 3", sample: true },
+    project: { id: "p1", name: "Cedar Ridge Warehouse", revisionSetLabel: "E1.1 Rev 3" },
     ...over,
   };
 }
@@ -63,11 +63,10 @@ describe("ExportPreview", () => {
     expect(within(allRow).getByText("15")).toBeTruthy();
   });
 
-  it("names the sampled project and its file, and shows the sample banner", () => {
+  it("names the project and its export file", () => {
     context = makeContext();
     renderExport();
     expect(screen.getByText("cedar-ridge-warehouse-takeoff.csv")).toBeTruthy();
-    expect(screen.getByText(/sample takeoff/i)).toBeTruthy();
   });
 
   it("enables Export when there are approved items and nothing blocking", () => {

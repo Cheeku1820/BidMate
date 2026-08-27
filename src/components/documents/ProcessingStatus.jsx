@@ -34,7 +34,7 @@ const engineRuns = new Map(); // projectId -> Promise<payload>
 export default function ProcessingStatus({ store }) {
   const { projectId } = useParams();
 
-  const [mode, setMode] = useState("checking"); // checking | engine | done | error
+  const [mode, setMode] = useState("checking"); // checking | engine | confirm-replace | done | error
   const [engineStage, setEngineStage] = useState(0);
   const [summary, setSummary] = useState(null);
   const [reviewPath, setReviewPath] = useState("");
@@ -100,7 +100,7 @@ export default function ProcessingStatus({ store }) {
       if (!alive) return;
 
       // Already has a takeoff — show complete, never re-run.
-      if (project && project.hasTakeoff) {
+      if (project && project.itemsTotal > 0) {
         setReviewPath(`/projects/${projectId}/takeoff`);
         setMode("done");
         return;
@@ -221,8 +221,8 @@ export default function ProcessingStatus({ store }) {
         {mode === "engine" ? (
           <>
             <p className="muted">
-              This can take a moment on a large set — the last step reads the drawings with the model. You can leave
-              this page.
+              This can take a moment on a large set — the last step checks the drawings against the schedules. You can
+              leave this page.
             </p>
             <ul className="processing-list">
               {ENGINE_STAGES.map((label, idx) => {

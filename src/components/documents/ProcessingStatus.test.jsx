@@ -39,7 +39,7 @@ async function flushMicrotasks() {
 describe("ProcessingStatus", () => {
   it("shows an error, not a fallback, when no documents were uploaded and no takeoff exists yet", async () => {
     const store = {
-      listProjects: vi.fn().mockResolvedValue([{ id: "p1", hasTakeoff: false }]),
+      listProjects: vi.fn().mockResolvedValue([{ id: "p1", itemsTotal: 0 }]),
     };
     renderProcessing(store);
     await flushMicrotasks();
@@ -52,7 +52,7 @@ describe("ProcessingStatus", () => {
 
   it("does not re-process a project that already has a takeoff", async () => {
     const store = {
-      listProjects: vi.fn().mockResolvedValue([{ id: "p1", hasTakeoff: true }]),
+      listProjects: vi.fn().mockResolvedValue([{ id: "p1", itemsTotal: 12 }]),
     };
     renderProcessing(store);
     await flushMicrotasks();
@@ -60,6 +60,41 @@ describe("ProcessingStatus", () => {
     // Straight to complete -- no engine call, no error, and crucially no
     // re-run that would wipe the estimator's review progress.
     expect(screen.getAllByRole("link", { name: /continue to review/i }).length).toBeGreaterThan(0);
+  });
+
+  it("proceeds to processing an upload for a project with itemsTotal 0, rather than treating it as already done", async () => {
+    // itemsTotal is the real signal mapProject emits (api-mapping.js); a
+    // freshly created project starts at 0. The re-run guard must not read
+    // that as "already has a takeoff" when there is an upload waiting --
+    // it must call the engine, not take the early "done" return.
+    vi.useRealTimers();
+    setUploadedFiles("p2", [{ file: new File([new Uint8Array(1024)], "e1.1.pdf", { type: "application/pdf" }), docType: "Drawings" }]);
+    vi.spyOn(engineClient, "estimateProject").mockResolvedValue({
+      totals: { item_count: 4, total_direct_cost: 12000 },
+      sheets: [{ id: "e11" }],
+      location: "",
+      source: "engine",
+    });
+    const store = {
+      listProjects: vi.fn().mockResolvedValue([{ id: "p2", itemsTotal: 0 }]),
+      attachEngineTakeoff: vi.fn().mockResolvedValue(undefined),
+    };
+
+    render(
+      <MemoryRouter initialEntries={["/projects/p2/processing"]}>
+        <Routes>
+          <Route path="/projects/:projectId/processing" element={<ProcessingStatus store={store} />} />
+          <Route path="/projects/:projectId/takeoff" element={<p>review workspace</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(engineClient.estimateProject).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(store.attachEngineTakeoff).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/no documents have been uploaded/i)).not.toBeInTheDocument();
+
+    clearUploadedFiles("p2");
+    vi.restoreAllMocks();
   });
 });
 

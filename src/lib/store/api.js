@@ -352,6 +352,19 @@ export function createApiStore() {
     return mapProject(raw);
   }
 
+  /** Writes a processed takeoff into the project. The server replaces
+   *  rather than appends, and refuses with `approved_items_present` when
+   *  that would discard estimator approvals — pass confirmReplace only
+   *  after a person has actually been asked. */
+  async function attachEngineTakeoff(id, payload, { confirmReplace = false } = {}) {
+    const result = await request(`/api/projects/${id}/takeoff`, {
+      method: "POST",
+      body: { payload, confirm_replace: confirmReplace },
+    });
+    invalidateCache();
+    return result;
+  }
+
   return {
     me,
     useProject,
@@ -369,5 +382,6 @@ export function createApiStore() {
     redo,
     listProjects,
     createProject,
+    attachEngineTakeoff,
   };
 }

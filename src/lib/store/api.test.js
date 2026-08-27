@@ -184,3 +184,51 @@ describe("api.js conversions", () => {
     expect(PRESENCE_BEAT_MS).toBe(5000);
   });
 });
+
+describe("attachEngineTakeoff", () => {
+  it("posts the engine payload to the project's takeoff endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ sheets: 2, items: 47 }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const result = await store.attachEngineTakeoff("p1", { sheets: [], items: [] });
+
+    expect(result).toEqual({ sheets: 2, items: 47 });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/projects/p1/takeoff");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      payload: { sheets: [], items: [] },
+      confirm_replace: false,
+    });
+  });
+
+  it("sends confirm_replace only when the estimator has confirmed", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ sheets: 1, items: 1 }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    await store.attachEngineTakeoff("p1", { sheets: [] }, { confirmReplace: true });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).confirm_replace).toBe(true);
+  });
+
+  it("surfaces the server's refusal code so the caller can confirm", async () => {
+    const body = JSON.stringify({
+      detail: {
+        code: "approved_items_present",
+        message: "3 item(s) on this project are estimator approved.",
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status: 409 })));
+
+    const store = createApiStore();
+    await expect(store.attachEngineTakeoff("p1", {})).rejects.toMatchObject({
+      code: "approved_items_present",
+    });
+  });
+});

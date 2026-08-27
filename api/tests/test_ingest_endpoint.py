@@ -123,3 +123,60 @@ def test_undo_after_ingest_refuses_instead_of_resurrecting(client, db, project, 
     assert response.status_code in (200, 409)
     if response.status_code == 409:
         assert response.json()["detail"]["code"] == "item_no_longer_exists"
+
+
+def _approve_one(db, project, sheet, user):
+    from app.takeoff.models import Item, ReviewStatus
+    item = Item(project_id=project.id, sheet_id=sheet.id, symbol="panel", name="Panel LP-2",
+                system="Distribution", category="Gear", quantity=1, unit="ea",
+                status=ReviewStatus.APPROVED, approved_by_user_id=user.id)
+    db.add(item)
+    db.flush()
+    return item
+
+
+def test_ingest_refuses_when_approvals_would_be_lost(client, db, project, sheet, signed_in_user):
+    """Replacing a takeoff that holds approvals discards a person's
+    professional judgment. Product spec section 6 requires confirmation
+    before discarding corrections, so the server refuses by default."""
+    _approve_one(db, project, sheet, signed_in_user)
+    db.commit()
+
+    response = _ingest(client, project.id)
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "approved_items_present"
+    assert "1" in detail["message"]
+
+
+def test_ingest_refusal_writes_nothing(client, db, project, sheet, signed_in_user):
+    """The refusal must leave the takeoff untouched -- a half-applied
+    refusal is worse than either outcome."""
+    approved = _approve_one(db, project, sheet, signed_in_user)
+    db.commit()
+
+    _ingest(client, project.id)
+
+    db.expire_all()
+    still_there = db.get(Item, approved.id)
+    assert still_there is not None
+    assert still_there.status.value == "approved"
+    assert db.get(Sheet, sheet.id) is not None
+
+
+def test_ingest_proceeds_once_the_estimator_confirms(client, db, project, sheet, signed_in_user):
+    approved = _approve_one(db, project, sheet, signed_in_user)
+    db.commit()
+
+    response = _ingest(client, project.id, confirm_replace=True)
+    assert response.status_code == 200
+
+    db.expire_all()
+    assert db.get(Item, approved.id) is None
+    assert db.scalars(select(Item).where(Item.project_id == project.id)).one().name == "20A duplex receptacle"
+
+
+def test_ingest_needs_no_confirmation_on_a_fresh_project(client, db, project, signed_in_user):
+    """First processing has nothing to lose, so the estimator is never
+    asked a question with only one answer."""
+    assert _ingest(client, project.id).status_code == 200

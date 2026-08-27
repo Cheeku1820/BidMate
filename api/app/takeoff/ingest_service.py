@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session as DbSession
 
+from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import actions
 from app.takeoff.ingest import map_payload
@@ -37,6 +38,27 @@ def ingest_takeoff(
     exactly as it was.
     """
     mapped = map_payload(payload)
+
+    # Replacing a takeoff destroys whatever it holds, and what it can hold
+    # is estimator approvals -- the one act in this product that carries a
+    # person's professional judgment, and the legal firewall the status
+    # vocabulary rests on. Refuse by default and make the estimator say so.
+    #
+    # Server-authoritative on purpose: the client's confirmation dialog is
+    # good feedback, but this refusal is what actually protects the data.
+    if not confirm_replace:
+        approved = db.scalar(
+            select(func.count())
+            .select_from(Item)
+            .where(Item.project_id == project.id, Item.status == ReviewStatus.APPROVED)
+        )
+        if approved:
+            raise DomainError(
+                "approved_items_present",
+                f"{approved} item(s) on this project are estimator approved. "
+                "Processing again replaces the whole takeoff, and those approvals would be discarded.",
+                status=409,
+            )
 
     existing_sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id)))
     if existing_sheets:

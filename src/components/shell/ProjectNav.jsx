@@ -154,18 +154,25 @@ function badgesFor(item, project) {
 
 function WorkspaceBadges({ badges, collapsed }) {
   if (badges.length === 0) return null;
+
+  // Collapsed, the row is 31px of usable width and already holds the
+  // workspace icon; two chips do not fit and overflowed it. One pip
+  // marks the more serious of the two states -- missing information
+  // outranks needs attention, because it is the one with no override --
+  // and its label still names both, so nothing is lost to anyone reading
+  // by ear. The numbers come back with the labels when the rail expands.
+  if (collapsed) {
+    const worst = badges[0];
+    const text = badges.map((b) => b.text).join("; ");
+    return <span className={`ws-pip ws-pip--${worst.key}`} role="img" aria-label={text} title={text} />;
+  }
+
   return (
     <span className="ws-badges">
       {badges.map(({ key, count, Icon, text }) => (
-        <span
-          key={key}
-          className={`ws-badge ws-badge--${key} tabular`}
-          role="img"
-          aria-label={text}
-          title={text}
-        >
+        <span key={key} className={`ws-badge ws-badge--${key} tabular`} role="img" aria-label={text} title={text}>
           <Icon size={12} aria-hidden="true" />
-          {!collapsed && count}
+          {count}
         </span>
       ))}
     </span>

@@ -180,6 +180,47 @@ export default function UploadDocuments() {
   };
 
   const openPicker = () => inputRef.current?.click();
+  const compact = files.length > 0;
+
+  const dropzone = (
+    <div
+      className={`dropzone${compact ? " dropzone--compact" : ""}${dragging ? " is-dragging" : ""}`}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+    >
+      <Upload aria-hidden="true" size={compact ? 18 : 28} />
+      <p>{compact ? "Drag more PDF files here" : "Drag PDF files here"}</p>
+      {compact ? null : (
+        <p className="dropzone-hint">
+          Drawings, specifications, addenda, and scope documents. Each file's type is detected from its name — change
+          any that's wrong before starting.
+        </p>
+      )}
+      <button type="button" className="btn" onClick={openPicker}>
+        Choose files
+      </button>
+    </div>
+  );
+
+  // Rendered once, in a position that never changes, so the node behind
+  // inputRef survives the dropzone moving.
+  const fileInput = (
+    <input
+      ref={inputRef}
+      type="file"
+      accept="application/pdf"
+      multiple
+      className="sr-only"
+      onChange={(event) => {
+        addFiles(event.target.files);
+        event.target.value = "";
+      }}
+    />
+  );
 
   return (
     <>
@@ -196,6 +237,8 @@ export default function UploadDocuments() {
           Upload files
         </button>
       </AppTopBar>
+
+      {fileInput}
 
       <div className="workspace-body">
         <div className="page">
@@ -219,36 +262,12 @@ export default function UploadDocuments() {
             {files.length > 0 ? <p className="filter-tabs-summary tabular">{summary}</p> : null}
           </div>
 
-          <div
-            className={dragging ? "dropzone is-dragging" : "dropzone"}
-            onDragOver={(event) => {
-              event.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-          >
-            <Upload aria-hidden="true" size={28} />
-            <p>Drag PDF files here</p>
-            <p className="dropzone-hint">
-              Drawings, specifications, addenda, and scope documents. Each file's type is detected from its name —
-              change any that's wrong before starting.
-            </p>
-            <button type="button" className="btn" onClick={openPicker}>
-              Choose files
-            </button>
-            <input
-              ref={inputRef}
-              type="file"
-              accept="application/pdf"
-              multiple
-              className="sr-only"
-              onChange={(event) => {
-                addFiles(event.target.files);
-                event.target.value = "";
-              }}
-            />
-          </div>
+          {/* The drop target leads the screen while the set is empty and
+              steps back to a strip beneath the table once it isn't — the
+              table is what an estimator has come to read by then. It is
+              the same target either way: dropping, and the picker, behave
+              identically in both states. */}
+          {files.length === 0 ? dropzone : null}
 
           {files.length === 0 ? (
             <p className="muted">No files added yet.</p>
@@ -321,6 +340,8 @@ export default function UploadDocuments() {
               </table>
             </div>
           )}
+
+          {files.length > 0 ? dropzone : null}
 
           {readyCount > 0 && drawingsCount === 0 ? (
             <div className="warncard warncard--attention" role="status">

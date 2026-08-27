@@ -61,7 +61,7 @@ export function formatTimestamp(iso) {
  *  formatCalendarDate is: `bidDueDate` is a date with no time component,
  *  and a viewer west of UTC must not see a bid deadline slip a day.
  *  Negative means the date has passed; 0 means today. */
-export function daysUntil(iso) {
+function daysUntil(iso) {
   if (!iso) return null;
   const due = new Date(iso);
   if (Number.isNaN(due.getTime())) return null;

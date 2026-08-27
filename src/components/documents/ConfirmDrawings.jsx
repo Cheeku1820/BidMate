@@ -95,43 +95,63 @@ export default function ConfirmDrawings() {
   const setType = (id, docType) => setRows((prev) => prev.map((r) => (r.id === id ? { ...r, docType } : r)));
   const toggle = (id) => setRows((prev) => prev.map((r) => (r.id === id ? { ...r, included: !r.included } : r)));
 
+  // Sorting the batch happens here, outside any state updater, and the
+  // updater below only appends what came out. Recording refusals inside
+  // the updater, as this first did, is what produced a notice whose
+  // count and list disagreed in the running app: an updater is not
+  // guaranteed to run before the setRejected() that follows it, and
+  // StrictMode's development double-invocation runs its body twice, so
+  // the array being filled was read at the wrong time and filled twice.
   const addFiles = (fileList) => {
     const incoming = Array.from(fileList);
     const refusals = [];
-    setRows((prev) => {
-      let next = prev;
-      for (const file of incoming) {
-        const lower = file.name.toLowerCase();
-        if (next.some((r) => r.name === file.name && r.size === file.size)) {
-          refusals.push(`${file.name} is already in this list.`);
-          continue;
-        }
-        if (!lower.endsWith(".pdf")) {
-          refusals.push(`${file.name} isn't a PDF. Upload the document as a PDF.`);
-          continue;
-        }
-        if (lower.includes("protected") || lower.includes("locked")) {
-          refusals.push(`${file.name} is password protected. Upload an unlocked copy.`);
-          continue;
-        }
-        const detected = detectDocTypeInfo(file.name);
-        const id = `added-${file.name}-${file.size}-${crypto.randomUUID()}`;
-        next = [...next, { id, name: file.name, size: file.size, docType: detected.type, file, included: true }];
-        // Same two-step detection upload uses: the filename decides when
-        // it is informative, and only when it isn't does the content get
-        // read. Guarded on the row still existing and still holding the
-        // guessed type, so a correction made while the look-up was in
-        // flight is never overwritten.
-        if (detected.source === "default") {
-          classifyDoc(file).then((type) => {
-            if (!type) return;
-            setRows((cur) => cur.map((r) => (r.id === id && r.docType === detected.type ? { ...r, docType: type } : r)));
-          });
-        }
+    const accepted = [];
+    // `rows` plus what this batch has already taken, so two copies of one
+    // file inside a single selection catch each other too.
+    const seen = [...rows];
+
+    for (const file of incoming) {
+      const lower = file.name.toLowerCase();
+      if (seen.some((r) => r.name === file.name && r.size === file.size)) {
+        refusals.push(`${file.name} is already in this list.`);
+        continue;
       }
-      return next;
-    });
+      if (!lower.endsWith(".pdf")) {
+        refusals.push(`${file.name} isn't a PDF. Upload the document as a PDF.`);
+        continue;
+      }
+      if (lower.includes("protected") || lower.includes("locked")) {
+        refusals.push(`${file.name} is password protected. Upload an unlocked copy.`);
+        continue;
+      }
+      const detected = detectDocTypeInfo(file.name);
+      const row = {
+        id: `added-${file.name}-${file.size}-${crypto.randomUUID()}`,
+        name: file.name,
+        size: file.size,
+        docType: detected.type,
+        file,
+        included: true,
+      };
+      accepted.push({ row, detected });
+      seen.push(row);
+    }
+
+    if (accepted.length > 0) setRows((prev) => [...prev, ...accepted.map((a) => a.row)]);
     setRejected(refusals);
+
+    // Same two-step detection upload uses: the filename decides when it
+    // is informative, and only when it isn't does the content get read.
+    // Guarded on the row still existing and still holding the guessed
+    // type, so a correction made while the look-up was in flight is
+    // never overwritten.
+    for (const { row, detected } of accepted) {
+      if (detected.source !== "default") continue;
+      classifyDoc(row.file).then((type) => {
+        if (!type) return;
+        setRows((cur) => cur.map((r) => (r.id === row.id && r.docType === detected.type ? { ...r, docType: type } : r)));
+      });
+    }
   };
 
   const kept = rows.filter((r) => r.included);
@@ -284,9 +304,14 @@ export default function ConfirmDrawings() {
                 <AlertTriangle aria-hidden="true" size={16} />{" "}
                 {rejected.length === 1 ? "1 file wasn't added" : `${rejected.length} files weren't added`}
               </h4>
+              {/* Keyed by position, not by the sentence: two files can
+                  fail the same way and produce identical text, which as a
+                  key is a duplicate. The list is replaced whole on every
+                  add and never reordered, so position is a stable
+                  identity here. */}
               <ul className="warncard-list">
-                {rejected.map((reason) => (
-                  <li key={reason}>{reason}</li>
+                {rejected.map((reason, index) => (
+                  <li key={index}>{reason}</li>
                 ))}
               </ul>
             </div>

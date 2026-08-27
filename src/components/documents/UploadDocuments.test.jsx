@@ -51,7 +51,10 @@ describe("UploadDocuments", () => {
     expect(start).toBeDisabled();
 
     drop([pdf("E-sheets.pdf")]);
-    expect(screen.getByText(/uploading/i)).toBeTruthy();
+    // Scoped to the file's own row: the footer strip also reports files
+    // in flight, so an unscoped /uploading/i now matches in two places
+    // and would pass or fail for reasons unrelated to the state cell.
+    expect(within(screen.getByText("E-sheets.pdf").closest("tr")).getByText(/uploading/i)).toBeTruthy();
     expect(start).toBeDisabled();
 
     advance(800);

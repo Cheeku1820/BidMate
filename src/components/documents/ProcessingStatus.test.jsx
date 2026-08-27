@@ -139,4 +139,31 @@ describe("ProcessingStatus — replacing a takeoff that holds approvals", () => 
     expect(store.attachEngineTakeoff).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("button", { name: /replace the takeoff/i })).not.toBeInTheDocument();
   });
+
+  it("surfaces a failure that happens after the estimator confirms", async () => {
+    const store = {
+      listProjects: vi.fn().mockResolvedValue([{ id: "p1", name: "Riverside" }]),
+      attachEngineTakeoff: vi
+        .fn()
+        .mockRejectedValueOnce({
+          code: "approved_items_present",
+          message: "3 item(s) on this project are estimator approved.",
+        })
+        .mockRejectedValueOnce({
+          code: "request_failed",
+          message: "The request failed (status 500). Try again.",
+        }),
+    };
+    renderProcessing(store);
+
+    await userEvent.click(await screen.findByRole("button", { name: /replace the takeoff/i }));
+
+    // A second failure lands in the same error state as any other
+    // processing failure -- not an unhandled rejection stranding the
+    // estimator on a dialog that looks like it did nothing.
+    expect(await screen.findByText(/the request failed \(status 500\)/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /replace the takeoff/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(store.attachEngineTakeoff).toHaveBeenCalledTimes(2);
+  });
 });

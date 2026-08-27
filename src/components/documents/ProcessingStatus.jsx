@@ -71,6 +71,22 @@ export default function ProcessingStatus({ store }) {
     [store, projectId],
   );
 
+  // The confirm dialog's own retry. A rejection here can't fall back on
+  // the mount effect's try/catch the way the first attempt does -- this is
+  // what turns a second failure (network blip, a 500, a stale project)
+  // into the same error state instead of an unhandled rejection that
+  // leaves the estimator staring at a confirm button that looks broken.
+  const confirmReplace = useCallback(async () => {
+    if (!replaceConfirm) return;
+    try {
+      await attachTakeoff(replaceConfirm.payload, { confirmReplace: true });
+    } catch (err) {
+      setReplaceConfirm(null);
+      setError(err?.message || "The takeoff couldn't be replaced.");
+      setMode("error");
+    }
+  }, [attachTakeoff, replaceConfirm]);
+
   useEffect(() => {
     // `alive` is per-invocation and re-created here, so StrictMode's
     // mount→cleanup→mount cycle leaves the final invocation with alive=true
@@ -227,11 +243,7 @@ export default function ProcessingStatus({ store }) {
               >
                 Keep the current takeoff
               </button>
-              <button
-                type="button"
-                className="btn btn--danger"
-                onClick={() => attachTakeoff(replaceConfirm.payload, { confirmReplace: true })}
-              >
+              <button type="button" className="btn btn--danger" onClick={confirmReplace}>
                 Replace the takeoff
               </button>
             </div>

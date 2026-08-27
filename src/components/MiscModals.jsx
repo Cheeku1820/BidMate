@@ -1,7 +1,7 @@
 import { Ruler } from "lucide-react";
 import Modal from "./Modal.jsx";
 import { SymbolGlyph } from "./Symbols.jsx";
-import { STATUS } from "../lib/data.js";
+import { STATUS } from "../lib/vocabulary.js";
 import { displayStatus } from "./Pill.jsx";
 
 /** The remaining, smaller dialogs (spec §5, screen F) — kept together

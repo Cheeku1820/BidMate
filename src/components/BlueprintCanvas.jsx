@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import PlanDrawing from "./PlanDrawing.jsx";
 import { SymbolGlyph } from "./Symbols.jsx";
-import { STATUS } from "../lib/data.js";
+import { STATUS } from "../lib/vocabulary.js";
 
 export const SHEET_W = 1000;
 export const SHEET_H = 750;

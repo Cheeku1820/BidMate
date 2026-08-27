@@ -32,7 +32,7 @@ import AppTopBar from "../shell/AppTopBar.jsx";
 import Pill, { displayStatus } from "../Pill.jsx";
 import BulkApproveBar from "./BulkApproveBar.jsx";
 import SampleBanner from "../documents/SampleBanner.jsx";
-import { STATUS } from "../../lib/data.js";
+import { STATUS } from "../../lib/vocabulary.js";
 import { timeOf } from "../../lib/format.js";
 import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";

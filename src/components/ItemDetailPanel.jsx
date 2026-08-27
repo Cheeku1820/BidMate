@@ -1,7 +1,7 @@
 import { Check, Pencil, CircleSlash, Trash2, ChevronLeft, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 import Pill from "./Pill.jsx";
 import { SYMBOL_LABELS } from "./Symbols.jsx";
-import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/data.js";
+import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/vocabulary.js";
 
 /** Right panel: selected item (spec §5, screen F). Renders the review
  *  progress summary when nothing is selected, or the full item detail

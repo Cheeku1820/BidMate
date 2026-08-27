@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { SYSTEMS } from "../lib/data.js";
+import { SYSTEMS } from "../lib/vocabulary.js";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceContext } from "./project/useWorkspaceContext.js";
 import SampleBanner from "./documents/SampleBanner.jsx";

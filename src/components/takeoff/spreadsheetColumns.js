@@ -17,7 +17,7 @@
    prejudge.
    ============================================================ */
 
-import { STATUS } from "../../lib/data.js";
+import { STATUS } from "../../lib/vocabulary.js";
 
 /** The absent-value mark. A dash reads as "nothing here" where an empty
  *  cell reads as an oversight. */

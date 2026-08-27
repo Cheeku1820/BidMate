@@ -13,7 +13,7 @@
    Re-entering a project that already has a takeoff never re-runs.
    ============================================================ */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
@@ -45,6 +45,31 @@ export default function ProcessingStatus({ store }) {
   const [summary, setSummary] = useState(null);
   const [reviewPath, setReviewPath] = useState("");
   const [error, setError] = useState(null);
+  // Set when the server refuses to replace a takeoff that holds
+  // approvals. Carries the server's own message, which names the count —
+  // the estimator is told what they would lose, not asked a vague
+  // "are you sure".
+  const [replaceConfirm, setReplaceConfirm] = useState(null);
+
+  const attachTakeoff = useCallback(
+    async (payload, { confirmReplace = false } = {}) => {
+      try {
+        await store.attachEngineTakeoff(projectId, payload, { confirmReplace });
+        clearUploadedFiles(projectId);
+        setReplaceConfirm(null);
+        setReviewPath(`/projects/${projectId}/takeoff`);
+        setMode("done");
+      } catch (err) {
+        if (err?.code === "approved_items_present") {
+          setReplaceConfirm({ message: err.message, payload });
+          setMode("confirm-replace");
+          return;
+        }
+        throw err;
+      }
+    },
+    [store, projectId],
+  );
 
   useEffect(() => {
     // `alive` is per-invocation and re-created here, so StrictMode's
@@ -93,8 +118,6 @@ export default function ProcessingStatus({ store }) {
           const payload = await run;
           engineRuns.delete(projectId);
           if (!alive) return;
-          await store.attachEngineTakeoff(projectId, payload);
-          clearUploadedFiles(projectId);
           clearInterval(iv);
           setSummary({
             items: payload.totals.item_count,
@@ -103,8 +126,7 @@ export default function ProcessingStatus({ store }) {
             location: payload.location,
             source: payload.source,
           });
-          setReviewPath(`/projects/${projectId}/takeoff`);
-          setMode("done");
+          await attachTakeoff(payload);
         } catch (err) {
           engineRuns.delete(projectId); // let a retry start fresh
           if (!alive) return;
@@ -182,6 +204,37 @@ export default function ProcessingStatus({ store }) {
             <Link className="btn" to={`/projects/${projectId}/documents`}>
               Back to documents
             </Link>
+          </div>
+        ) : null}
+
+        {mode === "confirm-replace" && replaceConfirm ? (
+          <div className="processing-confirm" role="alertdialog" aria-labelledby="replace-confirm-title">
+            <h2 id="replace-confirm-title">Replacing this takeoff discards approved items</h2>
+            <p>{replaceConfirm.message}</p>
+            <p>
+              Approving an item is a record that a person checked it. Replacing the takeoff removes those records
+              along with the items.
+            </p>
+            <div className="processing-confirm-actions">
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setReplaceConfirm(null);
+                  setReviewPath(`/projects/${projectId}/takeoff`);
+                  setMode("done");
+                }}
+              >
+                Keep the current takeoff
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => attachTakeoff(replaceConfirm.payload, { confirmReplace: true })}
+              >
+                Replace the takeoff
+              </button>
+            </div>
           </div>
         ) : null}
 

@@ -1859,3 +1859,8 @@ button {
   border-radius: 999px;
   white-space: nowrap;
 }
+
+/* a document unchecked on the confirm screen — kept visible but dimmed */
+.data-table tr.is-excluded {
+  opacity: 0.5;
+}

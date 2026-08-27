@@ -53,6 +53,12 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "path": list,
     "notes": str,
     "evidence": dict,
+    "material_cost": Decimal,
+    "labor_hours": Decimal,
+    "labor_cost": Decimal,
+    "total_cost": Decimal,
+    "placements": list,
+    "ai_confirmed": bool,
     "updated_at": datetime,
     "warnings": list,
 }

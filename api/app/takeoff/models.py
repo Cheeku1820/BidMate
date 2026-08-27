@@ -4,8 +4,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    BigInteger, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index, Integer,
-    Numeric, String, Text, func, text,
+    BigInteger, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index,
+    Integer, Numeric, String, Text, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -118,6 +118,20 @@ class Sheet(Base):
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Engine ingest metadata. The canvas addresses a page image by
+    # (takeoff_id, page_index), and normalizes marker coordinates against
+    # the page's own point dimensions -- a sheet's markers land wrongly if
+    # normalized against another sheet's size.
+    takeoff_id: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    page_index: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    width_pt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    height_pt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Set when a sheet could not be read. BUILD-STAGES: a sheet the engine
+    # reads poorly is marked unreadable with a reason, never returned as a
+    # short list of items -- silence reads as completeness.
+    unreadable_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    ai_reading: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
 
 class Item(Base):
     __tablename__ = "items"
@@ -145,6 +159,18 @@ class Item(Base):
     path: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Cost, carried for the spreadsheet and export. The engine stops at
+    # total direct cost -- markup, overhead, and profit are an
+    # estimator-owned layer and deliberately have no column here.
+    material_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    labor_hours: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    labor_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    total_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    # Every coordinate this cluster was counted at, in sheet space. `x`/`y`
+    # is the marker; this is what the canvas draws when showing all
+    # placements of one item.
+    placements: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ai_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Optimistic-concurrency counter for the five single-item mutations
     # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
     # is driven by `onupdate=func.now()` and therefore transaction-

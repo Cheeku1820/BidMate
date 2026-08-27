@@ -102,11 +102,9 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-/** Not part of the store interface (METHODS in contract.test.js) — the
- *  seed store has no login concept at all, since it invents an identity
- *  on first use. Login.jsx imports this directly rather than going
- *  through createApiStore(), and only ever renders when the api store
- *  is in use in the first place. */
+/** Not part of the store interface returned by createApiStore(). Login.jsx
+ *  imports this directly, since it renders before a store instance has
+ *  an authenticated identity to hang the rest of the interface off of. */
 export async function login(email, password) {
   const raw = await request("/api/auth/login", { method: "POST", body: { email, password } });
   return mapUser(raw);

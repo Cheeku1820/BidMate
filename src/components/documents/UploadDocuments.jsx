@@ -1,12 +1,10 @@
 /* ============================================================
    UploadDocuments.jsx — spec §5 screen C, the intake path.
 
-   Seed mode has no ingestion engine, so nothing here is parsed for real
-   -- files are held in component state only, never uploaded anywhere,
-   and "Start takeoff" hands off to the processing screen, which stands
-   in a sample takeoff (see ProcessingStatus.jsx and seed.js's
-   attachSampleTakeoff). What this screen does carry honestly is the full
-   set of intake states spec §10 requires: uploading, uploaded, a
+   Files are held in component state until "Start takeoff" hands them off
+   to the processing screen (see ProcessingStatus.jsx), which posts them
+   to the real takeoff engine. What this screen carries honestly is the
+   full set of intake states spec §10 requires: uploading, uploaded, a
    duplicate a file matches, an unsupported file type, and a
    password-protected file -- each stated in plain language with a
    recovery action, never a bare "something went wrong".

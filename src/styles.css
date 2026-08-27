@@ -1134,8 +1134,8 @@ button {
 }
 
 /* ============================================================
-   Login — the api store's sign-in gate (task-16-brief.md). Never shown
-   in seed mode, since createSeedStore()'s me() always resolves.
+   Login — the sign-in gate (task-16-brief.md). Shown whenever the
+   store's me() rejects with not_signed_in.
    ============================================================ */
 
 .login {
@@ -1816,26 +1816,6 @@ button {
   to {
     transform: rotate(360deg);
   }
-}
-
-.sample-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--blue-line);
-  background: var(--blue-tint);
-  color: var(--ink-1);
-}
-
-.sample-banner p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--ink-2);
-}
-
-.sample-banner strong {
-  color: var(--ink-1);
 }
 
 /* --- tabs, settings screens (J, K), and plain lists ---------------------- */

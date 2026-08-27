@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { SYSTEMS } from "../lib/vocabulary.js";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceContext } from "./project/useWorkspaceContext.js";
-import SampleBanner from "./documents/SampleBanner.jsx";
 import TopBar from "./TopBar.jsx";
 import SheetsRail from "./SheetsRail.jsx";
 import CanvasPane, { canvasCmd } from "./CanvasPane.jsx";
@@ -203,8 +202,6 @@ export default function Workspace() {
         onHelp={() => setModal({ kind: "help" })}
         onFinish={() => setModal({ kind: "finish" })}
       />
-
-      {project?.sample ? <SampleBanner /> : null}
 
       <div className="workspace">
         <SheetsRail

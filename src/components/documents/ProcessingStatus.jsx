@@ -1,5 +1,5 @@
 /* ============================================================
-   ProcessingStatus.jsx — spec §5 screen E, now driving the real engine.
+   ProcessingStatus.jsx — spec §5 screen E, driving the real engine.
 
    If the estimator uploaded drawings, this posts them to the takeoff
    engine (engineClient) and shows a genuine multi-stage loading sequence
@@ -8,9 +8,10 @@
    stage labels are indicative -- the engine runs as one request -- but
    completion is real.
 
-   With no upload (the sample demo path), it keeps the simulated per-sheet
-   animation and stands in a sample takeoff, so that path still works.
-   Re-entering a project that already has a takeoff never re-runs.
+   With no upload, there is nothing to process -- this is an error state,
+   not a fallback, since a project only reaches this screen after Upload
+   documents requires a drawing set. Re-entering a project that already
+   has a takeoff never re-runs.
    ============================================================ */
 
 import { useCallback, useEffect, useState } from "react";
@@ -21,12 +22,6 @@ import { estimateProject } from "../../lib/engineClient.js";
 import { getUploadedFiles, clearUploadedFiles } from "../../lib/uploadedFiles.js";
 
 const ENGINE_STAGES = ["Uploading documents", "Reading drawings and specifications", "Counting devices", "Classifying and pricing"];
-
-const SAMPLE_SHEETS = [
-  { id: "e11", number: "E1.1", title: "Level 1 power" },
-  { id: "e21", number: "E2.1", title: "Warehouse power" },
-  { id: "e31", number: "E3.1", title: "Roof and site" },
-];
 
 const money = (n) => "$" + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
 
@@ -39,9 +34,8 @@ const engineRuns = new Map(); // projectId -> Promise<payload>
 export default function ProcessingStatus({ store }) {
   const { projectId } = useParams();
 
-  const [mode, setMode] = useState("checking"); // checking | engine | sample | done | error
+  const [mode, setMode] = useState("checking"); // checking | engine | done | error
   const [engineStage, setEngineStage] = useState(0);
-  const [sampleProgress, setSampleProgress] = useState(() => SAMPLE_SHEETS.map(() => 0));
   const [summary, setSummary] = useState(null);
   const [reviewPath, setReviewPath] = useState("");
   const [error, setError] = useState(null);
@@ -106,7 +100,7 @@ export default function ProcessingStatus({ store }) {
       if (!alive) return;
 
       // Already has a takeoff — show complete, never re-run.
-      if (project && (project.sample || project.hasTakeoff)) {
+      if (project && project.hasTakeoff) {
         setReviewPath(`/projects/${projectId}/takeoff`);
         setMode("done");
         return;
@@ -153,35 +147,9 @@ export default function ProcessingStatus({ store }) {
         return;
       }
 
-      // --- sample fallback (no upload) ---
-      setMode("sample");
-      SAMPLE_SHEETS.forEach((_, sheetIdx) => {
-        for (let s = 1; s <= 3; s += 1) {
-          timers.push(
-            setTimeout(() => {
-              if (!alive) return;
-              setSampleProgress((prev) => {
-                const next = prev.slice();
-                next[sheetIdx] = s >= 3 ? -1 : s;
-                return next;
-              });
-            }, 400 + sheetIdx * 250 + s * 450),
-          );
-        }
-      });
-      timers.push(
-        setTimeout(async () => {
-          if (!alive) return;
-          try {
-            await store.attachSampleTakeoff?.(projectId);
-          } catch {
-            /* non-fatal */
-          }
-          if (!alive) return;
-          setReviewPath(`/projects/${projectId}/takeoff`);
-          setMode("done");
-        }, 400 + SAMPLE_SHEETS.length * 250 + 3 * 450 + 300),
-      );
+      // No documents uploaded — there is nothing to process.
+      setError("No documents have been uploaded for this project yet. Upload a drawing set to start a takeoff.");
+      setMode("error");
     })();
 
     return () => {
@@ -273,29 +241,6 @@ export default function ProcessingStatus({ store }) {
                     </span>
                     <span className="processing-title">{label}</span>
                     <span className="processing-stage">{complete ? "Done" : active ? "Working…" : "Waiting"}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        ) : null}
-
-        {mode === "sample" ? (
-          <>
-            <p className="muted">You can leave this page — your progress is saved.</p>
-            <ul className="processing-list">
-              {SAMPLE_SHEETS.map((sheet, idx) => {
-                const complete = sampleProgress[idx] === -1;
-                return (
-                  <li key={sheet.id} className="processing-row">
-                    <span className="processing-icon" aria-hidden="true">
-                      {complete ? <CheckCircle2 size={18} className="ink-blue" /> : <Loader2 size={18} className="spin" />}
-                    </span>
-                    <span className="processing-sheet tabular">{sheet.number}</span>
-                    <span className="processing-title">{sheet.title}</span>
-                    <span className={complete ? "processing-stage is-complete" : "processing-stage"}>
-                      {complete ? "Complete" : "Reading sheet"}
-                    </span>
                   </li>
                 );
               })}

@@ -108,9 +108,7 @@ export default function ProjectOverview({ store }) {
   // click right after creating a project, and following it would land on
   // a workspace belonging to a *different* project's data. So an empty
   // project's primary action is to upload documents instead, and only a
-  // project that actually has items links into the review workspace. (A
-  // sampled demo project has real items via attachSampleTakeoff, so it
-  // takes the has-takeoff path and carries its own sample banner there.)
+  // project that actually has items links into the review workspace.
   const hasTakeoff = progress.total > 0;
 
   return (

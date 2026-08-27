@@ -1,11 +1,10 @@
 /* ============================================================
    ProcessingStatus.test.jsx — screen E behaviour.
 
-   Two rules carry the weight: on completion it stands the sample takeoff
-   into the project (attachSampleTakeoff) exactly once and reveals a
-   Continue action, and re-entering the screen for an already-sampled
-   project does NOT re-run and overwrite review progress -- it detects the
-   sample and shows the completed state straight away.
+   With the seed/sample takeoff path removed, a project with no uploaded
+   documents and no existing takeoff has nothing to process -- that is an
+   error state, not a fallback. Re-entering a project that already has a
+   takeoff goes straight to complete and never re-runs the engine.
    ============================================================ */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -38,44 +37,29 @@ async function flushMicrotasks() {
 }
 
 describe("ProcessingStatus", () => {
-  it("attaches the sample takeoff once when processing finishes, then offers Continue to review", async () => {
+  it("shows an error, not a fallback, when no documents were uploaded and no takeoff exists yet", async () => {
     const store = {
-      listProjects: vi.fn().mockResolvedValue([{ id: "p1", sample: false }]),
-      attachSampleTakeoff: vi.fn().mockResolvedValue(undefined),
+      listProjects: vi.fn().mockResolvedValue([{ id: "p1", hasTakeoff: false }]),
     };
     renderProcessing(store);
     await flushMicrotasks();
 
-    // Not done yet, no Continue action while sheets are still working.
+    expect(
+      screen.getByText(/no documents have been uploaded for this project yet\. upload a drawing set to start a takeoff\./i),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /continue to review/i })).toBeNull();
-
-    await act(async () => {
-      vi.advanceTimersByTime(6000);
-      await Promise.resolve();
-    });
-
-    expect(store.attachSampleTakeoff).toHaveBeenCalledTimes(1);
-    expect(store.attachSampleTakeoff).toHaveBeenCalledWith("p1");
-    expect(screen.getAllByRole("link", { name: /continue to review/i }).length).toBeGreaterThan(0);
   });
 
-  it("does not re-process a project that already has a sample takeoff", async () => {
+  it("does not re-process a project that already has a takeoff", async () => {
     const store = {
-      listProjects: vi.fn().mockResolvedValue([{ id: "p1", sample: true }]),
-      attachSampleTakeoff: vi.fn().mockResolvedValue(undefined),
+      listProjects: vi.fn().mockResolvedValue([{ id: "p1", hasTakeoff: true }]),
     };
     renderProcessing(store);
     await flushMicrotasks();
 
-    // Straight to complete, and crucially never re-attaches (which would
-    // wipe the estimator's review progress).
+    // Straight to complete -- no engine call, no error, and crucially no
+    // re-run that would wipe the estimator's review progress.
     expect(screen.getAllByRole("link", { name: /continue to review/i }).length).toBeGreaterThan(0);
-
-    await act(async () => {
-      vi.advanceTimersByTime(6000);
-      await Promise.resolve();
-    });
-    expect(store.attachSampleTakeoff).not.toHaveBeenCalled();
   });
 });
 

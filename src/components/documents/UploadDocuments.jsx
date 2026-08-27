@@ -17,7 +17,7 @@
 
 import { useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { FileText, Upload, X } from "lucide-react";
+import { AlertTriangle, FileText, Upload, X } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectNav from "../shell/ProjectNav.jsx";
 import { setUploadedFiles } from "../../lib/uploadedFiles.js";
@@ -105,9 +105,13 @@ export default function UploadDocuments() {
     setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, docType, typeAuto: false } : f)));
 
   const readyCount = files.filter((f) => f.status === "ready").length;
+  const drawingsCount = files.filter((f) => f.status === "ready" && f.docType === "Drawings").length;
+  // The takeoff runs on the drawing set, so at least one file has to be
+  // typed Drawings before there's anything to process.
+  const canContinue = drawingsCount > 0;
 
   const reviewDetected = () => {
-    if (readyCount === 0) return;
+    if (!canContinue) return;
     // Every uploaded file is carried forward with its type. The engine
     // runs the Drawings through the takeoff pipeline and reads the rest
     // (specs, addenda, scope) as context, so all of them inform the
@@ -124,7 +128,7 @@ export default function UploadDocuments() {
       <AppTopBar
         title="Documents"
         primaryAction={
-          <button type="button" className="btn btn--primary" disabled={readyCount === 0} onClick={reviewDetected}>
+          <button type="button" className="btn btn--primary" disabled={!canContinue} onClick={reviewDetected}>
             Review detected drawings
           </button>
         }
@@ -227,8 +231,20 @@ export default function UploadDocuments() {
           </table>
         )}
 
+        {readyCount > 0 && drawingsCount === 0 ? (
+          <div className="warncard warncard--attention" role="status">
+            <h4>
+              <AlertTriangle aria-hidden="true" size={16} /> No drawing set yet
+            </h4>
+            <p>
+              The takeoff runs on the drawings. Set at least one file's type to <strong>Drawings</strong> to continue —
+              specifications and addenda are read as context, not as the drawing set.
+            </p>
+          </div>
+        ) : null}
+
         <div className="form-actions">
-          <button type="button" className="btn btn--primary" disabled={readyCount === 0} onClick={reviewDetected}>
+          <button type="button" className="btn btn--primary" disabled={!canContinue} onClick={reviewDetected}>
             Review detected drawings
           </button>
           <Link className="btn" to={`/projects/${projectId}`}>

@@ -21,7 +21,8 @@ import { AlertTriangle, FileText, Upload, X } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import ProjectNav from "../shell/ProjectNav.jsx";
 import { setUploadedFiles } from "../../lib/uploadedFiles.js";
-import { DOC_TYPES, detectDocType } from "../../lib/detectDocType.js";
+import { DOC_TYPES, detectDocTypeInfo } from "../../lib/detectDocType.js";
+import { classifyDoc } from "../../lib/engineClient.js";
 
 // A file is "ready" (counts toward starting a takeoff) only when it
 // uploaded cleanly. The other four are the spec §10 states, each with
@@ -65,6 +66,7 @@ export default function UploadDocuments() {
       let next = prev;
       for (const file of incoming) {
         const status = classify(file, next);
+        const detected = detectDocTypeInfo(file.name);
         const entry = {
           id: `${file.name}-${file.size}-${crypto.randomUUID()}`,
           name: file.name,
@@ -72,20 +74,29 @@ export default function UploadDocuments() {
           // Pre-select the type from the filename; typeAuto tracks whether
           // it's still the suggestion (shows a "detected" hint) or the
           // estimator has since set it by hand.
-          docType: detectDocType(file.name),
+          docType: detected.type,
           typeAuto: true,
           status,
           file, // kept so the drawings can be sent to the engine on continue
         };
         next = [...next, entry];
-        // A cleanly-uploading file settles to "ready" after a beat, the
-        // way a real upload would confirm. Guarded to this entry's id so
-        // a later remove can't resurrect it.
         if (status === "uploading") {
           const settleId = entry.id;
+          // A cleanly-uploading file settles to "ready" after a beat, the
+          // way a real upload would confirm. Guarded to this entry's id so
+          // a later remove can't resurrect it.
           setTimeout(() => {
             setFiles((cur) => cur.map((f) => (f.id === settleId && f.status === "uploading" ? { ...f, status: "ready" } : f)));
           }, 700);
+          // When the filename wasn't informative, peek at the content to
+          // refine the type -- best-effort, and only if the estimator
+          // hasn't set it by hand in the meantime (typeAuto still true).
+          if (detected.source === "default") {
+            classifyDoc(file).then((type) => {
+              if (!type) return;
+              setFiles((cur) => cur.map((f) => (f.id === settleId && f.typeAuto ? { ...f, docType: type } : f)));
+            });
+          }
         }
       }
       return next;

@@ -32,13 +32,21 @@ const RULES = [
   },
 ];
 
+/** Like detectDocType, but also reports whether a rule actually matched
+ *  (`source: "name"`) or the type fell back to the default
+ *  (`source: "default"`). The upload screen uses that to decide whether a
+ *  file's name was informative or whether it should peek at the content. */
+export function detectDocTypeInfo(filename) {
+  const lc = (filename || "").toLowerCase();
+  for (const rule of RULES) {
+    if (rule.keywords.some((k) => lc.includes(k))) return { type: rule.type, source: "name" };
+  }
+  return { type: "Drawings", source: "default" };
+}
+
 /** Returns the best-guess DOC_TYPE for a filename. Defaults to "Drawings"
  *  -- in a typical set the unlabeled files are the drawing sheets, and a
  *  wrong guess is one dropdown change away from corrected. */
 export function detectDocType(filename) {
-  const lc = (filename || "").toLowerCase();
-  for (const rule of RULES) {
-    if (rule.keywords.some((k) => lc.includes(k))) return rule.type;
-  }
-  return "Drawings";
+  return detectDocTypeInfo(filename).type;
 }

@@ -82,6 +82,20 @@ async def estimate_endpoint(file: UploadFile = File(...), location: str = Form("
     return await _run(file, location, estimate_mod.estimate)
 
 
+@app.post("/classify")
+async def classify_endpoint(file: UploadFile = File(...)):
+    """Peek at a document's first pages and guess its type from the
+    content, for the upload screen to refine a file whose name didn't say.
+    Returns {"type": <DOC_TYPE or null>} -- null means "no strong signal,
+    keep your filename guess"."""
+    try:
+        data = await file.read()
+        text = documents_mod.first_pages_text(data)
+        return {"type": documents_mod.classify_content(text)}
+    except Exception:  # noqa: BLE001 -- best-effort; the client falls back to the filename
+        return {"type": None}
+
+
 @app.post("/estimate/full")
 async def estimate_full_endpoint(file: UploadFile = File(...), location: str = Form("")):
     """Per-sheet takeoff with coordinates and page dimensions, for the full

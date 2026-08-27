@@ -38,6 +38,23 @@ export async function estimateFull(file, location) {
   return post("/estimate/full", form);
 }
 
+/** Peek at a document's content to refine its type when the filename
+ *  wasn't informative. Returns a DOC_TYPE string or null — null (including
+ *  when the service is down) means "keep the filename guess". Best-effort,
+ *  never throws. */
+export async function classifyDoc(file) {
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const res = await fetch(`${BASE}/classify`, { method: "POST", body: form });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.type || null;
+  } catch {
+    return null;
+  }
+}
+
 /** POST the whole document set (each `{ file, docType }`) + location to
  *  /estimate/project: Drawings run the pipeline, everything else is read
  *  as context. Returns the merged per-sheet takeoff payload. */

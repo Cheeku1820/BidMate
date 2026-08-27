@@ -129,6 +129,38 @@ def extract_context(pdf_bytes: bytes, max_chars: int = 6000) -> str:
     return "\n".join(chunks)[:max_chars]
 
 
+def first_pages_text(pdf_bytes: bytes, pages: int = 2, max_chars: int = 4000) -> str:
+    """The text of a document's first pages -- enough to read a cover
+    sheet, a spec section header, or a drawing title block."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    out = []
+    for i in range(min(pages, doc.page_count)):
+        out.append(doc[i].get_text("text"))
+    return "\n".join(out)[:max_chars]
+
+
+def classify_content(text: str) -> str | None:
+    """Guess a document's type from its first-page text, for files whose
+    name didn't say. Returns None when nothing is conclusive, so the
+    caller keeps the filename guess rather than overriding it with a
+    weak signal. Checked in the same priority order as the filename
+    rules (an addendum first)."""
+    up = (text or "").upper()
+    if "ADDENDUM" in up or "ADDENDA" in up:
+        return "Addendum"
+    if "SPECIFICATION" in up or "DIVISION 26" in up or re.search(r"\bSECTION 26 ?\d", up) or "PROJECT MANUAL" in up:
+        return "Specifications"
+    if "SCOPE OF WORK" in up:
+        return "Scope"
+    if "GEOTECHNICAL" in up or "BID TABULATION" in up:
+        return "Other"
+    # Drawing indicators: an electrical sheet number in a title block, or a
+    # scale label alongside a sheet reference.
+    if re.search(r"\bE\d{1,2}\.\d{1,2}\b", up) or ("SCALE:" in up and "SHEET" in up):
+        return "Drawings"
+    return None
+
+
 def render_vision_png_bytes(pdf_bytes: bytes, page_index: int, long_edge_px: int = 1500) -> bytes:
     """Render a sheet sized for a vision model to read -- the long edge
     around 1500px, which is where Claude reads a drawing well without the

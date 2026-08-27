@@ -302,3 +302,16 @@ class UndoRedoOut(BaseModel):
     performed: bool
     label: str | None = None
     snapshot: SnapshotOut | None = None
+
+
+class TakeoffIngestIn(BaseModel):
+    """The engine's payload, plus the estimator's explicit consent to
+    replace approved work (see ingest_service for when that is required)."""
+
+    payload: dict
+    confirm_replace: bool = False
+
+
+class TakeoffIngestOut(BaseModel):
+    sheets: int
+    items: int

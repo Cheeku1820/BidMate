@@ -135,6 +135,9 @@ TENANCY_TABLE = [
      lambda p, s, i: f"/api/projects/{p.id}/undo", None, None),
     ("POST", "/api/projects/{project_id}/redo",
      lambda p, s, i: f"/api/projects/{p.id}/redo", None, None),
+    ("POST", "/api/projects/{project_id}/takeoff",
+     lambda p, s, i: f"/api/projects/{p.id}/takeoff",
+     lambda p, s, i: {"payload": {"sheets": [], "items": []}}, None),
     ("PUT", "/api/presence",
      lambda p, s, i: "/api/presence", lambda p, s, i: {"project_id": str(p.id)}, None),
 ]

@@ -34,8 +34,11 @@ from app.takeoff import bulk, review
 from app.takeoff import scale as scale_module
 from app.takeoff import snapshot as snapshot_module
 from app.takeoff import undo as undo_module
+from app.takeoff.ingest_service import ingest_takeoff
 from app.takeoff.router import load_item, load_project, load_sheet
-from app.takeoff.schemas import BulkApproveOut, ItemMutationOut, ScaleMutationOut, SkippedItemOut, UndoRedoOut
+from app.takeoff.schemas import (
+    BulkApproveOut, ItemMutationOut, ScaleMutationOut, SkippedItemOut, TakeoffIngestIn, TakeoffIngestOut, UndoRedoOut,
+)
 
 router = APIRouter(prefix="/api", tags=["takeoff-mutations"])
 
@@ -317,6 +320,22 @@ def set_scale(
     db.commit()
     version = snapshot_module.version(db, project_id)
     return ScaleMutationOut(label=action.label, snapshot=snapshot_module.build(db, user, project_id, version))
+
+
+@router.post("/projects/{project_id}/takeoff", response_model=TakeoffIngestOut)
+def post_takeoff(
+    project_id: uuid.UUID,
+    payload: TakeoffIngestIn,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(current_user),
+) -> TakeoffIngestOut:
+    project = load_project(project_id, db, user)
+    result = ingest_takeoff(
+        db, actor=user, project=project,
+        payload=payload.payload, confirm_replace=payload.confirm_replace,
+    )
+    db.commit()
+    return TakeoffIngestOut(**result)
 
 
 @router.post("/projects/{project_id}/undo", response_model=UndoRedoOut)

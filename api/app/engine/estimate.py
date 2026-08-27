@@ -157,6 +157,21 @@ def full_takeoff(path: str, location: str, context: str = "") -> dict:
     }
 
 
+def _unconfirmed_type_warning(tag: str, count: int, sheet_no: str) -> dict:
+    """The four-field shape for an item the classifier could not place
+    confidently. An attention item with no warning tells the estimator
+    something is wrong but not what to do about it, which is the one
+    thing a warning exists to prevent."""
+    return {
+        "reason": "legend",
+        "title": "Item type needs confirmation",
+        "found": f"Type {tag} appears {count} times on {sheet_no}, but its description could not be matched to a schedule with confidence.",
+        "why": "The exact item and its price can't be confirmed until the type is matched to the schedule.",
+        "fix": "Confirm the item type against the schedule, then approve.",
+        "where": f"{sheet_no} and the project schedules.",
+    }
+
+
 def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_factor: float) -> dict:
     qty = cluster.count
     unit_material = float(spec.get("material_cost", 0) or 0) * material_factor
@@ -165,6 +180,8 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
     hours = round(unit_hours * qty, 2)
     labor = round(hours * labor_rate, 2)
     status = "ready" if spec.get("confidence") == "high" else "attention"
+    sheet_no = _sheet_no(sheets, cluster.sheet_page_index)
+    warning = None if status == "ready" else _unconfirmed_type_warning(cluster.tag, qty, sheet_no)
     return {
         "name": spec.get("name", f"Symbol {cluster.tag}"),
         "system": spec.get("system", "Unknown"),
@@ -172,7 +189,7 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
         "unit": spec.get("unit", "ea"),
         "quantity": qty,
         "status": status,
-        "sheet": _sheet_no(sheets, cluster.sheet_page_index),
+        "sheet": sheet_no,
         "page": cluster.sheet_page_index + 1,
         "sheet_id": str(cluster.sheet_page_index),
         "tag": cluster.tag,
@@ -183,6 +200,8 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
         "labor_hours": hours,
         "labor_cost": labor,
         "total_cost": round(material + labor, 2),
+        "symbol": spec.get("symbol", ""),
+        "warning": warning,
     }
 
 
@@ -212,4 +231,6 @@ def _row_from_catalog(item, cluster, sheets, labor_rate: float, material_factor:
         "labor_hours": hours,
         "labor_cost": labor,
         "total_cost": round(material + labor, 2),
+        "symbol": item.symbol,
+        "warning": item.warning,
     }

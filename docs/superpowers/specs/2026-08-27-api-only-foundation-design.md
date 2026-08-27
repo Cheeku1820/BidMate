@@ -23,7 +23,7 @@ The requested feature — notes and assumptions that can be marked as engine con
 
 - A fresh database plus a created account reaches a reviewable takeoff using only real uploaded PDFs. No fixture data at any point.
 - `grep -ri "seed" src/` returns nothing but incidental prose.
-- Re-processing a project replaces its takeoff rather than duplicating it.
+- Re-processing a project replaces its takeoff rather than duplicating it, and cannot discard an approved item without an explicit confirmation naming what would be lost.
 - Warnings that do not carry all four fields are rejected at the API boundary.
 - A user in one org cannot ingest into, or read, another org's project — proven by test.
 - The spreadsheet, export totals, and canvas markers render from ingested data with nothing lost relative to what the seed path carried.
@@ -49,7 +49,8 @@ The earlier spec anticipated this exact reversal and paid for it in advance — 
 | Engine→domain mapping | Moves to the server | Domain logic, and invariant 7 keeps processing internals server-side. Leaving it in the client means deleting seed deletes the mapping. |
 | Ingest semantics | Replace the project's takeoff in one transaction | Re-processing is the normal case; append would silently double every count |
 | Ingest attribution | Writes one `Action` row | Invariant 8 — every mutation attributable, ingest included |
-| Approved items on re-ingest | Out of scope here; ingest replaces wholesale | Preserving approvals across re-processing belongs to spec 2's apply-and-re-run, where it is the point rather than a side effect |
+| Approved items on re-ingest | Refused with a 409 until the estimator confirms | Replacing approved work is "discarding corrections" — product-spec §6 requires confirmation. Silent destruction of an approval is the one outcome the status vocabulary exists to prevent |
+| Preserving approvals across a re-run | Out of scope here | Belongs to spec 2's apply-and-re-run, where merging is the point rather than a side effect |
 | `seed.py` | Deleted, replaced by `create_admin` | "Remove all seed data" taken literally; but a database with no user cannot be logged into, so account creation must survive |
 | `demo/index.html` | Deleted with its build config | A seed-mode artifact by construction; cannot work without a backend |
 | GitHub Pages workflow | Deleted | It would publish a client with no reachable API — a page that loads and then fails |
@@ -73,6 +74,18 @@ Body is the payload `/estimate/project` returns (the shape [`seed-ingest.js`](..
 4. Return the project snapshot, so the client needs no follow-up fetch.
 
 Replacement rather than append is what makes re-processing safe: the same document set processed twice yields one takeoff, not two overlaid.
+
+### Approved work is never replaced without a person saying so
+
+Replacement is destructive, and on a project already under review it can destroy approvals — the one act in this product that carries a person's professional judgment. So ingest refuses rather than assumes.
+
+If the project holds **any estimator-approved items**, the endpoint raises `DomainError("approved_items_present", …, status=409)` and writes nothing. The message names the count and the consequence in estimator language: *"12 items on this project are estimator approved. Processing again replaces the whole takeoff, and those approvals would be discarded."* This reuses the existing 409 convention (`api/app/errors.py`, matching [`concurrency.py:89`](../../../api/app/takeoff/concurrency.py:89)) and needs no new error plumbing on either side.
+
+The client sends `confirm_replace: true` to proceed, and sets it **only** in response to an explicit confirmation dialog naming that count — never preemptively. `ProcessingStatus` catches the `approved_items_present` code, shows the confirmation with the server's message, and re-issues on confirm; declining leaves the existing takeoff untouched and returns the estimator to review.
+
+An empty project — the ordinary first-processing case — has no approved items, so it never sees the dialog. The confirmation appears exactly when something would be lost.
+
+The rule is **server-authoritative**: the 409 is what actually protects the data. The dialog is good feedback, not the guard, which is the same division invariant 4 draws for approval rules.
 
 ### The mapping moves to Python
 
@@ -158,6 +171,8 @@ This is not seed data by any reading: without it, a migrated database contains n
 
 **Backend.** Ingest mapping (coordinate normalization against known page dimensions, symbol inference, placements); transactional replacement (ingest twice, assert one takeoff); four-field warning rejection with the field named; org scoping on ingest; `stage` transition; the `Action` row's attribution.
 
+Approval protection gets its own tests, because it is the rule most costly to get wrong: ingest into a project with an approved item is refused with `approved_items_present` **and writes nothing** (asserted by re-reading the takeoff, not just by the status code); the same call with `confirm_replace: true` succeeds; a project with no approved items ingests without confirmation.
+
 **Client.** The api store's `attachEngineTakeoff` against a mocked fetch, including the failure message. Existing tests that mock a store keep working — they mock the interface, not the implementation. Tests of the seed store are deleted with it. Tests that pulled `SHEETS`/`ITEMS` in as a convenient fixture are repointed at inline literals; tests that import the status vocabulary keep doing so under its new path.
 
 **Not tested here:** a full end-to-end upload-through-review run. It needs Postgres, the API, the engine service, and a real PDF, which is a manual verification step in this slice rather than CI.
@@ -199,4 +214,4 @@ New project → upload drawings → process → review. Every row on screen came
 
 **The run loop got heavier.** Four processes where there was one static file. That is the accepted cost of testing against real data, and it is worth restating to whoever reads this next expecting `npm run dev` to be sufficient.
 
-**Out of scope, deliberately:** preserving approvals across a re-ingest. Wholesale replacement is correct for "process this set again"; it is wrong for "apply a note and re-run," which is spec 2's problem and where the merge rule belongs.
+**Out of scope, deliberately:** *preserving* approvals across a re-ingest. Wholesale replacement, once confirmed, is correct for "process this set again" — the estimator has said the old takeoff should go. It is wrong for "apply a note and re-run," where approved items must survive; that is spec 2's problem and where the merge rule belongs. This slice guarantees only that the loss is deliberate, never silent.

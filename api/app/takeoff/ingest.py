@@ -9,11 +9,11 @@ Coordinates arrive as PDF points and are normalized into the canvas's
 fixed 1000x750 sheet space against EACH SHEET'S OWN dimensions -- a
 sheet's markers land wrongly if scaled by another sheet's page size.
 
-Both axes are scaled by the SAME factor -- the page's width extent
-mapped onto SHEET_SPACE_W -- rather than x scaled independently by
-width and y by height. A single uniform factor preserves the source
-page's aspect ratio; scaling width into 1000 and height into 750
-independently would squash any page that is not exactly 4:3.
+Each axis is normalized independently against its own extent: x against
+the page's width_pt onto SHEET_SPACE_W (1000), y against the page's
+height_pt onto SHEET_SPACE_H (750). This is a port of the client's
+existing seed-ingest.js normalization, which markers are rendered
+against today.
 """
 from __future__ import annotations
 
@@ -159,9 +159,9 @@ def map_payload(payload: dict) -> MappedTakeoff:
             "unit": str(raw.get("unit") or "ea"),
             "status": str(raw.get("status") or "ready"),
             "x": normalize_point(raw.get("x"), width, SHEET_SPACE_W),
-            "y": normalize_point(raw.get("y"), height, SHEET_SPACE_W),
+            "y": normalize_point(raw.get("y"), height, SHEET_SPACE_H),
             "placements": [
-                [normalize_point(p[0], width, SHEET_SPACE_W), normalize_point(p[1], height, SHEET_SPACE_W)]
+                [normalize_point(p[0], width, SHEET_SPACE_W), normalize_point(p[1], height, SHEET_SPACE_H)]
                 for p in (raw.get("placements") or [])
                 if isinstance(p, (list, tuple)) and len(p) >= 2
             ],

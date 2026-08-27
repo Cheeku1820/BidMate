@@ -67,13 +67,19 @@ def test_map_payload_normalizes_against_the_items_own_sheet():
     mapped = map_payload(payload)
     first = next(i for i in mapped.items if i["sheet_key"] == "tk1:0")
     second = next(i for i in mapped.items if i["sheet_key"] == "tk1:1")
-    assert (first["x"], first["y"]) == (500, 500)
-    assert (second["x"], second["y"]) == (250, 250)
+    # The item sits at the exact center of each page (x = width/2, y =
+    # height/2), so it must land at the center of the 1000x750 canvas:
+    # (500, 375), not (500, 500). x and y scale into DIFFERENT targets
+    # (1000 and 750 respectively), so a page-center point does not land
+    # on (500, 500) -- do not "fix" this back without re-deriving the
+    # geometry first.
+    assert (first["x"], first["y"]) == (500, 375)
+    assert (second["x"], second["y"]) == (250, 188)
 
 
 def test_map_payload_normalizes_every_placement():
     mapped = map_payload(_payload())
-    assert mapped.items[0]["placements"] == [[500, 500], [250, 250]]
+    assert mapped.items[0]["placements"] == [[500, 375], [250, 188]]
 
 
 def test_map_payload_carries_cost_and_sheet_metadata():

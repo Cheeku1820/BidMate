@@ -17,7 +17,6 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import ProjectNav from "../shell/ProjectNav.jsx";
 import { estimateProject } from "../../lib/engineClient.js";
 import { getUploadedFiles, clearUploadedFiles } from "../../lib/uploadedFiles.js";
 
@@ -164,6 +163,7 @@ export default function ProcessingStatus({ store }) {
     <>
       <AppTopBar
         title="Processing"
+        breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}
         primaryAction={
           mode === "done" && reviewPath ? (
             <Link className="btn btn--primary" to={reviewPath}>
@@ -172,7 +172,6 @@ export default function ProcessingStatus({ store }) {
           ) : null
         }
       />
-      <ProjectNav projectId={projectId} />
 
       <div className="page">
         <h1 className="page-heading">{heading}</h1>

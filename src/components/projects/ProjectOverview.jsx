@@ -23,7 +23,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import ProjectNav from "../shell/ProjectNav.jsx";
 import { reviewProgress, stageLabel } from "../../lib/projectStage.js";
 import { formatCalendarDate, NOT_SET } from "../../lib/format.js";
 
@@ -119,6 +118,7 @@ export default function ProjectOverview({ store }) {
       <AppTopBar
         title={project.name}
         subtitle={project.revisionSetLabel || "No drawing set yet"}
+        breadcrumb={[{ label: "Projects", to: "/projects" }]}
         primaryAction={
           hasTakeoff ? (
             <Link className="btn btn--primary" to={`/projects/${project.id}/takeoff`}>
@@ -131,7 +131,6 @@ export default function ProjectOverview({ store }) {
           )
         }
       />
-      <ProjectNav projectId={project.id} />
 
       <div className="page">
         <h1 className="page-heading">{project.name}</h1>

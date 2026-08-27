@@ -33,7 +33,7 @@ import NotFound from "./components/shell/NotFound.jsx";
 
 export function appRoutes({ store, me, onSignedOut }) {
   return (
-    <Route element={<AppShell />}>
+    <Route element={<AppShell store={store} />}>
       <Route index element={<Navigate to="/projects" replace />} />
       <Route path="/projects" element={<ProjectsDashboard store={store} me={me} onSignedOut={onSignedOut} />} />
       <Route path="/accuracy" element={<Accuracy />} />

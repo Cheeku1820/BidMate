@@ -55,3 +55,35 @@ export function formatTimestamp(iso) {
     day: "numeric",
   });
 }
+
+/** Whole days from today until a calendar date, or null when there is no
+ *  date to count to. Anchored to UTC for the same reason
+ *  formatCalendarDate is: `bidDueDate` is a date with no time component,
+ *  and a viewer west of UTC must not see a bid deadline slip a day.
+ *  Negative means the date has passed; 0 means today. */
+export function daysUntil(iso) {
+  if (!iso) return null;
+  const due = new Date(iso);
+  if (Number.isNaN(due.getTime())) return null;
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dueUtc = Date.UTC(due.getUTCFullYear(), due.getUTCMonth(), due.getUTCDate());
+  return Math.round((dueUtc - todayUtc) / 86400000);
+}
+
+/** The bid-deadline chip's copy and urgency, as one derived value so the
+ *  sidebar never states a deadline the date doesn't support. `tone` is
+ *  "overdue" | "urgent" | "normal"; it drives hue, and the label carries
+ *  the same fact in words so the chip is never colour alone
+ *  (CLAUDE.md). */
+export function bidDueChip(iso) {
+  const days = daysUntil(iso);
+  if (days === null) return null;
+  if (days < 0) {
+    const n = Math.abs(days);
+    return { tone: "overdue", label: n === 1 ? "Due 1 day ago" : `Due ${n} days ago` };
+  }
+  if (days === 0) return { tone: "urgent", label: "Due today" };
+  if (days === 1) return { tone: "urgent", label: "Due in 1 day" };
+  return { tone: days <= 7 ? "urgent" : "normal", label: `Due in ${days} days` };
+}

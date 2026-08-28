@@ -150,3 +150,62 @@ def test_map_payload_rejects_an_item_on_an_unknown_sheet():
     with pytest.raises(DomainError) as exc:
         map_payload(payload)
     assert exc.value.status == 422
+
+
+def test_map_payload_normalizes_a_well_formed_ai_reading():
+    payload = _payload()
+    payload["sheets"][0]["ai_reading"] = {
+        "summary": "reads as a power plan",
+        "devices": [{"name": "Duplex receptacle", "count": 47}],
+    }
+    mapped = map_payload(payload)
+    assert mapped.sheets[0]["ai_reading"] == {
+        "summary": "reads as a power plan",
+        "devices": [{"name": "Duplex receptacle", "count": 47}],
+    }
+
+
+def test_map_payload_drops_an_ai_reading_missing_devices():
+    """A model-produced reading with no `devices` key is plausible and
+    must not reach the client as an object the UI assumes has one."""
+    payload = _payload()
+    payload["sheets"][0]["ai_reading"] = {"summary": "reads as a power plan"}
+    mapped = map_payload(payload)
+    assert mapped.sheets[0]["ai_reading"] == {"summary": "reads as a power plan", "devices": []}
+
+
+def test_map_payload_drops_an_ai_reading_whose_devices_is_not_a_list():
+    payload = _payload()
+    payload["sheets"][0]["ai_reading"] = {"summary": "reads as a power plan", "devices": "a lot"}
+    mapped = map_payload(payload)
+    assert mapped.sheets[0]["ai_reading"] == {"summary": "reads as a power plan", "devices": []}
+
+
+def test_map_payload_drops_malformed_device_entries_but_keeps_good_ones():
+    payload = _payload()
+    payload["sheets"][0]["ai_reading"] = {
+        "summary": "reads as a power plan",
+        "devices": [
+            {"name": "Duplex receptacle", "count": 47},
+            "not an object",
+            {"name": "Switch"},  # missing count -- dropped, not defaulted silently
+            {"count": 3},  # missing name -- dropped
+            {"name": "Panel", "count": "12"},  # non-numeric count -- dropped
+        ],
+    }
+    mapped = map_payload(payload)
+    assert mapped.sheets[0]["ai_reading"]["devices"] == [{"name": "Duplex receptacle", "count": 47}]
+
+
+def test_map_payload_stores_none_when_ai_reading_is_not_an_object():
+    payload = _payload()
+    payload["sheets"][0]["ai_reading"] = "reads as a power plan"
+    mapped = map_payload(payload)
+    assert mapped.sheets[0]["ai_reading"] is None
+
+
+def test_map_payload_stores_none_when_ai_reading_absent():
+    payload = _payload()
+    payload["sheets"][0]["ai_reading"] = None
+    mapped = map_payload(payload)
+    assert mapped.sheets[0]["ai_reading"] is None

@@ -52,14 +52,16 @@ export default function ItemDetailPanel({
             <div className="ai-reading">
               <p className="label">What this sheet shows · {currentSheet?.number}</p>
               <p className="value value--muted">{aiReading.summary}</p>
-              <ul className="ai-reading-list">
-                {aiReading.devices.map((d, i) => (
-                  <li key={i}>
-                    <span className="tabular ai-reading-count">{d.count}</span>
-                    <span>{d.name}</span>
-                  </li>
-                ))}
-              </ul>
+              {Array.isArray(aiReading.devices) && aiReading.devices.length > 0 && (
+                <ul className="ai-reading-list">
+                  {aiReading.devices.map((d, i) => (
+                    <li key={i}>
+                      <span className="tabular ai-reading-count">{d?.count}</span>
+                      <span>{d?.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <p className="value value--muted ai-reading-note">
                 Taken from the drawing itself — cross-check it against the counted takeoff.
               </p>

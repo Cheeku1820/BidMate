@@ -228,3 +228,27 @@ def test_ingested_fields_reach_the_snapshot(client, db, project, signed_in_user)
     # Normalized into sheet space, the same way x/y are.
     assert item["placements"] == [[500, 375], [250, 188]]
     assert item["ai_confirmed"] is True
+
+
+def test_ingest_normalizes_a_malformed_ai_reading_instead_of_failing(client, db, project, signed_in_user):
+    """`ai_reading` is unvalidated JSON a language model produced. A
+    reading with no `devices` key, or a `devices` that isn't a list, is
+    entirely plausible -- ingest must normalize it rather than let one
+    odd sheet reading block the whole takeoff from landing."""
+    payload = {
+        "sheets": [
+            {**PAYLOAD["sheets"][0], "ai_reading": {"summary": "reads as a power plan"}},
+            {"id": "tk1:1", "number": "E2.2", "takeoff_id": "tk1", "page": 1,
+             "width_pt": 2000, "height_pt": 1500, "unreadable": None,
+             "ai_reading": {"summary": "reads as a lighting plan", "devices": "a lot"}},
+        ],
+        "items": [PAYLOAD["items"][0]],
+    }
+    response = _ingest(client, project.id, payload=payload)
+    assert response.status_code == 200, response.text
+
+    body = client.get(f"/api/projects/{project.id}/snapshot").json()
+    sheets = {s["number"]: s for s in body["sheets"]}
+
+    assert sheets["E2.1"]["ai_reading"] == {"summary": "reads as a power plan", "devices": []}
+    assert sheets["E2.2"]["ai_reading"] == {"summary": "reads as a lighting plan", "devices": []}

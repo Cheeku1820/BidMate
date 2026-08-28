@@ -102,6 +102,41 @@ def validate_warning(raw: dict) -> dict:
     }
 
 
+def normalize_ai_reading(raw) -> dict | None:
+    """Normalize a sheet's model-produced reading at the boundary rather
+    than storing whatever shape it arrived in.
+
+    `ai_reading` is unvalidated JSON a language model produced -- the
+    same principle `validate_warning` applies to warnings applies here:
+    extracted/model-produced content is data, and its shape is not to be
+    trusted. Unlike a warning, one odd reading must never fail the whole
+    ingest, so malformed entries are dropped rather than raising: a
+    non-object reading becomes None, a missing or non-string `summary`
+    becomes "", and each device entry is kept only if it has both a
+    non-empty string `name` and a numeric `count` -- anything else is
+    dropped rather than defaulted, since a fabricated count is worse
+    than a missing one.
+    """
+    if not isinstance(raw, dict):
+        return None
+    summary = raw.get("summary")
+    devices = []
+    for d in raw.get("devices") or []:
+        if not isinstance(d, dict):
+            continue
+        name = d.get("name")
+        count = d.get("count")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if not isinstance(count, (int, float)) or isinstance(count, bool):
+            continue
+        devices.append({"name": name.strip(), "count": count})
+    return {
+        "summary": summary.strip() if isinstance(summary, str) else "",
+        "devices": devices,
+    }
+
+
 def map_payload(payload: dict) -> MappedTakeoff:
     """Engine payload -> domain rows, keyed by the engine's sheet ids.
 
@@ -130,7 +165,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
             "width_pt": width,
             "height_pt": height,
             "unreadable_reason": str(raw.get("unreadable") or ""),
-            "ai_reading": raw.get("ai_reading"),
+            "ai_reading": normalize_ai_reading(raw.get("ai_reading")),
         })
 
     fallback = sheets[0]["key"] if sheets else None

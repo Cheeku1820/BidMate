@@ -114,4 +114,4 @@ Rules that are easy to break here:
 
 ## Known scope limits
 
-The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. No detection, no export. Screens A–E and G–K are not built. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
+The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Notes & assumptions, Assemblies, Labor, Material pricing, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.

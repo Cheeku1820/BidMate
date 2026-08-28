@@ -10,7 +10,9 @@ This is screen F of a larger specification. It was built first because every oth
 
 ## Run it
 
-Everything runs against a real backend — Postgres, the API, and the takeoff engine. There is no fixture data: every row comes from a document you upload. You need [Docker](https://www.docker.com/) and Node 18+.
+Everything runs against a real backend — Postgres, the API, and the takeoff engine. There is no fixture data: every row comes from a document you upload. You need [Docker](https://www.docker.com/), Python 3.12, and Node 18+.
+
+Postgres and the API run in containers — dependencies install inside the image, nothing to set up on the host for this part:
 
 ```bash
 docker compose up -d postgres api
@@ -26,13 +28,16 @@ docker compose run --rm \
   api python -m app.create_admin
 ```
 
-Start the takeoff engine, from `api/`:
+The takeoff engine runs directly on your machine, not in a container — the browser reaches it at `localhost:8100` directly, so it needs its own Python environment. Install its dependencies once into a virtual environment, then start it, from `api/`:
 
 ```bash
-uvicorn estimate_service:app --port 8100
+cd api
+python3 -m venv ../.enginevenv
+../.enginevenv/bin/pip install -r requirements.txt
+../.enginevenv/bin/uvicorn estimate_service:app --port 8100
 ```
 
-Then the client:
+Then the client, also on the host:
 
 ```bash
 npm install
@@ -145,7 +150,8 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 
 - **Sync is a poll, not a push channel.** The client polls the API every few seconds for changes from other reviewers, rather than receiving them immediately over a WebSocket. Undo is also still a single shared linear stack, so one reviewer can undo another's action from underneath them — shared undo needs conflict resolution, either operational transforms or per-user undo stacks with a merge policy, and that decision is still open.
 - **The blueprint is drawn geometry, not a rendered PDF.** A production build would layer markers over `pdf.js` output.
-- **Screens A–E and G–K are not built.** See [`ROADMAP.md`](ROADMAP.md).
+- **Export produces a CSV, not yet a real Excel workbook.**
+- **All eleven screens from the original spec are routed and built.** Several of the newer workspace additions in the project nav are not — Notes & assumptions, Assemblies, Labor, Material pricing, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. See [`ROADMAP.md`](ROADMAP.md).
 
 ---
 

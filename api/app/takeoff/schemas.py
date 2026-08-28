@@ -87,6 +87,20 @@ class ItemOut(BaseModel):
     # depending on unordered query return order. Sorted by (reason, id) in
     # snapshot.py's query so the order is stable across polls.
     warnings: list[WarningOut] = Field(default_factory=list)
+    # Cost, written by ingest and read by the takeoff table and the
+    # export. Decimal on the wire exactly as `quantity` above is -- these
+    # are money, and the client's api-mapping.js converts both the same
+    # way. The engine stops at total direct cost; markup, overhead, and
+    # profit are an estimator-owned layer with no field here.
+    material_cost: Decimal = Decimal("0")
+    labor_hours: Decimal = Decimal("0")
+    labor_cost: Decimal = Decimal("0")
+    total_cost: Decimal = Decimal("0")
+    # Every coordinate a counted cluster was found at, in the same
+    # 1000x750 sheet space `x`/`y` uses. Without it a cluster of 47
+    # counted devices renders as a single marker.
+    placements: list | None = None
+    ai_confirmed: bool = False
 
     model_config = MODEL_CONFIG
 
@@ -101,6 +115,17 @@ class SheetOut(BaseModel):
     scale_options: list[str]
     plan: str
     superseded: bool = False
+    # Ingest metadata the canvas needs: the rendered page image is
+    # addressed by (takeoff_id, page_index), and marker coordinates were
+    # normalized against this page's own point dimensions.
+    takeoff_id: str = ""
+    page_index: int = 0
+    width_pt: int = 0
+    height_pt: int = 0
+    # A sheet the engine could not read says so, with a reason. Returning
+    # it as simply empty would let silence read as completeness.
+    unreadable_reason: str = ""
+    ai_reading: dict | None = None
 
     model_config = MODEL_CONFIG
 

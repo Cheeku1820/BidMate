@@ -180,3 +180,51 @@ def test_ingest_needs_no_confirmation_on_a_fresh_project(client, db, project, si
     """First processing has nothing to lose, so the estimator is never
     asked a question with only one answer."""
     assert _ingest(client, project.id).status_code == 200
+
+
+def test_ingested_fields_reach_the_snapshot(client, db, project, signed_in_user):
+    """The read path carries what ingest wrote.
+
+    A field written and never read is worse than a field never written:
+    the page image can't be addressed without (takeoff_id, page_index),
+    the cost columns export blank, a counted cluster collapses to one
+    marker, and an unreadable sheet renders as an empty one -- silence
+    reading as completeness. Asserted through the real endpoint rather
+    than the builder, because the schema is the half that drops fields.
+    """
+    payload = {
+        "sheets": [
+            {**PAYLOAD["sheets"][0], "ai_reading": {"summary": "Warehouse power plan",
+                                                    "devices": [{"name": "Duplex receptacle", "count": 47}]}},
+            {"id": "tk1:1", "number": "E2.2", "takeoff_id": "tk1", "page": 1,
+             "width_pt": 2000, "height_pt": 1500, "unreadable": "The page is a scanned photocopy with no readable linework."},
+        ],
+        "items": [{**PAYLOAD["items"][0], "placements": [[1000, 750], [500, 375]], "ai_confirmed": True}],
+    }
+    assert _ingest(client, project.id, payload=payload).status_code == 200
+
+    body = client.get(f"/api/projects/{project.id}/snapshot").json()
+    sheets = {s["number"]: s for s in body["sheets"]}
+
+    read = sheets["E2.1"]
+    assert read["takeoff_id"] == "tk1"
+    assert read["page_index"] == 0
+    assert read["width_pt"] == 2000 and read["height_pt"] == 1500
+    assert read["unreadable_reason"] == ""
+    assert read["ai_reading"]["devices"][0]["count"] == 47
+
+    unreadable = sheets["E2.2"]
+    assert unreadable["page_index"] == 1
+    assert "scanned photocopy" in unreadable["unreadable_reason"]
+
+    item = body["items"][0]
+    # Money is Decimal on the wire exactly as `quantity` is -- the client
+    # converts both the same way, so neither can silently become a string
+    # reaching a `+`.
+    assert float(item["material_cost"]) == 188.0
+    assert float(item["labor_hours"]) == 15.51
+    assert float(item["labor_cost"]) == 1209.78
+    assert float(item["total_cost"]) == 1397.78
+    # Normalized into sheet space, the same way x/y are.
+    assert item["placements"] == [[500, 375], [250, 188]]
+    assert item["ai_confirmed"] is True

@@ -179,6 +179,82 @@ describe("api.js conversions", () => {
     expect(body).toEqual({ notes: "ok" });
   });
 
+  it("carries every field ingest writes on a sheet through to the store shape", async () => {
+    // Written by ingest and never read back is the failure this pins:
+    // the page image cannot be addressed without takeoffId/pageIndex,
+    // markers are normalized against widthPt/heightPt, and a sheet the
+    // processing could not read renders as an empty one -- silence
+    // reading as completeness -- unless unreadableReason arrives.
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          snapshotBody({
+            sheets: [
+              {
+                ...snapshotBody().sheets[0],
+                takeoff_id: "tk1",
+                page_index: 0,
+                width_pt: 2000,
+                height_pt: 1500,
+                unreadable_reason: "The page is a scanned photocopy with no readable linework.",
+                ai_reading: { summary: "Warehouse power plan", devices: [{ name: "Duplex receptacle", count: 47 }] },
+              },
+            ],
+          })
+        )
+      );
+
+    const store = createApiStore();
+    const sheet = (await store.getSnapshot()).sheets[0];
+
+    expect(sheet.takeoffId).toBe("tk1");
+    // Zero-based: a page index of 0 is the first page, not an absent one.
+    expect(sheet.pageIndex).toBe(0);
+    expect(sheet.widthPt).toBe(2000);
+    expect(sheet.heightPt).toBe(1500);
+    expect(sheet.unreadableReason).toContain("scanned photocopy");
+    expect(sheet.aiReading.devices[0].count).toBe(47);
+  });
+
+  it("carries every field ingest writes on an item through to the store shape", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          snapshotBody({
+            items: [
+              {
+                ...snapshotBody().items[0],
+                material_cost: "188.00",
+                labor_hours: "15.51",
+                labor_cost: "1209.78",
+                total_cost: "1397.78",
+                placements: [[500, 375], [250, 188]],
+                ai_confirmed: true,
+              },
+            ],
+          })
+        )
+      );
+
+    const store = createApiStore();
+    const item = (await store.getSnapshot()).items[0];
+
+    // Money arrives as a Decimal string, exactly as quantity does. A
+    // string reaching the totals' `+` concatenates silently.
+    expect(item.materialCost).toBe(188);
+    expect(typeof item.materialCost).toBe("number");
+    expect(item.laborHours).toBe(15.51);
+    expect(item.laborCost).toBe(1209.78);
+    expect(item.totalCost).toBe(1397.78);
+    expect(typeof item.totalCost).toBe("number");
+    // Every coordinate the cluster was counted at -- without it, 47
+    // counted devices render as one marker.
+    expect(item.placements).toEqual([[500, 375], [250, 188]]);
+    expect(item.aiConfirmed).toBe(true);
+  });
+
   it("presence beat is derived from and shorter than collab/service.py's ASSUMED_HEARTBEAT_INTERVAL (10s)", () => {
     expect(PRESENCE_BEAT_MS).toBeLessThan(10_000);
     expect(PRESENCE_BEAT_MS).toBe(5000);
@@ -230,5 +306,41 @@ describe("attachEngineTakeoff", () => {
     await expect(store.attachEngineTakeoff("p1", {})).rejects.toMatchObject({
       code: "approved_items_present",
     });
+  });
+});
+
+
+describe("the store interface", () => {
+  /** Every method the components and the snapshot hook actually call,
+   *  derived from the call sites (`grep -rn "store\\." src/`) rather than
+   *  from memory. contract.test.js exercised both stores end to end and
+   *  went with the seed store; nothing replaced the api half. This is
+   *  deliberately only the interface guard: a method that quietly
+   *  disappears is a runtime crash in front of an estimator, not a test
+   *  failure, and that is the class of regression worth pinning here. */
+  const CALLED_BY_THE_APP = [
+    "approveItem",
+    "attachEngineTakeoff",
+    "bulkApprove",
+    "createProject",
+    "deleteItem",
+    "editItem",
+    "getSnapshot",
+    "listProjects",
+    "redo",
+    "rejectItem",
+    "setPresence",
+    "setScale",
+    "subscribe",
+    "undo",
+    "unrejectItem",
+    "useProject",
+  ];
+
+  it("exposes every method the app calls, as a function", () => {
+    const store = createApiStore();
+    for (const name of CALLED_BY_THE_APP) {
+      expect(typeof store[name], `store.${name} is called by the app`).toBe("function");
+    }
   });
 });

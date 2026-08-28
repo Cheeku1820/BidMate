@@ -184,15 +184,18 @@ export default function BlueprintCanvas({
       >
         <div className="sheetpaper" style={{ width: SHEET_W, height: SHEET_H }}>
           <svg width={SHEET_W} height={SHEET_H} viewBox={`0 0 ${SHEET_W} ${SHEET_H}`}>
-            {/* Real projects render the actual rendered PDF page behind the
-                markers (item coordinates were normalized to this space at
-                ingest, so preserveAspectRatio="none" keeps them aligned).
-                The seed fixture falls back to the drawn geometry. */}
+            {/* The rendered PDF page goes behind the markers (item
+                coordinates were normalized to this space at ingest, so
+                preserveAspectRatio="none" keeps them aligned). PlanDrawing
+                is the base layer underneath it, and for a sheet that came
+                from an uploaded document that base is deliberately blank:
+                an image that is slow or fails to load must reveal empty
+                paper, never geometry the estimator could mistake for their
+                own drawing. */}
+            <PlanDrawing sheet={sheet} />
             {sheetImageUrl ? (
               <image href={sheetImageUrl} x={0} y={0} width={SHEET_W} height={SHEET_H} preserveAspectRatio="none" />
-            ) : (
-              <PlanDrawing sheet={sheet} />
-            )}
+            ) : null}
 
             {/* measured runs */}
             {layers.measurements &&
@@ -226,6 +229,26 @@ export default function BlueprintCanvas({
                     </g>
                   );
                 })}
+
+            {/* Where a counted cluster was actually found. One item can
+                stand for dozens of identical devices, and a single marker
+                for forty-seven of them tells the estimator nothing about
+                where they are. Drawn for the selected item only, so the
+                sheet stays readable. Never interactive: the marker is the
+                item, these are its evidence. */}
+            {(() => {
+              const selItem = visible.find((it) => it.id === selectedId && !it.path);
+              const spots = selItem?.placements;
+              if (!spots?.length || spots.length < 2) return null;
+              const meta = STATUS[selItem.status];
+              return (
+                <g pointerEvents="none" aria-hidden="true">
+                  {spots.map((p, i) => (
+                    <circle key={i} cx={p[0]} cy={p[1]} r="5" fill="none" stroke={meta.color} strokeWidth="1.6" opacity="0.75" />
+                  ))}
+                </g>
+              );
+            })()}
 
             {/* point markers */}
             {visible
@@ -298,8 +321,26 @@ export default function BlueprintCanvas({
           );
         })()}
 
+      {/* A sheet the processing could not read says so. Without this it
+          would render as a sheet with nothing on it, and an empty sheet
+          reads as a finished one — the silence-is-completeness failure
+          the review workspace exists to prevent. */}
+      {sheet.unreadableReason ? (
+        <div className="overlay" style={{ top: 14, left: 14, right: 176 }}>
+          <div className="banner banner--missing">
+            <div style={{ flex: 1 }}>
+              <strong>Nothing was read from this sheet</strong>
+              <p>
+                {sheet.number} could not be read: {sheet.unreadableReason}. Any items it carries are
+                not in this takeoff, so count them by hand or replace the sheet with a clearer copy.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {/* scale banner */}
-      {scaleUnknown && (
+      {!sheet.unreadableReason && scaleUnknown && (
         <div className="overlay" style={{ top: 14, left: 14, right: 176 }}>
           <div className={"banner " + (sheet.scale === "none" ? "banner--missing" : "banner--attention")}>
             <div style={{ flex: 1 }}>

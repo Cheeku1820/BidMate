@@ -37,6 +37,17 @@ export function mapItem(i) {
     // Never collapsed to a singular field (carry-forward 3) — an item
     // can carry a scale warning and a legend warning at once.
     warnings: (i.warnings || []).map(mapWarning),
+    // Money arrives as a Decimal string, the same way `quantity` does,
+    // and is converted here rather than at each of the two places that
+    // sum it — a string reaching a `+` is a silent concatenation.
+    materialCost: Number(i.material_cost ?? 0),
+    laborHours: Number(i.labor_hours ?? 0),
+    laborCost: Number(i.labor_cost ?? 0),
+    totalCost: Number(i.total_cost ?? 0),
+    // Every coordinate this cluster was counted at. Without it a cluster
+    // of 47 counted devices would render as one marker.
+    placements: i.placements ?? null,
+    aiConfirmed: i.ai_confirmed ?? false,
   };
 }
 
@@ -51,6 +62,18 @@ export function mapSheet(s) {
     scaleOptions: s.scale_options,
     plan: s.plan,
     superseded: s.superseded,
+    // Ingest metadata. The canvas addresses the rendered page image by
+    // (takeoffId, pageIndex); the point dimensions are the extents the
+    // marker coordinates were normalized against.
+    takeoffId: s.takeoff_id ?? "",
+    pageIndex: s.page_index ?? 0,
+    widthPt: s.width_pt ?? 0,
+    heightPt: s.height_pt ?? 0,
+    // Non-empty on a sheet the engine could not read. It has to reach
+    // the estimator: an unreadable sheet rendered as an empty one lets
+    // silence read as completeness.
+    unreadableReason: s.unreadable_reason ?? "",
+    aiReading: s.ai_reading ?? null,
   };
 }
 

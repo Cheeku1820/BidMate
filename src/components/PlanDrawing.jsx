@@ -257,45 +257,19 @@ function OfficePlan({ sheet }) {
   );
 }
 
-function SchedulePlan({ sheet }) {
-  const rows = [
-    ["1", "LIGHTING — OPEN OFFICE", "20A/1P", "1,240 VA"],
-    ["3", "LIGHTING — CORRIDOR", "20A/1P", "860 VA"],
-    ["5", "RECEPTACLES — OFFICE 151", "20A/1P", "1,080 VA"],
-    ["7", "RECEPTACLES — OFFICE 152", "20A/1P", "1,080 VA"],
-    ["9", "DOCK LEVELER 1", "60A/3P", "8,400 VA"],
-    ["11", "DOCK LEVELER 2", "60A/3P", "8,400 VA"],
-    ["13", "SPARE", "20A/1P", "—"],
-    ["15", "SPACE", "—", "—"],
-  ];
+/** The base layer for a sheet whose drawing is a rendered page from an
+ *  uploaded document. Deliberately empty: the estimator's markers sit
+ *  over the real page image, and if that image is slow or fails to load
+ *  what shows through must be blank paper, never invented geometry. A
+ *  fabricated plan under a real takeoff would read as the estimator's
+ *  own drawing. The only text here comes from the sheet record itself. */
+function IngestedSheetSurface({ sheet }) {
   return (
     <g>
-      <text x="120" y="106" fill={TEXT} fontSize="15" fontWeight="700">
-        PANEL LP-1 — 208Y/120V, 3Ø, 4W, 225A MLO
+      <text x="500" y="374" fill={DIM} fontSize="12" textAnchor="middle">
+        {sheet.number}
+        {sheet.title ? ` — ${sheet.title}` : ""}
       </text>
-      <rect x="120" y="126" width="760" height="34" fill="#f1efe8" stroke={WALL} strokeWidth="1.2" />
-      {["CKT", "DESCRIPTION", "BREAKER", "CONNECTED LOAD"].map((h, i) => (
-        <text key={h} x={[136, 200, 560, 700][i]} y="148" fill={TEXT} fontSize="11" fontWeight="700">
-          {h}
-        </text>
-      ))}
-      {rows.map((r, i) => (
-        <g key={r[0]}>
-          <rect x="120" y={160 + i * 34} width="760" height="34" fill={i % 2 ? "#faf8f3" : "#fdfcf9"} stroke={THIN} strokeWidth="0.7" />
-          {r.map((cell, j) => (
-            <text key={j} x={[136, 200, 560, 700][j]} y={182 + i * 34} fill={TEXT} fontSize="11.5">
-              {cell}
-            </text>
-          ))}
-        </g>
-      ))}
-      <line x1="192" y1="126" x2="192" y2={160 + rows.length * 34} stroke={THIN} strokeWidth="0.7" />
-      <line x1="552" y1="126" x2="552" y2={160 + rows.length * 34} stroke={THIN} strokeWidth="0.7" />
-      <line x1="692" y1="126" x2="692" y2={160 + rows.length * 34} stroke={THIN} strokeWidth="0.7" />
-      <text x="120" y={470} fill={DIM} fontSize="11.5">
-        Schedules carry no plan geometry, so no measured items appear on this sheet.
-      </text>
-      <TitleBlock sheet={sheet} />
     </g>
   );
 }
@@ -303,5 +277,8 @@ function SchedulePlan({ sheet }) {
 export default function PlanDrawing({ sheet }) {
   if (sheet.plan === "warehouse") return <WarehousePlan sheet={sheet} />;
   if (sheet.plan === "office") return <OfficePlan sheet={sheet} />;
-  return <SchedulePlan sheet={sheet} />;
+  // Anything else — every sheet that came from an uploaded document —
+  // gets the neutral surface. There is no drawn geometry that could
+  // honestly stand in for a page nobody in this codebase has seen.
+  return <IngestedSheetSurface sheet={sheet} />;
 }

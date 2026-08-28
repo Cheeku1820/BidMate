@@ -50,7 +50,7 @@ export default function ItemDetailPanel({
 
           {aiReading ? (
             <div className="ai-reading">
-              <p className="label">Read by AI · {currentSheet?.number}</p>
+              <p className="label">What this sheet shows · {currentSheet?.number}</p>
               <p className="value value--muted">{aiReading.summary}</p>
               <ul className="ai-reading-list">
                 {aiReading.devices.map((d, i) => (
@@ -61,7 +61,7 @@ export default function ItemDetailPanel({
                 ))}
               </ul>
               <p className="value value--muted ai-reading-note">
-                What the model read from the drawing itself — cross-check against the counted takeoff.
+                Taken from the drawing itself — cross-check it against the counted takeoff.
               </p>
             </div>
           ) : (
@@ -111,7 +111,7 @@ export default function ItemDetailPanel({
             <p className="value value--muted" style={{ margin: "6px 0 0" }}>{sel.description}</p>
 
             {sel.aiConfirmed ? (
-              <p className="ai-confirmed">✓ Identified by the AI reading of the drawing</p>
+              <p className="ai-confirmed">✓ Confirmed against the drawing</p>
             ) : null}
 
             <p className="label">Quantity</p>

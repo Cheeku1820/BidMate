@@ -32,6 +32,7 @@ import AppTopBar from "../shell/AppTopBar.jsx";
 import Pill, { displayStatus } from "../Pill.jsx";
 import BulkApproveBar from "./BulkApproveBar.jsx";
 import { STATUS } from "../../lib/vocabulary.js";
+import { countsTowardTotals } from "../../lib/rules.js";
 import { timeOf } from "../../lib/format.js";
 import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
@@ -109,14 +110,17 @@ export default function TakeoffSpreadsheet() {
 
   const allItems = snapshot?.items ?? [];
 
-  // Running estimate total, from the engine's per-item cost (real projects
-  // carry it; the seed fixture doesn't, so the strip only shows when there
-  // is cost to show). Rejected items are out of scope.
-  const costItems = allItems.filter((i) => !i.rejected && i.totalCost != null);
+  // Running estimate total, from the per-item cost a priced takeoff
+  // carries. Membership is countsTowardTotals -- the one predicate the
+  // store's totals and the export preview also use -- so an item on a
+  // superseded sheet is excluded here exactly as it is everywhere else,
+  // rather than a local `!rejected` filter quietly counting it in one
+  // place and not the other. The strip shows only when there is cost.
+  const costItems = allItems.filter((i) => countsTowardTotals(i, sheetsById));
   const estimateTotal = costItems.reduce((sum, i) => sum + (i.totalCost || 0), 0);
   const laborHoursTotal = costItems.reduce((sum, i) => sum + (i.laborHours || 0), 0);
   const attentionCount = costItems.filter((i) => i.status === "attention").length;
-  const hasCost = costItems.length > 0;
+  const hasCost = costItems.some((i) => i.totalCost > 0);
 
   const rows = useMemo(() => {
     // Rejected is a flag, not a status (CLAUDE.md) -- it is excluded

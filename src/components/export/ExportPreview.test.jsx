@@ -92,4 +92,33 @@ describe("ExportPreview", () => {
       expect(button).toBeDisabled();
     }
   });
+  it("leaves an item on a superseded sheet out of the estimated cost", () => {
+    // The same countsTowardTotals predicate the takeoff table's running
+    // strip uses. Two predicates over one number is how a superseded
+    // sheet ends up inside one total and outside another.
+    context = makeContext({
+      snapshot: {
+        ...makeContext().snapshot,
+        sheets: [
+          { id: "s1", number: "E1.1", title: "Level 1 power", superseded: false },
+          { id: "s0", number: "E1.1", title: "Level 1 power", superseded: true },
+        ],
+        items: [
+          { id: "c1", sheetId: "s1", name: "Panel LP-1", description: "", system: "Distribution", quantity: 1, unit: "ea", status: "approved", rejected: false, warnings: [], materialCost: 600, laborHours: 10, laborCost: 400, totalCost: 1000 },
+          { id: "c0", sheetId: "s0", name: "Superseded panel", description: "", system: "Distribution", quantity: 1, unit: "ea", status: "approved", rejected: false, warnings: [], materialCost: 3000, laborHours: 50, laborCost: 2000, totalCost: 5000 },
+        ],
+      },
+    });
+    renderExport();
+
+    const card = screen.getByRole("heading", { name: /estimated total direct cost/i }).closest("section");
+    expect(within(card).getByText("$1,000")).toBeTruthy();
+    expect(within(card).queryByText("$6,000")).toBeNull();
+  });
+
+  it("hides the cost card on an unpriced takeoff rather than claiming $0", () => {
+    context = makeContext();
+    renderExport();
+    expect(screen.queryByRole("heading", { name: /estimated total direct cost/i })).toBeNull();
+  });
 });

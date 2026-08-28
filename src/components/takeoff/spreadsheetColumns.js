@@ -60,27 +60,27 @@ export const COLUMNS = [
     render: (item, { sheetsById }) => sheetsById[item.sheetId]?.number ?? NONE,
   },
   { key: "notes", label: "Notes", align: "left", render: (item) => item.notes || NONE },
-  // Cost columns are populated for engine-ingested items (which carry
-  // materialCost / laborHours / totalCost); the seed fixture has no cost
-  // field, so it shows a dash rather than a fabricated $0 -- the same
-  // absent-vs-empty rule the columns above follow.
+  // Cost columns are populated only for a priced takeoff. An item the
+  // pricing step never reached carries zero, and zero is not a price --
+  // it shows a dash rather than a fabricated $0, the same absent-vs-empty
+  // rule the columns above follow.
   {
     key: "materialCost",
     label: "Material",
     align: "right",
-    render: (item) => (item.materialCost != null ? money(item.materialCost) : NONE),
+    render: (item) => (item.materialCost ? money(item.materialCost) : NONE),
   },
   {
     key: "laborHours",
     label: "Labor hrs",
     align: "right",
-    render: (item) => (item.laborHours != null ? item.laborHours : NONE),
+    render: (item) => (item.laborHours ? item.laborHours : NONE),
   },
   {
     key: "totalCost",
     label: "Total",
     align: "right",
-    render: (item) => (item.totalCost != null ? money(item.totalCost) : NONE),
+    render: (item) => (item.totalCost ? money(item.totalCost) : NONE),
   },
 ];
 

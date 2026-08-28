@@ -83,15 +83,16 @@ export default function ExportPreview() {
     item.unit ?? "",
     sheetsById[item.sheetId]?.number ?? "",
     STATUS_TEXT[item.status] ?? item.status,
-    item.materialCost != null ? Math.round(item.materialCost) : "",
-    item.laborHours != null ? item.laborHours : "",
-    item.totalCost != null ? Math.round(item.totalCost) : "",
+    item.materialCost ? Math.round(item.materialCost) : "",
+    item.laborHours ? item.laborHours : "",
+    item.totalCost ? Math.round(item.totalCost) : "",
   ]);
 
-  // Estimate cost over the whole takeoff (engine-priced items carry cost;
-  // the seed fixture doesn't, so the card only shows when there is cost).
+  // Estimate cost over the whole takeoff. An unpriced takeoff carries
+  // zero on every item, and zero is not a price -- the card stays hidden
+  // rather than exporting a confident $0.
   const cost = (list, field) => list.reduce((sum, i) => sum + (i[field] || 0), 0);
-  const hasCost = countable.some((i) => i.totalCost != null);
+  const hasCost = countable.some((i) => i.totalCost > 0);
   const materialTotal = cost(countable, "materialCost");
   const laborHoursTotal = cost(countable, "laborHours");
   const laborCostTotal = cost(countable, "laborCost");

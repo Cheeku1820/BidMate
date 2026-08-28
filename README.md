@@ -90,7 +90,7 @@ Everything in the interface resolves to tokens defined at the top of [`src/style
 | Missing information | Required evidence absent (scale, legend) | Yes |
 | Estimator approved | A person confirmed it | — |
 
-**Every warning answers four questions** — what was found, why it matters, what to do, and where the evidence lives. That structure is enforced by the data shape itself (`warning: { title, found, why, fix, where }`), so a warning that skips one is a schema error rather than a copy oversight.
+**Every warning answers four questions** — what was found, why it matters, what to do, and where the evidence lives. That structure is enforced by the data shape itself (`warning: { title, found, why, fix, where }`) and validated where a processed takeoff enters the system (`api/app/takeoff/ingest.py`), which refuses any warning missing one of those four, and refuses one whose `reason` is not a recognized kind. A warning that skips a field is a schema error rather than a copy oversight.
 
 **Typography.** System sans stack at a 16px base, with tabular numerals on every quantity, count, and total so digits align in columns.
 

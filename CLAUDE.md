@@ -63,7 +63,7 @@ src/
     store/                   the store interface — a single api store (fetch)
   components/
     Workspace.jsx            the review workspace: selection, filters, modals, shortcuts
-    Login.jsx                sign-in screen (api store only)
+    Login.jsx                sign-in screen
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx, modals
     BlueprintCanvas.jsx      pan/zoom viewport, markers, measurements, minimap
     PlanDrawing.jsx          architectural plan geometry per sheet

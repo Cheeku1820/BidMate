@@ -1692,7 +1692,7 @@ button {
 .bulk-bar-reason--missing { color: var(--red); }
 .bulk-bar-result { margin: 0; }
 
-/* --- document intake (screens C, E) and the sample-data banner ---------- */
+/* --- document intake (screens C, E) -------------------------------------- */
 
 .dropzone {
   display: flex;

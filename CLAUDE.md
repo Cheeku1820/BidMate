@@ -57,10 +57,10 @@ src/
   App.jsx                    auth gate: login vs. workspace, nothing else
   styles.css                 design tokens and every component style
   lib/
-    data.js                  seed fixture: sheets, items, status definitions
+    vocabulary.js            the status vocabulary: four review labels, never a fifth
     rules.js                 approval/totals/scale-release rules, mirrored from the API
     useReviewStore.js        the snapshot hook: store subscription, poll, saves, mutations
-    store/                   the store interface — seed (localStorage) and api (fetch) behind it
+    store/                   the store interface — a single api store (fetch)
   components/
     Workspace.jsx            the review workspace: selection, filters, modals, shortcuts
     Login.jsx                sign-in screen (api store only)
@@ -99,7 +99,7 @@ Rules that are easy to break here:
 ## Conventions
 
 - Plain CSS with tokens at the top of `styles.css`. No Tailwind, no CSS-in-JS. Add new colors as tokens, never as inline hex.
-- React function components with hooks. No state library — shared state comes from the store (`lib/store/`, seed or api) through `lib/useReviewStore.js`.
+- React function components with hooks. No state library — shared state comes from the store (`lib/store/`, the api store) through `lib/useReviewStore.js`.
 - `lucide-react` for interface icons. Electrical symbols are hand-drawn SVG in `Symbols.jsx`, following standard drafting convention.
 - Tabular numerals (`className="tabular"`) on every quantity, count, and total.
 - Sentence case for all interface copy. No exclamation marks, no "successfully," no "please."
@@ -109,9 +109,9 @@ Rules that are easy to break here:
 
 - **Shared undo model.** The stack is currently shared and linear across reviewers, which means person B can undo person A's approval. Alternatives are per-user stacks with a merge policy, or a CRDT. Needs a product call.
 - **Revision conflict flow** (path 4 in the spec) is unbuilt. Open: whether superseded sheets stay browsable read-only, whether approvals carry forward across a revision, and how a mid-review swap surfaces to a second reviewer already in the file.
-- **Sync is single-machine** (`BroadcastChannel` + `localStorage`) to demo the interaction model without a backend. Production needs a real service.
+- **Sync is a poll against the real API**, every few seconds, not a push channel. Real-time collaboration needs a WebSocket layer; the undo model above is still the separate open question it always was.
 - **Conversation panel specifics** — whether a thread is shared across reviewers or per-user, and whether a symbol resolved on one project defaults on the next. Both are listed with their trade-offs at the end of [`ROADMAP.md`](ROADMAP.md). Do not pick one in passing while building something else.
 
 ## Known scope limits
 
-The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. No document ingestion, no detection, no export. Screens A–E and G–K are not built. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
+The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. No detection, no export. Screens A–E and G–K are not built. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.

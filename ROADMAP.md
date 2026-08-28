@@ -18,9 +18,9 @@ One further document sits alongside these: [`docs/electrical-estimating-product-
 
 ## Where we are
 
-Screen F runs end to end against seed data. It has the status vocabulary, the warning schema, undo/redo with compound actions, presence, and bidirectional selection state. Everything it does is in the browser: `localStorage` is the database, `BroadcastChannel` is the realtime layer, the blueprint is drawn SVG, and the twelve takeoff items in [`src/lib/data.js`](src/lib/data.js) are hand-written.
+Screen F runs end to end against the real API — Postgres, the FastAPI service, and the takeoff engine. It has the status vocabulary, the warning schema, undo/redo with compound actions, presence, and bidirectional selection state. There is no fixture data left in the client: the `localStorage`/`BroadcastChannel` seed store and its hand-written seed items are gone, and every row a reviewer sees came from a document someone uploaded and the engine processed. The blueprint is still drawn SVG rather than a rendered PDF.
 
-The prototype's real output is not code — it is a settled data model and a settled interaction contract. Both carry forward. Most of the client code does too. None of the infrastructure does.
+The prototype's real output was not code — it was a settled data model and a settled interaction contract. Both carried forward into the real API. Most of the client code did too.
 
 ---
 
@@ -153,7 +153,7 @@ Replaces the seed store's local transport, [`local-transport.js`](src/lib/store/
 ### 2.9 Operations
 
 - Environments, infrastructure as code, secrets management
-- CI that runs tests — there are currently **no tests of any kind**, and the only workflow is [`deploy.yml`](.github/workflows/deploy.yml) publishing to Pages
+- CI that runs the test suites. There is a real frontend and backend test suite now, but no workflow runs them on a push or a pull request
 - Error tracking, structured logs, metrics, alerting, on-call, incident process
 - Public status page. Bid-week downtime is a different severity of event here than in most B2B software.
 - **Back-office tooling.** Support cannot help with a stuck sheet without seeing the project. Impersonation needs to be explicit, scoped, and written to the same audit log.
@@ -291,11 +291,8 @@ These are the rules that break silently when a new service is added by someone w
 
 | Prototype | Production |
 |---|---|
-| `localStorage` via `seed.js` and `local-transport.js` | database behind `takeoff`, read through `api` |
-| `BroadcastChannel` | WebSocket fan-out in `collab` |
 | `identity()` random name and color | `identity` service with roles and approval authority |
 | `hist.undo` array capped at 60 | append-only action log, undo as compensating actions |
-| `ITEMS` seed array | `pipeline` output written to `takeoff` |
 | Drawn SVG in `PlanDrawing.jsx` | rendered tiles from `documents`, markers layered over `pdf.js` |
 | Client-side status filtering | same client code, server-authoritative rules underneath |
 

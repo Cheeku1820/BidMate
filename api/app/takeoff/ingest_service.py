@@ -103,7 +103,7 @@ def ingest_takeoff(
             x=row["x"], y=row["y"], placements=row["placements"],
             material_cost=row["material_cost"], labor_hours=row["labor_hours"],
             labor_cost=row["labor_cost"], total_cost=row["total_cost"],
-            ai_confirmed=row["ai_confirmed"],
+            ai_confirmed=row["ai_confirmed"], source_tag=row["source_tag"],
         )
         db.add(item)
         if row["warning"]:

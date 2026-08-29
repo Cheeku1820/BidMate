@@ -252,3 +252,10 @@ def test_ingest_normalizes_a_malformed_ai_reading_instead_of_failing(client, db,
 
     assert sheets["E2.1"]["ai_reading"] == {"summary": "reads as a power plan", "devices": []}
     assert sheets["E2.2"]["ai_reading"] == {"summary": "reads as a lighting plan", "devices": []}
+
+
+def test_source_tag_reaches_the_snapshot(client, db, project, signed_in_user):
+    payload = {**PAYLOAD, "items": [{**PAYLOAD["items"][0], "tag": "R"}]}
+    assert _ingest(client, project.id, payload=payload).status_code == 200
+    snap = client.get(f"/api/projects/{project.id}/snapshot").json()
+    assert snap["items"][0]["source_tag"] == "R"

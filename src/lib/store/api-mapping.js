@@ -48,6 +48,10 @@ export function mapItem(i) {
     // of 47 counted devices would render as one marker.
     placements: i.placements ?? null,
     aiConfirmed: i.ai_confirmed ?? false,
+    // Counting's cluster tag, carried through unchanged -- a drafting
+    // tag a human drew on the sheet ("R", "F2"), not processing
+    // internals. Not rendered anywhere yet (Task 5).
+    sourceTag: i.source_tag ?? "",
   };
 }
 

@@ -67,6 +67,23 @@ describe("api.js conversions", () => {
     expect(snapshot.totals.bySystem.Distribution).toBe(184.55);
   });
 
+  it("maps the engine cluster tag onto the item", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse([PROJECT]))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          snapshotBody({
+            items: [{ ...snapshotBody().items[0], source_tag: "F2" }],
+          })
+        )
+      );
+
+    const store = createApiStore();
+    const snapshot = await store.getSnapshot();
+
+    expect(snapshot.items[0].sourceTag).toBe("F2");
+  });
+
   it("converts presence's seen_at (ISO-8601) into epoch milliseconds", async () => {
     const seenAt = "2026-08-15T12:00:00Z";
     fetchMock

@@ -102,6 +102,11 @@ class ItemOut(BaseModel):
     # counted devices renders as a single marker.
     placements: list | None = None
     ai_confirmed: bool = False
+    # Counting's cluster tag, carried through ingest unchanged (Task 3).
+    # A drafting tag a human drew on the sheet ("R", "F2"), not a
+    # processing internal -- legitimate estimator-facing data, and the
+    # merge key a re-run uses to recognise an item it already produced.
+    source_tag: str = ""
 
     model_config = MODEL_CONFIG
 

@@ -123,6 +123,7 @@ def _item_out(item: Item, warnings: list[Warning], approved_by_name: str | None)
         total_cost=item.total_cost,
         placements=item.placements,
         ai_confirmed=item.ai_confirmed,
+        source_tag=item.source_tag,
     )
 
 

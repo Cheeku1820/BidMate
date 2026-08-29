@@ -205,6 +205,12 @@ def map_payload(payload: dict) -> MappedTakeoff:
             "labor_cost": raw.get("labor_cost") or 0,
             "total_cost": raw.get("total_cost") or 0,
             "ai_confirmed": bool(raw.get("ai_confirmed")),
+            # Counting's cluster tag ("R", "F2") -- the merge key a re-run
+            # uses to recognise an item it already produced, so an
+            # estimator's approval survives reprocessing. Not every engine
+            # row carries one, so a missing tag maps to "" rather than
+            # None or a KeyError.
+            "source_tag": str(raw.get("tag") or ""),
             "warning": validate_warning(warning) if warning else None,
         })
 

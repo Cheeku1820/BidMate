@@ -209,3 +209,19 @@ def test_map_payload_stores_none_when_ai_reading_absent():
     payload["sheets"][0]["ai_reading"] = None
     mapped = map_payload(payload)
     assert mapped.sheets[0]["ai_reading"] is None
+
+
+def test_map_payload_carries_the_cluster_tag():
+    """Counting's tag is the merge key for an approval-preserving re-run.
+    Dropped, there is nothing stable to match the same cluster across two
+    runs of the same drawing."""
+    payload = _payload()
+    payload["items"][0]["tag"] = "R"
+    mapped = map_payload(payload)
+    assert mapped.items[0]["source_tag"] == "R"
+
+
+def test_map_payload_tolerates_a_missing_tag():
+    payload = _payload()
+    payload["items"][0].pop("tag", None)
+    assert map_payload(payload).items[0]["source_tag"] == ""

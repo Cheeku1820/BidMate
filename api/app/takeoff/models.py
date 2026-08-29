@@ -171,6 +171,12 @@ class Item(Base):
     # placements of one item.
     placements: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     ai_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # The engine cluster tag this item came from ("A", "F2", "R"). The
+    # merge key for an approval-preserving re-run: Counting is
+    # deterministic geometry, so the same drawing yields the same tag on
+    # the same sheet, which is what lets a re-run recognise the item it
+    # produced last time instead of replacing it blindly.
+    source_tag: Mapped[str] = mapped_column(String(50), default="", server_default="")
     # Optimistic-concurrency counter for the five single-item mutations
     # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
     # is driven by `onupdate=func.now()` and therefore transaction-
@@ -240,3 +246,39 @@ class Action(Base):
     after: Mapped[dict] = mapped_column(JSONB, default=dict)
     undoes_action_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("actions.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class Note(Base):
+    """Something the drawings do not say, recorded by a person.
+
+    `usage` is the whole point: `reference` is documentation, `context`
+    is handed to the engine as authoritative input on the next run. The
+    estimator chooses; nothing infers it, because a note that silently
+    moved the estimate would be a number nobody decided.
+
+    `status` here is deliberately NOT the four review labels. Those
+    describe an item's evidence; `confirmed`/`open` describes whether the
+    estimator has settled the note. Sharing a vocabulary between the two
+    is how a fifth review status gets invented by accident.
+    """
+
+    __tablename__ = "notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    scope: Mapped[str] = mapped_column(String(20), default="project", server_default="project")
+    scope_ref: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="open", server_default="open")
+    rfi_needed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    usage: Mapped[str] = mapped_column(String(20), default="reference", server_default="reference")
+    source_ref: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    obsolete_after_revision: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    author_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

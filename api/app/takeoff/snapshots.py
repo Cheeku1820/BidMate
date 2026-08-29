@@ -59,6 +59,7 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "total_cost": Decimal,
     "placements": list,
     "ai_confirmed": bool,
+    "source_tag": str,
     "updated_at": datetime,
     "warnings": list,
 }

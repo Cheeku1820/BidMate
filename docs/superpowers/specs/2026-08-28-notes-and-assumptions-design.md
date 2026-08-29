@@ -37,7 +37,7 @@ The estimator chooses which of those a note is. That choice is the feature.
 | When a context note takes effect | Only on an explicit "apply and re-run" | No recompute happens under an estimator who is mid-review. |
 | Approved items on re-run | **Preserved untouched** | Approval is a person's professional judgment and the product's legal firewall. A note must never silently overwrite one. |
 | Merge identity | `(sheet number, source_tag)` | Counting is deterministic geometry, so a re-run of the same file yields the same clusters. Requires persisting `source_tag`, which today is dropped. |
-| Note storage | Postgres, through the existing action log | Same attribution, undo, and audit path as every other mutation. |
+| Note storage | Postgres, through the existing action log | Same attribution and audit path as every other mutation. Not undoable — see Backend. |
 | Conversation panel | **Out of scope** | It is its own feature ([`ROADMAP.md` 2.6](../../../ROADMAP.md#26-the-conversation-layer)). Notes must work fully without it, which is also the acceptance criterion the panel will later be held to. |
 | Question queue | Not built | An unresolved note is not a fifth status. Notes surface as notes; item state stays in the four labels. |
 
@@ -87,7 +87,9 @@ DELETE /api/notes/{note_id}
 POST   /api/projects/{id}/reprocess
 ```
 
-Every write goes through [`actions.commit()`](../../../api/app/takeoff/actions.py:174), so notes get attribution, the append-only audit trail, and the shared undo stack for free — the same path an approval takes. Note kinds: `note_add`, `note_edit`, `note_delete`, `note_apply`.
+Every write goes through [`actions.commit()`](../../../api/app/takeoff/actions.py:174), so notes get attribution and the append-only audit trail — the same path an approval takes.
+
+**They are not undoable, and the interface must not imply otherwise.** `undo.REVERSIBLE` is a closed set of item and scale mutations; note kinds are deliberately not in it, so undo walks past a note action to the previous reversible one rather than reversing it. That is the safe behaviour — reversing a note would have to resurrect a deleted row from a snapshot, which is its own feature — but it means deleting a note is final. So deletion confirms first, in copy that says plainly it cannot be undone, per product-spec §6's requirement to confirm before discarding. Making note actions reversible is a later decision, not a silent assumption. Note kinds: `note_add`, `note_edit`, `note_delete`, `note_apply`.
 
 Org scoping via the existing `load_project` gate, and the new routes registered in `tests/test_tenancy.py`'s table, which enumerates live routes and fails if a project-scoped one is unregistered.
 

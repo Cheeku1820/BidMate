@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapItem, mapNote, mapProject, mapSnapshot, mapUser } from "./api-mapping.js";
+import { mapItem, mapNote, mapProject, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -374,11 +374,11 @@ export function createApiStore() {
   }
 
   async function createNote(id, fields) {
-    return mapNote(await request(`/api/projects/${id}/notes`, { method: "POST", body: fields }));
+    return mapNote(await request(`/api/projects/${id}/notes`, { method: "POST", body: noteToWire(fields) }));
   }
 
   async function updateNote(noteId, changes) {
-    return mapNote(await request(`/api/notes/${noteId}`, { method: "PATCH", body: changes }));
+    return mapNote(await request(`/api/notes/${noteId}`, { method: "PATCH", body: noteToWire(changes) }));
   }
 
   async function deleteNote(noteId) {

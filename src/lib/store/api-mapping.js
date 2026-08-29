@@ -153,6 +153,39 @@ export function mapNote(raw) {
   };
 }
 
+/** Client note fields -> the wire shape NoteCreateIn/NoteUpdateIn expect.
+ *  The store owns the wire shape in both directions: a caller writes the
+ *  same camelCase names it reads back, and nothing has to remember that
+ *  one direction is snake_case. Unknown keys are dropped rather than
+ *  forwarded -- the server's schema forbids extras, so passing one
+ *  through would turn a caller's typo into a 422 about a field they
+ *  believe they set. */
+export function noteToWire(fields) {
+  const KEY_MAP = {
+    scope: "scope",
+    scopeRef: "scope_ref",
+    title: "title",
+    body: "body",
+    category: "category",
+    status: "status",
+    rfiNeeded: "rfi_needed",
+    usage: "usage",
+    sourceRef: "source_ref",
+    obsoleteAfterRevision: "obsolete_after_revision",
+  };
+  const body = {};
+  for (const [clientKey, wireKey] of Object.entries(KEY_MAP)) {
+    // Only when the caller actually supplied the field -- a PATCH that
+    // omits a key must omit it on the wire too, rather than sending it
+    // as `undefined` (JSON.stringify drops that anyway) or, worse, as an
+    // explicit null that would overwrite the stored value.
+    if (Object.prototype.hasOwnProperty.call(fields, clientKey)) {
+      body[wireKey] = fields[clientKey];
+    }
+  }
+  return body;
+}
+
 export function mapUser(u) {
   return { id: u.id, name: u.name, email: u.email, color: u.color };
 }

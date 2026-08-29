@@ -413,4 +413,47 @@ describe("notes", () => {
     await createApiStore().deleteNote("n1");
     expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
   });
+
+  it("creates a note writing camelCase fields back to their wire names", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(RAW_NOTE), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createApiStore().createNote("p1", { rfiNeeded: true, sourceRef: "Spec 262726", usage: "context" });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.rfi_needed).toBe(true);
+    expect(body.source_ref).toBe("Spec 262726");
+    expect(body).not.toHaveProperty("rfiNeeded");
+    expect(body).not.toHaveProperty("sourceRef");
+  });
+
+  it("patches a note sending only the field the caller actually supplied", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ...RAW_NOTE, usage: "reference" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createApiStore().updateNote("n1", { usage: "reference" });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(Object.keys(body)).toEqual(["usage"]);
+  });
+
+  it("drops server-owned fields when a whole note is handed back to updateNote", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(RAW_NOTE), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const wholeNote = {
+      id: "n1", projectId: "p1", scope: "project", scopeRef: null,
+      title: "Low-voltage excluded", body: "Per the Turner scope letter.",
+      category: "exclusion", status: "confirmed", rfiNeeded: false,
+      usage: "context", sourceRef: "Turner scope letter",
+      obsoleteAfterRevision: "", authorName: "Dana Whitfield",
+      createdAt: "2026-08-28T10:00:00Z", updatedAt: "2026-08-28T10:00:00Z",
+      appliedAt: null,
+    };
+    await createApiStore().updateNote("n1", wholeNote);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty("id");
+    expect(body).not.toHaveProperty("projectId");
+    expect(body).not.toHaveProperty("authorName");
+    expect(body).not.toHaveProperty("createdAt");
+    expect(body).not.toHaveProperty("updatedAt");
+    expect(body).not.toHaveProperty("appliedAt");
+  });
 });

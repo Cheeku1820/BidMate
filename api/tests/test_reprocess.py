@@ -304,3 +304,105 @@ def test_reprocess_only_stamps_context_notes_as_applied(client, db, project, sig
     notes = {n["id"]: n for n in client.get(f"/api/projects/{project.id}/notes").json()}
     assert notes[reference["id"]]["applied_at"] is None
     assert notes[context["id"]]["applied_at"] is not None
+
+
+def test_reprocess_reports_nothing_reclassified_when_nothing_changed(client, db, project, signed_in_user):
+    """`reclassified` counts rows that changed, not rows that were
+    touched. In the documented dev mode (no `ANTHROPIC_API_KEY`) notes
+    cannot affect classification at all, so a re-run there is a no-op --
+    and reporting "300 items reclassified" for it is a lie about the
+    only number this screen exists to state."""
+    items = [_item("R", "20A duplex receptacle"), _item("S", "Single-pole switch")]
+    _seed(client, project, items)
+
+    body = client.post(f"/api/projects/{project.id}/reprocess", json={"payload": _payload(items)}).json()
+    assert body["reclassified"] == 0
+    assert body["added"] == 0
+    assert body["removed"] == 0
+    assert body["preserved"] == 0
+
+
+def test_reprocess_counts_only_the_rows_whose_visible_fields_changed(client, db, project, signed_in_user):
+    """One of two matched rows changes name; the other is re-sent
+    identically except for coordinates, which is the geometry agent
+    being deterministic rather than a reclassification."""
+    _seed(client, project, [_item("R", "20A duplex receptacle"), _item("S", "Single-pole switch")])
+
+    moved = _item("S", "Single-pole switch")
+    moved["x"], moved["y"] = 1200, 900
+    body = client.post(
+        f"/api/projects/{project.id}/reprocess",
+        json={"payload": _payload([_item("R", "20A quad receptacle"), moved])},
+    ).json()
+    assert body["reclassified"] == 1
+
+
+def test_reprocess_does_not_resurrect_an_item_the_estimator_deleted(client, db, project, signed_in_user):
+    """A deletion is a judgment about the drawing -- "that device is
+    existing to remain" -- and survives the engine seeing the same shape
+    again, exactly as an approval does."""
+    _seed(client, project, [_item("R", "receptacle"), _item("S", "switch")])
+    gone = db.scalars(select(Item).where(Item.source_tag == "S")).one()
+    r = client.delete(f"/api/items/{gone.id}", headers={"If-Match": str(gone.version)})
+    assert r.status_code == 200, r.text
+
+    body = client.post(f"/api/projects/{project.id}/reprocess",
+                       json={"payload": _payload([_item("R", "receptacle"), _item("S", "switch")])}).json()
+    assert body["added"] == 0
+    db.expire_all()
+    assert _item_count(db, project) == 1
+    assert db.scalars(select(Item).where(Item.source_tag == "S")).one_or_none() is None
+
+
+def test_delete_then_reprocess_then_undo_leaves_exactly_one_item(client, db, project, signed_in_user):
+    """The duplicate-count bug. `note_apply` is not undoable, so the undo
+    after a re-run targets the earlier `delete` and restores the original
+    row unconditionally. If the merge had also re-added the cluster, one
+    cluster would end up as two items -- both counted in the bid total,
+    with nothing on screen saying why."""
+    _seed(client, project, [_item("R", "receptacle"), _item("S", "switch")])
+    gone = db.scalars(select(Item).where(Item.source_tag == "S")).one()
+    client.delete(f"/api/items/{gone.id}", headers={"If-Match": str(gone.version)})
+
+    client.post(f"/api/projects/{project.id}/reprocess",
+                json={"payload": _payload([_item("R", "receptacle"), _item("S", "switch")])})
+    r = client.post(f"/api/projects/{project.id}/undo")
+    assert r.status_code == 200, r.text
+    assert r.json()["performed"] is True
+
+    db.expire_all()
+    assert len(list(db.scalars(select(Item).where(Item.source_tag == "S")))) == 1
+    assert _item_count(db, project) == 2
+
+
+def test_reprocess_re_adds_a_deletion_the_estimator_has_undone(client, db, project, signed_in_user):
+    """Suppression follows liveness, not the mere existence of a delete
+    action: an estimator who deleted an item and then undid that has
+    said the item belongs, so a later re-run must treat the cluster
+    normally again."""
+    _seed(client, project, [_item("R", "receptacle"), _item("S", "switch")])
+    gone = db.scalars(select(Item).where(Item.source_tag == "S")).one()
+    client.delete(f"/api/items/{gone.id}", headers={"If-Match": str(gone.version)})
+    client.post(f"/api/projects/{project.id}/undo")
+
+    db.expire_all()
+    body = client.post(f"/api/projects/{project.id}/reprocess",
+                       json={"payload": _payload([_item("R", "receptacle"), _item("S", "switch")])}).json()
+    assert body["added"] == 0, "the restored item should be matched, not re-added"
+    db.expire_all()
+    assert _item_count(db, project) == 2
+
+
+def test_reprocess_suppresses_one_row_per_deletion_sharing_a_key(client, db, project, signed_in_user):
+    """Merge keys are not unique -- every item ingested before migration
+    0012 carries an empty `source_tag`. Deleting one of three untagged
+    items on a sheet must silence exactly one incoming row, not all
+    three."""
+    _seed(client, project, [_item("", "A"), _item("", "B"), _item("", "C")])
+    gone = db.scalars(select(Item).where(Item.name == "B")).one()
+    client.delete(f"/api/items/{gone.id}", headers={"If-Match": str(gone.version)})
+
+    client.post(f"/api/projects/{project.id}/reprocess",
+                json={"payload": _payload([_item("", "A"), _item("", "B"), _item("", "C")])})
+    db.expire_all()
+    assert _item_count(db, project) == 2

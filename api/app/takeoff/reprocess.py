@@ -50,13 +50,67 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.identity.models import User
-from app.takeoff import actions
+from app.takeoff import actions, undo
 from app.takeoff.ingest import map_payload
-from app.takeoff.models import Item, Project, ReviewStatus, Sheet, Warning, WarningReason
+from app.takeoff.models import Action, Item, Project, ReviewStatus, Sheet, Warning, WarningReason
 
 
 def _key(sheet_number: str, source_tag: str) -> tuple[str, str]:
     return (sheet_number or "", source_tag or "")
+
+
+def _deliberately_deleted(db: DbSession, project_id: uuid.UUID, number_by_sheet_id: dict) -> dict:
+    """How many items per merge key a person deleted and has not undone.
+
+    Deletion is a hard row delete (`review._apply_delete`), not a flag,
+    so the items table cannot distinguish "an estimator deleted this"
+    from "this never existed" -- but the action log can, and it is the
+    system of record for exactly this kind of question. A live `delete`
+    action carries the removed row's full column snapshot, `sheet_id`
+    and `source_tag` included, which is the merge key.
+
+    Without this, delete → re-run → undo produced two items for one
+    cluster, both counted in the total: the merge found the key
+    unmatched and inserted a fresh row, then the next undo (`note_apply`
+    is not undoable, so undo skips past it to the earlier `delete`)
+    restored the original alongside it.
+
+    Liveness is `undo._live()`, the same walk undo/redo use, so a
+    deletion the estimator has already undone correctly does not
+    suppress anything -- and a delete → undo → redo chain, which leaves
+    the item deleted, correctly does.
+
+    Counted per key rather than treated as a boolean because a key is
+    not unique: with three untagged items on a sheet and one deleted,
+    exactly one incoming row should be suppressed, not all three.
+    """
+    rows = undo._action_summaries(db, project_id)
+    live = undo._live(rows)
+    live_delete_ids = [r.id for r in rows if r.kind == "delete" and live[r.id]]
+    if not live_delete_ids:
+        return {}
+
+    deleted: dict[tuple[str, str], int] = {}
+    for action in db.scalars(select(Action).where(Action.id.in_(live_delete_ids))):
+        snapshot = action.before or {}
+        # `sheet_id` is a UUID encoded to a string by `encode_snapshot`;
+        # the sheet may since have been removed, in which case there is
+        # no key to suppress and nothing to do.
+        number = number_by_sheet_id.get(_as_uuid(snapshot.get("sheet_id")))
+        if number is None:
+            continue
+        key = _key(number, snapshot.get("source_tag") or "")
+        deleted[key] = deleted.get(key, 0) + 1
+    return deleted
+
+
+def _as_uuid(value) -> uuid.UUID | None:
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def _bucket_order(item: Item) -> tuple[bool, object, uuid.UUID]:
@@ -85,6 +139,54 @@ def _bucket_order(item: Item) -> tuple[bool, object, uuid.UUID]:
     to return them in.
     """
     return (item.status is ReviewStatus.APPROVED, item.updated_at, item.id)
+
+
+# The fields whose change an estimator would call "reclassified".
+#
+# Chosen as: what the item reads as on the review workspace and the
+# takeoff table -- its identity (`name`, `description`, `symbol`), where
+# it sits in the estimate (`system`, `category`), the number being bid
+# (`quantity`, `unit`), and its review label (`status`).
+#
+# Deliberately excluded: `x`/`y`/`placements`, and every cost field.
+# Coordinates shifting by a fraction of a sheet unit is the geometry
+# agent being deterministic about the same drawing, not a
+# reclassification, and cost is *derived* -- a pricing table refresh
+# would otherwise report every item in the project as reclassified when
+# nothing about what the item IS has changed. `ai_confirmed` and
+# `source_tag` are pipeline bookkeeping the estimator never sees, and
+# `version` is bumped by this function itself.
+#
+# A warning appearing, vanishing, or changing its title counts too: it
+# is the evidence that decides the status, and it is on screen.
+_VISIBLE_FIELDS = ("name", "description", "symbol", "system", "category", "quantity", "unit")
+
+
+def _changes_visibly(item: Item, sheet: Sheet, row: dict, warning_title: str | None) -> bool:
+    """Whether writing `row` onto `item` would change something the
+    estimator would notice -- the test for counting a row as
+    reclassified.
+
+    Without this, `reclassified` counted every matched un-approved row
+    whether or not a single field differed. In the documented dev mode
+    (no `ANTHROPIC_API_KEY`) notes cannot affect classification at all,
+    so a 300-item project reported "300 items reclassified" after a
+    re-run that changed nothing -- and the spec's own example
+    ("Reclassified 7 items") plainly means seven items that changed.
+    """
+    if item.sheet_id != sheet.id:
+        return True
+    if ReviewStatus(row["status"]) is not item.status:
+        return True
+    if any(getattr(item, field) != row[field] for field in _VISIBLE_FIELDS):
+        return True
+    incoming = row["warning"]["title"] if row["warning"] else None
+    return incoming != warning_title
+
+
+def _warning_title(db: DbSession, item_id: uuid.UUID) -> str | None:
+    row = db.scalars(select(Warning).where(Warning.item_id == item_id)).first()
+    return row.title if row else None
 
 
 def _replace_warning(db: DbSession, item_id: uuid.UUID, warning: dict | None) -> None:
@@ -134,6 +236,14 @@ def _overwrite(item: Item, sheet: Sheet, row: dict) -> None:
 def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: dict) -> dict:
     mapped = map_payload(payload)
 
+    # Sheets are keyed by `number` alone, with no ordering and no
+    # revision filter, so two sheets in a project sharing a number would
+    # resolve to whichever the query returned last -- arbitrarily. That
+    # is latent today because nothing writes `superseded_at`: a project
+    # holds one revision of each sheet and numbers are in fact unique.
+    # It becomes a real defect the moment revisions land (ROADMAP.md
+    # 2.2), so whoever builds them has to key this on (number, revision)
+    # or filter superseded sheets out here.
     sheets = {s.number: s for s in db.scalars(select(Sheet).where(Sheet.project_id == project.id))}
     for row in mapped.sheets:
         sheet = sheets.get(row["number"])
@@ -166,6 +276,9 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
         )
     )
     number_by_sheet_id = {s.id: s.number for s in sheets.values()}
+    # Per merge key, how many items a person deleted and has not undone.
+    # Consumed below so the merge does not resurrect them.
+    deleted_by_key = _deliberately_deleted(db, project.id, number_by_sheet_id)
     by_key: dict[tuple[str, str], list[Item]] = {}
     for i in existing:
         by_key.setdefault(_key(number_by_sheet_id.get(i.sheet_id, ""), i.source_tag), []).append(i)
@@ -180,7 +293,12 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
     # against an incoming row and skipped, or never matched at all --
     # counted here, once, so the number and the audit label always agree
     # with what actually happened.
-    preserved = reclassified = added = 0
+    # `skipped_deleted` goes into the audit label rather than the
+    # response: the summary strip on screen names what a re-run changed,
+    # and declining to resurrect a deleted item is the absence of a
+    # change. The action log is where "and it left three deletions
+    # alone" is worth being able to read back.
+    preserved = reclassified = added = skipped_deleted = 0
 
     for row in mapped.items:
         number = sheet_number_by_key.get(row["sheet_key"], "")
@@ -200,9 +318,25 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
 
         sheet = sheets[number]
         if current is not None:
+            # Asked *before* the overwrite, while the row still holds
+            # what the estimator last saw -- `reclassified` counts rows
+            # that changed, not rows that were touched.
+            changed = _changes_visibly(current, sheet, row, _warning_title(db, current.id))
             _overwrite(current, sheet, row)
             _replace_warning(db, current.id, row["warning"])
-            reclassified += 1
+            if changed:
+                reclassified += 1
+        elif deleted_by_key.get(key, 0) > 0:
+            # The estimator deleted this one and has not undone it. A
+            # re-run does not get to bring it back -- deletion is a
+            # judgment about the drawing ("that device is existing to
+            # remain") that survives the engine seeing the same shape
+            # again, exactly as an approval survives it. Decremented so
+            # one deletion suppresses one incoming row: keys are not
+            # unique, and deleting one of three untagged items on a
+            # sheet must not silence the other two.
+            deleted_by_key[key] -= 1
+            skipped_deleted += 1
         else:
             item = Item(
                 id=uuid.uuid4(), project_id=project.id, sheet_id=sheet.id,
@@ -238,10 +372,12 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
             removed += 1
 
     db.flush()
+    label = (f"Applied notes and re-ran the takeoff: {reclassified} reclassified, "
+             f"{preserved} approved left unchanged")
+    if skipped_deleted:
+        label += f", {skipped_deleted} deleted left deleted"
     actions.commit(
         db, actor=actor, project_id=project.id, kind="note_apply",
-        label=(f"Applied notes and re-ran the takeoff: {reclassified} reclassified, "
-               f"{preserved} approved left unchanged"),
-        before={}, after={},
+        label=label, before={}, after={},
     )
     return {"reclassified": reclassified, "preserved": preserved, "added": added, "removed": removed}

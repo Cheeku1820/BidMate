@@ -39,6 +39,18 @@
   --red-tint: #fbe9e7;
   --red-line: #edbdb7;
 
+  /* note vocabulary — a note's own confirmed/open status, kept
+     deliberately distinct from the four review-status hues above so it
+     is never mistaken for one (CLAUDE.md: "never render a note's status
+     using the item-status components or colours"). */
+  --slate: #3d5566;
+  --slate-tint: #e8eef1;
+  --slate-line: #c3d1d8;
+
+  --plum: #5b4570;
+  --plum-tint: #efe9f3;
+  --plum-line: #d3c3dd;
+
   /* drafting ink used on the sheet itself */
   --draft-wall: #6e6a62;
   --draft-thin: #b8b3a9;
@@ -2254,4 +2266,115 @@ button {
   display: flex;
   gap: 10px;
   margin-top: 16px;
+}
+
+/* ---- Notes & assumptions (screen: NotesWorkspace) ---- */
+
+/* A note's own status -- confirmed/open -- rendered with its own hue
+   pair (--slate/--plum) and its own icons, never Pill.jsx and never the
+   STATUS colors: that vocabulary belongs to items, this one to notes
+   (CLAUDE.md). Hue + icon + text label together, same rule as every
+   other status in the product. */
+.note-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.note-status--confirmed { background: var(--slate-tint); color: var(--slate); border-color: var(--slate-line); }
+.note-status--open { background: var(--plum-tint); color: var(--plum); border-color: var(--plum-line); }
+
+/* The RFI flag is a separate boolean from status, so it gets its own
+   small marker rather than folding into the status pill above. */
+.note-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: var(--plum-tint);
+  color: var(--plum);
+  border: 1px solid var(--plum-line);
+}
+
+.notes-summary {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+/* Modelled on .estimate-strip: an informational strip in the primary
+   blue, not a status pill -- it is telling the estimator what applying
+   would do, not reporting a review outcome. */
+.notes-apply-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  border: 1px solid var(--blue-line);
+  background: var(--blue-tint);
+  border-radius: var(--r-md);
+}
+.notes-apply-banner p { margin: 0; font-size: 13px; color: var(--ink-1); }
+.notes-apply-banner-note {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.note-card {
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 14px 16px;
+}
+
+.note-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.note-card__title { margin: 0; font-size: 14.5px; font-weight: 600; }
+
+.note-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.note-card__body { margin: 0 0 8px; font-size: 13.5px; color: var(--ink-1); white-space: pre-wrap; }
+
+.note-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.note-card__actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
 }

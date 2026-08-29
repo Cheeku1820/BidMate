@@ -92,7 +92,7 @@ const GROUPS = [
     title: "Evidence",
     items: [
       { slug: "documents", label: "Documents", built: true, Icon: FileText },
-      { slug: "notes", label: "Notes & assumptions", built: false, Icon: StickyNote },
+      { slug: "notes", label: "Notes & assumptions", built: true, Icon: StickyNote },
     ],
   },
   {

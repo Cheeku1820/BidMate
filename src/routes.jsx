@@ -24,6 +24,7 @@ import ProcessingStatus from "./components/documents/ProcessingStatus.jsx";
 import ProjectWorkspaceLayout from "./components/project/ProjectWorkspaceLayout.jsx";
 import Workspace from "./components/Workspace.jsx";
 import TakeoffSpreadsheet from "./components/takeoff/TakeoffSpreadsheet.jsx";
+import NotesWorkspace from "./components/notes/NotesWorkspace.jsx";
 import ExportPreview from "./components/export/ExportPreview.jsx";
 import CompanySettings from "./components/settings/CompanySettings.jsx";
 import ProjectSettings from "./components/settings/ProjectSettings.jsx";
@@ -49,6 +50,7 @@ export function appRoutes({ store, me, onSignedOut }) {
         path="/projects/:projectId"
         element={<ProjectWorkspaceLayout store={store} me={me} onSignedOut={onSignedOut} />}
       >
+        <Route path="notes" element={<NotesWorkspace />} />
         <Route path="takeoff" element={<Workspace />} />
         <Route path="spreadsheet" element={<TakeoffSpreadsheet />} />
         <Route path="export" element={<ExportPreview />} />

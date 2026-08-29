@@ -1,0 +1,302 @@
+/* ============================================================
+   NotesWorkspace.jsx — the notes-and-assumptions workspace
+   (docs/superpowers/sdd/2026-08-28-notes-and-assumptions).
+
+   Notes are not part of the review snapshot useReviewStore polls --
+   Task 4's store methods (listNotes/createNote/updateNote/deleteNote)
+   are a separate surface, because a note write never changes the
+   takeoff itself (api.js's own comment on those methods). So this
+   screen fetches its own list through `store` from useWorkspaceContext()
+   rather than reading `snapshot.notes`, and refetches after every write
+   rather than waiting on the shared poll.
+
+   Every fact this screen states is doable through the structured form
+   below (NoteForm.jsx) -- ROADMAP.md 2.6's constraint that anything
+   sayable in a conversation panel must also be reachable through a
+   form, field, or menu. This screen has no conversation panel at all
+   (deliberately out of scope for this slice); it is the form.
+
+   The apply banner ("Apply notes and re-run") only APPEARS in this
+   task -- wiring an actual re-run is Task 8's job. Its handler is a
+   clearly-labelled placeholder: it must not be a dead control that
+   silently does nothing when clicked, so it surfaces an honest, plain
+   status message rather than performing the re-run.
+   ============================================================ */
+
+import { useCallback, useEffect, useState } from "react";
+import { BadgeCheck, Building2, Calculator, FileText, HelpCircle, Layers, Tag } from "lucide-react";
+import AppTopBar from "../shell/AppTopBar.jsx";
+import Modal from "../Modal.jsx";
+import NoteForm from "./NoteForm.jsx";
+import { CATEGORY_LABELS, calculationEffect, SCOPE_LABELS, unappliedContextNotes } from "./noteVocabulary.js";
+import { formatTimestamp } from "../../lib/format.js";
+import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
+
+const SCOPE_FILTERS = ["company", "project", "sheet", "item"];
+
+const EFFECT_ICON = { used: Calculator, reference: FileText, standard: Building2 };
+
+function NoteStatusPill({ status }) {
+  const Icon = status === "confirmed" ? BadgeCheck : HelpCircle;
+  const label = status === "confirmed" ? "Confirmed" : "Open";
+  return (
+    <span className={"note-status note-status--" + status}>
+      <Icon size={12} strokeWidth={2.6} aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
+
+function NoteCard({ note, onEdit, onDelete }) {
+  const effect = calculationEffect(note);
+  const EffectIcon = EFFECT_ICON[effect.tone];
+  return (
+    <div className="note-card">
+      <div className="note-card__head">
+        <h3 className="note-card__title">{note.title}</h3>
+        <div className="note-card__actions">
+          <button type="button" className="btn" onClick={() => onEdit(note)}>
+            Edit
+          </button>
+          <button type="button" className="btn" onClick={() => onDelete(note)}>
+            Delete
+          </button>
+        </div>
+      </div>
+
+      <div className="note-card__tags">
+        <NoteStatusPill status={note.status} />
+        <span className="pill pill--neutral">
+          <Layers size={12} aria-hidden="true" />
+          {SCOPE_LABELS[note.scope]}
+        </span>
+        <span className="pill pill--neutral">
+          <Tag size={12} aria-hidden="true" />
+          {CATEGORY_LABELS[note.category]}
+        </span>
+        <span className="pill pill--neutral">
+          <EffectIcon size={12} aria-hidden="true" />
+          {effect.label}
+        </span>
+        {note.rfiNeeded ? (
+          <span className="note-flag">
+            <HelpCircle size={11} aria-hidden="true" />
+            RFI needed
+          </span>
+        ) : null}
+      </div>
+
+      <p className="note-card__body">{note.body}</p>
+
+      <div className="note-card__meta">
+        {note.authorName ? <span>{note.authorName}</span> : null}
+        <span className="tabular">{formatTimestamp(note.updatedAt)}</span>
+        {note.sourceRef ? <span>{note.sourceRef}</span> : null}
+        {note.obsoleteAfterRevision ? <span>Clears after {note.obsoleteAfterRevision}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function pluralize(count, singular, plural) {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+export default function NotesWorkspace() {
+  const { store, projectId } = useWorkspaceContext();
+
+  const [notes, setNotes] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [filterKey, setFilterKey] = useState(null); // null | "company" | "project" | "sheet" | "item" | "rfi"
+  const [formNote, setFormNote] = useState(undefined); // undefined = closed, null = new, object = editing
+  const [deletingNote, setDeletingNote] = useState(null);
+  const [applyMessage, setApplyMessage] = useState(null);
+
+  const load = useCallback(() => {
+    setLoadError(null);
+    return store
+      .listNotes(projectId)
+      .then(setNotes)
+      .catch((err) => setLoadError(err?.message || "Couldn't load notes. Check your connection and try again."));
+  }, [store, projectId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const hasNotes = Boolean(notes?.length);
+
+  const visibleNotes = (notes ?? []).filter((note) => {
+    if (!filterKey) return true;
+    if (filterKey === "rfi") return note.rfiNeeded && note.status !== "confirmed";
+    return note.scope === filterKey;
+  });
+
+  const affectCount = (notes ?? []).filter((n) => calculationEffect(n).tone !== "reference").length;
+  const openRfiCount = (notes ?? []).filter((n) => n.rfiNeeded && n.status !== "confirmed").length;
+  const unapplied = unappliedContextNotes(notes ?? []);
+
+  const summaryParts = notes
+    ? [
+        pluralize(notes.length, "note", "notes"),
+        affectCount > 0 ? `${affectCount} ${affectCount === 1 ? "affects" : "affect"} this estimate` : null,
+        openRfiCount > 0 ? `${pluralize(openRfiCount, "open RFI", "open RFIs")}` : null,
+      ].filter(Boolean)
+    : [];
+
+  async function handleSave(fields) {
+    if (formNote) {
+      await store.updateNote(formNote.id, fields);
+    } else {
+      await store.createNote(projectId, fields);
+    }
+    setFormNote(undefined);
+    await load();
+  }
+
+  async function handleDeleteConfirmed() {
+    await store.deleteNote(deletingNote.id);
+    setDeletingNote(null);
+    await load();
+  }
+
+  // Task 8's placeholder: this screen only has to make the affordance
+  // appear (task-5-brief.md). It must not be a dead control that does
+  // nothing when clicked, so it names the state plainly rather than
+  // pretending to re-run anything.
+  function handleApplyAndRerun() {
+    setApplyMessage("Re-running the takeoff from here isn't wired up yet. The notes are saved either way.");
+  }
+
+  const addNoteButton = (
+    <button type="button" className="btn btn--primary" onClick={() => setFormNote(null)}>
+      Add note
+    </button>
+  );
+
+  return (
+    <>
+      <AppTopBar title="Notes & assumptions" primaryAction={hasNotes ? addNoteButton : undefined} />
+
+      <div className="page">
+        <h1 className="page-heading">Notes & assumptions</h1>
+        <p className="page-intro">
+          Record what the drawings don't say — an existing condition, a scope exclusion, an instruction from the
+          customer. Mark a note to feed the takeoff and it is used the next time the takeoff is re-run; otherwise
+          it stays here as documentation only.
+        </p>
+
+        {loadError ? (
+          <div className="load-error" role="alert">
+            <p>{loadError}</p>
+            <button type="button" className="btn" onClick={load}>
+              Try again
+            </button>
+          </div>
+        ) : null}
+
+        {notes === null && !loadError ? <p className="muted">Loading notes…</p> : null}
+
+        {notes && !hasNotes ? (
+          <div className="empty-state">
+            <h2>No notes yet</h2>
+            <p>Add one to document an assumption, exclusion, or instruction the drawings don't carry.</p>
+            {addNoteButton}
+          </div>
+        ) : null}
+
+        {notes && hasNotes ? (
+          <>
+            <p className="notes-summary tabular">{summaryParts.join(" · ")}</p>
+
+            {unapplied.length > 0 ? (
+              <div className="notes-apply-banner">
+                <p>
+                  {pluralize(unapplied.length, "note", "notes")} marked to feed the takeoff{" "}
+                  {unapplied.length === 1 ? "hasn't" : "haven't"} been carried into it yet.
+                </p>
+                <button type="button" className="btn btn--primary" onClick={handleApplyAndRerun}>
+                  Apply notes and re-run
+                </button>
+              </div>
+            ) : null}
+            {applyMessage ? (
+              <p className="notes-apply-banner-note" role="status">
+                {applyMessage}
+              </p>
+            ) : null}
+
+            <div className="filter-chips" role="group" aria-label="Filter notes">
+              <button
+                type="button"
+                className="filter-chip"
+                aria-pressed={filterKey === null}
+                onClick={() => setFilterKey(null)}
+              >
+                All notes
+              </button>
+              {SCOPE_FILTERS.map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  className="filter-chip"
+                  aria-pressed={filterKey === key}
+                  onClick={() => setFilterKey(key)}
+                >
+                  {SCOPE_LABELS[key]}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="filter-chip"
+                aria-pressed={filterKey === "rfi"}
+                onClick={() => setFilterKey("rfi")}
+              >
+                RFI needed
+              </button>
+            </div>
+
+            {visibleNotes.length === 0 ? (
+              <div className="empty-state">
+                <h2>No notes match</h2>
+                <p>Try a different filter.</p>
+                <button type="button" className="btn" onClick={() => setFilterKey(null)}>
+                  Clear filter
+                </button>
+              </div>
+            ) : (
+              <div className="notes-list">
+                {visibleNotes.map((note) => (
+                  <NoteCard key={note.id} note={note} onEdit={setFormNote} onDelete={setDeletingNote} />
+                ))}
+              </div>
+            )}
+          </>
+        ) : null}
+      </div>
+
+      {formNote !== undefined ? (
+        <NoteForm note={formNote} onSave={handleSave} onClose={() => setFormNote(undefined)} />
+      ) : null}
+
+      {deletingNote ? (
+        <Modal
+          title="Delete note"
+          onClose={() => setDeletingNote(null)}
+          foot={
+            <>
+              <button type="button" className="btn" onClick={() => setDeletingNote(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn--danger" onClick={handleDeleteConfirmed}>
+                Delete note
+              </button>
+            </>
+          }
+        >
+          <p>Delete “{deletingNote.title}”? This can't be undone.</p>
+        </Modal>
+      ) : null}
+    </>
+  );
+}

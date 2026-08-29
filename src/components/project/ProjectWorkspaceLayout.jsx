@@ -109,6 +109,13 @@ function LayoutForProject({ store, me, onSignedOut, projectId }) {
     <Outlet
       context={{
         ...review,
+        // The raw store, alongside everything useReviewStore() wraps.
+        // Notes (Task 4's listNotes/createNote/updateNote/deleteNote)
+        // sit outside the polled review snapshot on purpose -- a note
+        // write never changes the takeoff -- so NotesWorkspace.jsx calls
+        // the store directly rather than through a wrapper this layout
+        // would otherwise have to grow just for that one screen.
+        store,
         projectId,
         project,
         me,

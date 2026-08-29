@@ -18,8 +18,12 @@
 
    The apply banner ("Apply notes and re-run") wires a real re-run:
    gather this session's uploaded drawings (uploadedFiles.js), run them
-   back through the engine with the unapplied context notes as the
-   authoritative notes channel (engineClient.js's estimateProject), and
+   back through the engine with EVERY standing context note as the
+   authoritative notes channel (engineClient.js's estimateProject) --
+   not just the unapplied ones, which drive only whether the banner
+   appears. Sending only the unapplied set would let a second re-run
+   overwrite the first note's effect with a payload that no longer
+   mentions it, silently reverting a change nobody asked to undo. And
    hand the resulting payload to the approval-preserving merge
    (store.reprocess, Task 7). The summary names exactly what the server
    reported -- reclassified and preserved counts -- never a number this

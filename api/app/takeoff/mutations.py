@@ -24,6 +24,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, ConfigDict, field_validator
+from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.auth.dependencies import current_user
@@ -31,13 +32,16 @@ from app.db import get_db
 from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import bulk, review
+from app.takeoff import notes as notes_service
 from app.takeoff import scale as scale_module
 from app.takeoff import snapshot as snapshot_module
 from app.takeoff import undo as undo_module
 from app.takeoff.ingest_service import ingest_takeoff
-from app.takeoff.router import load_item, load_project, load_sheet
+from app.takeoff.models import Note, Project
+from app.takeoff.router import load_item, load_project, load_sheet, not_found
 from app.takeoff.schemas import (
-    BulkApproveOut, ItemMutationOut, ScaleMutationOut, SkippedItemOut, TakeoffIngestIn, TakeoffIngestOut, UndoRedoOut,
+    BulkApproveOut, ItemMutationOut, NoteCreateIn, NoteOut, NoteUpdateIn, ScaleMutationOut, SkippedItemOut,
+    TakeoffIngestIn, TakeoffIngestOut, UndoRedoOut,
 )
 
 router = APIRouter(prefix="/api", tags=["takeoff-mutations"])
@@ -362,3 +366,56 @@ def redo(project_id: uuid.UUID, user: User = Depends(current_user), db: DbSessio
     return UndoRedoOut(
         performed=True, label=action.label, snapshot=snapshot_module.build(db, user, project.id, version)
     )
+
+
+def _note_out(note: Note, author_name: str) -> NoteOut:
+    return NoteOut(
+        id=note.id, project_id=note.project_id, scope=note.scope, scope_ref=note.scope_ref,
+        title=note.title, body=note.body, category=note.category, status=note.status,
+        rfi_needed=note.rfi_needed, usage=note.usage, source_ref=note.source_ref,
+        obsolete_after_revision=note.obsolete_after_revision, author_name=author_name,
+        created_at=note.created_at, updated_at=note.updated_at, applied_at=note.applied_at,
+    )
+
+
+def _load_note(note_id: uuid.UUID, db: DbSession, user: User) -> tuple[Note, Project]:
+    note = db.get(Note, note_id)
+    if note is None:
+        raise not_found()
+    project = load_project(note.project_id, db, user)
+    return note, project
+
+
+@router.get("/projects/{project_id}/notes", response_model=list[NoteOut])
+def get_notes(project_id: uuid.UUID, db: DbSession = Depends(get_db), user: User = Depends(current_user)):
+    project = load_project(project_id, db, user)
+    rows = notes_service.list_notes(db, project.id)
+    names = {u.id: u.name for u in db.scalars(select(User).where(User.org_id == user.org_id))}
+    return [_note_out(n, names.get(n.author_user_id, "")) for n in rows]
+
+
+@router.post("/projects/{project_id}/notes", response_model=NoteOut, status_code=201)
+def post_note(project_id: uuid.UUID, payload: NoteCreateIn,
+              db: DbSession = Depends(get_db), user: User = Depends(current_user)):
+    project = load_project(project_id, db, user)
+    note = notes_service.create_note(db, actor=user, project=project, fields=payload.model_dump())
+    db.commit()
+    return _note_out(note, user.name)
+
+
+@router.patch("/notes/{note_id}", response_model=NoteOut)
+def patch_note(note_id: uuid.UUID, payload: NoteUpdateIn,
+               db: DbSession = Depends(get_db), user: User = Depends(current_user)):
+    note, project = _load_note(note_id, db, user)
+    changes = payload.model_dump(exclude_unset=True)
+    notes_service.update_note(db, actor=user, project=project, note=note, changes=changes)
+    db.commit()
+    return _note_out(note, user.name)
+
+
+@router.delete("/notes/{note_id}", status_code=204)
+def delete_note_endpoint(note_id: uuid.UUID, db: DbSession = Depends(get_db), user: User = Depends(current_user)):
+    note, project = _load_note(note_id, db, user)
+    notes_service.delete_note(db, actor=user, project=project, note=note)
+    db.commit()
+    return None

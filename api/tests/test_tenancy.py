@@ -25,6 +25,19 @@ from sqlalchemy import text
 from app.auth.passwords import hash_password
 from app.identity.models import Org, User
 from app.main import app
+from app.takeoff.models import Note
+
+
+@pytest.fixture
+def note(db, project, dana):
+    n = Note(
+        project_id=project.id, scope="project", title="Existing panel to remain",
+        body="Panel LP-1 is existing to remain, per the demo plan.",
+        category="existing_condition", author_user_id=dana.id,
+    )
+    db.add(n)
+    db.flush()
+    return n
 
 
 @pytest.fixture
@@ -140,9 +153,31 @@ TENANCY_TABLE = [
      lambda p, s, i: {"payload": {"sheets": [], "items": []}}, None),
     ("PUT", "/api/presence",
      lambda p, s, i: "/api/presence", lambda p, s, i: {"project_id": str(p.id)}, None),
+    ("GET", "/api/projects/{project_id}/notes",
+     lambda p, s, i: f"/api/projects/{p.id}/notes", None, None),
+    ("POST", "/api/projects/{project_id}/notes",
+     lambda p, s, i: f"/api/projects/{p.id}/notes",
+     lambda p, s, i: {"title": "t", "body": "b", "category": "existing_condition"}, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]
+
+# The two note routes keyed by note_id rather than project_id -- same
+# shape as the item-scoped rows above (`PATCH /items/{item_id}`, etc.),
+# but those reuse the `item` fixture the main table's path_fn already
+# closes over via (p, s, i). A note row needs its own fixture (`note`,
+# above) that the main table's lambdas were never written to accept, so
+# rather than widen every existing row's signature for two new routes,
+# these get their own small table and their own pair of test functions
+# below, following the same rival-404 / unauthenticated-401 pattern.
+NOTE_TENANCY_TABLE = [
+    ("PATCH", "/api/notes/{note_id}",
+     lambda n: f"/api/notes/{n.id}", lambda n: {"status": "confirmed"}, None),
+    ("DELETE", "/api/notes/{note_id}",
+     lambda n: f"/api/notes/{n.id}", None, None),
+]
+
+NOTE_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in NOTE_TENANCY_TABLE]
 
 # Routes that are deliberately not project-scoped, so the guard test
 # below must not demand a tenancy-table row for them. Not limited to
@@ -212,6 +247,39 @@ def test_an_unauthenticated_caller_gets_401_on_every_mutation_route(
     assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
 
 
+# --- The note routes, keyed by note_id rather than project_id ---
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", NOTE_TENANCY_TABLE, ids=NOTE_TENANCY_IDS)
+def test_a_rival_org_gets_404_on_every_note_route(
+    client, dana, rival, note, method, path_template, path_fn, body_fn, headers_fn
+):
+    _sign_in_as(client, "rival@example.com", "hunter2")
+    path = path_fn(note)
+    body = body_fn(note) if body_fn else None
+    headers = headers_fn(note) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 404, (
+        f"{method} {path} leaked status {response.status_code} to a rival org, expected 404"
+    )
+    assert response.json()["detail"]["code"] == "project_not_found"
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", NOTE_TENANCY_TABLE, ids=NOTE_TENANCY_IDS)
+def test_an_unauthenticated_caller_gets_401_on_every_note_route(
+    client, note, method, path_template, path_fn, body_fn, headers_fn
+):
+    path = path_fn(note)
+    body = body_fn(note) if body_fn else None
+    headers = headers_fn(note) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
+
+
 # --- The guard: the table above cannot silently fall out of date ---
 
 
@@ -263,7 +331,11 @@ def test_every_project_scoped_route_is_covered_by_the_tenancy_table():
     endpoint has to make a deliberate choice, not get a green suite with
     an ungated route.
     """
-    covered = {(method, template) for method, template, _, _, _ in TENANCY_TABLE} | NON_PROJECT_SCOPED_ROUTES
+    covered = (
+        {(method, template) for method, template, _, _, _ in TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
+        | NON_PROJECT_SCOPED_ROUTES
+    )
     missing = _live_api_routes() - covered
 
     assert not missing, (
@@ -277,6 +349,9 @@ def test_the_tenancy_table_does_not_list_a_route_that_no_longer_exists():
     it was written for got renamed or removed.
     """
     live = _live_api_routes()
-    stale = {(method, template) for method, template, _, _, _ in TENANCY_TABLE} - live
+    stale = (
+        {(method, template) for method, template, _, _, _ in TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
+    ) - live
 
     assert not stale, f"tenancy-table rows with no matching live route: {sorted(stale)}"

@@ -18,8 +18,9 @@ user's display name, not their id).
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 from app.collab.schemas import PresenceOut
@@ -340,3 +341,66 @@ class TakeoffIngestIn(BaseModel):
 class TakeoffIngestOut(BaseModel):
     sheets: int
     items: int
+
+
+NOTE_SCOPES = ("company", "project", "sheet", "item")
+NOTE_CATEGORIES = (
+    "existing_condition", "exclusion", "customer_instruction",
+    "labor_consideration", "company_rule",
+)
+NOTE_STATUSES = ("confirmed", "open")
+NOTE_USAGES = ("reference", "context")
+
+
+class NoteOut(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    scope: str
+    scope_ref: uuid.UUID | None
+    title: str
+    body: str
+    category: str
+    status: str
+    rfi_needed: bool
+    usage: str
+    source_ref: str
+    obsolete_after_revision: str
+    author_name: str
+    created_at: datetime
+    updated_at: datetime
+    applied_at: datetime | None
+
+
+class NoteCreateIn(BaseModel):
+    """`usage` defaults to reference: a note is documentation until the
+    estimator deliberately says it should feed the engine."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Literal["company", "project", "sheet", "item"] = "project"
+    scope_ref: uuid.UUID | None = None
+    title: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1)
+    category: Literal["existing_condition", "exclusion", "customer_instruction",
+                      "labor_consideration", "company_rule"]
+    status: Literal["confirmed", "open"] = "open"
+    rfi_needed: bool = False
+    usage: Literal["reference", "context"] = "reference"
+    source_ref: str = ""
+    obsolete_after_revision: str = ""
+
+
+class NoteUpdateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Literal["company", "project", "sheet", "item"] | None = None
+    scope_ref: uuid.UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    body: str | None = Field(default=None, min_length=1)
+    category: Literal["existing_condition", "exclusion", "customer_instruction",
+                      "labor_consideration", "company_rule"] | None = None
+    status: Literal["confirmed", "open"] | None = None
+    rfi_needed: bool | None = None
+    usage: Literal["reference", "context"] | None = None
+    source_ref: str | None = None
+    obsolete_after_revision: str | None = None

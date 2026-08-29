@@ -64,3 +64,69 @@ def test_item_source_tag_defaults_empty(db, project, sheet):
     db.add(item)
     db.flush()
     assert item.source_tag == ""
+
+
+NOTE_BODY = {
+    "scope": "project",
+    "title": "Low-voltage systems excluded from Division 26",
+    "body": "Fire alarm, security, and structured cabling are excluded per the Turner scope letter.",
+    "category": "exclusion",
+    "status": "confirmed",
+    "usage": "context",
+    "source_ref": "Turner scope letter",
+}
+
+
+def test_create_note_returns_it(client, project, signed_in_user):
+    r = client.post(f"/api/projects/{project.id}/notes", json=NOTE_BODY)
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["title"] == NOTE_BODY["title"]
+    assert body["usage"] == "context"
+    assert body["author_name"] == signed_in_user.name
+
+
+def test_create_note_records_an_attributable_action(client, db, project, signed_in_user):
+    from app.takeoff.models import Action
+    from sqlalchemy import select
+    client.post(f"/api/projects/{project.id}/notes", json=NOTE_BODY)
+    actions = list(db.scalars(select(Action).where(Action.project_id == project.id, Action.kind == "note_add")))
+    assert len(actions) == 1
+    assert actions[0].actor_user_id == signed_in_user.id
+
+
+def test_list_notes_returns_newest_first(client, project, signed_in_user):
+    client.post(f"/api/projects/{project.id}/notes", json={**NOTE_BODY, "title": "first"})
+    client.post(f"/api/projects/{project.id}/notes", json={**NOTE_BODY, "title": "second"})
+    rows = client.get(f"/api/projects/{project.id}/notes").json()
+    assert [n["title"] for n in rows] == ["second", "first"]
+
+
+def test_update_note_toggles_usage(client, project, signed_in_user):
+    nid = client.post(f"/api/projects/{project.id}/notes", json=NOTE_BODY).json()["id"]
+    r = client.patch(f"/api/notes/{nid}", json={"usage": "reference"})
+    assert r.status_code == 200
+    assert r.json()["usage"] == "reference"
+
+
+def test_delete_note_removes_it(client, project, signed_in_user):
+    nid = client.post(f"/api/projects/{project.id}/notes", json=NOTE_BODY).json()["id"]
+    assert client.delete(f"/api/notes/{nid}").status_code == 204
+    assert client.get(f"/api/projects/{project.id}/notes").json() == []
+
+
+def test_note_rejects_an_unknown_usage(client, project, signed_in_user):
+    """usage decides whether a note moves the estimate. A typo must be
+    refused, never silently stored as something the engine ignores."""
+    r = client.post(f"/api/projects/{project.id}/notes", json={**NOTE_BODY, "usage": "maybe"})
+    assert r.status_code == 422
+
+
+def test_note_rejects_an_unknown_category(client, project, signed_in_user):
+    r = client.post(f"/api/projects/{project.id}/notes", json={**NOTE_BODY, "category": "vibes"})
+    assert r.status_code == 422
+
+
+def test_notes_are_org_scoped(client, other_org_project, signed_in_user):
+    assert client.post(f"/api/projects/{other_org_project.id}/notes", json=NOTE_BODY).status_code == 404
+    assert client.get(f"/api/projects/{other_org_project.id}/notes").status_code == 404

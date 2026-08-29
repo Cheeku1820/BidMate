@@ -103,14 +103,21 @@ function pluralize(count, singular, plural) {
 }
 
 export default function NotesWorkspace() {
-  const { store, projectId } = useWorkspaceContext();
+  const { store, projectId, snapshot } = useWorkspaceContext();
 
   const [notes, setNotes] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [filterKey, setFilterKey] = useState(null); // null | "company" | "project" | "sheet" | "item" | "rfi"
   const [formNote, setFormNote] = useState(undefined); // undefined = closed, null = new, object = editing
   const [deletingNote, setDeletingNote] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [applyMessage, setApplyMessage] = useState(null);
+
+  // The workspace's own sheets, for NoteForm's "which sheet" picker
+  // (fix round 1, finding 3) -- read off the same shared snapshot
+  // TakeoffSpreadsheet.jsx reads sheets/items from, not a second fetch.
+  const sheets = snapshot?.sheets ?? [];
 
   const load = useCallback(() => {
     setLoadError(null);
@@ -132,7 +139,17 @@ export default function NotesWorkspace() {
     return note.scope === filterKey;
   });
 
-  const affectCount = (notes ?? []).filter((n) => calculationEffect(n).tone !== "reference").length;
+  // Keyed on `usage` directly, the same field `unappliedContextNotes`
+  // (the apply banner, below) keys on -- fix round 1's finding 1. Before
+  // this fix the header counted `calculationEffect(n).tone !==
+  // "reference"`, and a company-scoped note saved with the toggle off
+  // had tone "standard" (not "reference"), so it was counted here while
+  // the banner correctly ignored it: the one screen whose job is to say
+  // what moves the number disagreed with itself. `calculationEffect`
+  // now checks `usage` first too (noteVocabulary.js), so this could
+  // read either way and still agree -- `usage === "context"` is kept
+  // explicit here because it's the fact this count is actually about.
+  const affectCount = (notes ?? []).filter((n) => n.usage === "context").length;
   const openRfiCount = (notes ?? []).filter((n) => n.rfiNeeded && n.status !== "confirmed").length;
   const unapplied = unappliedContextNotes(notes ?? []);
 
@@ -154,18 +171,50 @@ export default function NotesWorkspace() {
     await load();
   }
 
-  async function handleDeleteConfirmed() {
-    await store.deleteNote(deletingNote.id);
+  // Deletion is not undoable (there is no undo_apply.py case for a note
+  // action, and this screen carries no undo control of its own), which
+  // is exactly why a failed request can't be allowed to look like it
+  // worked. Fix round 1, finding 2: this used to have no catch at all --
+  // a rejected promise left the dialog open with no message and the
+  // note still there, while nothing told the estimator the delete
+  // hadn't happened. Now a failure keeps the dialog open and surfaces
+  // the store's own message (the server's already name a recovery
+  // action) right next to the confirm button, rather than closing on
+  // an assumption.
+  function openDelete(note) {
+    setDeleteError(null);
+    setDeletingNote(note);
+  }
+
+  function closeDelete() {
     setDeletingNote(null);
-    await load();
+    setDeleteError(null);
+  }
+
+  async function handleDeleteConfirmed() {
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await store.deleteNote(deletingNote.id);
+      setDeletingNote(null);
+      await load();
+    } catch (err) {
+      setDeleteError(err?.message || "This note couldn't be deleted. Try again.");
+    } finally {
+      setDeleteBusy(false);
+    }
   }
 
   // Task 8's placeholder: this screen only has to make the affordance
   // appear (task-5-brief.md). It must not be a dead control that does
   // nothing when clicked, so it names the state plainly rather than
-  // pretending to re-run anything.
+  // pretending to re-run anything. Auto-dismisses on the same schedule
+  // as the shared toast (useReviewStore.js's showToast) rather than
+  // sitting on screen indefinitely (fix round 1, minor).
   function handleApplyAndRerun() {
-    setApplyMessage("Re-running the takeoff from here isn't wired up yet. The notes are saved either way.");
+    const id = Date.now();
+    setApplyMessage({ id, text: "Re-running the takeoff from here isn't wired up yet. The notes are saved either way." });
+    setTimeout(() => setApplyMessage((m) => (m && m.id === id ? null : m)), 5000);
   }
 
   const addNoteButton = (
@@ -222,7 +271,7 @@ export default function NotesWorkspace() {
             ) : null}
             {applyMessage ? (
               <p className="notes-apply-banner-note" role="status">
-                {applyMessage}
+                {applyMessage.text}
               </p>
             ) : null}
 
@@ -267,7 +316,7 @@ export default function NotesWorkspace() {
             ) : (
               <div className="notes-list">
                 {visibleNotes.map((note) => (
-                  <NoteCard key={note.id} note={note} onEdit={setFormNote} onDelete={setDeletingNote} />
+                  <NoteCard key={note.id} note={note} onEdit={setFormNote} onDelete={openDelete} />
                 ))}
               </div>
             )}
@@ -276,24 +325,29 @@ export default function NotesWorkspace() {
       </div>
 
       {formNote !== undefined ? (
-        <NoteForm note={formNote} onSave={handleSave} onClose={() => setFormNote(undefined)} />
+        <NoteForm note={formNote} sheets={sheets} onSave={handleSave} onClose={() => setFormNote(undefined)} />
       ) : null}
 
       {deletingNote ? (
         <Modal
           title="Delete note"
-          onClose={() => setDeletingNote(null)}
+          onClose={closeDelete}
           foot={
             <>
-              <button type="button" className="btn" onClick={() => setDeletingNote(null)}>
+              <button type="button" className="btn" onClick={closeDelete} disabled={deleteBusy}>
                 Cancel
               </button>
-              <button type="button" className="btn btn--danger" onClick={handleDeleteConfirmed}>
-                Delete note
+              <button type="button" className="btn btn--danger" onClick={handleDeleteConfirmed} disabled={deleteBusy}>
+                {deleteBusy ? "Deleting…" : "Delete note"}
               </button>
             </>
           }
         >
+          {deleteError ? (
+            <div className="warncard warncard--missing" role="alert">
+              <p>{deleteError}</p>
+            </div>
+          ) : null}
           <p>Delete “{deletingNote.title}”? This can't be undone.</p>
         </Modal>
       ) : null}

@@ -52,11 +52,15 @@ vi.mock("../project/useWorkspaceContext.js", () => ({
   useWorkspaceContext: () => context,
 }));
 
-function renderNotes({ notes = [], store = makeStore({ notes }) } = {}) {
+function renderNotes({ notes = [], store = makeStore({ notes }), sheets = [] } = {}) {
   context = {
     store,
     projectId: "p1",
     me: { id: "u1", name: "Dana Whitfield" },
+    // Fix round 1, finding 3: NoteForm's "which sheet" picker reads
+    // sheets off the shared snapshot, the same place
+    // TakeoffSpreadsheet.jsx reads them from.
+    snapshot: { sheets, items: [] },
   };
   return render(
     <MemoryRouter>
@@ -82,6 +86,18 @@ describe("NotesWorkspace", () => {
   it("shows what each note does to the estimate, in words", async () => {
     renderNotes({ notes: [{ ...NOTE, usage: "context" }] });
     expect(await screen.findByText("Used in this estimate")).toBeInTheDocument();
+  });
+
+  it("does not count a company-scoped note as affecting the estimate unless it feeds the takeoff", async () => {
+    // Fix round 1, finding 1: scope alone used to be enough to read as
+    // "Company standard" and be counted in "N affect this estimate",
+    // even with "Feeds the takeoff" left off -- disagreeing with the
+    // apply banner, which correctly ignored it (keyed on usage alone).
+    renderNotes({ notes: [{ ...NOTE, scope: "company", usage: "reference" }] });
+    expect(await screen.findByText(/^1 note/)).toBeInTheDocument();
+    expect(screen.queryByText(/affect this estimate/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /apply notes and re-run/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Reference only")).toBeInTheDocument();
   });
 
   it("filters to one scope", async () => {
@@ -129,5 +145,66 @@ describe("NotesWorkspace", () => {
   it("shows an empty state that names the next action", async () => {
     renderNotes({ notes: [] });
     expect(await screen.findByRole("button", { name: /add note/i })).toBeInTheDocument();
+  });
+
+  it("deletes a note once the estimator confirms", async () => {
+    const store = makeStore({ notes: [NOTE] });
+    renderNotes({ store, notes: [NOTE] });
+    await userEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^delete note$/i }));
+    await waitFor(() => expect(store.deleteNote).toHaveBeenCalledWith(NOTE.id));
+  });
+
+  it("keeps the note and shows the error when delete fails, rather than closing on an assumption", async () => {
+    // Fix round 1, finding 2: handleDeleteConfirmed had no catch --  a
+    // rejected promise left the dialog open with no message and the
+    // note untouched, with nothing telling the estimator it hadn't
+    // worked. Deletion isn't undoable, so this is the one flow that
+    // can least afford ambiguity.
+    const store = makeStore({ notes: [NOTE] });
+    store.deleteNote = vi.fn().mockRejectedValue({
+      code: "conflict",
+      message: "This note was already removed by another reviewer.",
+    });
+    renderNotes({ store, notes: [NOTE] });
+    await userEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^delete note$/i }));
+
+    expect(await screen.findByText(/already removed by another reviewer/i)).toBeInTheDocument();
+    // The dialog is still open (its own "Delete note" button is still
+    // there) and the note is still in the list underneath it.
+    expect(screen.getByRole("button", { name: /^delete note$/i })).toBeInTheDocument();
+    expect(screen.getByText(NOTE.title)).toBeInTheDocument();
+  });
+
+  it("does not offer takeoff item as a scope until a picker exists for it", async () => {
+    renderNotes({ notes: [] });
+    await userEvent.click(await screen.findByRole("button", { name: /add note/i }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByRole("option", { name: /takeoff item/i })).not.toBeInTheDocument();
+  });
+
+  it("requires choosing which sheet before a sheet-scoped note can be saved", async () => {
+    // Fix round 1, finding 3: "Sheet" scope used to offer no way to say
+    // which sheet, so the note was permanently unanchored.
+    const store = makeStore({ notes: [] });
+    const sheets = [{ id: "s1", number: "E1.1", title: "Level 1 power" }];
+    renderNotes({ store, sheets });
+    await userEvent.click(await screen.findByRole("button", { name: /add note/i }));
+    const dialog = screen.getByRole("dialog");
+
+    await userEvent.type(within(dialog).getByLabelText(/title/i), "Panel LP-2 note");
+    await userEvent.type(within(dialog).getByLabelText(/note/i), "Panel schedule shows LP-2 as existing.");
+    await userEvent.selectOptions(within(dialog).getByLabelText(/applies to/i), "sheet");
+    await userEvent.click(within(dialog).getByRole("button", { name: /save note/i }));
+
+    expect(store.createNote).not.toHaveBeenCalled();
+    expect(within(dialog).getByText(/choose which sheet/i)).toBeInTheDocument();
+
+    await userEvent.selectOptions(within(dialog).getByLabelText(/which sheet/i), "s1");
+    await userEvent.click(within(dialog).getByRole("button", { name: /save note/i }));
+
+    await waitFor(() => expect(store.createNote).toHaveBeenCalled());
+    expect(store.createNote.mock.calls[0][1].scopeRef).toBe("s1");
   });
 });

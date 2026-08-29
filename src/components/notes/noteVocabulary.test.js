@@ -14,6 +14,15 @@ describe("calculationEffect", () => {
     expect(calculationEffect({ usage: "context", scope: "company" }).label).toBe("Company standard");
   });
 
+  it("does not call a company-scoped note a company standard unless it feeds the takeoff", () => {
+    // Fix round 1: usage must win over scope, or a company-scoped note
+    // saved with the toggle off reads as "in force" while nothing
+    // actually treats it that way.
+    const effect = calculationEffect({ usage: "reference", scope: "company" });
+    expect(effect.label).toBe("Reference only");
+    expect(effect.tone).toBe("reference");
+  });
+
   it("labels every scope and category it accepts", () => {
     for (const s of ["company", "project", "sheet", "item"]) expect(SCOPE_LABELS[s]).toBeTruthy();
     for (const c of ["existing_condition", "exclusion", "customer_instruction",

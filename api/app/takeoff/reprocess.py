@@ -27,6 +27,20 @@ the row under a fresh id orphaned every prior action pointing at it --
 previous mutation, which then 409s forever because the id it names no
 longer exists. Updating the row's columns in place keeps that id alive,
 so undo keeps working exactly as it did before the note was applied.
+
+Fix round 2: a bucket with more than one item can hold a mix of
+approved and un-approved rows, and `list.pop(0)` doesn't care which it
+returns. Popping an approved item first burns the incoming row that
+would otherwise have gone to an un-approved sibling -- the row is
+correctly never written onto the approved item (that guarantee is
+untouched), but it is then simply discarded, so the engine's finding
+vanishes instead of landing anywhere. Which item happened to sort first
+depended on `Item.id`, a random UUID with no relationship to anything
+about the drawing, so the same scenario silently produced a different
+item count from one project to the next. `_bucket_order()` below fixes
+this by matching every un-approved item in a bucket before any approved
+one is even considered -- an approved item is only ever popped once
+there is no un-approved sibling left to take the row instead.
 """
 from __future__ import annotations
 
@@ -43,6 +57,34 @@ from app.takeoff.models import Item, Project, ReviewStatus, Sheet, Warning, Warn
 
 def _key(sheet_number: str, source_tag: str) -> tuple[str, str]:
     return (sheet_number or "", source_tag or "")
+
+
+def _bucket_order(item: Item) -> tuple[bool, object, uuid.UUID]:
+    """Sort key for items sharing one merge-key bucket.
+
+    `status is APPROVED` first in the tuple means every un-approved item
+    in a bucket sorts before every approved one (`False < True`), so
+    `list.pop(0)` in the merge loop below always exhausts the
+    un-approved items before it ever considers an approved one -- an
+    approved item can only consume (and discard) an incoming row once
+    there is truly no un-approved sibling left that could have taken it
+    instead. That is the actual fix; without it, an approved item could
+    win an incoming row purely because it happened to sort first, and
+    the engine's finding for that row would vanish with no item left to
+    carry it.
+
+    `Item` has no creation-order column, so `updated_at` (set once at
+    insert, changed only by a later mutation) is the closest stable,
+    meaningful tiebreaker available for items that tie on approval
+    status -- not perfect, since every item written in the same ingest
+    transaction shares one transaction timestamp (`actions.py`'s
+    `Action.created_at` has the identical problem), but still real
+    insertion-adjacent information rather than an arbitrary UUID. `id`
+    breaks any remaining tie, so a fixed set of rows always sorts the
+    same way rather than depending on whatever order a query happened
+    to return them in.
+    """
+    return (item.status is ReviewStatus.APPROVED, item.updated_at, item.id)
 
 
 def _replace_warning(db: DbSession, item_id: uuid.UUID, warning: dict | None) -> None:
@@ -127,6 +169,12 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
     by_key: dict[tuple[str, str], list[Item]] = {}
     for i in existing:
         by_key.setdefault(_key(number_by_sheet_id.get(i.sheet_id, ""), i.source_tag), []).append(i)
+    # Un-approved before approved, then a stable tiebreak -- see
+    # `_bucket_order()`. Sorted once per bucket, up front, so every
+    # `pop(0)` below draws from a fixed, deterministic order rather than
+    # whatever order the locking query happened to return.
+    for bucket in by_key.values():
+        bucket.sort(key=_bucket_order)
 
     # Every approved item the run left alone -- whether it was matched
     # against an incoming row and skipped, or never matched at all --

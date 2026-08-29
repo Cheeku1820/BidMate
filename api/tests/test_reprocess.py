@@ -3,7 +3,7 @@ the engine without discarding a person's judgment.
 """
 from sqlalchemy import select
 
-from app.takeoff.models import Action, Item, Note, ReviewStatus, Warning
+from app.takeoff.models import Action, Item, Note, Project, ReviewStatus, Warning
 
 SHEET = {"id": "tk1:0", "number": "E2.1", "takeoff_id": "tk1", "page": 0,
          "width_pt": 2000, "height_pt": 1500, "unreadable": None, "ai_reading": None}
@@ -173,6 +173,84 @@ def test_reprocess_preserves_an_approved_item_sharing_an_empty_tag_with_unapprov
     assert remaining[0].id == keeper.id
     assert remaining[0].name == "Keep me"
     assert remaining[0].status is ReviewStatus.APPROVED
+
+
+def _fresh_project(db, org_id, name):
+    p = Project(org_id=org_id, name=name, revision_set_label="")
+    db.add(p)
+    db.flush()
+    return p
+
+
+def test_reprocess_matches_the_engine_row_to_the_unapproved_sibling_not_the_approved_one(
+    client, db, project, signed_in_user
+):
+    """Round 2's finding. A bucket can hold both an approved item and an
+    un-approved one sharing an empty tag. Popping whichever sorts first
+    by raw `Item.id` meant the approved item could randomly consume the
+    engine's one incoming row, discarding it, instead of it landing on
+    the un-approved sibling that could actually accept it -- a silent
+    under-count that depended on nothing but a random UUID.
+
+    Run across several fresh projects (fresh random ids every time) and
+    require the identical outcome every run, so a reintroduced ordering
+    bug fails the suite instead of passing on whichever half of the
+    coin flips its way.
+    """
+    for n in range(8):
+        proj = project if n == 0 else _fresh_project(db, project.org_id, f"Fresh {n}")
+        _seed(client, proj, [_item("", "A"), _item("", "B")])
+        seeded = list(db.scalars(select(Item).where(Item.project_id == proj.id)))
+        approved_item = next(i for i in seeded if i.name == "A")
+        approve = client.post(f"/api/items/{approved_item.id}/approve",
+                              headers={"If-Match": str(approved_item.version)})
+        assert approve.status_code == 200, approve.text
+
+        r = client.post(f"/api/projects/{proj.id}/reprocess",
+                        json={"payload": _payload([_item("", "ENGINE ROW")])})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body == {"reclassified": 1, "preserved": 1, "added": 0, "removed": 0}, f"run {n}: {body}"
+
+        db.expire_all()
+        rows = list(db.scalars(select(Item).where(Item.project_id == proj.id)))
+        assert {i.name for i in rows} == {"A", "ENGINE ROW"}, f"run {n}: {[i.name for i in rows]}"
+        kept = next(i for i in rows if i.name == "A")
+        assert kept.id == approved_item.id
+        assert kept.status is ReviewStatus.APPROVED
+
+
+def test_reprocess_lands_every_incoming_row_before_touching_the_approved_one(
+    client, db, project, signed_in_user
+):
+    """Five items share an empty tag, one of them approved. Three
+    incoming rows must all land on the four un-approved siblings --
+    none discarded because the approved item happened to sort first --
+    and the approved item must survive untouched regardless."""
+    for n in range(6):
+        proj = project if n == 0 else _fresh_project(db, project.org_id, f"Fresh {n}")
+        _seed(client, proj, [_item("", "A"), _item("", "B"), _item("", "C"),
+                             _item("", "D"), _item("", "E")])
+        seeded = list(db.scalars(select(Item).where(Item.project_id == proj.id)))
+        approved_item = next(i for i in seeded if i.name == "A")
+        client.post(f"/api/items/{approved_item.id}/approve",
+                   headers={"If-Match": str(approved_item.version)})
+
+        r = client.post(f"/api/projects/{proj.id}/reprocess",
+                        json={"payload": _payload([_item("", "X"), _item("", "Y"), _item("", "Z")])})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body == {"reclassified": 3, "preserved": 1, "added": 0, "removed": 1}, f"run {n}: {body}"
+
+        db.expire_all()
+        rows = list(db.scalars(select(Item).where(Item.project_id == proj.id)))
+        names = {i.name for i in rows}
+        assert {"X", "Y", "Z"} <= names, f"run {n}: engine rows did not all land: {names}"
+        assert "A" in names, f"run {n}: the approved item disappeared: {names}"
+        kept = next(i for i in rows if i.name == "A")
+        assert kept.id == approved_item.id
+        assert kept.status is ReviewStatus.APPROVED
+        assert len(rows) == 4
 
 
 def test_reprocess_keeps_undo_working_for_an_edit_made_before_it(client, db, project, signed_in_user):

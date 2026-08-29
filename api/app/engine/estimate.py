@@ -14,6 +14,43 @@ from collections import defaultdict
 from . import classification, counting, documents, llm, regions
 from .catalog import CATALOG
 
+NOTES_CAP = 4000
+CONTEXT_CAP = 12000
+
+
+def build_classifier_context(schedule_text: str, context: str, estimator_notes: list[dict] | None) -> str:
+    """The text the classifier reads, assembled from three sources that
+    are deliberately kept apart.
+
+    `schedule_text` is the drawings' own schedules. `context` is text
+    lifted from other uploaded documents -- untrusted, because a drawing
+    set arrives from outside and text inside it must be data rather than
+    instruction. `estimator_notes` are typed records a person wrote and
+    is accountable for, so they are the only block framed as something to
+    act on.
+
+    Nothing writes document text into the notes block: the two arrive as
+    separate parameters and are formatted separately here. That is the
+    injection guard, and it holds by shape rather than by wording.
+    """
+    parts: list[str] = []
+    if estimator_notes:
+        lines = []
+        for n in estimator_notes:
+            src = f" ({n['source_ref']})" if n.get("source_ref") else ""
+            lines.append(f"- [{n.get('scope', 'project')}] {n.get('title', '')}{src}: {n.get('body', '')}")
+        block = "\n".join(lines)[:NOTES_CAP]
+        parts.append(
+            "=== Estimator notes and assumptions ===\n"
+            "Written by the estimator for this project. These take precedence "
+            "over what the drawings appear to say.\n" + block
+        )
+    if schedule_text:
+        parts.append(schedule_text)
+    if context:
+        parts.append("=== From project specifications and addenda ===\n" + context[:CONTEXT_CAP])
+    return "\n\n".join(parts)[:20000]
+
 
 def _consolidate(rows: list[dict]) -> list[dict]:
     """Group per-sheet clusters into one row per catalog item, summing
@@ -46,24 +83,28 @@ def _sheet_no(sheets, page_index) -> str:
     return "?"
 
 
-def _compute(path: str, location: str, context: str = ""):
+def _compute(path: str, location: str, context: str = "", estimator_notes: list[dict] | None = None):
     """Shared pipeline: returns (per-cluster rows, sheets, meta). Each row
     carries coordinates and cost. `context` is extra text pulled from the
-    other project documents (specs, addenda) so the classifier can read a
-    fixture or panel schedule that lives outside the drawings."""
+    other project documents (specs, addenda) -- untrusted -- so the
+    classifier can read a fixture or panel schedule that lives outside the
+    drawings. `estimator_notes` are typed records a person wrote for this
+    project; they reach the classifier through their own labelled block,
+    never merged into `context`, so document text can never be promoted
+    into something framed as an instruction."""
     sheets = documents.detect_sheets(path)
     clusters = counting.count(path, sheets)
 
     # Aggregate tag counts across sheets for the classifier, and gather the
     # schedule text the LLM interprets fixture types from -- the drawings'
-    # own schedule text plus whatever the other documents contributed.
+    # own schedule text plus whatever the other documents and the estimator
+    # contributed, kept in separate labelled blocks.
     tag_counts: dict[str, int] = defaultdict(int)
     for c in clusters:
         tag_counts[c.tag] += c.count
     tags = [{"tag": t, "count": n} for t, n in sorted(tag_counts.items(), key=lambda kv: -kv[1])]
     schedule_text = "\n\n".join(s.schedule_text for s in sheets if s.schedule_text)
-    if context:
-        schedule_text = (schedule_text + "\n\n=== From project specifications and addenda ===\n\n" + context)[:16000]
+    schedule_text = build_classifier_context(schedule_text, context, estimator_notes)
 
     rows: list[dict] = []
     source = "deterministic"
@@ -132,13 +173,13 @@ def estimate(path: str, location: str) -> dict:
     }
 
 
-def full_takeoff(path: str, location: str, context: str = "") -> dict:
+def full_takeoff(path: str, location: str, context: str = "", estimator_notes: list[dict] | None = None) -> dict:
     """Per-cluster takeoff with coordinates and page dimensions, for
     injecting into the review store (one reviewable item per device
     group, positioned on its sheet). Each sheet carries an `id` (unique
     within this file, by page) that items reference, so a merge across
     several drawing files can keep sheet references unambiguous."""
-    rows, sheets, meta = _compute(path, location, context)
+    rows, sheets, meta = _compute(path, location, context, estimator_notes)
     return {
         **meta,
         "sheets": [

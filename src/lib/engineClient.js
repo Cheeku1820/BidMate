@@ -58,12 +58,13 @@ export async function classifyDoc(file) {
 /** POST the whole document set (each `{ file, docType }`) + location to
  *  /estimate/project: Drawings run the pipeline, everything else is read
  *  as context. Returns the merged per-sheet takeoff payload. */
-export async function estimateProject(uploaded, location) {
+export async function estimateProject(uploaded, location, estimatorNotes = []) {
   const form = new FormData();
   form.append("location", location || "");
   for (const { file, docType } of uploaded) {
     form.append("files", file);
     form.append("types", docType || "Other");
   }
+  form.append("estimator_notes", JSON.stringify(estimatorNotes || []));
   return post("/estimate/project", form);
 }

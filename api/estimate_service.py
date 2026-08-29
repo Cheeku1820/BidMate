@@ -15,6 +15,7 @@ still works, using the deterministic classifier and regional pricing.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import tempfile
@@ -198,6 +199,7 @@ async def estimate_project_endpoint(
     files: list[UploadFile] = File(...),
     types: list[str] = Form(...),
     location: str = Form(""),
+    estimator_notes: str = Form("[]"),
 ):
     """Process the whole document set: every Drawings PDF goes through the
     engine (merged), and every other document (specs, addenda, scope) has
@@ -231,11 +233,18 @@ async def estimate_project_endpoint(
 
         context = "\n\n".join(context_parts)[:12000]
 
+        try:
+            notes = json.loads(estimator_notes)
+            if not isinstance(notes, list):
+                notes = []
+        except (TypeError, ValueError):
+            notes = []
+
         merged_sheets: list[dict] = []
         merged_items: list[dict] = []
         meta: dict | None = None
         for takeoff_id, path, _fname in drawings:
-            payload = estimate_mod.full_takeoff(path, location, context)
+            payload = estimate_mod.full_takeoff(path, location, context, notes)
             if meta is None:
                 meta = {k: payload[k] for k in ("location", "location_note", "labor_rate", "material_factor", "source")}
             for sheet in payload["sheets"]:

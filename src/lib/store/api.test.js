@@ -339,10 +339,13 @@ describe("the store interface", () => {
     "approveItem",
     "attachEngineTakeoff",
     "bulkApprove",
+    "createNote",
     "createProject",
     "deleteItem",
+    "deleteNote",
     "editItem",
     "getSnapshot",
+    "listNotes",
     "listProjects",
     "redo",
     "rejectItem",
@@ -351,6 +354,7 @@ describe("the store interface", () => {
     "subscribe",
     "undo",
     "unrejectItem",
+    "updateNote",
     "useProject",
   ];
 
@@ -359,5 +363,54 @@ describe("the store interface", () => {
     for (const name of CALLED_BY_THE_APP) {
       expect(typeof store[name], `store.${name} is called by the app`).toBe("function");
     }
+  });
+});
+
+describe("notes", () => {
+  const RAW_NOTE = {
+    id: "n1", project_id: "p1", scope: "project", scope_ref: null,
+    title: "Low-voltage excluded", body: "Per the Turner scope letter.",
+    category: "exclusion", status: "confirmed", rfi_needed: false,
+    usage: "context", source_ref: "Turner scope letter",
+    obsolete_after_revision: "", author_name: "Dana Whitfield",
+    created_at: "2026-08-28T10:00:00Z", updated_at: "2026-08-28T10:00:00Z",
+    applied_at: null,
+  };
+
+  it("lists notes in camelCase", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([RAW_NOTE]), { status: 200 })));
+    const notes = await createApiStore().listNotes("p1");
+    expect(notes[0].rfiNeeded).toBe(false);
+    expect(notes[0].usage).toBe("context");
+    expect(notes[0].authorName).toBe("Dana Whitfield");
+    expect(notes[0].sourceRef).toBe("Turner scope letter");
+  });
+
+  it("creates a note against the project", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(RAW_NOTE), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createApiStore().createNote("p1", { title: "t", body: "b", category: "exclusion", usage: "context" });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/projects/p1/notes");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body).usage).toBe("context");
+  });
+
+  it("patches a note by its own id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ...RAW_NOTE, usage: "reference" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const note = await createApiStore().updateNote("n1", { usage: "reference" });
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/notes/n1");
+    expect(note.usage).toBe("reference");
+  });
+
+  it("deletes a note", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await createApiStore().deleteNote("n1");
+    expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
   });
 });

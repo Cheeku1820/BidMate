@@ -129,6 +129,30 @@ export function mapSnapshot(s) {
   };
 }
 
+/** Wire note -> client note. `usage` decides whether this note feeds the
+ *  engine; the calculation-effect label the screen shows is derived from
+ *  it and from scope, never stored. */
+export function mapNote(raw) {
+  return {
+    id: raw.id,
+    projectId: raw.project_id,
+    scope: raw.scope,
+    scopeRef: raw.scope_ref ?? null,
+    title: raw.title,
+    body: raw.body,
+    category: raw.category,
+    status: raw.status,
+    rfiNeeded: Boolean(raw.rfi_needed),
+    usage: raw.usage,
+    sourceRef: raw.source_ref ?? "",
+    obsoleteAfterRevision: raw.obsolete_after_revision ?? "",
+    authorName: raw.author_name ?? "",
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+    appliedAt: raw.applied_at ?? null,
+  };
+}
+
 export function mapUser(u) {
   return { id: u.id, name: u.name, email: u.email, color: u.color };
 }

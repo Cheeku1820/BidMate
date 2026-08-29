@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapItem, mapProject, mapSnapshot, mapUser } from "./api-mapping.js";
+import { mapItem, mapNote, mapProject, mapSnapshot, mapUser } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -363,6 +363,28 @@ export function createApiStore() {
     return result;
   }
 
+  // Notes and assumptions (Task 4): the client half of the endpoints
+  // built in Task 2. No local cache here — unlike getSnapshot(), the
+  // screen (Task 5) fetches on mount and after each write rather than
+  // polling, and a note write never changes the takeoff itself, so
+  // invalidateCache() is deliberately not called from these.
+  async function listNotes(id) {
+    const rows = await request(`/api/projects/${id}/notes`);
+    return (rows ?? []).map(mapNote);
+  }
+
+  async function createNote(id, fields) {
+    return mapNote(await request(`/api/projects/${id}/notes`, { method: "POST", body: fields }));
+  }
+
+  async function updateNote(noteId, changes) {
+    return mapNote(await request(`/api/notes/${noteId}`, { method: "PATCH", body: changes }));
+  }
+
+  async function deleteNote(noteId) {
+    await request(`/api/notes/${noteId}`, { method: "DELETE" });
+  }
+
   return {
     me,
     useProject,
@@ -381,5 +403,9 @@ export function createApiStore() {
     listProjects,
     createProject,
     attachEngineTakeoff,
+    listNotes,
+    createNote,
+    updateNote,
+    deleteNote,
   };
 }

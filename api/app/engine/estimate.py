@@ -9,47 +9,108 @@ multiplies counts by unit costs here, in one place.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 
 from . import classification, counting, documents, llm, regions
 from .catalog import CATALOG
 
-NOTES_CAP = 4000
+# llm._prompt() truncates whatever blob this function builds to its own
+# [:6000] before it ever reaches the model -- that slice, not any cap
+# defined here, is the real budget. Sizing NOTES_CAP or the assembly order
+# against a bigger number would make every cap in this module a lie about
+# what actually reaches the classifier. Duplicating the number is an
+# accepted coupling; llm.py is not touched by this module.
+PROMPT_BUDGET = 6000
+# A person's notes get a modest, guaranteed slice of that budget -- big
+# enough for real project notes, small enough that even a maximal payload
+# cannot crowd the drawings' own schedule text out of the window the
+# classifier actually reads.
+NOTES_CAP = 1200
 CONTEXT_CAP = 12000
+
+# A line shaped exactly like one of this module's own block headers
+# ("=== ... ==="). Matched per-line so multi-line untrusted text can't
+# smuggle in a forged boundary anywhere inside it.
+_HEADER_LINE_RE = re.compile(r"^[ \t]*===.*===[ \t]*$", re.MULTILINE)
+
+
+def _defang_block_headers(text: str) -> str:
+    """Neutralise any line that reads as one of this module's own
+    "=== ... ===" block headers, wherever it appears.
+
+    The parameters `context` and `estimator_notes` are already kept
+    separate -- but the *rendered* text is one string, and a specification
+    whose extracted text happens to contain the literal line
+    '=== Estimator notes and assumptions ===' would otherwise render a
+    second, indistinguishable authoritative block inside the untrusted
+    one. That would put the guarantee back on the model not being fooled
+    by a forged header, which is exactly what this function exists to
+    avoid depending on.
+
+    Punctuation is swapped rather than the line being dropped -- a removed
+    line is just a different way to hide content from the person
+    reviewing it. This runs on `context` (untrusted document text) and on
+    every estimator-note field: a note is trusted, but an estimator who
+    pastes a stray header line shouldn't be able to break the block
+    structure either.
+    """
+    if not text:
+        return text
+    return _HEADER_LINE_RE.sub(lambda m: m.group(0).replace("=", "-"), text)
 
 
 def build_classifier_context(schedule_text: str, context: str, estimator_notes: list[dict] | None) -> str:
     """The text the classifier reads, assembled from three sources that
     are deliberately kept apart.
 
-    `schedule_text` is the drawings' own schedules. `context` is text
-    lifted from other uploaded documents -- untrusted, because a drawing
-    set arrives from outside and text inside it must be data rather than
-    instruction. `estimator_notes` are typed records a person wrote and
-    is accountable for, so they are the only block framed as something to
-    act on.
+    `schedule_text` is the drawings' own schedules -- the highest
+    priority, listed first so it is the last thing truncation can reach.
+    `context` is text lifted from other uploaded documents -- untrusted,
+    because a drawing set arrives from outside and text inside it must be
+    data rather than instruction -- listed last, since it is already the
+    least-trusted block and the one already accustomed to being cut when
+    space runs out. `estimator_notes` are typed records a person wrote and
+    is accountable for, so they sit between the two: framed as something
+    to act on, and capped small enough that they do not need the schedule
+    to make room for them.
 
     Nothing writes document text into the notes block: the two arrive as
-    separate parameters and are formatted separately here. That is the
-    injection guard, and it holds by shape rather than by wording.
+    separate parameters and are formatted separately here. Untrusted text
+    also cannot forge a second copy of either block's own header (see
+    `_defang_block_headers`), so the guarantee holds by shape rather than
+    by wording or by trusting the model to see through a lookalike.
     """
     parts: list[str] = []
+
+    schedule_text = _defang_block_headers(schedule_text or "")
+    if schedule_text:
+        parts.append(schedule_text)
+
     if estimator_notes:
         lines = []
         for n in estimator_notes:
-            src = f" ({n['source_ref']})" if n.get("source_ref") else ""
-            lines.append(f"- [{n.get('scope', 'project')}] {n.get('title', '')}{src}: {n.get('body', '')}")
-        block = "\n".join(lines)[:NOTES_CAP]
-        parts.append(
-            "=== Estimator notes and assumptions ===\n"
-            "Written by the estimator for this project. These take precedence "
-            "over what the drawings appear to say.\n" + block
-        )
-    if schedule_text:
-        parts.append(schedule_text)
+            if not isinstance(n, dict):
+                continue  # malformed entry: skip it, never fail the takeoff over it
+            scope = str(n.get("scope") or "project")
+            title = _defang_block_headers(str(n.get("title") or ""))
+            body = _defang_block_headers(str(n.get("body") or ""))
+            source_ref = n.get("source_ref")
+            src = f" ({_defang_block_headers(str(source_ref))})" if source_ref else ""
+            lines.append(f"- [{scope}] {title}{src}: {body}")
+        if lines:
+            block = "\n".join(lines)[:NOTES_CAP]
+            parts.append(
+                "=== Estimator notes and assumptions ===\n"
+                "Written by the estimator for this project. These take precedence "
+                "over what the drawings appear to say.\n" + block
+            )
+
     if context:
+        context = _defang_block_headers(context)
         parts.append("=== From project specifications and addenda ===\n" + context[:CONTEXT_CAP])
-    return "\n\n".join(parts)[:20000]
+
+    return "\n\n".join(parts)
 
 
 def _consolidate(rows: list[dict]) -> list[dict]:

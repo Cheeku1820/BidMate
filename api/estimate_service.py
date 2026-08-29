@@ -234,11 +234,15 @@ async def estimate_project_endpoint(
         context = "\n\n".join(context_parts)[:12000]
 
         try:
-            notes = json.loads(estimator_notes)
-            if not isinstance(notes, list):
-                notes = []
+            parsed_notes = json.loads(estimator_notes)
         except (TypeError, ValueError):
-            notes = []
+            parsed_notes = []
+        if not isinstance(parsed_notes, list):
+            parsed_notes = []
+        # A malformed element (a bare string, a number) must not fail the
+        # whole request -- drop it here rather than let it reach the
+        # classifier's note formatting, which expects a dict.
+        notes = [n for n in parsed_notes if isinstance(n, dict)]
 
         merged_sheets: list[dict] = []
         merged_items: list[dict] = []

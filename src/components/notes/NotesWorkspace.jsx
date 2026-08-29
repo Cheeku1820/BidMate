@@ -39,7 +39,13 @@ import AppTopBar from "../shell/AppTopBar.jsx";
 import Modal from "../Modal.jsx";
 import NoteForm from "./NoteForm.jsx";
 import ApplyNotesBanner from "./ApplyNotesBanner.jsx";
-import { CATEGORY_LABELS, calculationEffect, SCOPE_LABELS, unappliedContextNotes } from "./noteVocabulary.js";
+import {
+  CATEGORY_LABELS,
+  calculationEffect,
+  SCOPE_LABELS,
+  standingContextNotes,
+  unappliedContextNotes,
+} from "./noteVocabulary.js";
 import { formatTimestamp } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 import { estimateProject } from "../../lib/engineClient.js";
@@ -166,7 +172,16 @@ export default function NotesWorkspace() {
   // explicit here because it's the fact this count is actually about.
   const affectCount = (notes ?? []).filter((n) => n.usage === "context").length;
   const openRfiCount = (notes ?? []).filter((n) => n.rfiNeeded && n.status !== "confirmed").length;
+  // Two sets, two jobs, and conflating them is finding 1 of the final
+  // review. `unapplied` drives the *banner* -- "is there anything new to
+  // apply?" -- so it is the notes no re-run has carried in yet.
+  // `standing` is the *payload*: the whole context this project is
+  // estimated under, re-sent on every run, because the engine has no
+  // memory of a previous run's notes and the merge overwrites from
+  // whatever payload it is handed. See `standingContextNotes` in
+  // noteVocabulary.js for the failure this separation prevents.
   const unapplied = unappliedContextNotes(notes ?? []);
+  const standing = standingContextNotes(notes ?? []);
 
   const summaryParts = notes
     ? [
@@ -222,9 +237,21 @@ export default function NotesWorkspace() {
 
   // The real re-run. Only `usage === "context"` notes are the engine's
   // authoritative notes channel (a reference-only note must never reach
-  // the classifier) -- `unapplied` is already exactly that set, keyed
-  // the same way the banner counts it, so the two can never disagree
-  // about which notes this run is for.
+  // the classifier), and the set sent is `standing` -- every context
+  // note, not only the ones not yet applied. The banner's `unapplied`
+  // set says whether there is anything new; it is not a filter on what
+  // the engine may see.
+  //
+  // Worth writing down plainly: "a reference note never reaches the
+  // classifier" is enforced HERE, client-side, and nowhere else. The
+  // `/reprocess` endpoint accepts whatever takeoff payload it is given
+  // and never talks to the engine itself -- the browser drives the
+  // engine directly (engineClient.js, localhost:8100) and posts the
+  // result. That is inherent to the current browser-drives-engine
+  // architecture rather than a structural guarantee like the
+  // two-channel agent split, so it holds only as long as this filter
+  // does. If the engine ever moves behind the API, this rule moves with
+  // it and stops being a client concern.
   async function handleApplyAndRerun() {
     setApplyError(null);
     setApplyBusy(true);
@@ -236,7 +263,7 @@ export default function NotesWorkspace() {
         );
         return;
       }
-      const contextNotes = unapplied.map((n) => ({
+      const contextNotes = standing.map((n) => ({
         scope: n.scope,
         title: n.title,
         body: n.body,

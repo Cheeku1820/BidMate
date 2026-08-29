@@ -48,7 +48,40 @@ export function calculationEffect(note) {
 }
 
 /** Notes marked as context that no re-run has carried into the takeoff
- *  yet. The apply banner exists for exactly this set. */
+ *  yet. The apply banner exists for exactly this set: it answers "is
+ *  there anything new to apply?", which is a question about what has
+ *  *not* been applied.
+ *
+ *  This is deliberately NOT the set sent to the engine -- see
+ *  `standingContextNotes` below for why the two must differ. */
 export function unappliedContextNotes(notes) {
   return notes.filter((n) => n.usage === "context" && !n.appliedAt);
+}
+
+/** Every note marked as context, applied or not -- the full standing
+ *  context this project is estimated under, and the set that goes to
+ *  the engine on a re-run.
+ *
+ *  These two selectors answer two different questions and must not be
+ *  collapsed into one. The engine is stateless: it classifies from the
+ *  drawings plus the notes it is handed on that run, and it has no
+ *  memory of a previous run's notes. The merge
+ *  (`api/app/takeoff/reprocess.py`) then overwrites every matched
+ *  un-approved item from whatever payload it is given.
+ *
+ *  So sending only the *unapplied* notes silently reverts every earlier
+ *  note. Apply note A ("west wing fixtures are type F") and items
+ *  reclassify; later add note B and apply, and a payload built from B
+ *  alone carries no trace of A -- every item A had changed is
+ *  overwritten back to the pre-A result, while the screen still reads
+ *  "Used in this estimate" for A and nothing anywhere says it was
+ *  undone. That is a wrong bid total produced by using the feature
+ *  normally twice.
+ *
+ *  The applied stamp therefore records "this note has been carried into
+ *  the takeoff at least once" -- it is banner state, not a filter on
+ *  what the engine is allowed to see. Every standing context note is
+ *  re-sent on every run. */
+export function standingContextNotes(notes) {
+  return notes.filter((n) => n.usage === "context");
 }

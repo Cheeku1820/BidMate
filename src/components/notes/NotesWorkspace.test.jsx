@@ -263,6 +263,30 @@ describe("NotesWorkspace", () => {
       expect(sentNotes).toHaveLength(1);
       expect(sentNotes[0].title).toBe("Feeds it");
     });
+
+    it("re-sends an already-applied note, so a second run does not revert the first", async () => {
+      // The regression guard for the worst bug this slice shipped. The
+      // engine has no memory of a previous run's notes and the merge
+      // overwrites every matched un-approved item from the payload it is
+      // handed, so a payload built from the *unapplied* notes alone
+      // silently reverts every earlier note's effect -- while the screen
+      // still says "Used in this estimate" and the server re-stamps the
+      // applied timestamp. A wrong bid total from using the feature
+      // normally twice.
+      const store = makeStore({
+        notes: [
+          { ...NOTE, id: "a", usage: "context", appliedAt: "2026-08-28T10:00:00Z", title: "Applied earlier" },
+          { ...NOTE, id: "b", usage: "context", appliedAt: null, title: "Added just now" },
+        ],
+      });
+      store.reprocess = vi.fn().mockResolvedValue({ reclassified: 2, preserved: 0, added: 0, removed: 0 });
+      renderNotes({ store });
+      await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
+      await waitFor(() => expect(store.reprocess).toHaveBeenCalled());
+
+      const sentNotes = engineClient.estimateProject.mock.calls[0][2];
+      expect(sentNotes.map((n) => n.title).sort()).toEqual(["Added just now", "Applied earlier"]);
+    });
   });
 
   it("says plainly when no source drawings remain to re-run, rather than failing obscurely", async () => {

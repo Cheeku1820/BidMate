@@ -118,7 +118,9 @@ The distinction is enforced by shape rather than by prompt wording: document tex
 
 ## Apply and re-run
 
-The estimator presses **Apply notes and re-run takeoff**. It is explicit, it is one action, and it is undoable.
+The estimator presses **Apply notes and re-run takeoff**. It is explicit, and it is one action.
+
+**It is not undoable**, and an earlier draft of this section said otherwise — the Backend section above has it right. `note_apply` is not in `undo.REVERSIBLE`, so undo walks straight past a re-run to the previous reversible action. What a re-run's reversibility actually amounts to: the run is recorded as one attributable entry in the append-only action log, so it is auditable and its counts are readable back, but there is no single press that puts the takeoff back the way it was. Backing out means correcting the note and re-running, or editing the affected items. Undo remains available for everything it always covered — approve, reject, edit, delete, bulk approve, scale — and those actions keep working across a re-run, because the merge updates a matched row in place rather than recreating it under a new id.
 
 `POST /api/projects/{id}/reprocess` — deliberately **not** the ingest endpoint from spec 1. Ingest replaces wholesale and refuses when approvals exist; this preserves them. Two different intentions deserve two endpoints rather than a flag that changes what a call destroys.
 
@@ -127,11 +129,13 @@ The merge, per item in the new engine output:
 1. Key it as `(sheet number, source_tag)`.
 2. If an existing item with that key is **estimator approved** — leave it entirely untouched. Not its classification, quantity, status, or warnings.
 3. Otherwise replace it with the new result.
-4. An existing un-approved item with no match in the new output is removed; a new item with no existing match is added.
+4. An existing un-approved item with no match in the new output is removed; a new item with no existing match is added — *unless* the estimator deliberately deleted it. Deletion is a hard row delete, so the merge reads live `delete` actions out of the action log to tell "a person removed this" from "this never existed," and declines to bring it back. A deletion the estimator has since undone suppresses nothing.
 
-One compound action in the log, reversible in one undo — the same shape scale confirmation already uses ([`scale.py:97`](../../../api/app/takeoff/scale.py:97)), where one estimator decision re-derives many items and undo reverses both halves together.
+And what is sent to the engine on each run: **every note marked as context, applied or not.** The engine has no memory of a previous run's notes and this merge overwrites from the payload it is handed, so sending only the newly-added notes would silently revert every earlier one. The applied stamp records that a note has been carried in at least once; it never filters what the engine sees.
 
-The result reports what happened in the estimator's terms: *"Reclassified 7 items. 3 approved items were left unchanged."* Silence about preserved approvals would be the wrong kind of quiet.
+One entry in the log for the whole run, attributed to the person who pressed the button, naming what it changed. It is *not* reversible in one undo — scale confirmation ([`scale.py:97`](../../../api/app/takeoff/scale.py:97)) is compound *and* reversible; a re-run is compound only.
+
+The result reports what happened in the estimator's terms: *"Reclassified 7 items. 3 approved items were left unchanged."* Silence about preserved approvals would be the wrong kind of quiet. Seven means seven items that actually changed — the merge compares each incoming row against the existing one and counts only a difference an estimator would notice, never every row it touched. A re-run that changes nothing says so.
 
 **A note whose effect lands on an approved item is not lost.** The response names those items, and the note stays applied — so the estimator can revisit them deliberately. What the system will not do is change them on its own.
 
@@ -176,4 +180,16 @@ The conversation panel, question generation and ranking, cross-project firm memo
 
 **Re-running costs money and time.** Every apply is a full engine pass over the affected sheets. Sheet-scoped notes limit that; project-scoped notes do not. Worth watching before it becomes a per-note habit on a 300-sheet set.
 
-**Notes are the first feature where an estimator's words change a number.** Everything before this was a person confirming what the engine produced. The direction reverses here, which is exactly why apply is explicit, approvals are immovable, and the whole thing lands as one undoable action attributed to the person who pressed the button.
+**Notes are the first feature where an estimator's words change a number.** Everything before this was a person confirming what the engine produced. The direction reverses here, which is exactly why apply is explicit, approvals are immovable, and the whole thing lands as one attributable entry in the action log naming the person who pressed the button. That entry is the audit trail, not an undo target — see *Apply and re-run*.
+
+---
+
+## Not built in this slice
+
+Written down rather than left to be discovered by the next reader, because each of these reads as shipped in the sections above.
+
+- **`applied_action_id`.** The column does not exist. A note's `applied_at` timestamp records *that* a run carried it in, not *which* run, so a note cannot be traced to the specific re-run entry in the action log.
+- **The footer strip** (blocking and attention counts, notes possibly obsolete after a revision) is not built. The header count summary is.
+- **Sheet-scoped narrowing.** The spec says a sheet-scoped note is "sent only when that sheet is reprocessed." It is not: every context note goes to every sheet, carrying a `[scope]` prefix, and the engine reads the prefix as text. The cost note under *Risks* — that sheet-scoped notes limit a re-run's expense — therefore does not hold yet either. A re-run is a full pass over the whole set regardless of scope.
+- **Item-scoped notes naming their `source_tag`.** An item-scoped note carries the item's id in `scope_ref`; it does not resolve that to the cluster tag the classifier would need in order to act on the specific item.
+- **Where the context/reference split is enforced.** Client-side, in `NotesWorkspace.jsx`, and nowhere else. `/reprocess` accepts whatever takeoff payload it is given and never talks to the engine itself — the browser drives the engine directly and posts the result. Unlike the two-channel split between document text and estimator notes, which is structural, this one holds only as long as that filter does.

@@ -1,9 +1,17 @@
 """notes.py -- the note record's service layer.
 
 Every write goes through actions.commit() rather than a bare db.add(),
-so a note gets the same attribution, append-only audit trail, and shared
-undo stack an approval gets. A note changes what a bid is built on; it
-is not a lesser kind of record than an item.
+so a note gets the same attribution and the same append-only audit trail
+an approval gets. A note changes what a bid is built on; it is not a
+lesser kind of record than an item.
+
+It does NOT get the undo stack. `note_add`/`note_edit`/`note_delete`/
+`note_apply` are deliberately absent from `undo.REVERSIBLE`, so undo
+walks straight past a note action to the previous reversible one. That
+is the safe behaviour -- reversing a note deletion would mean
+resurrecting a row from a snapshot, which is its own feature -- but it
+means deleting a note is final, which is why the screen confirms first
+and says so.
 """
 from __future__ import annotations
 

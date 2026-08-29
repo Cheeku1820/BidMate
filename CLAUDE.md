@@ -33,6 +33,7 @@ Every screen is a different view onto this same state. When building a new scree
 - **Green appears only on estimator-approved content.** Not on "done processing," not on a successful upload.
 - **No save buttons.** Everything autosaves, with save state in the top bar and an undoable toast per action.
 - **Approving a *Missing information* item is blocked at the item level**, with inline copy explaining why — so the estimator hits the rule while looking at the evidence, not later in a summary dialog.
+- **A note's status is not an item's status.** Notes carry their own confirmed/open vocabulary describing a *note*; the four labels above describe an *item's evidence*. Never render a note's status using the item-status components or colours — a note pill in amber reads as *Needs attention* and quietly makes the four labels into five. `--slate`/`--plum` in `styles.css` exist for exactly this separation.
 - **The conversation panel never becomes the only path to anything.** See the section below.
 
 ## The conversation panel is additive, never load-bearing
@@ -68,6 +69,19 @@ src/
     BlueprintCanvas.jsx      pan/zoom viewport, markers, measurements, minimap
     PlanDrawing.jsx          architectural plan geometry per sheet
     Symbols.jsx              electrical symbol glyphs
+    notes/                   notes & assumptions: what the drawings don't say
+      NotesWorkspace.jsx     the screen — list, filters, apply-and-re-run
+      NoteForm.jsx           add/edit, with the context/reference control
+      ApplyNotesBanner.jsx   offers the re-run when context notes are pending
+      noteVocabulary.js      a note's own words — deliberately not the four review labels
+```
+
+On the API side, two modules carry that feature:
+
+```
+api/app/takeoff/
+  notes.py                   note CRUD, audited through commit(), not undoable
+  reprocess.py               the approval-preserving merge behind a re-run
 ```
 
 Sheet space is a 1000 x 750 unit coordinate system. Item positions are in sheet units, so markers land on real plan geometry.
@@ -114,4 +128,6 @@ Rules that are easy to break here:
 
 ## Known scope limits
 
-The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Notes & assumptions, Assemblies, Labor, Material pricing, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
+The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Labor, Material pricing, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Notes & assumptions is built and routed. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
+
+Within notes, several things the design spec describes are not built: the `applied_action_id` column, the footer strip, sheet-scoped narrowing of a re-run, and item-scoped notes resolving to a cluster tag. See the *Not built in this slice* section of [`docs/superpowers/specs/2026-08-28-notes-and-assumptions-design.md`](docs/superpowers/specs/2026-08-28-notes-and-assumptions-design.md).

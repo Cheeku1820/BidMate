@@ -128,6 +128,19 @@ src/
     BlueprintCanvas.jsx        pan/zoom viewport, markers, measurements, minimap
     PlanDrawing.jsx            architectural plan geometry per sheet
     Symbols.jsx                electrical symbol glyphs
+    notes/                     notes & assumptions — what the drawings don't say
+      NotesWorkspace.jsx       the screen: list, filters, apply-and-re-run
+      NoteForm.jsx             add/edit, with the context/reference control
+      ApplyNotesBanner.jsx     offers the re-run when context notes are pending
+      noteVocabulary.js        a note's own words, distinct from the review labels
+```
+
+The two API modules behind that screen:
+
+```
+api/app/takeoff/
+  notes.py                     note CRUD, audited through commit(), not undoable
+  reprocess.py                 the approval-preserving merge behind a re-run
 ```
 
 If you open this repo in Claude Code, [`CLAUDE.md`](CLAUDE.md) loads automatically and carries the design context — status vocabulary, the rules that are easy to break, and the decisions still open.
@@ -151,7 +164,8 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 - **Sync is a poll, not a push channel.** The client polls the API every few seconds for changes from other reviewers, rather than receiving them immediately over a WebSocket. Undo is also still a single shared linear stack, so one reviewer can undo another's action from underneath them — shared undo needs conflict resolution, either operational transforms or per-user undo stacks with a merge policy, and that decision is still open.
 - **The blueprint is drawn geometry, not a rendered PDF.** A production build would layer markers over `pdf.js` output.
 - **Export produces a CSV, not yet a real Excel workbook.**
-- **All eleven screens from the original spec are routed and built.** Several of the newer workspace additions in the project nav are not — Notes & assumptions, Assemblies, Labor, Material pricing, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. See [`ROADMAP.md`](ROADMAP.md).
+- **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Labor, Material pricing, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. See [`ROADMAP.md`](ROADMAP.md).
+- **Applying a note is audited but not undoable.** The re-run lands as one attributable entry in the action log; there is no single press that puts the takeoff back. Undo still covers approve, reject, edit, delete, bulk approve, and scale, across a re-run.
 
 ---
 

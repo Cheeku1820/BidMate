@@ -385,6 +385,19 @@ export function createApiStore() {
     await request(`/api/notes/${noteId}`, { method: "DELETE" });
   }
 
+  /** Applies context notes by re-running the engine's output through the
+   *  approval-preserving merge. Distinct from attachEngineTakeoff, which
+   *  replaces wholesale — this one never overwrites approved work.
+   *  A re-run changes the takeoff, so the cached snapshot is invalidated
+   *  exactly like every other mutation in this file (see invalidateCache's
+   *  own comment) rather than left to serve stale totals until the next
+   *  poll happens to notice. */
+  async function reprocess(id, payload) {
+    const result = await request(`/api/projects/${id}/reprocess`, { method: "POST", body: { payload } });
+    invalidateCache();
+    return result;
+  }
+
   return {
     me,
     useProject,
@@ -407,5 +420,6 @@ export function createApiStore() {
     createNote,
     updateNote,
     deleteNote,
+    reprocess,
   };
 }

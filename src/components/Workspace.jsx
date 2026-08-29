@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { SYSTEMS } from "../lib/vocabulary.js";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useWorkspaceContext } from "./project/useWorkspaceContext.js";
 import TopBar from "./TopBar.jsx";
 import SheetsRail from "./SheetsRail.jsx";
@@ -9,6 +9,8 @@ import ItemDetailPanel from "./ItemDetailPanel.jsx";
 import SummaryDrawer from "./SummaryDrawer.jsx";
 import FinishReviewModal from "./FinishReviewModal.jsx";
 import { ScaleModal, EvidenceModal, DeleteModal, HelpModal } from "./MiscModals.jsx";
+import ApplyNotesBanner from "./notes/ApplyNotesBanner.jsx";
+import { unappliedContextNotes } from "./notes/noteVocabulary.js";
 
 /** The review workspace itself (spec §5, screen F) — everything between
  *  signing in and Finish review. Owns local UI state only (filters,
@@ -22,8 +24,33 @@ export default function Workspace() {
     itemError, clearItemError, setPresenceTarget, refresh,
     approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
     me, sheetId, setSheetId, selectedItemId, selectItem, project, projectId,
+    store,
   } = useWorkspaceContext();
   const navigate = useNavigate();
+
+  // Notes (Task 4's listNotes/createNote/updateNote/deleteNote) sit
+  // outside the polled review snapshot -- a note write never changes the
+  // takeoff -- so this screen fetches them itself, the same way
+  // NotesWorkspace.jsx does, purely to know whether the apply banner
+  // below has anything to show. It never writes a note or triggers a
+  // re-run itself; ApplyNotesBanner's action here is a link, not a
+  // button, so there is exactly one place a re-run gets triggered from.
+  const [notes, setNotes] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    store
+      .listNotes(projectId)
+      .then((rows) => {
+        if (alive) setNotes(rows);
+      })
+      .catch(() => {
+        /* the banner just doesn't show; NotesWorkspace surfaces the real error */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [store, projectId]);
+  const unappliedNotes = unappliedContextNotes(notes);
 
   const [filter, setFilter] = useState("all");
   const [sheetQuery, setSheetQuery] = useState("");
@@ -201,6 +228,15 @@ export default function Workspace() {
         onRedo={doRedo}
         onHelp={() => setModal({ kind: "help" })}
         onFinish={() => setModal({ kind: "finish" })}
+      />
+
+      <ApplyNotesBanner
+        count={unappliedNotes.length}
+        action={
+          <Link className="btn btn--primary" to={`/projects/${projectId}/notes`}>
+            Review in notes & assumptions
+          </Link>
+        }
       />
 
       <div className="workspace">

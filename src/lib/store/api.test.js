@@ -327,6 +327,17 @@ describe("attachEngineTakeoff", () => {
 });
 
 
+describe("reprocess", () => {
+  it("posts a re-run to the reprocess endpoint, not to ingest", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ reclassified: 7, preserved: 3, added: 0, removed: 1 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await createApiStore().reprocess("p1", { sheets: [], items: [] });
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/projects/p1/reprocess");
+    expect(out.preserved).toBe(3);
+  });
+});
+
 describe("the store interface", () => {
   /** Every method the components and the snapshot hook actually call,
    *  derived from the call sites (`grep -rn "store\\." src/`) rather than
@@ -349,6 +360,7 @@ describe("the store interface", () => {
     "listProjects",
     "redo",
     "rejectItem",
+    "reprocess",
     "setPresence",
     "setScale",
     "subscribe",

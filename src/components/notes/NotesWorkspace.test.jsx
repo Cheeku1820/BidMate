@@ -12,11 +12,13 @@
    than reading notes off `snapshot`.
    ============================================================ */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import NotesWorkspace from "./NotesWorkspace.jsx";
+import { setUploadedFiles, clearUploadedFiles } from "../../lib/uploadedFiles.js";
+import * as engineClient from "../../lib/engineClient.js";
 
 const NOTE = {
   id: "n1",
@@ -43,6 +45,7 @@ function makeStore({ notes = [] } = {}) {
     createNote: vi.fn().mockResolvedValue({ ...NOTE, id: "new" }),
     updateNote: vi.fn().mockResolvedValue(NOTE),
     deleteNote: vi.fn().mockResolvedValue(undefined),
+    reprocess: vi.fn().mockResolvedValue({ reclassified: 0, preserved: 0, added: 0, removed: 0 }),
   };
 }
 
@@ -52,10 +55,11 @@ vi.mock("../project/useWorkspaceContext.js", () => ({
   useWorkspaceContext: () => context,
 }));
 
-function renderNotes({ notes = [], store = makeStore({ notes }), sheets = [] } = {}) {
+function renderNotes({ notes = [], store = makeStore({ notes }), sheets = [], project = { id: "p1", location: "Warehouse — Riverside, CA" } } = {}) {
   context = {
     store,
     projectId: "p1",
+    project,
     me: { id: "u1", name: "Dana Whitfield" },
     // Fix round 1, finding 3: NoteForm's "which sheet" picker reads
     // sheets off the shared snapshot, the same place
@@ -206,5 +210,71 @@ describe("NotesWorkspace", () => {
 
     await waitFor(() => expect(store.createNote).toHaveBeenCalled());
     expect(store.createNote.mock.calls[0][1].scopeRef).toBe("s1");
+  });
+
+  describe("applying notes and re-running", () => {
+    // A re-run needs the engine's payload for the same drawings the
+    // project was first processed from -- getUploadedFiles(projectId) is
+    // how the client still has them, in memory, for this session. These
+    // two tests exercise the happy and unhappy paths for what happens
+    // once that payload exists and store.reprocess is reached; the
+    // "no files in memory" state (the common one, since ProcessingStatus
+    // clears this map right after the first successful process) gets its
+    // own test below.
+    beforeEach(() => {
+      setUploadedFiles("p1", [{ file: new File([new Uint8Array(1)], "e1.1.pdf", { type: "application/pdf" }), docType: "Drawings" }]);
+      vi.spyOn(engineClient, "estimateProject").mockResolvedValue({ sheets: [], items: [] });
+    });
+
+    afterEach(() => {
+      clearUploadedFiles("p1");
+      vi.restoreAllMocks();
+    });
+
+    it("says how many approved items a re-run left alone", async () => {
+      const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
+      store.reprocess = vi.fn().mockResolvedValue({ reclassified: 7, preserved: 3, added: 0, removed: 0 });
+      renderNotes({ store });
+      await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
+      expect(await screen.findByText(/3 approved items were left unchanged/i)).toBeInTheDocument();
+      expect(screen.getByText(/7 items reclassified/i)).toBeInTheDocument();
+    });
+
+    it("reports a failed re-run with a recovery action", async () => {
+      const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
+      store.reprocess = vi.fn().mockRejectedValue({ code: "request_failed", message: "Couldn't reach the estimate service. Start it in the api folder." });
+      renderNotes({ store });
+      await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
+      expect(await screen.findByText(/Couldn't reach the estimate service/)).toBeInTheDocument();
+    });
+
+    it("only sends context notes to the engine, never a reference-only one", async () => {
+      const store = makeStore({
+        notes: [
+          { ...NOTE, id: "ctx", usage: "context", appliedAt: null, title: "Feeds it" },
+          { ...NOTE, id: "ref", usage: "reference", appliedAt: null, title: "Reference only note" },
+        ],
+      });
+      store.reprocess = vi.fn().mockResolvedValue({ reclassified: 1, preserved: 0, added: 0, removed: 0 });
+      renderNotes({ store });
+      await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
+      await waitFor(() => expect(store.reprocess).toHaveBeenCalled());
+      const sentNotes = engineClient.estimateProject.mock.calls[0][2];
+      expect(sentNotes).toHaveLength(1);
+      expect(sentNotes[0].title).toBe("Feeds it");
+    });
+  });
+
+  it("says plainly when no source drawings remain to re-run, rather than failing obscurely", async () => {
+    // The common case: ProcessingStatus.jsx clears the uploaded-files map
+    // right after the project's first successful process, so by the time
+    // an estimator adds a note and comes back here, this browser simply
+    // doesn't hold the drawings in memory any more.
+    clearUploadedFiles("p1");
+    const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
+    renderNotes({ store });
+    await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
+    expect(await screen.findByText(/no source drawings|drawings aren't available|upload/i)).toBeInTheDocument();
+    expect(store.reprocess).not.toHaveBeenCalled();
   });
 });

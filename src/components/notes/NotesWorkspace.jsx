@@ -16,11 +16,21 @@
    form, field, or menu. This screen has no conversation panel at all
    (deliberately out of scope for this slice); it is the form.
 
-   The apply banner ("Apply notes and re-run") only APPEARS in this
-   task -- wiring an actual re-run is Task 8's job. Its handler is a
-   clearly-labelled placeholder: it must not be a dead control that
-   silently does nothing when clicked, so it surfaces an honest, plain
-   status message rather than performing the re-run.
+   The apply banner ("Apply notes and re-run") wires a real re-run:
+   gather this session's uploaded drawings (uploadedFiles.js), run them
+   back through the engine with the unapplied context notes as the
+   authoritative notes channel (engineClient.js's estimateProject), and
+   hand the resulting payload to the approval-preserving merge
+   (store.reprocess, Task 7). The summary names exactly what the server
+   reported -- reclassified and preserved counts -- never a number this
+   screen invented.
+
+   Uploaded files are held in memory only for the session that uploaded
+   them, and ProcessingStatus.jsx clears them the moment the project's
+   first processing succeeds -- so "no drawings in memory" is the
+   *common* state by the time an estimator is back here adding a note,
+   not a rare edge case. That is handled plainly rather than surfacing
+   as an obscure fetch failure.
    ============================================================ */
 
 import { useCallback, useEffect, useState } from "react";
@@ -28,9 +38,12 @@ import { BadgeCheck, Building2, Calculator, FileText, HelpCircle, Layers, Tag } 
 import AppTopBar from "../shell/AppTopBar.jsx";
 import Modal from "../Modal.jsx";
 import NoteForm from "./NoteForm.jsx";
+import ApplyNotesBanner from "./ApplyNotesBanner.jsx";
 import { CATEGORY_LABELS, calculationEffect, SCOPE_LABELS, unappliedContextNotes } from "./noteVocabulary.js";
 import { formatTimestamp } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
+import { estimateProject } from "../../lib/engineClient.js";
+import { getUploadedFiles } from "../../lib/uploadedFiles.js";
 
 const SCOPE_FILTERS = ["company", "project", "sheet", "item"];
 
@@ -103,7 +116,7 @@ function pluralize(count, singular, plural) {
 }
 
 export default function NotesWorkspace() {
-  const { store, projectId, snapshot } = useWorkspaceContext();
+  const { store, projectId, project, snapshot } = useWorkspaceContext();
 
   const [notes, setNotes] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -113,6 +126,8 @@ export default function NotesWorkspace() {
   const [deleteError, setDeleteError] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [applyMessage, setApplyMessage] = useState(null);
+  const [applyError, setApplyError] = useState(null);
+  const [applyBusy, setApplyBusy] = useState(false);
 
   // The workspace's own sheets, for NoteForm's "which sheet" picker
   // (fix round 1, finding 3) -- read off the same shared snapshot
@@ -205,16 +220,42 @@ export default function NotesWorkspace() {
     }
   }
 
-  // Task 8's placeholder: this screen only has to make the affordance
-  // appear (task-5-brief.md). It must not be a dead control that does
-  // nothing when clicked, so it names the state plainly rather than
-  // pretending to re-run anything. Auto-dismisses on the same schedule
-  // as the shared toast (useReviewStore.js's showToast) rather than
-  // sitting on screen indefinitely (fix round 1, minor).
-  function handleApplyAndRerun() {
-    const id = Date.now();
-    setApplyMessage({ id, text: "Re-running the takeoff from here isn't wired up yet. The notes are saved either way." });
-    setTimeout(() => setApplyMessage((m) => (m && m.id === id ? null : m)), 5000);
+  // The real re-run. Only `usage === "context"` notes are the engine's
+  // authoritative notes channel (a reference-only note must never reach
+  // the classifier) -- `unapplied` is already exactly that set, keyed
+  // the same way the banner counts it, so the two can never disagree
+  // about which notes this run is for.
+  async function handleApplyAndRerun() {
+    setApplyError(null);
+    setApplyBusy(true);
+    try {
+      const uploaded = getUploadedFiles(projectId);
+      if (uploaded.length === 0) {
+        setApplyError(
+          "The source drawings for this project aren't available in this browser. Upload the drawing set again to re-run the takeoff.",
+        );
+        return;
+      }
+      const contextNotes = unapplied.map((n) => ({
+        scope: n.scope,
+        title: n.title,
+        body: n.body,
+        source_ref: n.sourceRef,
+      }));
+      const payload = await estimateProject(uploaded, project?.location || "", contextNotes);
+      const result = await store.reprocess(projectId, payload);
+      const id = Date.now();
+      setApplyMessage({
+        id,
+        text: `${result.reclassified} ${result.reclassified === 1 ? "item" : "items"} reclassified. ${result.preserved} approved ${result.preserved === 1 ? "item was" : "items were"} left unchanged.`,
+      });
+      setTimeout(() => setApplyMessage((m) => (m && m.id === id ? null : m)), 5000);
+      await load();
+    } catch (err) {
+      setApplyError(err?.message || "The re-run couldn't be completed. Try again.");
+    } finally {
+      setApplyBusy(false);
+    }
   }
 
   const addNoteButton = (
@@ -258,21 +299,23 @@ export default function NotesWorkspace() {
           <>
             <p className="notes-summary tabular">{summaryParts.join(" · ")}</p>
 
-            {unapplied.length > 0 ? (
-              <div className="notes-apply-banner">
-                <p>
-                  {pluralize(unapplied.length, "note", "notes")} marked to feed the takeoff{" "}
-                  {unapplied.length === 1 ? "hasn't" : "haven't"} been carried into it yet.
-                </p>
-                <button type="button" className="btn btn--primary" onClick={handleApplyAndRerun}>
-                  Apply notes and re-run
+            <ApplyNotesBanner
+              count={unapplied.length}
+              action={
+                <button type="button" className="btn btn--primary" onClick={handleApplyAndRerun} disabled={applyBusy}>
+                  {applyBusy ? "Applying…" : "Apply notes and re-run"}
                 </button>
-              </div>
-            ) : null}
+              }
+            />
             {applyMessage ? (
-              <p className="notes-apply-banner-note" role="status">
+              <p className="notes-apply-banner-note tabular" role="status">
                 {applyMessage.text}
               </p>
+            ) : null}
+            {applyError ? (
+              <div className="warncard warncard--missing" role="alert">
+                <p>{applyError}</p>
+              </div>
             ) : null}
 
             <div className="filter-chips" role="group" aria-label="Filter notes">

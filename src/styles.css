@@ -146,6 +146,7 @@ button {
 
 @media (max-width: 1023px) {
   .app > .topbar,
+  .app > .notes-apply-banner,
   .app > .workspace,
   .app > .drawer {
     display: none;

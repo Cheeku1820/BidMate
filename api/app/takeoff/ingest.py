@@ -17,6 +17,7 @@ against today.
 """
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 
 from app.errors import DomainError
@@ -183,6 +184,14 @@ def map_payload(payload: dict) -> MappedTakeoff:
         name = str(raw.get("name") or "Unclassified item")
         system = str(raw.get("system") or "Unknown")
         warning = raw.get("warning")
+        placements = [
+            [normalize_point(p[0], width, SHEET_SPACE_W), normalize_point(p[1], height, SHEET_SPACE_H)]
+            for p in (raw.get("placements") or [])
+            if isinstance(p, (list, tuple)) and len(p) >= 2
+        ]
+        n_places = len(placements) or 1
+        png_b64 = raw.get("evidence_png_b64")
+        sheet_number = next((s["number"] for s in sheets if s["key"] == key), "")
         items.append({
             "sheet_key": key,
             "symbol": str(raw.get("symbol") or "") or infer_symbol(name, system),
@@ -195,11 +204,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
             "status": str(raw.get("status") or "ready"),
             "x": normalize_point(raw.get("x"), width, SHEET_SPACE_W),
             "y": normalize_point(raw.get("y"), height, SHEET_SPACE_H),
-            "placements": [
-                [normalize_point(p[0], width, SHEET_SPACE_W), normalize_point(p[1], height, SHEET_SPACE_H)]
-                for p in (raw.get("placements") or [])
-                if isinstance(p, (list, tuple)) and len(p) >= 2
-            ],
+            "placements": placements,
             "material_cost": raw.get("material_cost") or 0,
             "labor_hours": raw.get("labor_hours") or 0,
             "labor_cost": raw.get("labor_cost") or 0,
@@ -212,6 +217,12 @@ def map_payload(payload: dict) -> MappedTakeoff:
             # None or a KeyError.
             "source_tag": str(raw.get("tag") or ""),
             "warning": validate_warning(warning) if warning else None,
+            "evidence": {
+                "detail": f"Counted from the drawing at {n_places} location{'s' if n_places != 1 else ''}",
+                "sheet": sheet_number,
+                "has_image": bool(png_b64),
+            },
+            "evidence_png": base64.b64decode(png_b64) if png_b64 else None,
         })
 
     return MappedTakeoff(sheets=sheets, items=items)

@@ -1,6 +1,7 @@
 """app/takeoff/ingest.py -- the engine payload to domain mapping, moved
 server-side from the client's seed-ingest.js. Pure functions: no database.
 """
+import base64
 import pytest
 
 from app.errors import DomainError
@@ -225,3 +226,30 @@ def test_map_payload_tolerates_a_missing_tag():
     payload = _payload()
     payload["items"][0].pop("tag", None)
     assert map_payload(payload).items[0]["source_tag"] == ""
+
+
+def test_map_payload_populates_evidence_metadata():
+    payload = _payload()
+    payload["items"][0]["evidence_png_b64"] = base64.b64encode(b"fake-png").decode("ascii")
+    mapped = map_payload(payload)
+    item = mapped.items[0]
+    assert item["evidence"]["sheet"] == "E2.1"
+    assert item["evidence"]["has_image"] is True
+    assert "2 locations" in item["evidence"]["detail"]
+    assert item["evidence_png"] == b"fake-png"
+
+
+def test_map_payload_evidence_has_image_false_without_a_crop():
+    payload = _payload()
+    mapped = map_payload(payload)
+    item = mapped.items[0]
+    assert item["evidence"]["has_image"] is False
+    assert item["evidence_png"] is None
+
+
+def test_map_payload_evidence_detail_is_singular_for_one_location():
+    payload = _payload()
+    payload["items"][0]["placements"] = [[1000, 750]]
+    mapped = map_payload(payload)
+    assert "1 location" in mapped.items[0]["evidence"]["detail"]
+    assert "1 locations" not in mapped.items[0]["evidence"]["detail"]

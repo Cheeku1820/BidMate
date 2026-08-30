@@ -9,6 +9,7 @@ multiplies counts by unit costs here, in one place.
 
 from __future__ import annotations
 
+import base64
 import re
 from collections import defaultdict
 
@@ -182,7 +183,7 @@ def _sheet_no(sheets, page_index) -> str:
     return "?"
 
 
-def _compute(path: str, location: str, context: str = "", estimator_notes: list[dict] | None = None):
+def _compute(path: str, location: str, context: str = "", estimator_notes: list[dict] | None = None, with_evidence: bool = False):
     """Shared pipeline: returns (per-cluster rows, sheets, meta). Each row
     carries coordinates and cost. `context` is extra text pulled from the
     other project documents (specs, addenda) -- untrusted -- so the
@@ -190,7 +191,9 @@ def _compute(path: str, location: str, context: str = "", estimator_notes: list[
     drawings. `estimator_notes` are typed records a person wrote for this
     project; they reach the classifier through their own labelled block,
     never merged into `context`, so document text can never be promoted
-    into something framed as an instruction."""
+    into something framed as an instruction. When `with_evidence` is True,
+    each row includes an evidence_png_b64 key with a base64-encoded crop
+    of the source page around the item's placement(s)."""
     sheets = documents.detect_sheets(path)
     clusters = counting.count(path, sheets)
 
@@ -232,6 +235,15 @@ def _compute(path: str, location: str, context: str = "", estimator_notes: list[
         classified = classification.classify(clusters, sheets)
         for c, item in zip(clusters, classified):
             rows.append(_row_from_catalog(item, c, sheets, labor_rate, material_factor))
+
+    if with_evidence:
+        dims_by_page = {s.page_index: (s.width_pt, s.height_pt) for s in sheets}
+        for row in rows:
+            page_index = row["page"] - 1
+            width_pt, height_pt = dims_by_page.get(page_index, (0, 0))
+            placements = row["placements"] or [(row["x"], row["y"])]
+            png = documents.render_evidence_crop(path, page_index, width_pt, height_pt, placements)
+            row["evidence_png_b64"] = base64.b64encode(png).decode("ascii") if png else None
 
     meta = {
         "location": location,
@@ -278,7 +290,7 @@ def full_takeoff(path: str, location: str, context: str = "", estimator_notes: l
     group, positioned on its sheet). Each sheet carries an `id` (unique
     within this file, by page) that items reference, so a merge across
     several drawing files can keep sheet references unambiguous."""
-    rows, sheets, meta = _compute(path, location, context, estimator_notes)
+    rows, sheets, meta = _compute(path, location, context, estimator_notes, with_evidence=True)
     return {
         **meta,
         "sheets": [

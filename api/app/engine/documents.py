@@ -45,13 +45,28 @@ def _is_raster(page: pymupdf.Page) -> bool:
     return cover > 0.6 and len(page.get_drawings()) < 50
 
 
-def _sheet_number(text: str) -> str:
-    ids = SHEET_ID.findall(text)
+def _sheet_number(page: pymupdf.Page, text: str) -> str:
+    """The sheet's own number, read from its title block first.
+
+    The title block is the one place on the page an E-number is
+    guaranteed to name *this* sheet rather than a sheet it references —
+    a detail callout bubble ("see 2/E5.1") can otherwise repeat a
+    different sheet's number more often than the title block states this
+    one's, and the most-frequent heuristic below would pick the wrong
+    sheet. RIGHT_STRIP is the same boundary `detect_sheets` already uses
+    to exclude the title block from device counting, reused here rather
+    than duplicated so the two never drift apart.
+    """
+    w, h = page.rect.width, page.rect.height
+    tb_text = page.get_text("text", clip=pymupdf.Rect(w * RIGHT_STRIP, 0, w, h))
+    ids = SHEET_ID.findall(tb_text)
+    if not ids:
+        # Some sets have no machine-readable text in a consistent
+        # title-block box -- fall back to the whole page rather than
+        # returning nothing.
+        ids = SHEET_ID.findall(text)
     if not ids:
         return ""
-    # The sheet's own number is the one that repeats most in its own text
-    # (title block + references back to itself); good enough for v1, and
-    # the estimator can correct it.
     return max(set(ids), key=ids.count)
 
 
@@ -74,7 +89,7 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
         if _is_raster(page):
             sheets.append(
                 DetectedSheet(
-                    page_index=pno, number=_sheet_number(text), title="Electrical",
+                    page_index=pno, number=_sheet_number(page, text), title="Electrical",
                     discipline="Electrical", scale="", width_pt=w, height_pt=h, region=region,
                     unreadable_reason="Scanned sheet — vector reading isn't available yet, so it was not counted.",
                 )
@@ -86,7 +101,7 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
         sched = text if any(k in text.upper() for k in SCHEDULE_KEYWORDS) else ""
         sheets.append(
             DetectedSheet(
-                page_index=pno, number=_sheet_number(text), title="Electrical plan",
+                page_index=pno, number=_sheet_number(page, text), title="Electrical plan",
                 discipline="Electrical", scale=_scale(text), width_pt=w, height_pt=h,
                 region=region, schedule_text=sched,
             )

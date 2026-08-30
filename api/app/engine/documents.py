@@ -31,6 +31,17 @@ SCALE = re.compile(r'\d{1,2}/\d{1,2}"?\s*=\s*\d')
 RIGHT_STRIP = 0.82
 BORDER = 0.03
 
+# A crop around one item's counted location(s), for the item panel's
+# evidence view. A point item gets a fixed radius around its single
+# coordinate; a multi-placement cluster gets the bounding box of every
+# placement plus a margin, so the crop shows the group Counting actually
+# found rather than one instance of it -- see render_evidence_crop.
+EVIDENCE_POINT_RADIUS_PT = 90
+EVIDENCE_CLUSTER_MARGIN_PT = 40
+EVIDENCE_MAX_PX = 640      # longest output edge, in pixels
+EVIDENCE_MIN_ZOOM = 0.5
+EVIDENCE_MAX_ZOOM = 4.0
+
 SCHEDULE_KEYWORDS = ("SCHEDULE", "LUMINAIRE", "FIXTURE", "LEGEND", "MANUFACTURER")
 
 
@@ -194,3 +205,60 @@ def render_page_png_bytes(pdf_bytes: bytes, page_index: int, zoom: float = 1.6) 
     page = doc[page_index]
     pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
     return pix.tobytes("png")
+
+
+def render_evidence_crop(
+    path: str,
+    page_index: int,
+    page_width_pt: float,
+    page_height_pt: float,
+    placements: list[tuple[float, float]],
+) -> bytes | None:
+    """A tight PNG crop of the source page around one item's counted
+    location(s), for the item panel's evidence view.
+
+    Zoom is chosen so the crop's longest edge lands near
+    EVIDENCE_MAX_PX regardless of how large the bounding box is -- a
+    cluster spread across most of a sheet renders at a lower zoom
+    rather than having placements cropped out of frame; nothing here
+    ever discards a placement to keep zoom high.
+
+    Returns None on any failure -- a missing crop must never fail the
+    takeoff, the same principle the vision pass in estimate_service.py
+    already follows.
+    """
+    if not placements or page_width_pt <= 0 or page_height_pt <= 0:
+        return None
+    try:
+        xs = [p[0] for p in placements]
+        ys = [p[1] for p in placements]
+        if len(placements) == 1:
+            x, y = xs[0], ys[0]
+            x0 = x - EVIDENCE_POINT_RADIUS_PT
+            y0 = y - EVIDENCE_POINT_RADIUS_PT
+            x1 = x + EVIDENCE_POINT_RADIUS_PT
+            y1 = y + EVIDENCE_POINT_RADIUS_PT
+        else:
+            x0 = min(xs) - EVIDENCE_CLUSTER_MARGIN_PT
+            y0 = min(ys) - EVIDENCE_CLUSTER_MARGIN_PT
+            x1 = max(xs) + EVIDENCE_CLUSTER_MARGIN_PT
+            y1 = max(ys) + EVIDENCE_CLUSTER_MARGIN_PT
+
+        x0 = max(0.0, x0)
+        y0 = max(0.0, y0)
+        x1 = min(float(page_width_pt), x1)
+        y1 = min(float(page_height_pt), y1)
+        if x1 <= x0 or y1 <= y0:
+            return None
+
+        bbox_w, bbox_h = x1 - x0, y1 - y0
+        zoom = EVIDENCE_MAX_PX / max(bbox_w, bbox_h)
+        zoom = max(EVIDENCE_MIN_ZOOM, min(EVIDENCE_MAX_ZOOM, zoom))
+
+        doc = pymupdf.open(path)
+        page = doc[page_index]
+        clip = pymupdf.Rect(x0, y0, x1, y1)
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=clip)
+        return pix.tobytes("png")
+    except Exception:  # noqa: BLE001 -- a missing crop must never fail the takeoff
+        return None

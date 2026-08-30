@@ -49,3 +49,57 @@ def test_sheet_number_falls_back_to_whole_page_when_title_block_is_silent(tmp_pa
     doc = pymupdf.open(path)
     page = doc[0]
     assert documents._sheet_number(page, page.get_text("text")) == "E3.1"
+
+
+def _one_page_pdf(tmp_path, width=1000, height=800):
+    doc = pymupdf.open()
+    doc.new_page(width=width, height=height)
+    path = tmp_path / "page.pdf"
+    doc.save(path)
+    doc.close()
+    return str(path)
+
+
+def test_evidence_crop_returns_a_valid_png_for_a_point_item(tmp_path):
+    path = _one_page_pdf(tmp_path)
+    png = documents.render_evidence_crop(path, 0, 1000, 800, [(500, 400)])
+    assert png is not None
+    doc = pymupdf.open(stream=png, filetype="png")
+    assert doc[0].rect.width > 0 and doc[0].rect.height > 0
+
+
+def test_evidence_crop_covers_every_placement_in_a_cluster(tmp_path):
+    """A crop for a scattered cluster must not silently drop the ones
+    farthest from the centroid -- render at a bounding box that contains
+    every placement, even if that means a lower zoom."""
+    path = _one_page_pdf(tmp_path)
+    placements = [(50, 50), (900, 700)]
+    png = documents.render_evidence_crop(path, 0, 1000, 800, placements)
+    assert png is not None
+
+
+def test_evidence_crop_clamps_to_the_page_at_a_corner(tmp_path):
+    """A point right at the page edge must not ask pymupdf for a clip
+    rect that extends past the page (a Rect with a negative or
+    out-of-bounds coordinate is legal in pymupdf but must not be handed
+    a nonsensical crop for a corner device)."""
+    path = _one_page_pdf(tmp_path)
+    png = documents.render_evidence_crop(path, 0, 1000, 800, [(2, 2)])
+    assert png is not None
+
+
+def test_evidence_crop_returns_none_for_a_bad_page_index(tmp_path):
+    path = _one_page_pdf(tmp_path)
+    assert documents.render_evidence_crop(path, 7, 1000, 800, [(500, 400)]) is None
+
+
+def test_evidence_crop_returns_none_with_no_placements(tmp_path):
+    path = _one_page_pdf(tmp_path)
+    assert documents.render_evidence_crop(path, 0, 1000, 800, []) is None
+
+
+def test_evidence_crop_returns_none_with_unmeasured_page_dims(tmp_path):
+    """A sheet the Documents agent couldn't measure (width/height 0) must
+    not crash the takeoff by dividing by zero when computing zoom."""
+    path = _one_page_pdf(tmp_path)
+    assert documents.render_evidence_crop(path, 0, 0, 0, [(500, 400)]) is None

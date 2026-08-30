@@ -259,3 +259,32 @@ def test_source_tag_reaches_the_snapshot(client, db, project, signed_in_user):
     assert _ingest(client, project.id, payload=payload).status_code == 200
     snap = client.get(f"/api/projects/{project.id}/snapshot").json()
     assert snap["items"][0]["source_tag"] == "R"
+
+
+import base64
+
+from app.takeoff.models import ItemEvidenceImage
+
+
+def test_ingest_stores_evidence_metadata_and_image(client, db, project, signed_in_user):
+    payload = {
+        "sheets": PAYLOAD["sheets"],
+        "items": [{**PAYLOAD["items"][0], "evidence_png_b64": base64.b64encode(b"fake-png").decode("ascii")}],
+    }
+    response = _ingest(client, project.id, payload=payload)
+    assert response.status_code == 200, response.text
+
+    item = db.scalars(select(Item).where(Item.project_id == project.id)).one()
+    assert item.evidence["sheet"] == "E2.1"
+    assert item.evidence["has_image"] is True
+
+    image = db.get(ItemEvidenceImage, item.id)
+    assert image is not None and image.png == b"fake-png"
+
+
+def test_ingest_without_a_crop_leaves_no_image_row(client, db, project, signed_in_user):
+    response = _ingest(client, project.id)  # PAYLOAD has no evidence_png_b64
+    assert response.status_code == 200, response.text
+    item = db.scalars(select(Item).where(Item.project_id == project.id)).one()
+    assert item.evidence["has_image"] is False
+    assert db.get(ItemEvidenceImage, item.id) is None

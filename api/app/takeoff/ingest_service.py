@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import actions
+from app.takeoff.evidence_images import upsert_evidence_image
 from app.takeoff.ingest import map_payload
 from app.takeoff.models import Item, Project, ReviewStatus, Sheet, Warning, WarningReason
 
@@ -104,8 +105,11 @@ def ingest_takeoff(
             material_cost=row["material_cost"], labor_hours=row["labor_hours"],
             labor_cost=row["labor_cost"], total_cost=row["total_cost"],
             ai_confirmed=row["ai_confirmed"], source_tag=row["source_tag"],
+            evidence=row["evidence"],
         )
         db.add(item)
+        db.flush()
+        upsert_evidence_image(db, item.id, row["evidence_png"])
         if row["warning"]:
             w = row["warning"]
             db.add(Warning(

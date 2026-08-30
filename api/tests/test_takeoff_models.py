@@ -88,3 +88,31 @@ def test_item_carries_cost_and_placements(db, project, sheet):
     assert item.total_cost == Decimal("1397.78")
     assert item.placements == [[120, 340], [180, 340]]
     assert item.ai_confirmed is True
+
+
+def test_item_evidence_image_cascades_on_item_delete(db, item):
+    """The image is a cache of what the drawing showed at that item's
+    location, not reviewable state -- deleting the item deletes the
+    image with it, same as Warning already does. `item` is the shared
+    conftest.py fixture (a real, already-flushed Item row)."""
+    from app.takeoff.models import ItemEvidenceImage
+
+    db.add(ItemEvidenceImage(item_id=item.id, png=b"fake-png-bytes"))
+    db.commit()
+
+    db.delete(item)
+    db.commit()
+
+    assert db.get(ItemEvidenceImage, item.id) is None
+
+
+def test_item_evidence_image_is_not_in_the_undo_snapshot_types():
+    """The undo/snapshot machinery (snapshots._column_snapshot) walks
+    every mapped column of Item automatically -- this table must stay
+    outside that entirely, or a delete's full-row snapshot would need to
+    JSON-encode raw PNG bytes. Nothing about an evidence image is ever
+    undone, so it has no business in ITEM_SNAPSHOT_TYPES."""
+    from app.takeoff.snapshots import ITEM_SNAPSHOT_TYPES
+
+    assert "evidence_image" not in ITEM_SNAPSHOT_TYPES
+    assert "png" not in ITEM_SNAPSHOT_TYPES

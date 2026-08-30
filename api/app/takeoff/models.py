@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index,
-    Integer, Numeric, String, Text, func, text,
+    Integer, LargeBinary, Numeric, String, Text, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -190,6 +190,35 @@ class Item(Base):
     # `app.takeoff.concurrency` and every module that mutates an `Item`.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ItemEvidenceImage(Base):
+    """A crop of the source drawing around one item's counted
+    location(s) -- what "View evidence" actually shows. Deliberately its
+    own table, not a column on Item: `snapshots._column_snapshot()`
+    walks every mapped column of Item automatically for the delete-undo
+    snapshot, and this codebase has already hit "a new Item column
+    breaks decode_snapshot()" twice. Nothing about this row is ever
+    reviewed or undone -- it is a cache of what the drawing showed, not
+    estimator state -- so it stays outside the action-log/undo system
+    entirely rather than being taught to it.
+
+    One row per item at most: `item_id` is both the primary key and the
+    foreign key, so a re-run's upsert (see evidence_images.py) never has
+    to reason about more than one existing row per item. `ON DELETE
+    CASCADE` means deleting an item (or undoing back through a delete,
+    which recreates the Item row) does not restore a lost image -- it
+    starts with none, the same honest state as an item that never had
+    one.
+    """
+
+    __tablename__ = "item_evidence_images"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("items.id", ondelete="CASCADE"), primary_key=True
+    )
+    png: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Warning(Base):

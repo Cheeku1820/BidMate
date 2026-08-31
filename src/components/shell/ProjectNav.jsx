@@ -106,8 +106,8 @@ const GROUPS = [
     title: "Cost",
     items: [
       { slug: "assemblies", label: "Assemblies", built: false, Icon: Boxes },
-      { slug: "labor", label: "Labor", built: false, Icon: Users },
-      { slug: "pricing", label: "Material pricing", built: false, Icon: DollarSign },
+      { slug: "labor", label: "Labor", built: true, Icon: Users },
+      { slug: "pricing", label: "Material pricing", built: true, Icon: DollarSign },
       { slug: "estimate", label: "Estimate summary", built: false, Icon: Calculator },
     ],
   },

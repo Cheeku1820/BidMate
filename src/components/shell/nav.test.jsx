@@ -171,12 +171,24 @@ describe("ProjectNav", () => {
     expect(within(nav).getByRole("link", { name: /^export/i })).toHaveAttribute("href", "/projects/p1/export");
 
     const disabled = disabledItems(nav);
-    // 13 workspaces total, minus the seven now built: overview, blueprint
+    // 13 workspaces total, minus the nine now built: overview, blueprint
     // takeoff, takeoff spreadsheet, documents (intake), notes &
-    // assumptions, export, and project settings.
-    expect(disabled).toHaveLength(6);
+    // assumptions, labor, material pricing, export, and project settings.
+    expect(disabled).toHaveLength(4);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("renders Labor and Material pricing as enabled workspace links", () => {
+    renderProjectNav();
+    const nav = screen.getByRole("navigation", { name: /project workspaces/i });
+    expect(within(nav).getByRole("link", { name: /^labor/i })).toHaveAttribute("href", "/projects/p1/labor");
+    expect(within(nav).getByRole("link", { name: /^material pricing/i })).toHaveAttribute(
+      "href",
+      "/projects/p1/pricing",
+    );
+    expect(screen.queryByText(/labor.*not built yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/material pricing.*not built yet/i)).not.toBeInTheDocument();
   });
 });
 

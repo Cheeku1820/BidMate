@@ -17,11 +17,13 @@
    prejudge.
    ============================================================ */
 
-import { STATUS } from "../../lib/data.js";
+import { STATUS } from "../../lib/vocabulary.js";
 
 /** The absent-value mark. A dash reads as "nothing here" where an empty
  *  cell reads as an oversight. */
 const NONE = "—";
+
+const money = (n) => "$" + Math.round(Number(n)).toLocaleString();
 
 export const COLUMNS = [
   {
@@ -58,6 +60,28 @@ export const COLUMNS = [
     render: (item, { sheetsById }) => sheetsById[item.sheetId]?.number ?? NONE,
   },
   { key: "notes", label: "Notes", align: "left", render: (item) => item.notes || NONE },
+  // Cost columns are populated only for a priced takeoff. An item the
+  // pricing step never reached carries zero, and zero is not a price --
+  // it shows a dash rather than a fabricated $0, the same absent-vs-empty
+  // rule the columns above follow.
+  {
+    key: "materialCost",
+    label: "Material",
+    align: "right",
+    render: (item) => (item.materialCost ? money(item.materialCost) : NONE),
+  },
+  {
+    key: "laborHours",
+    label: "Labor hrs",
+    align: "right",
+    render: (item) => (item.laborHours ? item.laborHours : NONE),
+  },
+  {
+    key: "totalCost",
+    label: "Total",
+    align: "right",
+    render: (item) => (item.totalCost ? money(item.totalCost) : NONE),
+  },
 ];
 
 /** Description and notes are long and push the numeric columns off the

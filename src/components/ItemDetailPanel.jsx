@@ -1,7 +1,7 @@
 import { Check, Pencil, CircleSlash, Trash2, ChevronLeft, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
 import Pill from "./Pill.jsx";
 import { SYMBOL_LABELS } from "./Symbols.jsx";
-import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/data.js";
+import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/vocabulary.js";
 
 /** Right panel: selected item (spec §5, screen F). Renders the review
  *  progress summary when nothing is selected, or the full item detail
@@ -11,11 +11,12 @@ import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/data.js";
  *  recover, right next to the evidence it concerns (DESIGN.md; task-
  *  16-brief.md §4). */
 export default function ItemDetailPanel({
-  sel, sheets, edit, onStartEdit, onChangeEdit, onSaveEdit, onCancelEdit,
+  sel, sheets, currentSheet, edit, onStartEdit, onChangeEdit, onSaveEdit, onCancelEdit,
   onApprove, onReject, onRequestDelete, onShowEvidence, onStep, stepIndex, stepCount,
   itemError, onRefreshItem, onDismissItemError,
   counts, itemsTotal, onNextIssue,
 }) {
+  const aiReading = currentSheet?.aiReading;
   if (!sel) {
     return (
       <aside className="detail" aria-label="Selected item">
@@ -47,8 +48,30 @@ export default function ItemDetailPanel({
             <p className="value" style={{ marginTop: 16, color: "var(--green)", fontWeight: 600 }}>Every item has been reviewed.</p>
           )}
 
-          <p className="label">On this sheet</p>
-          <p className="value value--muted">Select a symbol on the drawing to review its details, or press J to step through items.</p>
+          {aiReading ? (
+            <div className="ai-reading">
+              <p className="label">What this sheet shows · {currentSheet?.number}</p>
+              <p className="value value--muted">{aiReading.summary}</p>
+              {Array.isArray(aiReading.devices) && aiReading.devices.length > 0 && (
+                <ul className="ai-reading-list">
+                  {aiReading.devices.map((d, i) => (
+                    <li key={i}>
+                      <span className="tabular ai-reading-count">{d?.count}</span>
+                      <span>{d?.name}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="value value--muted ai-reading-note">
+                Taken from the drawing itself — cross-check it against the counted takeoff.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="label">On this sheet</p>
+              <p className="value value--muted">Select a symbol on the drawing to review its details, or press J to step through items.</p>
+            </>
+          )}
         </div>
       </aside>
     );
@@ -88,6 +111,10 @@ export default function ItemDetailPanel({
           <>
             <h2>{sel.name}</h2>
             <p className="value value--muted" style={{ margin: "6px 0 0" }}>{sel.description}</p>
+
+            {sel.aiConfirmed ? (
+              <p className="ai-confirmed">✓ Confirmed against the drawing</p>
+            ) : null}
 
             <p className="label">Quantity</p>
             <p className="qty tabular">

@@ -18,8 +18,9 @@ user's display name, not their id).
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 from app.collab.schemas import PresenceOut
@@ -87,6 +88,25 @@ class ItemOut(BaseModel):
     # depending on unordered query return order. Sorted by (reason, id) in
     # snapshot.py's query so the order is stable across polls.
     warnings: list[WarningOut] = Field(default_factory=list)
+    # Cost, written by ingest and read by the takeoff table and the
+    # export. Decimal on the wire exactly as `quantity` above is -- these
+    # are money, and the client's api-mapping.js converts both the same
+    # way. The engine stops at total direct cost; markup, overhead, and
+    # profit are an estimator-owned layer with no field here.
+    material_cost: Decimal = Decimal("0")
+    labor_hours: Decimal = Decimal("0")
+    labor_cost: Decimal = Decimal("0")
+    total_cost: Decimal = Decimal("0")
+    # Every coordinate a counted cluster was found at, in the same
+    # 1000x750 sheet space `x`/`y` uses. Without it a cluster of 47
+    # counted devices renders as a single marker.
+    placements: list | None = None
+    ai_confirmed: bool = False
+    # Counting's cluster tag, carried through ingest unchanged (Task 3).
+    # A drafting tag a human drew on the sheet ("R", "F2"), not a
+    # processing internal -- legitimate estimator-facing data, and the
+    # merge key a re-run uses to recognise an item it already produced.
+    source_tag: str = ""
 
     model_config = MODEL_CONFIG
 
@@ -101,6 +121,17 @@ class SheetOut(BaseModel):
     scale_options: list[str]
     plan: str
     superseded: bool = False
+    # Ingest metadata the canvas needs: the rendered page image is
+    # addressed by (takeoff_id, page_index), and marker coordinates were
+    # normalized against this page's own point dimensions.
+    takeoff_id: str = ""
+    page_index: int = 0
+    width_pt: int = 0
+    height_pt: int = 0
+    # A sheet the engine could not read says so, with a reason. Returning
+    # it as simply empty would let silence read as completeness.
+    unreadable_reason: str = ""
+    ai_reading: dict | None = None
 
     model_config = MODEL_CONFIG
 
@@ -302,3 +333,94 @@ class UndoRedoOut(BaseModel):
     performed: bool
     label: str | None = None
     snapshot: SnapshotOut | None = None
+
+
+class TakeoffIngestIn(BaseModel):
+    """The engine's payload, plus the estimator's explicit consent to
+    replace approved work (see ingest_service for when that is required)."""
+
+    payload: dict
+    confirm_replace: bool = False
+
+
+class TakeoffIngestOut(BaseModel):
+    sheets: int
+    items: int
+
+
+class ReprocessIn(BaseModel):
+    """The engine's payload from a re-run. Unlike TakeoffIngestIn, there
+    is no `confirm_replace` -- this endpoint never replaces wholesale, so
+    there is nothing to consent to."""
+
+    payload: dict
+
+
+class ReprocessOut(BaseModel):
+    reclassified: int
+    preserved: int
+    added: int
+    removed: int
+
+
+NOTE_SCOPES = ("company", "project", "sheet", "item")
+NOTE_CATEGORIES = (
+    "existing_condition", "exclusion", "customer_instruction",
+    "labor_consideration", "company_rule",
+)
+NOTE_STATUSES = ("confirmed", "open")
+NOTE_USAGES = ("reference", "context")
+
+
+class NoteOut(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    scope: str
+    scope_ref: uuid.UUID | None
+    title: str
+    body: str
+    category: str
+    status: str
+    rfi_needed: bool
+    usage: str
+    source_ref: str
+    obsolete_after_revision: str
+    author_name: str
+    created_at: datetime
+    updated_at: datetime
+    applied_at: datetime | None
+
+
+class NoteCreateIn(BaseModel):
+    """`usage` defaults to reference: a note is documentation until the
+    estimator deliberately says it should feed the engine."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Literal["company", "project", "sheet", "item"] = "project"
+    scope_ref: uuid.UUID | None = None
+    title: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1)
+    category: Literal["existing_condition", "exclusion", "customer_instruction",
+                      "labor_consideration", "company_rule"]
+    status: Literal["confirmed", "open"] = "open"
+    rfi_needed: bool = False
+    usage: Literal["reference", "context"] = "reference"
+    source_ref: str = ""
+    obsolete_after_revision: str = ""
+
+
+class NoteUpdateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scope: Literal["company", "project", "sheet", "item"] | None = None
+    scope_ref: uuid.UUID | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    body: str | None = Field(default=None, min_length=1)
+    category: Literal["existing_condition", "exclusion", "customer_instruction",
+                      "labor_consideration", "company_rule"] | None = None
+    status: Literal["confirmed", "open"] | None = None
+    rfi_needed: bool | None = None
+    usage: Literal["reference", "context"] | None = None
+    source_ref: str | None = None
+    obsolete_after_revision: str | None = None

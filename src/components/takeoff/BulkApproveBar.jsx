@@ -20,7 +20,7 @@
 
 import { AlertCircle, AlertTriangle } from "lucide-react";
 import { approvableInBulk } from "../../lib/rules.js";
-import { STATUS } from "../../lib/data.js";
+import { STATUS } from "../../lib/vocabulary.js";
 
 export default function BulkApproveBar({ checkedItems, onApprove, onClear, result }) {
   if (checkedItems.length === 0 && !result) return null;

@@ -31,8 +31,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import Pill, { displayStatus } from "../Pill.jsx";
 import BulkApproveBar from "./BulkApproveBar.jsx";
-import SampleBanner from "../documents/SampleBanner.jsx";
-import { STATUS } from "../../lib/data.js";
+import { STATUS } from "../../lib/vocabulary.js";
+import { countsTowardTotals } from "../../lib/rules.js";
 import { timeOf } from "../../lib/format.js";
 import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
@@ -73,7 +73,7 @@ const FILTER_SHORT_LABEL = { ready: "Ready", attention: "Attention", missing: "M
 const LOCKED_COLUMNS = new Set(["status", "name"]);
 
 export default function TakeoffSpreadsheet() {
-  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove, saved, toast, dismissToast, undo, project } =
+  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove, saved, toast, dismissToast, undo } =
     useWorkspaceContext();
 
   const [search, setSearch] = useState("");
@@ -109,6 +109,18 @@ export default function TakeoffSpreadsheet() {
   const visibleColumns = useMemo(() => COLUMNS.filter((c) => visible.has(c.key)), [visible]);
 
   const allItems = snapshot?.items ?? [];
+
+  // Running estimate total, from the per-item cost a priced takeoff
+  // carries. Membership is countsTowardTotals -- the one predicate the
+  // store's totals and the export preview also use -- so an item on a
+  // superseded sheet is excluded here exactly as it is everywhere else,
+  // rather than a local `!rejected` filter quietly counting it in one
+  // place and not the other. The strip shows only when there is cost.
+  const costItems = allItems.filter((i) => countsTowardTotals(i, sheetsById));
+  const estimateTotal = costItems.reduce((sum, i) => sum + (i.totalCost || 0), 0);
+  const laborHoursTotal = costItems.reduce((sum, i) => sum + (i.laborHours || 0), 0);
+  const attentionCount = costItems.filter((i) => i.status === "attention").length;
+  const hasCost = costItems.some((i) => i.totalCost > 0);
 
   const rows = useMemo(() => {
     // Rejected is a flag, not a status (CLAUDE.md) -- it is excluded
@@ -206,7 +218,6 @@ export default function TakeoffSpreadsheet() {
   return (
     <>
       <AppTopBar title="Takeoff" saveState={saveStateText(saved)} />
-      {project?.sample ? <SampleBanner /> : null}
 
       <div className="page">
         <h1 className="page-heading">Takeoff spreadsheet</h1>
@@ -230,6 +241,21 @@ export default function TakeoffSpreadsheet() {
             </div>
           ) : (
             <>
+              {hasCost ? (
+                <div className="estimate-strip">
+                  <div>
+                    <span className="estimate-strip__label">Estimated total direct cost</span>
+                    <span className="estimate-strip__total tabular">
+                      ${Math.round(estimateTotal).toLocaleString()}
+                    </span>
+                  </div>
+                  <span className="muted tabular">
+                    {costItems.length} items · {Math.round(laborHoursTotal)} labor hrs · {attentionCount} need review ·
+                    material and labor only
+                  </span>
+                </div>
+              ) : null}
+
               <div className="takeoff-controls">
                 <div className="formfield">
                   <label className="formfield-label" htmlFor="takeoff-search">

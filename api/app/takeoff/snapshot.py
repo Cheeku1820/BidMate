@@ -87,6 +87,12 @@ def sheet_out(sheet: Sheet) -> SheetOut:
         scale_options=sheet.scale_options,
         plan=sheet.plan,
         superseded=sheet.superseded_at is not None,
+        takeoff_id=sheet.takeoff_id,
+        page_index=sheet.page_index,
+        width_pt=sheet.width_pt,
+        height_pt=sheet.height_pt,
+        unreadable_reason=sheet.unreadable_reason,
+        ai_reading=sheet.ai_reading,
     )
 
 
@@ -111,6 +117,13 @@ def _item_out(item: Item, warnings: list[Warning], approved_by_name: str | None)
         notes=item.notes,
         evidence=item.evidence,
         warnings=[_warning_out(w) for w in warnings],
+        material_cost=item.material_cost,
+        labor_hours=item.labor_hours,
+        labor_cost=item.labor_cost,
+        total_cost=item.total_cost,
+        placements=item.placements,
+        ai_confirmed=item.ai_confirmed,
+        source_tag=item.source_tag,
     )
 
 

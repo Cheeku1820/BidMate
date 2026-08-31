@@ -4,8 +4,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    BigInteger, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index, Integer,
-    Numeric, String, Text, func, text,
+    BigInteger, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index,
+    Integer, LargeBinary, Numeric, String, Text, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -118,6 +118,20 @@ class Sheet(Base):
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Engine ingest metadata. The canvas addresses a page image by
+    # (takeoff_id, page_index), and normalizes marker coordinates against
+    # the page's own point dimensions -- a sheet's markers land wrongly if
+    # normalized against another sheet's size.
+    takeoff_id: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    page_index: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    width_pt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    height_pt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Set when a sheet could not be read. BUILD-STAGES: a sheet the engine
+    # reads poorly is marked unreadable with a reason, never returned as a
+    # short list of items -- silence reads as completeness.
+    unreadable_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    ai_reading: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
 
 class Item(Base):
     __tablename__ = "items"
@@ -145,6 +159,24 @@ class Item(Base):
     path: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Cost, carried for the spreadsheet and export. The engine stops at
+    # total direct cost -- markup, overhead, and profit are an
+    # estimator-owned layer and deliberately have no column here.
+    material_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    labor_hours: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    labor_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    total_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    # Every coordinate this cluster was counted at, in sheet space. `x`/`y`
+    # is the marker; this is what the canvas draws when showing all
+    # placements of one item.
+    placements: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ai_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # The engine cluster tag this item came from ("A", "F2", "R"). The
+    # merge key for an approval-preserving re-run: Counting is
+    # deterministic geometry, so the same drawing yields the same tag on
+    # the same sheet, which is what lets a re-run recognise the item it
+    # produced last time instead of replacing it blindly.
+    source_tag: Mapped[str] = mapped_column(String(50), default="", server_default="")
     # Optimistic-concurrency counter for the five single-item mutations
     # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
     # is driven by `onupdate=func.now()` and therefore transaction-
@@ -158,6 +190,45 @@ class Item(Base):
     # `app.takeoff.concurrency` and every module that mutates an `Item`.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ItemEvidenceImage(Base):
+    """A crop of the source drawing around one item's counted
+    location(s) -- what "View evidence" actually shows. Deliberately its
+    own table, not a column on Item: `snapshots._column_snapshot()`
+    walks every mapped column of Item automatically for the delete-undo
+    snapshot, and this codebase has already hit "a new Item column
+    breaks decode_snapshot()" twice. Nothing about this row is ever
+    reviewed or undone -- it is a cache of what the drawing showed, not
+    estimator state -- so it stays outside the action-log/undo system
+    entirely rather than being taught to it.
+
+    One row per item at most: `item_id` is both the primary key and the
+    foreign key, so a re-run's upsert (see evidence_images.py) never has
+    to reason about more than one existing row per item. `ON DELETE
+    CASCADE` means deleting an item drops this row, and undoing back
+    through that delete does not bring it back -- this table sits
+    outside the snapshot system entirely, so nothing restores it.
+
+    `Item.evidence` (the JSONB dict, including `has_image`) is a normal
+    mapped column and IS restored on undo like any other snapshotted
+    field (see snapshots.py's `ITEM_SNAPSHOT_TYPES`). That means a
+    delete-then-undo round trip can leave `item.evidence.has_image`
+    reading `true` while this table has no row for that item -- the
+    dict says an image exists and it does not. The frontend already
+    handles this gracefully: `EvidenceModal` (MiscModals.jsx) requests
+    the image, the fetch 404s, and the `onError` fallback shows the
+    evidence detail/sheet text with copy that says no drawing crop was
+    captured, rather than crashing or claiming no evidence exists.
+    """
+
+    __tablename__ = "item_evidence_images"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("items.id", ondelete="CASCADE"), primary_key=True
+    )
+    png: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Warning(Base):
@@ -214,3 +285,39 @@ class Action(Base):
     after: Mapped[dict] = mapped_column(JSONB, default=dict)
     undoes_action_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("actions.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class Note(Base):
+    """Something the drawings do not say, recorded by a person.
+
+    `usage` is the whole point: `reference` is documentation, `context`
+    is handed to the engine as authoritative input on the next run. The
+    estimator chooses; nothing infers it, because a note that silently
+    moved the estimate would be a number nobody decided.
+
+    `status` here is deliberately NOT the four review labels. Those
+    describe an item's evidence; `confirmed`/`open` describes whether the
+    estimator has settled the note. Sharing a vocabulary between the two
+    is how a fifth review status gets invented by accident.
+    """
+
+    __tablename__ = "notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    scope: Mapped[str] = mapped_column(String(20), default="project", server_default="project")
+    scope_ref: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="open", server_default="open")
+    rfi_needed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    usage: Mapped[str] = mapped_column(String(20), default="reference", server_default="reference")
+    source_ref: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    obsolete_after_revision: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    author_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

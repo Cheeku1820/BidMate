@@ -40,12 +40,27 @@ const renderCompanyNav = (path = "/projects") =>
     </MemoryRouter>,
   );
 
-const renderProjectNav = () =>
+const renderProjectNav = (props = {}) =>
   render(
     <MemoryRouter initialEntries={["/projects/p1"]}>
-      <ProjectNav projectId="p1" />
+      <ProjectNav projectId="p1" {...props} />
     </MemoryRouter>,
   );
+
+// A project row shaped like the ones listProjects() returns.
+const projectRow = (over = {}) => ({
+  id: "p1",
+  name: "Riverside Medical Center — Bldg C",
+  number: "2607",
+  customer: "Turner Construction",
+  revisionSetLabel: "Rev 3 · Add. 2",
+  bidDueDate: null,
+  itemsTotal: 51,
+  itemsApproved: 32,
+  missingInfo: 0,
+  warningsOpen: 0,
+  ...over,
+});
 
 /** Every element the nav renders as a disabled destination. */
 const disabledItems = (nav) =>
@@ -152,13 +167,14 @@ describe("ProjectNav", () => {
     );
 
     expect(within(nav).getByRole("link", { name: /^documents/i })).toHaveAttribute("href", "/projects/p1/documents");
+    expect(within(nav).getByRole("link", { name: /^notes/i })).toHaveAttribute("href", "/projects/p1/notes");
     expect(within(nav).getByRole("link", { name: /^export/i })).toHaveAttribute("href", "/projects/p1/export");
 
     const disabled = disabledItems(nav);
-    // 13 workspaces total, minus the six now built: overview, blueprint
-    // takeoff, takeoff spreadsheet, documents (intake), export, and
-    // project settings.
-    expect(disabled).toHaveLength(7);
+    // 13 workspaces total, minus the seven now built: overview, blueprint
+    // takeoff, takeoff spreadsheet, documents (intake), notes &
+    // assumptions, export, and project settings.
+    expect(disabled).toHaveLength(6);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
   });
@@ -200,5 +216,113 @@ describe("the two navs", () => {
     };
 
     expect(projectShape).toEqual(companyShape);
+  });
+});
+
+describe("ProjectNav as the project's rail", () => {
+  it("keeps the brand and the project card out of the workspace nav", () => {
+    // Both sit in the rail but neither is a workspace. While they were
+    // inside the labelled <nav>, "Project workspaces" announced fourteen
+    // destinations for thirteen workspaces.
+    renderProjectNav({ project: projectRow(), companyName: "Meridian Electric Co." });
+    const nav = screen.getByRole("navigation", { name: /project workspaces/i });
+
+    expect(within(nav).getAllByRole("link")).toHaveLength(13);
+    expect(within(nav).queryByText("BidMate")).toBeNull();
+    expect(screen.getByRole("link", { name: /bidmate/i })).toHaveAttribute("href", "/projects");
+  });
+
+  it("groups the thirteen without reordering them", () => {
+    renderProjectNav({ project: projectRow() });
+    const nav = screen.getByRole("navigation", { name: /project workspaces/i });
+
+    for (const title of [/^evidence$/i, /^takeoff$/i, /^cost$/i, /^close out$/i, /^project$/i]) {
+      expect(within(nav).getByRole("heading", { name: title })).toBeTruthy();
+    }
+    // The spec §4.2 order the flat list had, unchanged.
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((el) => el.getAttribute("aria-label").replace(/ — .*$/, "")),
+    ).toEqual([
+      "Overview",
+      "Documents",
+      "Notes & assumptions",
+      "Blueprint takeoff",
+      "Takeoff spreadsheet",
+      "Assemblies",
+      "Labor",
+      "Material pricing",
+      "Estimate summary",
+      "Revisions",
+      "Final review",
+      "Export",
+      "Project settings",
+    ]);
+  });
+
+  it("states the project's identity and review progress from the row, in words", () => {
+    renderProjectNav({ project: projectRow() });
+    expect(screen.getByText("Riverside Medical Center — Bldg C")).toBeTruthy();
+    expect(screen.getByText("#2607 · Turner Construction")).toBeTruthy();
+    expect(screen.getByText("Rev 3 · Add. 2")).toBeTruthy();
+    // The meter is decorative; the sentence is what carries the figure.
+    expect(screen.getByText("32 of 51 items approved")).toBeTruthy();
+  });
+
+  it("renders no card at all when there is no project row yet", () => {
+    // The rail mounts before listProjects() resolves. An empty card of
+    // placeholders would read as a project with nothing in it.
+    const { container } = renderProjectNav();
+    expect(container.querySelector(".project-card")).toBeNull();
+    expect(screen.getAllByRole("link").length).toBeGreaterThan(0);
+  });
+
+  it("invents no counts, and puts the real ones only where they belong", () => {
+    // missingInfo and warningsOpen describe takeoff items, so they may
+    // appear on the two workspaces that are views of those items and
+    // nowhere else.
+    renderProjectNav({ project: projectRow({ missingInfo: 2, warningsOpen: 3 }) });
+
+    expect(screen.getAllByLabelText(/2 items are missing required information/i)).toHaveLength(2);
+    expect(screen.getAllByLabelText(/3 items need attention/i)).toHaveLength(2);
+
+    for (const label of [/2 items are missing/i, /3 items need attention/i]) {
+      for (const badge of screen.getAllByLabelText(label)) {
+        const workspace = badge.closest("a").getAttribute("aria-label");
+        expect(["Blueprint takeoff", "Takeoff spreadsheet"]).toContain(workspace);
+      }
+    }
+  });
+
+  it("says nothing when there is nothing outstanding", () => {
+    renderProjectNav({ project: projectRow({ missingInfo: 0, warningsOpen: 0 }) });
+    expect(screen.queryByLabelText(/missing required information/i)).toBeNull();
+    expect(screen.queryByLabelText(/need attention/i)).toBeNull();
+  });
+
+  it("keeps one severity pip, not two chips, in the collapsed rail", () => {
+    // 31px of usable width already holds the workspace icon; two chips
+    // overflowed it. The label still names both states.
+    const { container } = renderProjectNav({
+      project: projectRow({ missingInfo: 2, warningsOpen: 3 }),
+      collapsed: true,
+    });
+
+    const pips = container.querySelectorAll(".ws-pip");
+    expect(pips).toHaveLength(2); // one per badged workspace, not per badge
+    expect(pips[0].className).toContain("ws-pip--missing"); // the one with no override wins
+    expect(pips[0].getAttribute("aria-label")).toMatch(/missing required information/i);
+    expect(pips[0].getAttribute("aria-label")).toMatch(/need attention/i);
+    expect(container.querySelector(".ws-badge")).toBeNull();
+  });
+
+  it("offers the collapse control only when something can act on it", () => {
+    renderProjectNav({ project: projectRow() });
+    expect(screen.queryByRole("button", { name: /collapse navigation/i })).toBeNull();
+
+    const onToggle = () => {};
+    renderProjectNav({ project: projectRow(), onToggleCollapsed: onToggle });
+    expect(screen.getByRole("button", { name: /collapse navigation/i })).toBeTruthy();
   });
 });

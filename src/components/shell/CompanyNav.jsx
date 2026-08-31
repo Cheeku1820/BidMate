@@ -9,9 +9,10 @@
    and every collapsed icon still carries an aria-label and a title so
    the label survives for screen readers and on hover.
 
-   Only "Projects" has a route today. The other five are spec §4.1
-   destinations that are not built yet (Tasks past this plan's current
-   scope). They stay visible — the product's shape should stay legible —
+   Each destination declares whether it is routed (`available` in
+   DESTINATIONS below), and today three are not: the company library,
+   integrations, and help are spec §4.1 destinations that are not built
+   yet. They stay visible — the product's shape should stay legible —
    but render as non-interactive with a reason, rather than as a link
    that 404s into copy about an out-of-date link or an archived project,
    which would be actively misleading for a destination that was simply
@@ -29,10 +30,11 @@
 
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { BookOpen, HelpCircle, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plug, Settings, Target } from "lucide-react";
+import { BookOpen, HelpCircle, LayoutGrid, PanelLeftClose, PanelLeftOpen, Plug, Settings, Target, Zap } from "lucide-react";
 
 const DESTINATIONS = [
   { to: "/projects", label: "Projects", Icon: LayoutGrid, available: true },
+  { to: "/estimate", label: "Instant estimate", Icon: Zap, available: true },
   { to: "/accuracy", label: "Accuracy", Icon: Target, available: true },
   { to: "/library", label: "Company library", Icon: BookOpen, available: false },
   { to: "/integrations", label: "Integrations", Icon: Plug, available: false },

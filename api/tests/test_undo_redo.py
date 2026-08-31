@@ -208,6 +208,41 @@ def test_undoing_a_delete_restores_the_item_with_its_warnings(db, dana, project,
     assert restored_warnings[0].where_ == "E2.1 title block"
 
 
+def test_undoing_a_delete_does_not_restore_the_evidence_image(db, dana, project, item):
+    """ItemEvidenceImage sits outside the snapshot system entirely (see
+    its docstring in models.py): deleting an item drops the row via
+    ON DELETE CASCADE, and undo -- which recreates the Item row and
+    restores every snapshotted column, including `evidence` itself --
+    does not bring the image back. This is the scenario the design
+    spec's Testing section asked for: undoing a delete must not crash
+    or attempt to touch the image, and the item must come back with
+    no image row, even though `item.evidence["has_image"]` still reads
+    true because that's a normal restored column.
+    """
+    from app.takeoff.evidence_images import upsert_evidence_image
+    from app.takeoff.models import ItemEvidenceImage
+
+    item.evidence = {"detail": "Counted from the drawing at 3 locations", "sheet": "E2.1", "has_image": True}
+    db.flush()
+    upsert_evidence_image(db, item.id, b"\x89PNG fake bytes")
+    db.flush()
+    item_id = item.id
+    assert db.get(ItemEvidenceImage, item_id) is not None
+
+    review.delete_item(db, dana, item, item.version)
+    db.flush()
+    assert db.get(Item, item_id) is None
+    assert db.get(ItemEvidenceImage, item_id) is None
+
+    undo.undo(db, dana, project.id)
+    db.flush()
+
+    restored = db.get(Item, item_id)
+    assert restored is not None
+    assert restored.evidence["has_image"] is True
+    assert db.get(ItemEvidenceImage, item_id) is None
+
+
 def test_redoing_a_delete_removes_the_restored_item_again(db, dana, project, item):
     item_id = item.id
     review.delete_item(db, dana, item, item.version)

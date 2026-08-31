@@ -15,13 +15,14 @@ export default function TopBar({
   onRedo,
   onHelp,
   onFinish,
-  // The active project's name and revision set. Defaulted to the fixture
-  // project's own values so the blueprint workspace reads correctly even
-  // before the project row loads (and for the fixture itself); a sampled
-  // demo project passes its own name here, so the title never shows a
-  // different project's name than the one being reviewed.
-  title = "Meridian Distribution Center — Division 26",
-  subtitle = "Active set: E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1",
+  // The active project's name and revision set, both empty until the
+  // project row loads. They used to default to the seed fixture's own
+  // values, which outlived the fixture: a real project with no revision
+  // set rendered "Active set: E1.1 Rev 3 · E2.1 Rev 2 · E3.1 Rev 1"
+  // over its own drawings, naming a sheet that does not exist in it.
+  // A blank heading is honest; an invented one is not.
+  title = "",
+  subtitle = "",
 }) {
   const avatars = [me, ...presence].slice(0, 5);
 
@@ -39,7 +40,7 @@ export default function TopBar({
       <div className="topbar__rule" />
       <div className="topbar__title">
         <strong>{title}</strong>
-        <span>{subtitle}</span>
+        {subtitle ? <span>{subtitle}</span> : null}
       </div>
       <Pill status={overall} />
       <span className="savestate tabular">

@@ -206,10 +206,20 @@ class ItemEvidenceImage(Base):
     One row per item at most: `item_id` is both the primary key and the
     foreign key, so a re-run's upsert (see evidence_images.py) never has
     to reason about more than one existing row per item. `ON DELETE
-    CASCADE` means deleting an item (or undoing back through a delete,
-    which recreates the Item row) does not restore a lost image -- it
-    starts with none, the same honest state as an item that never had
-    one.
+    CASCADE` means deleting an item drops this row, and undoing back
+    through that delete does not bring it back -- this table sits
+    outside the snapshot system entirely, so nothing restores it.
+
+    `Item.evidence` (the JSONB dict, including `has_image`) is a normal
+    mapped column and IS restored on undo like any other snapshotted
+    field (see snapshots.py's `ITEM_SNAPSHOT_TYPES`). That means a
+    delete-then-undo round trip can leave `item.evidence.has_image`
+    reading `true` while this table has no row for that item -- the
+    dict says an image exists and it does not. The frontend already
+    handles this gracefully: `EvidenceModal` (MiscModals.jsx) requests
+    the image, the fetch 404s, and the `onError` fallback shows the
+    evidence detail/sheet text with copy that says no drawing crop was
+    captured, rather than crashing or claiming no evidence exists.
     """
 
     __tablename__ = "item_evidence_images"

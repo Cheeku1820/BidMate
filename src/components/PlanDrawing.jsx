@@ -11,12 +11,10 @@
 
 const DIM = "#8a857c";
 
-/** The base layer for a sheet whose drawing is a rendered page from an
- *  uploaded document. Deliberately empty: the estimator's markers sit
- *  over the real page image, and if that image is slow or fails to load
- *  what shows through must be blank paper, never invented geometry. A
- *  fabricated plan under a real takeoff would read as the estimator's
- *  own drawing. The only text here comes from the sheet record itself. */
+/** Deliberately empty apart from the sheet's own number and title:
+ *  a fabricated plan under a real takeoff would read as the estimator's
+ *  own drawing, and nobody in this codebase has seen the actual page to
+ *  draw honestly. The only text here comes from the sheet record itself. */
 function IngestedSheetSurface({ sheet }) {
   return (
     <g>

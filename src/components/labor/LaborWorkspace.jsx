@@ -70,6 +70,25 @@ export default function LaborWorkspace() {
     }
   };
 
+  // Rate is a second, independently-resolved precedence chain -- an
+  // estimator can have hours from a company standard and still need to
+  // enter the rate by hand. Without this the screen's own copy ("Set
+  // hours and rates directly on each row below") is only half true, and
+  // on any project the pricing assistant did not price, every labor row
+  // is stuck at Missing information with no in-product remedy.
+  const editRate = async (itemId, raw) => {
+    if (raw === "") return; // an estimator clearing the field is not a value to save
+    const n = Number(raw);
+    if (Number.isNaN(n)) return;
+    setSaveError(null);
+    try {
+      await store.setLaborLine(itemId, { rateOverride: n });
+      await load();
+    } catch (err) {
+      setSaveError(err?.message || "That change couldn't be saved. Try again.");
+    }
+  };
+
   return (
     <>
       <AppTopBar title="Labor" />
@@ -153,6 +172,17 @@ export default function LaborWorkspace() {
                               aria-label="Hours per unit"
                               defaultValue={row.hoursPerUnit ?? ""}
                               onBlur={(event) => editHours(row.itemId, event.target.value)}
+                              className="field field--number tabular"
+                            />
+                          ) : c.key === "rate" ? (
+                            <input
+                              key={row.rate}
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              aria-label="Rate"
+                              defaultValue={row.rate ?? ""}
+                              onBlur={(event) => editRate(row.itemId, event.target.value)}
                               className="field field--number tabular"
                             />
                           ) : c.key === "hoursSourceLabel" ? (

@@ -79,4 +79,30 @@ describe("LaborWorkspace", () => {
     fireEvent.blur(hoursInput);
     await waitFor(() => expect(store.setLaborLine).toHaveBeenCalledWith("i1", { hoursOverride: 0.75 }));
   });
+
+  test("editing the rate calls setLaborLine with a rate override", async () => {
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: baseRows }),
+      setLaborLine: vi.fn().mockResolvedValue({}),
+    };
+    renderLabor({ store });
+    await waitFor(() => expect(screen.getByText("20A duplex receptacle")).toBeInTheDocument());
+    const rateInput = screen.getByLabelText(/^rate$/i);
+    fireEvent.change(rateInput, { target: { value: "78" } });
+    fireEvent.blur(rateInput);
+    await waitFor(() => expect(store.setLaborLine).toHaveBeenCalledWith("i1", { rateOverride: 78 }));
+  });
+
+  test("clearing the rate field saves nothing -- an empty field is not a $0/hr rate", async () => {
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: baseRows }),
+      setLaborLine: vi.fn().mockResolvedValue({}),
+    };
+    renderLabor({ store });
+    await waitFor(() => expect(screen.getByText("20A duplex receptacle")).toBeInTheDocument());
+    const rateInput = screen.getByLabelText(/^rate$/i);
+    fireEvent.change(rateInput, { target: { value: "" } });
+    fireEvent.blur(rateInput);
+    expect(store.setLaborLine).not.toHaveBeenCalled();
+  });
 });

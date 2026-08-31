@@ -41,9 +41,14 @@ export function EvidenceModal({ item, onClose }) {
           />
         </div>
       ) : (
-        <p className="value value--muted" style={{ marginBottom: 12 }}>
-          No evidence recorded for this item.
-        </p>
+        <div style={{ marginBottom: 12 }}>
+          <p className="value" style={{ marginBottom: 4 }}>
+            {item.evidence.detail}, {item.evidence.sheet}
+          </p>
+          <p className="value value--muted" style={{ margin: 0 }}>
+            No drawing crop was captured for this item.
+          </p>
+        </div>
       )}
       {showImage ? (
         <p style={{ margin: 0, fontSize: 13.5 }}>

@@ -21,16 +21,22 @@ describe("EvidenceModal", () => {
     expect(img.src).toContain("/api/items/item-1/evidence-image");
   });
 
-  test("falls back to text when the image fails to load", () => {
+  test("falls back to the recorded detail and sheet, not a false 'no evidence' claim, when the image fails to load", () => {
     render(<EvidenceModal item={baseItem} onClose={() => {}} />);
     fireEvent.error(screen.getByRole("img"));
-    expect(screen.getByText(/no evidence recorded/i)).toBeInTheDocument();
+    expect(screen.getByText(/counted from the drawing at 3 locations/i)).toBeInTheDocument();
+    expect(screen.getByText(/e2\.1/i)).toBeInTheDocument();
+    expect(screen.getByText(/no drawing crop was captured/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no evidence recorded/i)).not.toBeInTheDocument();
   });
 
-  test("shows the fallback directly for an item with no image", () => {
+  test("shows the recorded detail and sheet directly for an item with no image, not a false 'no evidence' claim", () => {
     const noImage = { ...baseItem, evidence: { ...baseItem.evidence, has_image: false } };
     render(<EvidenceModal item={noImage} onClose={() => {}} />);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
-    expect(screen.getByText(/no evidence recorded/i)).toBeInTheDocument();
+    expect(screen.getByText(/counted from the drawing at 3 locations/i)).toBeInTheDocument();
+    expect(screen.getByText(/e2\.1/i)).toBeInTheDocument();
+    expect(screen.getByText(/no drawing crop was captured/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no evidence recorded/i)).not.toBeInTheDocument();
   });
 });

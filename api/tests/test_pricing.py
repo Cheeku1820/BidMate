@@ -171,6 +171,19 @@ def test_labor_rate_falls_back_to_estimated_basis_without_crew_mix():
     assert result.rate_source_label == "Estimated basis"
 
 
+@pytest.mark.parametrize("labor_cost", [None, Decimal("0")])
+def test_labor_rate_is_absent_not_zero_when_cost_is_missing(labor_cost):
+    # Real hours with no cost behind them resolves to nothing at all. A
+    # $0/hr rate labelled "Estimated basis" would read as a confirmed
+    # figure; the honest answer is that no rate resolved.
+    item = FakeItem(labor_hours=Decimal("5"), labor_cost=labor_cost)
+    project = FakeProject(pricing_source="llm")
+    result = resolve_labor(item, project, None, company_rates=None, company_hours=None)
+    assert result.rate is None
+    assert result.rate_source_label is None
+    assert result.status == "missing"
+
+
 def test_labor_final_cost_applies_adjustment_and_productivity_factor():
     item = FakeItem(quantity=Decimal("10"), labor_hours=Decimal("5"), labor_cost=Decimal("390"))
     project = FakeProject(pricing_source="llm")

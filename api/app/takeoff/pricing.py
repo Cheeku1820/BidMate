@@ -99,7 +99,12 @@ def _resolve_rate(item, project, override, company_rates) -> tuple[Decimal | Non
             weighted = sum(Decimal(count) * rate for count, rate in roles if count)
             return weighted / Decimal(total_count), "Company crew rate"
 
-    if project.pricing_source == "llm" and item.labor_hours:
+    # Both halves of the division are guarded, the same way _resolve_hours
+    # guards its own -- a labor_cost of 0 or None against real hours would
+    # otherwise crash, or worse, hand back $0/hr wearing an "Estimated
+    # basis" tag, which is a confidently wrong number rather than an
+    # honest absence of one.
+    if project.pricing_source == "llm" and item.labor_hours and item.labor_cost:
         return item.labor_cost / item.labor_hours, "Estimated basis"
 
     return None, None

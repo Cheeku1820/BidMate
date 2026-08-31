@@ -75,6 +75,15 @@ def patch_labor(
             "This update has no changes. Include at least one field, such as hours or a crew count.",
         )
 
+    # These two columns are NOT NULL with a "" default. The schema types
+    # them optional so they can be omitted, but a caller sending an
+    # explicit null means "clear it," and the empty string is what
+    # clearing looks like in this table -- an IntegrityError on flush is
+    # not.
+    for key in ("adjustment_reason", "notes"):
+        if key in changes and changes[key] is None:
+            changes[key] = ""
+
     before = _snapshot(ProjectLaborLine, item_id, db)
     row = db.get(ProjectLaborLine, item_id)
     if row is None:

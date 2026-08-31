@@ -198,3 +198,14 @@ def test_patch_material_price_rejects_a_negative_price(client, item, signed_in_u
     response = client.patch(f"/api/items/{item.id}/material-price",
                             json={"priceOverride": -5, "source": "project_price"})
     assert response.status_code == 422
+
+
+def test_patch_labor_clears_a_text_field_sent_as_null(client, db, item, signed_in_user):
+    """adjustment_reason and notes are NOT NULL. An explicit null means
+    "clear it," which is the empty string here -- not a 500 on flush."""
+    client.patch(f"/api/items/{item.id}/labor", json={"adjustmentReason": "crew unfamiliar with the gear"})
+    response = client.patch(f"/api/items/{item.id}/labor", json={"adjustmentReason": None, "notes": None})
+    assert response.status_code == 200, response.text
+    row = db.get(ProjectLaborLine, item.id)
+    db.refresh(row)
+    assert row.adjustment_reason == "" and row.notes == ""

@@ -84,19 +84,23 @@ def test_get_labor_row_ready_when_project_priced_by_llm(client, db, project, ite
     from decimal import Decimal
 
     project.pricing_source = "llm"
-    # The engine-computed baseline `resolve_labor` reads for "Estimated
-    # basis" is item.labor_hours -- the shared `item` fixture leaves it
-    # at its column default of 0, which is falsy and would otherwise
-    # skip straight past the llm branch into "missing" regardless of
-    # project.pricing_source. Set it here rather than on the shared
-    # fixture, since most other tests using `item` don't want a
-    # labor_hours baseline at all.
+    # The engine-computed baselines `resolve_labor` reads for "Estimated
+    # basis" are item.labor_hours (for hours) and item.labor_cost (for
+    # the rate) -- the shared `item` fixture leaves both at their column
+    # default of 0, which is falsy and would otherwise skip straight past
+    # the llm branch into "missing" regardless of project.pricing_source.
+    # Both are set here rather than on the shared fixture, since most
+    # other tests using `item` don't want a labor baseline at all. A cost
+    # with no hours behind it is what a $0/hr "Estimated basis" rate is
+    # made of, which _resolve_rate now refuses to produce.
     item.labor_hours = Decimal("5")
+    item.labor_cost = Decimal("390")
     db.commit()
     response = client.get(f"/api/projects/{project.id}/labor")
     row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
     assert row["status"] == "ready"
     assert row["hours_source_label"] == "Estimated basis"
+    assert float(row["rate"]) == 78.0  # 390 / 5, never 0
 
 
 def test_get_material_pricing_lists_every_countable_item(client, project, item, signed_in_user):

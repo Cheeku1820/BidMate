@@ -55,6 +55,16 @@ export function mapItem(i) {
   };
 }
 
+// Built from fields mapItem already carries unchanged from the wire
+// (evidence.has_image, id, version) -- version already increments on
+// every server-side rewrite of the item (approve/edit/reject/reprocess
+// all bump it), which makes it a correct cache-buster for free: a
+// re-run that replaces an item's image is guaranteed to change this URL.
+export function evidenceImageUrl(item) {
+  if (!item?.evidence?.has_image) return null;
+  return `/api/items/${item.id}/evidence-image?v=${item.version}`;
+}
+
 export function mapSheet(s) {
   return {
     id: s.id,

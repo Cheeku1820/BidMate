@@ -698,3 +698,49 @@ def test_undo_reverses_a_material_price_edit(client, db, item, signed_in_user):
     client.patch(f"/api/items/{item.id}/material-price", json={"priceOverride": 15.5, "source": "project_price"})
     client.post(f"/api/projects/{item.project_id}/undo")
     assert db.get(ProjectMaterialPrice, item.id) is None
+
+
+# --- Critical fix (task-5 review): a labor_edit/material_price_edit
+# reversal must not attempt a ProjectLaborLine/ProjectMaterialPrice
+# insert against an item_id whose Item row is already gone -- that's a
+# ForeignKeyViolation reaching the client as a raw 500, not the graceful
+# 409 every other kind's reversal already produces for this scenario
+# (see the two test_..._scale_action_..._does_not_raise tests above).
+# _apply_sparse_pricing_row() now guards on the parent Item existing,
+# the same way _apply_item_state() does. ---
+
+
+def test_undoing_a_labor_edit_whose_item_was_since_deleted_raises_a_domain_error(client, db, item, signed_in_user):
+    response = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    assert response.status_code == 200, response.text
+    labor_action = db.query(Action).filter(Action.kind == "labor_edit").one()
+
+    delete_response = client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
+    assert delete_response.status_code == 200, delete_response.text
+    assert db.get(Item, item.id) is None
+
+    with pytest.raises(DomainError) as caught:
+        undo_apply.apply(db, labor_action, "before")
+
+    assert caught.value.code == "item_no_longer_exists"
+    assert caught.value.status == 409
+    assert db.get(Item, item.id) is None, "the failed reversal must not have resurrected the item"
+
+
+def test_redoing_a_labor_edit_after_the_item_was_since_deleted_raises_a_domain_error(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectLaborLine
+
+    response = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    assert response.status_code == 200, response.text
+
+    undo_response = client.post(f"/api/projects/{item.project_id}/undo")
+    assert undo_response.status_code == 200, undo_response.text
+    assert db.get(ProjectLaborLine, item.id) is None
+
+    delete_response = client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
+    assert delete_response.status_code == 200, delete_response.text
+
+    redo_response = client.post(f"/api/projects/{item.project_id}/redo")
+    assert redo_response.status_code == 409, redo_response.text
+    assert redo_response.json()["detail"]["code"] == "item_no_longer_exists"
+    assert db.get(ProjectLaborLine, item.id) is None, "the failed reversal must not have inserted a row"

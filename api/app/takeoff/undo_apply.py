@@ -174,7 +174,24 @@ def _apply_sparse_pricing_row(db: DbSession, model: type, item_id: uuid.UUID, sn
     these rows are sparse -- created on first edit -- so `state` may be
     an empty dict (the row didn't exist before this action; undo means it
     shouldn't exist now) or a decoded snapshot of every column (the row
-    existed; undo/redo means it should hold exactly these values)."""
+    existed; undo/redo means it should hold exactly these values).
+
+    Guards on the parent `Item` existing before touching either table,
+    the same way `_apply_item_state()` does for approve/reject/edit --
+    this is a single-item reversal, not a batch one, so it follows that
+    function's raise-a-409 pattern rather than `_apply_bulk_approve()`'s/
+    `_apply_scale()`'s skip-and-continue. Checked unconditionally, before
+    the `state`-empty branch too: even a delete-if-present reversal onto
+    a now-gone item should report the same 409 rather than silently
+    no-op'ing, since a caller relying on undo/redo actually having
+    happened has no other way to learn it didn't.
+    """
+    item = db.execute(
+        select(Item).where(Item.id == item_id).with_for_update().execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if item is None:
+        raise DomainError("item_no_longer_exists", _ITEM_GONE_MESSAGE, status=409)
+
     if not state:
         _delete_sparse_row_if_present(db, model, item_id)
         return

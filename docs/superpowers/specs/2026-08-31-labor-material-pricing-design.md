@@ -55,14 +55,20 @@ narrowed by decisions made in brainstorming.
 Three facts from the existing engine drove the shape below, not
 invention:
 
-1. **`Item` already carries the engine's original pricing.**
-   `material_cost`, `labor_hours`, `labor_cost`, `total_cost` are real
-   columns, populated at ingest from `estimate.py`'s catalog lookup and
-   `regions.py`'s location-based rate/factor. That computation already
-   *is* the "regional baseline" tier — this plan doesn't recompute it,
-   it reads it. `Item.material_cost / Item.quantity` is the baseline
-   unit price; `Item.labor_hours / Item.quantity` is the baseline hours
-   per unit; `Item.labor_cost / Item.labor_hours` is the baseline rate.
+1. **`Item` already carries the engine's original pricing — but only
+   some of it is real enough to trust.** `material_cost`, `labor_hours`,
+   `labor_cost`, `total_cost` are real columns, populated at ingest
+   either by the LLM path (`llm.estimate()`, which prices every item for
+   the project's actual location) or, when no key is configured, by the
+   deterministic fallback (`catalog.py`'s fixed placeholder labor hours
+   and `regions.py`'s ~15-entry hardcoded rate table — both explicitly
+   documented as rough guesses, neither sourced from anything published).
+   A working MVP that firms bid real work off of cannot present the
+   second kind as if it were the first. So this plan tracks which one
+   actually ran (`Project.pricing_source`, below) and only treats
+   `Item`'s stored cost/hours as a real "baseline" tier when it came from
+   the LLM. When it didn't, that tier simply doesn't exist for the
+   project — see Precedence resolution.
 
 2. **There is no `Item.catalog_id`.** The deterministic classification
    path resolves a `CatalogItem` internally but never puts its id on the
@@ -85,6 +91,34 @@ invention:
    commercial license this project does not hold. Every place this
    design surfaces that figure, it is labeled "Catalog default hours" or
    "Company hours," never NECA.
+
+## Tracking which mechanism actually priced a project
+
+`estimate.py`'s payload already carries `source` (`"llm"` or
+`"deterministic"`) and `location_note` (a one-sentence basis, e.g. "Rate
+based on Sacramento, CA area cost data," or the LLM's own equivalent) at
+the top level of every `/estimate/project` response — today both are
+computed and then dropped; nothing persists them. This plan adds two
+columns to the existing `Project` table:
+
+```python
+# On Project (existing model, two new columns):
+pricing_source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # "llm" | "deterministic" | null
+pricing_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+```
+
+Set from the raw payload (not through `map_payload`, which stays a pure
+sheets/items mapper per its own documented contract) in the two places
+that already write to `Project` from a payload: `ingest_service.py`'s
+`ingest_takeoff()` and `reprocess.py`'s `reprocess_takeoff()`, both of
+which already receive the full `payload: dict` and already set
+`project.stage`. One line each:
+`project.pricing_source = payload.get("source")`,
+`project.pricing_note = str(payload.get("location_note") or "")`.
+
+A project ingested before this column existed reads `pricing_source` as
+`NULL` — treated identically to `"deterministic"` everywhere below: no
+baseline tier, not a false "not sure so let's guess" state.
 
 ## Data model
 
@@ -187,19 +221,28 @@ matching `ROADMAP.md` invariant 1 (totals computed in one place).
 1. `ProjectMaterialPrice.price_override` where `source = "project_price"` → **"Project price"**
 2. `ProjectMaterialPrice.price_override` where `source = "allowance"` → **"Allowance"**
 3. `CompanyMaterialPrice` row matching `item.name` → **"Company price"**
-4. `item.material_cost / item.quantity` (the engine's own ingest-time
-   figure) → **"Regional baseline"**, unless `item.quantity` is zero or
-   `item.material_cost` is zero/null, in which case there is nothing to
-   show and the row is **Missing information**.
+4. **Only if `project.pricing_source == "llm"`:** `item.material_cost /
+   item.quantity` → **"Regional baseline"**, with `project.pricing_note`
+   available as the row's one-sentence basis.
+5. Nothing resolved (tier 4 unreached, or reached but
+   `item.material_cost`/`item.quantity` is zero/null) → **Missing
+   information**. Its warning names what's needed: a company price, an
+   estimator override, or reprocessing the project with the pricing
+   assistant available — plain language, never mentioning a model.
 
 ### Labor hours per unit, per item
 
 1. `ProjectLaborLine.hours_override` → **"Estimator entered"**
 2. `CompanyLaborHoursOverride` row matching `item.name` → **"Company standard"**
-3. `item.labor_hours / item.quantity` → **"Catalog default"**
-
-(No missing-information case: every ingested item already carries
-`labor_hours` from the engine, even if it's a rough placeholder figure.)
+3. **Only if `project.pricing_source == "llm"`:** `item.labor_hours /
+   item.quantity` → **"Estimated basis"** (not "Catalog default" —
+   when the LLM priced the project this figure is per-item and
+   location-aware, not a static catalog lookup, and the name should say
+   so without naming the mechanism).
+4. Nothing resolved → **Missing information**, same as materials tier 5.
+   (Previously this had no missing-information case, on the assumption
+   `Item.labor_hours` was always populated; that's still true, but its
+   value is no longer trusted when it came from the deterministic path.)
 
 ### Labor rate ($/hr), per item — independent of hours
 
@@ -208,8 +251,13 @@ matching `ROADMAP.md` invariant 1 (totals computed in one place).
    `(crew_journeyman × company.journeyman_rate + crew_foreman ×
    company.foreman_rate + crew_apprentice × company.apprentice_rate) /
    (crew_journeyman + crew_foreman + crew_apprentice)` → **"Company crew rate"**
-3. Else, `item.labor_cost / item.labor_hours` (the rate baked into the
-   item's original ingest-time cost) → **"Regional baseline"**
+3. **Only if `project.pricing_source == "llm"`:** `item.labor_cost /
+   item.labor_hours` → **"Estimated basis"**
+4. Nothing resolved → the row's hours may still show a status, but a
+   labor row with hours but no resolvable rate cannot compute a cost —
+   also **Missing information**, its warning naming the same fixes as
+   above (set a crew mix, a flat rate, or reprocess with pricing
+   support).
 
 ### Final labor hours and cost
 
@@ -233,9 +281,12 @@ review*, *Needs attention*, *Missing information*, or *Estimator
 approved*, matching the mockup showing 51 rows against "32 of 51
 approved":
 
-- **Missing information** — material only: nothing resolves (see tier 4
-  above). Blocks nothing else in the product; it's informational until
-  Estimate Summary exists.
+- **Missing information** — nothing resolves for this row (see the last
+  tier of each resolution chain above). On a project priced
+  deterministically, this is the *expected* state for every row with no
+  override yet, not an edge case — which is the point: a rough guess
+  never quietly stands in for a real number. Blocks nothing else in the
+  product; it's informational until Estimate Summary exists.
 - **Needs attention** — the resolved price came from `CompanyMaterialPrice`
   and its `effective_date` is more than 180 days old ("Stale price," a
   fixed constant for this plan, not a company setting).
@@ -271,6 +322,16 @@ GET   /api/projects/{project_id}/labor            -> list[LaborRowOut]
 PATCH /api/items/{item_id}/labor                   -> LaborRowOut
 GET   /api/projects/{project_id}/material-pricing  -> list[MaterialRowOut]
 PATCH /api/items/{item_id}/material-price           -> MaterialRowOut
+```
+
+Both `GET` responses carry the project's `pricingSource` and
+`pricingNote` once at the top level (not repeated per row) — the
+frontend uses `pricingSource` to render the "reprocess to unlock a
+baseline" prompt when it's not `"llm"`, and shows `pricingNote` as the
+one-sentence basis wherever a row's tier is "Regional baseline" or
+"Estimated basis."
+
+```
 
 GET   /api/company/labor-rates                     -> CompanyLaborRatesOut
 PUT   /api/company/labor-rates                      -> CompanyLaborRatesOut
@@ -339,6 +400,16 @@ summary) stay `built: false` — untouched by this plan.
   the source label matches and that a lower tier is correctly skipped
   when a higher one is present (mirrors the discipline
   `test_ingest_mapping.py` already applies to `normalize_point`).
+- `pricing_source` gating, the load-bearing new behavior: a project with
+  `pricing_source = "deterministic"` never surfaces "Regional baseline"
+  or "Estimated basis" for any row, even when `Item.material_cost`/
+  `labor_hours` are nonzero — it resolves to Missing information instead.
+  A project with `pricing_source = "llm"` does surface that tier. A
+  project with `pricing_source = NULL` (pre-dates the column) behaves
+  identically to `"deterministic"`.
+- `ingest_service.py` and `reprocess.py` both set `project.pricing_source`
+  and `project.pricing_note` from the payload's top-level `source`/
+  `location_note` fields.
 - Missing-information case: an item with `material_cost = 0` and no
   override/company price resolves to that status, not a crash on
   division by a zero quantity.
@@ -370,8 +441,15 @@ summary) stay `built: false` — untouched by this plan.
   silently wrong" reasoning above. Precise matching is quote-matching's
   job, not this plan's.
 - No supplier quote or price-sheet upload of any kind. Every price in
-  this plan is either the engine's original regional-baseline figure or
+  this plan is either the LLM-priced project's ingest-time figure or
   something a person typed in directly.
+- **A project processed without a configured pricing assistant shows
+  Missing information for nearly every row** until the estimator or
+  company fills in overrides, or the project is reprocessed with one
+  available. This is deliberate (see "no hardcode" above), but it means
+  the two projects already in this database from earlier testing will
+  show almost entirely Missing information on first load, since their
+  `pricing_source` is `NULL`.
 - No assemblies, so no derived wire/conduit/box material rows — only
   rows that map 1:1 to an approved takeoff item.
 - The 180-day staleness threshold is a fixed constant, not configurable

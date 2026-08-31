@@ -56,4 +56,19 @@ describe("mapMaterialRow", () => {
     const mapped = mapMaterialRow(row);
     expect(mapped).toMatchObject({ itemId: "abc", unitPrice: 12.5, sourceLabel: "Company price" });
   });
+
+  test("maps the raw source and reason for an allowance row", () => {
+    const row = { item_id: "abc", item_name: "x", quantity: "10", unit_price: "15.5",
+                  source: "allowance", source_label: "Allowance", reason: "no vendor quote yet",
+                  status: "approved", basis_note: "" };
+    const mapped = mapMaterialRow(row);
+    expect(mapped).toMatchObject({ source: "allowance", reason: "no vendor quote yet" });
+  });
+
+  test("source and reason default to null and empty string when absent", () => {
+    const row = { item_id: "abc", item_name: "x", quantity: "10", unit_price: null,
+                  source_label: null, status: "missing", basis_note: "" };
+    const mapped = mapMaterialRow(row);
+    expect(mapped).toMatchObject({ source: null, reason: "" });
+  });
 });

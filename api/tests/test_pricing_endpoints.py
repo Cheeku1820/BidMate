@@ -121,6 +121,26 @@ def test_get_material_pricing_uses_company_price_when_present(client, db, org, p
     assert float(row["unit_price"]) == 99.0
 
 
+def test_get_material_pricing_round_trips_the_allowance_reason(client, project, item, signed_in_user):
+    # Without this, a client that reloads has no way to know a row is an
+    # existing allowance -- a follow-up price-only edit would silently
+    # revert it to a plain project price and erase why the number was a
+    # placeholder.
+    client.patch(f"/api/items/{item.id}/material-price",
+                 json={"priceOverride": 15.5, "source": "allowance", "reason": "no vendor quote yet"})
+    response = client.get(f"/api/projects/{project.id}/material-pricing")
+    row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
+    assert row["source"] == "allowance"
+    assert row["reason"] == "no vendor quote yet"
+
+
+def test_get_material_pricing_source_is_none_with_no_override(client, project, item, signed_in_user):
+    response = client.get(f"/api/projects/{project.id}/material-pricing")
+    row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
+    assert row["source"] is None
+    assert row["reason"] == ""
+
+
 def test_get_company_labor_rates_defaults_to_zero(client, signed_in_user):
     response = client.get("/api/company/labor-rates")
     assert response.status_code == 200, response.text

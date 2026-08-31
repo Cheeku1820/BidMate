@@ -110,6 +110,61 @@ describe("MaterialPricingWorkspace", () => {
     expect(store.setMaterialPrice).not.toHaveBeenCalled();
   });
 
+  test("a row that is already an allowance loads with the checkbox checked and the reason filled in", async () => {
+    const rows = [
+      {
+        ...baseRows[0],
+        unitPrice: 15.5,
+        source: "allowance",
+        sourceLabel: "Allowance",
+        reason: "no vendor quote yet",
+        status: "approved",
+      },
+    ];
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows }),
+      setMaterialPrice: vi.fn(),
+    };
+    renderMaterialPricing({ store });
+    await waitFor(() => expect(screen.getByLabelText("Mark as allowance")).toBeChecked());
+    expect(screen.getByLabelText("Allowance reason")).toHaveValue("no vendor quote yet");
+  });
+
+  test("editing only the price of an existing allowance keeps it an allowance with its reason", async () => {
+    // The regression this guards: without seeding local allowance state from
+    // the loaded row, a price-only edit after a reload would silently send
+    // source: "project_price" with an empty reason, discarding why the
+    // number was a placeholder.
+    const rows = [
+      {
+        ...baseRows[0],
+        unitPrice: 15.5,
+        source: "allowance",
+        sourceLabel: "Allowance",
+        reason: "no vendor quote yet",
+        status: "approved",
+      },
+    ];
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows }),
+      setMaterialPrice: vi.fn().mockResolvedValue({}),
+    };
+    renderMaterialPricing({ store });
+    await waitFor(() => expect(screen.getByLabelText("Mark as allowance")).toBeChecked());
+
+    const priceInput = screen.getByLabelText(/unit price/i);
+    fireEvent.change(priceInput, { target: { value: "20" } });
+    fireEvent.blur(priceInput);
+
+    await waitFor(() =>
+      expect(store.setMaterialPrice).toHaveBeenCalledWith("i1", {
+        priceOverride: 20,
+        source: "allowance",
+        reason: "no vendor quote yet",
+      })
+    );
+  });
+
   test("shows the source label and basis note when a row resolves from Regional baseline", async () => {
     const rows = [
       {

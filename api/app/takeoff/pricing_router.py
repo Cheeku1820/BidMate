@@ -190,10 +190,14 @@ def get_material_pricing(project_id: uuid.UUID, user: User = Depends(current_use
 
     rows = []
     for item in items:
-        resolution = resolve_material_price(item, project, overrides.get(item.id), company_prices.get(item.name))
+        override = overrides.get(item.id)
+        resolution = resolve_material_price(item, project, override, company_prices.get(item.name))
         rows.append(MaterialRowOut(
             item_id=item.id, item_name=item.name, quantity=item.quantity,
-            unit_price=resolution.unit_price, source_label=resolution.source_label,
+            unit_price=resolution.unit_price,
+            source=override.source if override is not None else None,
+            source_label=resolution.source_label,
+            reason=override.reason if override is not None else "",
             status=resolution.status, basis_note=resolution.basis_note,
         ))
     return MaterialListOut(pricing_source=project.pricing_source, pricing_note=project.pricing_note, rows=rows)

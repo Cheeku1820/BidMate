@@ -503,7 +503,9 @@ class MaterialRowOut(BaseModel):
     item_name: str
     quantity: Decimal
     unit_price: Decimal | None = None
+    source: str | None = None  # "project_price" | "allowance" | None, the raw override kind
     source_label: str | None = None
+    reason: str = ""
     status: str
     basis_note: str = ""
 

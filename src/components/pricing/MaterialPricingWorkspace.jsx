@@ -46,6 +46,16 @@ export default function MaterialPricingWorkspace() {
         setRows(result.rows);
         setPricingSource(result.pricingSource);
         setPricingNote(result.pricingNote);
+        // Seed local allowance intent from what the server actually has
+        // stored, every load -- otherwise a reload forgets an existing
+        // allowance's checkbox and reason, and a later price-only edit
+        // would silently revert it to a plain project price and erase
+        // why the number was a placeholder.
+        setAllowance(
+          Object.fromEntries(
+            result.rows.map((row) => [row.itemId, { on: row.source === "allowance", reason: row.reason || "" }])
+          )
+        );
       })
       .catch((err) => setLoadError(err?.message || "Couldn't load material pricing. Check your connection and try again."));
   }, [store, projectId]);

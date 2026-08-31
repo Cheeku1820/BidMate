@@ -230,7 +230,9 @@ export function mapMaterialRow(r) {
     itemName: r.item_name,
     quantity: Number(r.quantity),
     unitPrice: r.unit_price == null ? null : Number(r.unit_price),
+    source: r.source ?? null,
     sourceLabel: r.source_label ?? null,
+    reason: r.reason ?? "",
     status: r.status,
     basisNote: r.basis_note ?? "",
   };

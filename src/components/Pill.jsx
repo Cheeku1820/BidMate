@@ -1,5 +1,5 @@
 import { AlertTriangle, AlertCircle, CheckCircle2, Circle, CircleSlash } from "lucide-react";
-import { STATUS } from "../lib/data.js";
+import { STATUS } from "../lib/vocabulary.js";
 
 const STATUS_ICON = { ready: Circle, attention: AlertTriangle, missing: AlertCircle, approved: CheckCircle2, rejected: CircleSlash };
 

@@ -8,88 +8,68 @@ This is screen F of a larger specification. It was built first because every oth
 
 ---
 
-## Take a look
+## Run it
 
-**Fastest — no install.** Open [`demo/index.html`](demo/index.html) directly in a browser. It's a single self-contained file with everything inlined — JS, CSS, no separate requests, so it works straight off the filesystem. Download the repo as a ZIP, double-click that file, done.
+Everything runs against a real backend — Postgres, the API, and the takeoff engine. There is no fixture data: every row comes from a document you upload. You need [Docker](https://www.docker.com/), Python 3.12, and Node 18+.
 
-This file is a build output, produced by `npm run build:demo` (`vite.demo.config.js`, via [`vite-plugin-singlefile`](https://www.npmjs.com/package/vite-plugin-singlefile)) and committed so it's runnable without a build step. It always runs in seed mode against `localStorage` — there is no backend to reach from a `file://` page — and it reflects whatever was committed the last time someone ran `npm run build:demo`, which can lag behind the latest source. Regenerate it after a client change you want the demo to show.
-
-**Run the dev server.**
-
-```bash
-git clone https://github.com/<your-username>/takeoff-review.git
-cd takeoff-review
-npm install
-npm run dev
-```
-
-Then open http://localhost:5173. You need Node 18 or newer.
-
-**Build and preview a production bundle.**
-
-```bash
-npm run build
-npm run preview     # serves the built app on http://localhost:4173
-```
-
-**Publish it.** Push to GitHub and enable Pages (Settings → Pages → Source: GitHub Actions). The included workflow at `.github/workflows/deploy.yml` builds and deploys on every push to `main`, giving you a shareable URL.
-
----
-
-## Try the multi-user behavior
-
-Open the app in **two browser windows side by side**, both pointed at `localhost:5173`.
-
-- Each window gets its own estimator identity, shown as a colored avatar in the top bar. Both windows see both avatars.
-- Approve an item in one window. It changes in the other within a few seconds, and the totals in the bottom drawer update in both.
-- Select an item in one window. The other window draws a dashed ring in that person's color around the same symbol, so you can see what a colleague is looking at.
-- Press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd> in either window. Undo pulls from a **shared** history stack, so you can undo a teammate's action — and the tooltip on the undo button names what you're about to reverse.
-
-State syncs over `BroadcastChannel` + `localStorage`, which behaves like a real backend for demo purposes without needing one. See [Known limitations](#known-limitations) for what a production version would need instead.
-
----
-
-## Run the full stack
-
-Everything above runs the client alone, against `localStorage` — no install beyond Node. There is also a real backend (`api/`): Postgres, a FastAPI service, and a login screen in front of the same review workspace. You need [Docker](https://www.docker.com/) for this path.
+Postgres and the API run in containers — dependencies install inside the image, nothing to set up on the host for this part:
 
 ```bash
 docker compose up -d postgres api
 docker compose run --rm api alembic upgrade head
 ```
 
-Seed the demo project. The seed reads its login credential from the environment and refuses to run without one — there is no default password, so **choose your own** `SEED_EMAIL` and `SEED_PASSWORD` here:
+Create the first account. There is no default password — choose your own:
 
 ```bash
 docker compose run --rm \
-  -e SEED_EMAIL="you@example.com" \
-  -e SEED_PASSWORD="choose-a-password" \
-  api python -m app.seed
+  -e ADMIN_EMAIL="you@example.com" \
+  -e ADMIN_PASSWORD="choose-a-password" \
+  api python -m app.create_admin
 ```
 
-Then bring up the web container and open **http://localhost:5174** (not 5173 — that port is commonly already in use, so the containerised client publishes on 5174 instead):
+The takeoff engine runs directly on your machine, not in a container — the browser reaches it at `localhost:8100` directly, so it needs its own Python environment. Install its dependencies once into a virtual environment, then start it, from `api/`:
 
 ```bash
-docker compose up -d web
+cd api
+python3 -m venv ../.enginevenv
+../.enginevenv/bin/pip install -r requirements.txt
+../.enginevenv/bin/uvicorn estimate_service:app --port 8100
 ```
 
-Sign in with the `SEED_EMAIL`/`SEED_PASSWORD` you chose above. From here, the multi-user walkthrough above works the same way, except the "backend" is now Postgres: open a second browser window, sign in, approve an item in one, and watch it — and the presence avatar — appear in the other within a few seconds.
+Then the client, also on the host:
 
-**`npm run dev` alone still runs the seed/`localStorage` mode**, API stopped or not — that's deliberate. The client picks its backend from `VITE_DATA_SOURCE`: unset (the default, including plain `npm run dev` on the host) means seed mode; `api` (set automatically inside the `web` container above) means the real backend. Seed mode never imports anything from the API path, which is what makes it possible to delete later without touching the rest of the client.
+```bash
+npm install
+npm run dev
+```
 
-If you're running `npm run dev` on the host **against** the containerised API (`docker compose up postgres api`, then `npm run dev` separately), it talks to `http://localhost:8000` automatically — no extra configuration needed.
+Open http://localhost:5173, sign in with the account you created, create a project, upload a drawing set, and process it.
+
+---
+
+## Try the multi-user behavior
+
+Open the app in **two browser windows side by side**, both signed in against the same project.
+
+- Each window gets its own estimator identity, shown as a colored avatar in the top bar. Both windows see both avatars.
+- Approve an item in one window. It changes in the other within a few seconds, and the totals in the bottom drawer update in both.
+- Select an item in one window. The other window draws a dashed ring in that person's color around the same symbol, so you can see what a colleague is looking at.
+- Press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Z</kbd> in either window. Undo pulls from a **shared** history stack, so you can undo a teammate's action — and the tooltip on the undo button names what you're about to reverse.
+
+The client polls the API every few seconds for changes from other reviewers. See [Known limitations](#known-limitations) for what real-time sync would need instead.
 
 ---
 
 ## Walk through the review flows
 
-The seed project has 12 takeoff items across 3 sheets, deliberately seeded with the failure modes that matter.
+Once you've uploaded and processed a drawing set, the workspace surfaces whatever the engine found — including the failure modes that matter:
 
-**Resolve a conflict.** Open E2.1 and click the high-bay fixture symbol at grid D-2 (amber). The panel explains that the plan tag and the E0.1 luminaire schedule disagree about the fixture type. Press <kbd>E</kbd> to edit, correct the classification, then <kbd>A</kbd> to approve.
+**Resolve a conflict.** A *Needs attention* item marks where the plan and a schedule disagree. Open its evidence, correct the classification, then approve it.
 
-**Fix a missing scale.** Open E1.1. The banner says no scale was found in the title block, and the conduit run is drawn as a dashed red polyline because it couldn't be measured with confidence. Click **Set scale**, choose one — or pick **Calibrate against a known dimension**, then click the two ends of the 185'-0" dimension string across the top of the plan. Both paths clear the warning and flip the affected measured items to *Ready to review* in one undoable action.
+**Fix a missing scale.** A sheet with no scale in its title block shows measured items as *Missing information*, drawn as dashed red polylines because they can't be measured with confidence. Set the scale, or calibrate against a known dimension on the plan, to clear the warning and flip the affected items to *Ready to review*.
 
-**Classify an unknown symbol.** Also on E2.1, near the dock office, a dashed circle with a question mark marks a symbol that isn't in the legend. It stays visible and reviewable rather than being silently dropped. Edit it to assign a real classification.
+**Classify an unknown symbol.** A symbol that isn't in the legend stays visible and reviewable rather than being silently dropped. Edit it to assign a real classification.
 
 **Hit the blocking rule.** Click **Finish review** while any *Missing information* item remains. Completion is blocked, the blocking items are listed with direct links, and only *Needs attention* items can be carried forward — after an explicit acknowledgment checkbox.
 
@@ -110,7 +90,7 @@ Everything in the interface resolves to tokens defined at the top of [`src/style
 | Missing information | Required evidence absent (scale, legend) | Yes |
 | Estimator approved | A person confirmed it | — |
 
-**Every warning answers four questions** — what was found, why it matters, what to do, and where the evidence lives. That structure is enforced by the data shape itself (`warning: { title, found, why, fix, where }`), so a warning that skips one is a schema error rather than a copy oversight.
+**Every warning answers four questions** — what was found, why it matters, what to do, and where the evidence lives. That structure is enforced by the data shape itself (`warning: { title, found, why, fix, where }`) and validated where a processed takeoff enters the system (`api/app/takeoff/ingest.py`), which refuses any warning missing one of those four, and refuses one whose `reason` is not a recognized kind. A warning that skips a field is a schema error rather than a copy oversight.
 
 **Typography.** System sans stack at a 16px base, with tabular numerals on every quantity, count, and total so digits align in columns.
 
@@ -118,7 +98,7 @@ Everything in the interface resolves to tokens defined at the top of [`src/style
 
 ## What's in the drawing
 
-The canvas isn't a placeholder rectangle. Each sheet is drafted with double-line exterior walls, a dashed column grid with lettered and numbered bubbles, structural columns at grid intersections, door swings, dimension strings, room tags with numbers, a north arrow, a graphic scale bar, and a title block carrying the sheet number and a revision triangle.
+Every sheet comes from an uploaded document, so the canvas shows the honest surface for that: blank paper carrying just the sheet number and title, because there is no drawn geometry that could stand in for a page nobody in this codebase has seen. What grounds each item in the real drawing is its evidence — a crop of the source page around where it was counted, available from the item detail panel's "View evidence" control.
 
 Takeoff items are drawn as **standard electrical symbols** — a circle with a bisecting line for a receptacle, a circle with an S for a switch, a crossed rectangle for a panel, a crossed circle for a high bay, a triangle for a data outlet — rather than generic pins. The symbol carries the item type, the ring color carries the review status, and the badge carries the warning. Three independent channels, no overloading.
 
@@ -133,22 +113,34 @@ src/
   App.jsx                      auth gate: login vs. workspace, nothing else
   styles.css                   design tokens and every component style
   lib/
-    data.js                    seed fixture: sheets, items, status definitions
+    vocabulary.js              the status vocabulary: four review labels, never a fifth
     rules.js                   approval/totals/scale-release rules, mirrored from the API
     format.js                  time and initials formatting
     useReviewStore.js          the snapshot hook: store subscription, poll, saves, mutations
     store/
-      index.js                 picks seed or api by VITE_DATA_SOURCE
-      seed.js + seed-*.js       the localStorage/BroadcastChannel store
-      api.js + api-mapping.js  the real backend store (fetch, caching, wire-shape mapping)
+      index.js                 the single data source: the api store
+      api.js + api-mapping.js  the backend store (fetch, caching, wire-shape mapping)
   components/
     Workspace.jsx              the review workspace: selection, filters, modals, shortcuts
     Login.jsx                  sign-in screen (api store only)
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx
     Modal.jsx, FinishReviewModal.jsx, MiscModals.jsx, Pill.jsx
     BlueprintCanvas.jsx        pan/zoom viewport, markers, measurements, minimap
-    PlanDrawing.jsx            architectural plan geometry per sheet
+    PlanDrawing.jsx            honest blank-paper base layer under markers
     Symbols.jsx                electrical symbol glyphs
+    notes/                     notes & assumptions — what the drawings don't say
+      NotesWorkspace.jsx       the screen: list, filters, apply-and-re-run
+      NoteForm.jsx             add/edit, with the context/reference control
+      ApplyNotesBanner.jsx     offers the re-run when context notes are pending
+      noteVocabulary.js        a note's own words, distinct from the review labels
+```
+
+The two API modules behind that screen:
+
+```
+api/app/takeoff/
+  notes.py                     note CRUD, audited through commit(), not undoable
+  reprocess.py                 the approval-preserving merge behind a re-run
 ```
 
 If you open this repo in Claude Code, [`CLAUDE.md`](CLAUDE.md) loads automatically and carries the design context — status vocabulary, the rules that are easy to break, and the decisions still open.
@@ -169,12 +161,11 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 
 ## Known limitations
 
-This is a design prototype, not a product. Specifically:
-
-- **Two sync modes, neither production-grade.** The default `localStorage` + `BroadcastChannel` mode is single-machine, demonstrating the interaction model across tabs without a server. The optional `docker compose` mode (see "Run the full stack" above) is a real Postgres-backed API, but sync there is a three-second poll, not a push channel — real-time collaboration needs a WebSocket layer. Both modes share the same open question: undo is a single linear stack, so one reviewer can undo another's action from underneath them. Shared undo needs conflict resolution — either operational transforms or per-user undo stacks with a merge policy — and that decision is still open regardless of which sync mode is in front of it.
+- **Sync is a poll, not a push channel.** The client polls the API every few seconds for changes from other reviewers, rather than receiving them immediately over a WebSocket. Undo is also still a single shared linear stack, so one reviewer can undo another's action from underneath them — shared undo needs conflict resolution, either operational transforms or per-user undo stacks with a merge policy, and that decision is still open.
 - **The blueprint is drawn geometry, not a rendered PDF.** A production build would layer markers over `pdf.js` output.
-- **No takeoff is actually computed.** Items are seed data. There is no document ingestion, no detection, no export.
-- **Screens A–E and G–K are not built.** See [`ROADMAP.md`](ROADMAP.md).
+- **Export produces a CSV, not yet a real Excel workbook.**
+- **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Labor, Material pricing, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. See [`ROADMAP.md`](ROADMAP.md).
+- **Applying a note is audited but not undoable.** The re-run lands as one attributable entry in the action log; there is no single press that puts the takeoff back. Undo still covers approve, reject, edit, delete, bulk approve, and scale, across a re-run.
 
 ---
 

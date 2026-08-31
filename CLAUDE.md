@@ -33,6 +33,7 @@ Every screen is a different view onto this same state. When building a new scree
 - **Green appears only on estimator-approved content.** Not on "done processing," not on a successful upload.
 - **No save buttons.** Everything autosaves, with save state in the top bar and an undoable toast per action.
 - **Approving a *Missing information* item is blocked at the item level**, with inline copy explaining why — so the estimator hits the rule while looking at the evidence, not later in a summary dialog.
+- **A note's status is not an item's status.** Notes carry their own confirmed/open vocabulary describing a *note*; the four labels above describe an *item's evidence*. Never render a note's status using the item-status components or colours — a note pill in amber reads as *Needs attention* and quietly makes the four labels into five. `--slate`/`--plum` in `styles.css` exist for exactly this separation.
 - **The conversation panel never becomes the only path to anything.** See the section below.
 
 ## The conversation panel is additive, never load-bearing
@@ -57,17 +58,30 @@ src/
   App.jsx                    auth gate: login vs. workspace, nothing else
   styles.css                 design tokens and every component style
   lib/
-    data.js                  seed fixture: sheets, items, status definitions
+    vocabulary.js            the status vocabulary: four review labels, never a fifth
     rules.js                 approval/totals/scale-release rules, mirrored from the API
     useReviewStore.js        the snapshot hook: store subscription, poll, saves, mutations
-    store/                   the store interface — seed (localStorage) and api (fetch) behind it
+    store/                   the store interface — a single api store (fetch)
   components/
     Workspace.jsx            the review workspace: selection, filters, modals, shortcuts
-    Login.jsx                sign-in screen (api store only)
+    Login.jsx                sign-in screen
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx, modals
     BlueprintCanvas.jsx      pan/zoom viewport, markers, measurements, minimap
-    PlanDrawing.jsx          architectural plan geometry per sheet
+    PlanDrawing.jsx          honest blank-paper base layer under markers
     Symbols.jsx              electrical symbol glyphs
+    notes/                   notes & assumptions: what the drawings don't say
+      NotesWorkspace.jsx     the screen — list, filters, apply-and-re-run
+      NoteForm.jsx           add/edit, with the context/reference control
+      ApplyNotesBanner.jsx   offers the re-run when context notes are pending
+      noteVocabulary.js      a note's own words — deliberately not the four review labels
+```
+
+On the API side, two modules carry that feature:
+
+```
+api/app/takeoff/
+  notes.py                   note CRUD, audited through commit(), not undoable
+  reprocess.py               the approval-preserving merge behind a re-run
 ```
 
 Sheet space is a 1000 x 750 unit coordinate system. Item positions are in sheet units, so markers land on real plan geometry.
@@ -99,7 +113,7 @@ Rules that are easy to break here:
 ## Conventions
 
 - Plain CSS with tokens at the top of `styles.css`. No Tailwind, no CSS-in-JS. Add new colors as tokens, never as inline hex.
-- React function components with hooks. No state library — shared state comes from the store (`lib/store/`, seed or api) through `lib/useReviewStore.js`.
+- React function components with hooks. No state library — shared state comes from the store (`lib/store/`, the api store) through `lib/useReviewStore.js`.
 - `lucide-react` for interface icons. Electrical symbols are hand-drawn SVG in `Symbols.jsx`, following standard drafting convention.
 - Tabular numerals (`className="tabular"`) on every quantity, count, and total.
 - Sentence case for all interface copy. No exclamation marks, no "successfully," no "please."
@@ -109,9 +123,11 @@ Rules that are easy to break here:
 
 - **Shared undo model.** The stack is currently shared and linear across reviewers, which means person B can undo person A's approval. Alternatives are per-user stacks with a merge policy, or a CRDT. Needs a product call.
 - **Revision conflict flow** (path 4 in the spec) is unbuilt. Open: whether superseded sheets stay browsable read-only, whether approvals carry forward across a revision, and how a mid-review swap surfaces to a second reviewer already in the file.
-- **Sync is single-machine** (`BroadcastChannel` + `localStorage`) to demo the interaction model without a backend. Production needs a real service.
+- **Sync is a poll against the real API**, every few seconds, not a push channel. Real-time collaboration needs a WebSocket layer; the undo model above is still the separate open question it always was.
 - **Conversation panel specifics** — whether a thread is shared across reviewers or per-user, and whether a symbol resolved on one project defaults on the next. Both are listed with their trade-offs at the end of [`ROADMAP.md`](ROADMAP.md). Do not pick one in passing while building something else.
 
 ## Known scope limits
 
-The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. No document ingestion, no detection, no export. Screens A–E and G–K are not built. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
+The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Labor, Material pricing, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Notes & assumptions is built and routed. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
+
+Within notes, several things the design spec describes are not built: the `applied_action_id` column, the footer strip, sheet-scoped narrowing of a re-run, and item-scoped notes resolving to a cluster tag. See the *Not built in this slice* section of [`docs/superpowers/specs/2026-08-28-notes-and-assumptions-design.md`](docs/superpowers/specs/2026-08-28-notes-and-assumptions-design.md).

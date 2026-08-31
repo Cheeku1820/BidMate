@@ -53,6 +53,13 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "path": list,
     "notes": str,
     "evidence": dict,
+    "material_cost": Decimal,
+    "labor_hours": Decimal,
+    "labor_cost": Decimal,
+    "total_cost": Decimal,
+    "placements": list,
+    "ai_confirmed": bool,
+    "source_tag": str,
     "updated_at": datetime,
     "warnings": list,
 }
@@ -71,6 +78,29 @@ WARNING_SNAPSHOT_TYPES: dict[str, type] = {
     "why": str,
     "fix": str,
     "where_": str,
+}
+
+LABOR_LINE_SNAPSHOT_TYPES: dict[str, type] = {
+    "item_id": uuid.UUID,
+    "hours_override": Decimal,
+    "crew_journeyman": int,
+    "crew_foreman": int,
+    "crew_apprentice": int,
+    "rate_override": Decimal,
+    "adjustment_percent": Decimal,
+    "adjustment_reason": str,
+    "notes": str,
+    "updated_by_user_id": uuid.UUID,
+    "updated_at": datetime,
+}
+
+MATERIAL_PRICE_SNAPSHOT_TYPES: dict[str, type] = {
+    "item_id": uuid.UUID,
+    "price_override": Decimal,
+    "source": str,
+    "reason": str,
+    "updated_by_user_id": uuid.UUID,
+    "updated_at": datetime,
 }
 
 # The key `before`/`after` nest a list of per-item snapshots under, for

@@ -12,6 +12,7 @@ from app.errors import DomainError, domain_error_handler
 from app.observability import RequestIdMiddleware, configure_logging, request_id_var
 from app.takeoff.actions import CrossOrgActionError
 from app.takeoff.mutations import router as takeoff_mutations_router
+from app.takeoff.pricing_router import router as pricing_router
 from app.takeoff.router import PROJECT_NOT_FOUND_CODE, PROJECT_NOT_FOUND_MESSAGE
 from app.takeoff.router import router as takeoff_router
 
@@ -93,6 +94,7 @@ async def no_shared_caching(request: Request, call_next):
 app.include_router(auth_router)
 app.include_router(takeoff_router)
 app.include_router(takeoff_mutations_router)
+app.include_router(pricing_router)
 app.include_router(collab_router)
 
 

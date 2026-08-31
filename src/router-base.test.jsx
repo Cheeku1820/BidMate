@@ -1,20 +1,16 @@
 /* ============================================================
    router-base.test.jsx — pins why App.jsx uses HashRouter rather than
    BrowserRouter (see App.jsx's comment at the swap for the full
-   reasoning: vite.config.js's base: "./", the GitHub Pages subpath
-   deploy.yml publishes to, and the file:// demo/index.html build).
+   reasoning: routes.jsx's paths are absolute from "/", and nothing
+   serving this app rewrites unknown paths back to index.html).
 
    BrowserRouter matches window.location.pathname verbatim. This test
-   simulates the one property both broken distribution paths share —
-   window.location.pathname is something other than exactly "/" — using
-   history.pushState, which jsdom supports without triggering a real
-   navigation. It does not attempt to simulate a file:// origin
-   specifically (jsdom's handling of the file: scheme is unreliable
-   enough that a test built on it would not be trustworthy), but the
-   failure mode under a non-root pathname is the same mechanism GitHub
-   Pages hits, and it is the mechanism HashRouter is immune to — HashRouter
-   reads the URL fragment instead, which is untouched by either the
-   serving subpath or the origin scheme.
+   simulates the property every broken case shares — pathname is
+   something other than exactly "/" — using history.pushState, which
+   jsdom supports without triggering a real navigation. That is what a
+   deep link or a reload on /projects/<id>/review looks like to the
+   router, and it is the mechanism HashRouter is immune to: HashRouter
+   reads the URL fragment instead, which no server ever sees.
    ============================================================ */
 
 import { describe, expect, it, afterEach } from "vitest";

@@ -28,6 +28,12 @@ from app.takeoff.models import (
 from app.takeoff.pricing import resolve_labor, resolve_material_price
 from app.takeoff.router import load_item, load_project, not_found
 from app.takeoff.schemas import (
+    CompanyLaborHoursOverrideIn,
+    CompanyLaborHoursOverrideOut,
+    CompanyLaborRatesIn,
+    CompanyLaborRatesOut,
+    CompanyMaterialPriceIn,
+    CompanyMaterialPriceOut,
     LaborLineUpdateIn,
     LaborListOut,
     LaborRowOut,
@@ -184,3 +190,90 @@ def get_material_pricing(project_id: uuid.UUID, user: User = Depends(current_use
             status=resolution.status, basis_note=resolution.basis_note,
         ))
     return MaterialListOut(pricing_source=project.pricing_source, pricing_note=project.pricing_note, rows=rows)
+
+
+@router.get("/company/labor-rates", response_model=CompanyLaborRatesOut)
+def get_company_labor_rates(user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    row = db.get(CompanyLaborRate, user.org_id)
+    if row is None:
+        return CompanyLaborRatesOut(journeyman_rate=0, foreman_rate=0, apprentice_rate=0, productivity_factor=1)
+    return row
+
+
+@router.put("/company/labor-rates", response_model=CompanyLaborRatesOut)
+def put_company_labor_rates(body: CompanyLaborRatesIn, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    row = db.get(CompanyLaborRate, user.org_id)
+    if row is None:
+        row = CompanyLaborRate(org_id=user.org_id)
+        db.add(row)
+    row.journeyman_rate = body.journeyman_rate
+    row.foreman_rate = body.foreman_rate
+    row.apprentice_rate = body.apprentice_rate
+    row.productivity_factor = body.productivity_factor
+    row.updated_by_user_id = user.id
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.get("/company/material-prices", response_model=list[CompanyMaterialPriceOut])
+def get_company_material_prices(user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    return list(db.scalars(select(CompanyMaterialPrice).where(CompanyMaterialPrice.org_id == user.org_id)))
+
+
+@router.put("/company/material-prices/{item_name}", response_model=CompanyMaterialPriceOut)
+def put_company_material_price(item_name: str, body: CompanyMaterialPriceIn, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    row = db.scalars(select(CompanyMaterialPrice).where(
+        CompanyMaterialPrice.org_id == user.org_id, CompanyMaterialPrice.item_name == item_name,
+    )).one_or_none()
+    if row is None:
+        row = CompanyMaterialPrice(org_id=user.org_id, item_name=item_name, unit_price=body.unit_price, effective_date=body.effective_date)
+        db.add(row)
+    else:
+        row.unit_price = body.unit_price
+        row.effective_date = body.effective_date
+    row.updated_by_user_id = user.id
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete("/company/material-prices/{item_name}", status_code=204)
+def delete_company_material_price(item_name: str, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    row = db.scalars(select(CompanyMaterialPrice).where(
+        CompanyMaterialPrice.org_id == user.org_id, CompanyMaterialPrice.item_name == item_name,
+    )).one_or_none()
+    if row is not None:
+        db.delete(row)
+        db.commit()
+
+
+@router.get("/company/labor-hours-overrides", response_model=list[CompanyLaborHoursOverrideOut])
+def get_company_labor_hours_overrides(user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    return list(db.scalars(select(CompanyLaborHoursOverride).where(CompanyLaborHoursOverride.org_id == user.org_id)))
+
+
+@router.put("/company/labor-hours-overrides/{item_name}", response_model=CompanyLaborHoursOverrideOut)
+def put_company_labor_hours_override(item_name: str, body: CompanyLaborHoursOverrideIn, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    row = db.scalars(select(CompanyLaborHoursOverride).where(
+        CompanyLaborHoursOverride.org_id == user.org_id, CompanyLaborHoursOverride.item_name == item_name,
+    )).one_or_none()
+    if row is None:
+        row = CompanyLaborHoursOverride(org_id=user.org_id, item_name=item_name, hours_per_unit=body.hours_per_unit)
+        db.add(row)
+    else:
+        row.hours_per_unit = body.hours_per_unit
+    row.updated_by_user_id = user.id
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete("/company/labor-hours-overrides/{item_name}", status_code=204)
+def delete_company_labor_hours_override(item_name: str, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    row = db.scalars(select(CompanyLaborHoursOverride).where(
+        CompanyLaborHoursOverride.org_id == user.org_id, CompanyLaborHoursOverride.item_name == item_name,
+    )).one_or_none()
+    if row is not None:
+        db.delete(row)
+        db.commit()

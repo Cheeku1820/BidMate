@@ -509,3 +509,52 @@ class MaterialListOut(BaseModel):
     rows: list[MaterialRowOut]
 
     model_config = MODEL_CONFIG
+
+
+class CompanyLaborRatesIn(BaseModel):
+    journeyman_rate: Decimal
+    foreman_rate: Decimal
+    apprentice_rate: Decimal
+    productivity_factor: Decimal
+
+    model_config = {**MODEL_CONFIG, "alias_generator": to_camel, "populate_by_name": True, "extra": "forbid"}
+
+
+class CompanyLaborRatesOut(BaseModel):
+    journeyman_rate: Decimal
+    foreman_rate: Decimal
+    apprentice_rate: Decimal
+    productivity_factor: Decimal
+    updated_at: datetime | None = None
+
+    model_config = MODEL_CONFIG
+
+
+class CompanyMaterialPriceIn(BaseModel):
+    unit_price: Decimal
+    effective_date: date
+
+    model_config = {**MODEL_CONFIG, "alias_generator": to_camel, "populate_by_name": True, "extra": "forbid"}
+
+
+class CompanyMaterialPriceOut(BaseModel):
+    item_name: str
+    unit_price: Decimal
+    effective_date: date
+    updated_at: datetime
+
+    model_config = MODEL_CONFIG
+
+
+class CompanyLaborHoursOverrideIn(BaseModel):
+    hours_per_unit: Decimal
+
+    model_config = {**MODEL_CONFIG, "alias_generator": to_camel, "populate_by_name": True, "extra": "forbid"}
+
+
+class CompanyLaborHoursOverrideOut(BaseModel):
+    item_name: str
+    hours_per_unit: Decimal
+    updated_at: datetime
+
+    model_config = MODEL_CONFIG

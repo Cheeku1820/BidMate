@@ -115,3 +115,61 @@ def test_get_material_pricing_uses_company_price_when_present(client, db, org, p
     row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
     assert row["source_label"] == "Company price"
     assert float(row["unit_price"]) == 99.0
+
+
+def test_get_company_labor_rates_defaults_to_zero(client, signed_in_user):
+    response = client.get("/api/company/labor-rates")
+    assert response.status_code == 200, response.text
+    assert response.json()["journeyman_rate"] == "0.00" or float(response.json()["journeyman_rate"]) == 0.0
+
+
+def test_put_company_labor_rates_persists(client, db, org, signed_in_user):
+    response = client.put("/api/company/labor-rates", json={
+        "journeymanRate": 68, "foremanRate": 82, "apprenticeRate": 41, "productivityFactor": 0.97,
+    })
+    assert response.status_code == 200, response.text
+    from app.takeoff.models import CompanyLaborRate
+    row = db.get(CompanyLaborRate, org.id)
+    assert float(row.journeyman_rate) == 68.0
+
+
+def test_put_company_material_price_creates_and_updates(client, db, org, signed_in_user):
+    response = client.put("/api/company/material-prices/20A%20duplex%20receptacle",
+                           json={"unitPrice": 13.5, "effectiveDate": "2026-08-01"})
+    assert response.status_code == 200, response.text
+    response2 = client.put("/api/company/material-prices/20A%20duplex%20receptacle",
+                            json={"unitPrice": 14.0, "effectiveDate": "2026-08-15"})
+    assert response2.status_code == 200
+    from app.takeoff.models import CompanyMaterialPrice
+    row = db.scalars(select(CompanyMaterialPrice).where(
+        CompanyMaterialPrice.org_id == org.id, CompanyMaterialPrice.item_name == "20A duplex receptacle",
+    )).one()
+    assert float(row.unit_price) == 14.0
+
+
+def test_delete_company_material_price(client, db, org, signed_in_user):
+    client.put("/api/company/material-prices/20A%20duplex%20receptacle",
+               json={"unitPrice": 13.5, "effectiveDate": "2026-08-01"})
+    response = client.delete("/api/company/material-prices/20A%20duplex%20receptacle")
+    assert response.status_code == 204
+    from app.takeoff.models import CompanyMaterialPrice
+    remaining = db.scalars(select(CompanyMaterialPrice).where(CompanyMaterialPrice.org_id == org.id)).all()
+    assert remaining == []
+
+
+def test_get_company_material_prices_lists_all(client, org, signed_in_user):
+    client.put("/api/company/material-prices/20A%20duplex%20receptacle", json={"unitPrice": 13.5, "effectiveDate": "2026-08-01"})
+    response = client.get("/api/company/material-prices")
+    names = [row["item_name"] for row in response.json()]
+    assert "20A duplex receptacle" in names
+
+
+def test_put_company_labor_hours_override(client, db, org, signed_in_user):
+    response = client.put("/api/company/labor-hours-overrides/20A%20duplex%20receptacle",
+                           json={"hoursPerUnit": 0.6})
+    assert response.status_code == 200, response.text
+    from app.takeoff.models import CompanyLaborHoursOverride
+    row = db.scalars(select(CompanyLaborHoursOverride).where(
+        CompanyLaborHoursOverride.org_id == org.id, CompanyLaborHoursOverride.item_name == "20A duplex receptacle",
+    )).one()
+    assert float(row.hours_per_unit) == 0.6

@@ -62,6 +62,41 @@ describe("CompanySettings", () => {
     await waitFor(() => expect(screen.getByDisplayValue("68")).toBeInTheDocument());
   });
 
+  it("saves a labor rate once, on blur, with all four fields", async () => {
+    // The field is uncontrolled and commits on blur, so typing several
+    // characters must produce exactly one write -- not one per keystroke,
+    // where the last character can lose the race against the reload.
+    const store = {
+      getCompanyLaborRates: vi.fn().mockResolvedValue({
+        journeyman_rate: "68.00",
+        foreman_rate: "82.00",
+        apprentice_rate: "41.00",
+        productivity_factor: "1.000",
+        updated_at: "2026-08-01T00:00:00Z",
+      }),
+      setCompanyLaborRates: vi.fn().mockResolvedValue({}),
+    };
+    render(<CompanySettings store={store} />);
+    fireEvent.click(screen.getByRole("tab", { name: /labor rates/i }));
+    await waitFor(() => expect(screen.getByDisplayValue("68")).toBeInTheDocument());
+
+    const journeyman = screen.getByLabelText(/journeyman rate/i);
+    await userEvent.clear(journeyman);
+    await userEvent.type(journeyman, "72.5");
+    expect(store.setCompanyLaborRates).not.toHaveBeenCalled();
+
+    fireEvent.blur(journeyman);
+    await waitFor(() =>
+      expect(store.setCompanyLaborRates).toHaveBeenCalledWith({
+        journeymanRate: 72.5,
+        foremanRate: 82,
+        apprenticeRate: 41,
+        productivityFactor: 1,
+      })
+    );
+    expect(store.setCompanyLaborRates).toHaveBeenCalledTimes(1);
+  });
+
   it("Material pricing tab lists company prices and supports add/remove", async () => {
     const store = {
       getCompanyMaterialPrices: vi.fn().mockResolvedValue([

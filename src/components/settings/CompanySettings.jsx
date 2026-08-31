@@ -229,8 +229,18 @@ export default function CompanySettings({ store }) {
                           className="field field--number tabular"
                           type="number"
                           step={f.step}
-                          value={laborRates[f.field]}
-                          onChange={(e) => {
+                          // Uncontrolled, committed on blur -- the same pattern
+                          // LaborWorkspace's hours field and MaterialPricing's
+                          // price field use. A controlled field committing on
+                          // every keystroke fires a PUT and a reload per
+                          // character: an estimator typing faster than the round
+                          // trip watches the field jump under them, and the last
+                          // character can lose the race against the reload and
+                          // never reach the server. Keyed on the loaded value so
+                          // the field remounts with whatever the store returned.
+                          key={laborRates[f.field]}
+                          defaultValue={laborRates[f.field]}
+                          onBlur={(e) => {
                             // Same empty-field guard as the generic renderer below:
                             // don't persist an empty field as 0.
                             const raw = e.target.value;

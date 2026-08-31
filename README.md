@@ -98,7 +98,7 @@ Everything in the interface resolves to tokens defined at the top of [`src/style
 
 ## What's in the drawing
 
-The canvas isn't a placeholder rectangle. Each sheet is drafted with double-line exterior walls, a dashed column grid with lettered and numbered bubbles, structural columns at grid intersections, door swings, dimension strings, room tags with numbers, a north arrow, a graphic scale bar, and a title block carrying the sheet number and a revision triangle.
+Every sheet comes from an uploaded document, so the canvas shows the honest surface for that: blank paper carrying just the sheet number and title, because there is no drawn geometry that could stand in for a page nobody in this codebase has seen. What grounds each item in the real drawing is its evidence — a crop of the source page around where it was counted, available from the item detail panel's "View evidence" control.
 
 Takeoff items are drawn as **standard electrical symbols** — a circle with a bisecting line for a receptacle, a circle with an S for a switch, a crossed rectangle for a panel, a crossed circle for a high bay, a triangle for a data outlet — rather than generic pins. The symbol carries the item type, the ring color carries the review status, and the badge carries the warning. Three independent channels, no overloading.
 
@@ -126,7 +126,7 @@ src/
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx
     Modal.jsx, FinishReviewModal.jsx, MiscModals.jsx, Pill.jsx
     BlueprintCanvas.jsx        pan/zoom viewport, markers, measurements, minimap
-    PlanDrawing.jsx            architectural plan geometry per sheet
+    PlanDrawing.jsx            honest blank-paper base layer under markers
     Symbols.jsx                electrical symbol glyphs
     notes/                     notes & assumptions — what the drawings don't say
       NotesWorkspace.jsx       the screen: list, filters, apply-and-re-run

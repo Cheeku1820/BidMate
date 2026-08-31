@@ -67,7 +67,7 @@ src/
     Login.jsx                sign-in screen
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx, modals
     BlueprintCanvas.jsx      pan/zoom viewport, markers, measurements, minimap
-    PlanDrawing.jsx          architectural plan geometry per sheet
+    PlanDrawing.jsx          honest blank-paper base layer under markers
     Symbols.jsx              electrical symbol glyphs
     notes/                   notes & assumptions: what the drawings don't say
       NotesWorkspace.jsx     the screen — list, filters, apply-and-re-run

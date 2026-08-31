@@ -424,3 +424,44 @@ class NoteUpdateIn(BaseModel):
     usage: Literal["reference", "context"] | None = None
     source_ref: str | None = None
     obsolete_after_revision: str | None = None
+
+
+class LaborLineUpdateIn(BaseModel):
+    hours_override: Decimal | None = Field(default=None)
+    crew_journeyman: int | None = Field(default=None, ge=0)
+    crew_foreman: int | None = Field(default=None, ge=0)
+    crew_apprentice: int | None = Field(default=None, ge=0)
+    rate_override: Decimal | None = Field(default=None)
+    adjustment_percent: Decimal | None = Field(default=None)
+    adjustment_reason: str | None = Field(default=None)
+    notes: str | None = Field(default=None)
+
+    model_config = {**MODEL_CONFIG, "alias_generator": to_camel, "populate_by_name": True, "extra": "forbid"}
+
+
+class MaterialPriceUpdateIn(BaseModel):
+    price_override: Decimal
+    source: Literal["project_price", "allowance"]
+    reason: str = ""
+
+    # validate_default: an omitted `reason` falls back to "" without ever
+    # reaching the validator below unless Pydantic is told to validate
+    # defaults too -- and "" is exactly the value the allowance rule needs
+    # to catch.
+    model_config = {
+        **MODEL_CONFIG,
+        "alias_generator": to_camel,
+        "populate_by_name": True,
+        "extra": "forbid",
+        "validate_default": True,
+    }
+
+    @field_validator("reason")
+    @classmethod
+    def _allowance_needs_a_reason(cls, value: str, info) -> str:
+        # An allowance with no reason is a number nobody can trace back
+        # to a judgment call -- the same principle scale.py already
+        # enforces for a confirmed measurement with no evidence behind it.
+        if info.data.get("source") == "allowance" and not value.strip():
+            raise ValueError("An allowance needs a reason -- state what it's standing in for.")
+        return value

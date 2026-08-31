@@ -17,6 +17,7 @@ const baseRows = [
     unitPrice: null,
     sourceLabel: null,
     status: "missing",
+    basisNote: "",
   },
 ];
 
@@ -59,5 +60,24 @@ describe("MaterialPricingWorkspace", () => {
     await waitFor(() =>
       expect(store.setMaterialPrice).toHaveBeenCalledWith("i1", { priceOverride: 15.5, source: "project_price" })
     );
+  });
+
+  test("shows the source label and basis note when a row resolves from Regional baseline", async () => {
+    const rows = [
+      {
+        ...baseRows[0],
+        unitPrice: 12.5,
+        sourceLabel: "Regional baseline",
+        status: "ready",
+        basisNote: "Price based on Sacramento, CA area cost data.",
+      },
+    ];
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: "llm", pricingNote: "x", rows }),
+      setMaterialPrice: vi.fn(),
+    };
+    renderMaterialPricing({ store });
+    await waitFor(() => expect(screen.getByText("Regional baseline")).toBeInTheDocument());
+    expect(screen.getByText("Price based on Sacramento, CA area cost data.")).toBeInTheDocument();
   });
 });

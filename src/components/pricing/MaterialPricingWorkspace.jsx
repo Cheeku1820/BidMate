@@ -131,7 +131,12 @@ export default function MaterialPricingWorkspace() {
                           className={c.align === "right" ? "tabular" : undefined}
                           style={{ textAlign: c.align }}
                         >
-                          {c.key === "unitPrice" ? (
+                          {c.key === "itemName" && row.basisNote ? (
+                            <>
+                              {c.render(row)}
+                              <div className="muted labor-basis-note">{row.basisNote}</div>
+                            </>
+                          ) : c.key === "unitPrice" ? (
                             <input
                               key={row.unitPrice}
                               type="number"

@@ -400,7 +400,11 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
             removed += 1
 
     db.flush()
-    project.pricing_source = payload.get("source")
+    # Fall back to what the project already carries, not to None: a
+    # payload that simply does not mention pricing has not repriced
+    # anything, and clearing this flips every labor and material row
+    # on the project to Missing information.
+    project.pricing_source = payload.get("source", project.pricing_source)
     project.pricing_note = str(payload.get("location_note") or "")
     label = (f"Applied notes and re-ran the takeoff: {reclassified} reclassified, "
              f"{preserved} approved left unchanged")

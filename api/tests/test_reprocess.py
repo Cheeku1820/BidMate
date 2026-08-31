@@ -508,3 +508,20 @@ def test_reprocess_keeps_pricing_when_the_classification_is_unchanged(client, db
     db.expire_all()
     assert float(db.get(ProjectLaborLine, item.id).hours_override) == 0.75
     assert float(db.get(ProjectMaterialPrice, item.id).price_override) == 15.5
+
+
+def test_reprocess_without_a_source_keeps_the_one_the_project_already_had(client, db, project, signed_in_user):
+    """A payload that says nothing about pricing has not repriced
+    anything. Clearing the flag would flip every labor and material row on
+    the project to Missing information without a single figure changing."""
+    _seed(client, project, [_item("R", "20A duplex receptacle")])
+    payload = {**_payload([_item("R", "20A duplex receptacle")]), "source": "llm",
+               "location_note": "Rate based on Sacramento, CA area cost data."}
+    client.post(f"/api/projects/{project.id}/reprocess", json={"payload": payload})
+    db.refresh(project)
+    assert project.pricing_source == "llm"
+
+    client.post(f"/api/projects/{project.id}/reprocess",
+                json={"payload": _payload([_item("R", "20A duplex receptacle")])})  # no "source"
+    db.refresh(project)
+    assert project.pricing_source == "llm"

@@ -120,16 +120,6 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
     return sheets
 
 
-def render_page_png(path: str, page_index: int, zoom: float = 2.0) -> bytes:
-    """Render a sheet to PNG for the canvas to show behind the markers.
-    A real blueprint needs its own page image; the drawn SVG is only for
-    the seed fixture."""
-    doc = pymupdf.open(path)
-    page = doc[page_index]
-    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
-    return pix.tobytes("png")
-
-
 _CONTEXT_KEYWORDS = (
     "LUMINAIRE", "FIXTURE", "SCHEDULE", "PANEL", "RECEPTACLE", "LIGHTING",
     "DIVISION 26", "26 05", "26 24", "26 27", "26 51", "WATT", "CIRCUIT", "DISCONNECT",
@@ -196,15 +186,6 @@ def render_vision_png_bytes(pdf_bytes: bytes, page_index: int, long_edge_px: int
     zoom = long_edge_px / max(page.rect.width, page.rect.height)
     return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom)).tobytes("png")
 
-
-def render_page_png_bytes(pdf_bytes: bytes, page_index: int, zoom: float = 1.6) -> bytes:
-    """Same, from the PDF bytes the service keeps in memory keyed by
-    takeoff id (so the canvas can fetch one sheet image on demand without
-    the whole set living in the browser)."""
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    page = doc[page_index]
-    pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
-    return pix.tobytes("png")
 
 
 def render_evidence_crop(

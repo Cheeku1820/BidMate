@@ -20,29 +20,14 @@ import os
 import re
 import tempfile
 import uuid
-from collections import OrderedDict
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 
 from app.engine import documents as documents_mod
 from app.engine import estimate as estimate_mod
 from app.engine import llm
-
-# Keeps the source PDF bytes for the last few takeoffs, so the canvas can
-# fetch one sheet image at a time (GET /sheet-image) without the whole
-# set living in the browser's localStorage. Capped so memory stays bounded.
-_PDF_STORE: "OrderedDict[str, bytes]" = OrderedDict()
-_PDF_STORE_CAP = 6
-
-
-def _remember_pdf(data: bytes) -> str:
-    takeoff_id = uuid.uuid4().hex
-    _PDF_STORE[takeoff_id] = data
-    while len(_PDF_STORE) > _PDF_STORE_CAP:
-        _PDF_STORE.popitem(last=False)
-    return takeoff_id
 
 app = FastAPI(title="Takeoff estimate service")
 
@@ -100,12 +85,11 @@ async def classify_endpoint(file: UploadFile = File(...)):
 @app.post("/estimate/full")
 async def estimate_full_endpoint(file: UploadFile = File(...), location: str = Form("")):
     """Per-sheet takeoff with coordinates and page dimensions, for the full
-    review workflow. Also keeps the PDF bytes so the canvas can fetch sheet
-    images (the returned takeoff_id addresses them)."""
+    review workflow."""
     if not (file.filename or "").lower().endswith(".pdf"):
         return JSONResponse(status_code=400, content={"error": "Upload a PDF drawing set."})
     data = await file.read()
-    takeoff_id = _remember_pdf(data)
+    takeoff_id = uuid.uuid4().hex
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(data)
         path = tmp.name
@@ -179,14 +163,14 @@ def _reconcile_vision(sheets: list[dict], items: list[dict]) -> None:
                 break
 
 
-async def _read_sheets_with_vision(sheets: list[dict]) -> None:
+async def _read_sheets_with_vision(sheets: list[dict], pdf_bytes_by_id: dict[str, bytes]) -> None:
     if not llm.available():
         return
-    targets = [s for s in sheets if not s.get("unreadable") and _PDF_STORE.get(s.get("takeoff_id"))]
+    targets = [s for s in sheets if not s.get("unreadable") and pdf_bytes_by_id.get(s.get("takeoff_id"))]
     if not targets:
         return
     results = await asyncio.gather(
-        *[asyncio.to_thread(_render_and_read, _PDF_STORE[s["takeoff_id"]], s["page"], s.get("number") or f"page {s['page']}") for s in targets],
+        *[asyncio.to_thread(_render_and_read, pdf_bytes_by_id[s["takeoff_id"]], s["page"], s.get("number") or f"page {s['page']}") for s in targets],
         return_exceptions=True,
     )
     for sheet, res in zip(targets, results):
@@ -205,8 +189,11 @@ async def estimate_project_endpoint(
     engine (merged), and every other document (specs, addenda, scope) has
     its electrical-relevant text extracted as context so the classifier can
     read schedules that live outside the drawings. Each sheet keeps its own
-    takeoff_id, so the canvas fetches the right page image per drawing."""
+    takeoff_id so several drawing files merge without their sheet
+    references colliding, and so the vision pass below can find the right
+    document's bytes for each sheet within this same request."""
     drawings: list[tuple[str, str, str]] = []  # (takeoff_id, temp_path, filename)
+    pdf_bytes_by_id: dict[str, bytes] = {}
     context_parts: list[str] = []
     try:
         for f, t in zip(files, types):
@@ -215,7 +202,8 @@ async def estimate_project_endpoint(
             if not name.endswith(".pdf"):
                 continue
             if t == "Drawings":
-                takeoff_id = _remember_pdf(data)
+                takeoff_id = uuid.uuid4().hex
+                pdf_bytes_by_id[takeoff_id] = data
                 fd, path = tempfile.mkstemp(suffix=".pdf")
                 with os.fdopen(fd, "wb") as tmp:
                     tmp.write(data)
@@ -260,7 +248,7 @@ async def estimate_project_endpoint(
         # reports the devices it sees, attached to the sheet as `ai_reading`.
         # Purely additive enrichment -- run in parallel, and any failure just
         # leaves a sheet without a reading rather than failing the takeoff.
-        await _read_sheets_with_vision(merged_sheets)
+        await _read_sheets_with_vision(merged_sheets, pdf_bytes_by_id)
         _reconcile_vision(merged_sheets, merged_items)
 
         return {
@@ -279,16 +267,3 @@ async def estimate_project_endpoint(
                 os.unlink(path)
             except OSError:
                 pass
-
-
-@app.get("/sheet-image")
-def sheet_image_endpoint(takeoff_id: str, page: int):
-    """Rendered PNG of one sheet (1-based page), for the canvas background."""
-    data = _PDF_STORE.get(takeoff_id)
-    if data is None:
-        return JSONResponse(status_code=404, content={"error": "takeoff not found — reprocess the drawings"})
-    try:
-        png = documents_mod.render_page_png_bytes(data, page - 1)
-    except Exception:  # noqa: BLE001
-        return JSONResponse(status_code=400, content={"error": "couldn't render that page"})
-    return Response(content=png, media_type="image/png", headers={"Cache-Control": "max-age=3600"})

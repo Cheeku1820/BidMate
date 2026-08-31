@@ -53,7 +53,17 @@ from app.identity.models import User
 from app.takeoff import actions, undo
 from app.takeoff.evidence_images import upsert_evidence_image
 from app.takeoff.ingest import map_payload
-from app.takeoff.models import Action, Item, Project, ReviewStatus, Sheet, Warning, WarningReason
+from app.takeoff.models import (
+    Action,
+    Item,
+    Project,
+    ProjectLaborLine,
+    ProjectMaterialPrice,
+    ReviewStatus,
+    Sheet,
+    Warning,
+    WarningReason,
+)
 
 
 def _key(sheet_number: str, source_tag: str) -> tuple[str, str]:
@@ -324,7 +334,20 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
             # what the estimator last saw -- `reclassified` counts rows
             # that changed, not rows that were touched.
             changed = _changes_visibly(current, sheet, row, _warning_title(db, current.id))
+            old_name = current.name
             _overwrite(current, sheet, row)
+            # A price and an hours figure belong to the item as it was
+            # classified when someone priced it. ProjectLaborLine and
+            # ProjectMaterialPrice are keyed on item_id, not on name, so a
+            # re-run that turns a duplex receptacle into an isolated
+            # ground receptacle would otherwise carry the old money along
+            # under the new name. Drop them and let the row resolve again
+            # -- an absent price is visible; a wrong one is not. Approved
+            # items never reach this branch, so nobody's approved pricing
+            # is touched.
+            if current.name != old_name:
+                db.execute(delete(ProjectLaborLine).where(ProjectLaborLine.item_id == current.id))
+                db.execute(delete(ProjectMaterialPrice).where(ProjectMaterialPrice.item_id == current.id))
             _replace_warning(db, current.id, row["warning"])
             upsert_evidence_image(db, current.id, row["evidence_png"])
             if changed:

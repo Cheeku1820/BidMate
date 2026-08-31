@@ -5,7 +5,17 @@ import base64
 
 from sqlalchemy import select
 
-from app.takeoff.models import Action, Item, ItemEvidenceImage, Note, Project, ReviewStatus, Warning
+from app.takeoff.models import (
+    Action,
+    Item,
+    ItemEvidenceImage,
+    Note,
+    Project,
+    ProjectLaborLine,
+    ProjectMaterialPrice,
+    ReviewStatus,
+    Warning,
+)
 
 SHEET = {"id": "tk1:0", "number": "E2.1", "takeoff_id": "tk1", "page": 0,
          "width_pt": 2000, "height_pt": 1500, "unreadable": None, "ai_reading": None}
@@ -457,3 +467,44 @@ def test_reprocess_updates_pricing_source_and_note(client, db, project, signed_i
     db.refresh(project)
     assert project.pricing_source == "deterministic"
     assert project.pricing_note == "National average rate (no local data matched)."
+
+
+def test_reprocess_drops_pricing_when_it_reclassifies_an_item(client, db, project, signed_in_user):
+    """A price belongs to the item as it was classified when someone
+    priced it. ProjectLaborLine/ProjectMaterialPrice are keyed on item_id,
+    which survives a reclassification in place -- so without this the old
+    money rides along under the new name."""
+    _seed(client, project, [_item("R", "20A duplex receptacle")])
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    client.patch(f"/api/items/{item.id}/material-price",
+                 json={"priceOverride": 15.5, "source": "project_price"})
+    assert db.get(ProjectLaborLine, item.id) is not None
+    assert db.get(ProjectMaterialPrice, item.id) is not None
+
+    client.post(f"/api/projects/{project.id}/reprocess",
+                json={"payload": _payload([_item("R", "Isolated ground receptacle")])})
+
+    db.expire_all()
+    same_item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    assert same_item.id == item.id, "the item is reclassified in place, not replaced"
+    assert same_item.name == "Isolated ground receptacle"
+    assert db.get(ProjectLaborLine, item.id) is None
+    assert db.get(ProjectMaterialPrice, item.id) is None
+
+
+def test_reprocess_keeps_pricing_when_the_classification_is_unchanged(client, db, project, signed_in_user):
+    """The other half: a re-run that lands on the same classification has
+    not invalidated anything, so a price an estimator entered survives."""
+    _seed(client, project, [_item("R", "20A duplex receptacle")])
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    client.patch(f"/api/items/{item.id}/material-price",
+                 json={"priceOverride": 15.5, "source": "project_price"})
+
+    client.post(f"/api/projects/{project.id}/reprocess",
+                json={"payload": _payload([_item("R", "20A duplex receptacle", qty=12)])})
+
+    db.expire_all()
+    assert float(db.get(ProjectLaborLine, item.id).hours_override) == 0.75
+    assert float(db.get(ProjectMaterialPrice, item.id).price_override) == 15.5

@@ -1,9 +1,11 @@
 """POST /api/projects/{id}/reprocess -- applying a note and re-running
 the engine without discarding a person's judgment.
 """
+import base64
+
 from sqlalchemy import select
 
-from app.takeoff.models import Action, Item, Note, Project, ReviewStatus, Warning
+from app.takeoff.models import Action, Item, ItemEvidenceImage, Note, Project, ReviewStatus, Warning
 
 SHEET = {"id": "tk1:0", "number": "E2.1", "takeoff_id": "tk1", "page": 0,
          "width_pt": 2000, "height_pt": 1500, "unreadable": None, "ai_reading": None}
@@ -15,11 +17,12 @@ _WARNING = {"reason": "legend", "title": "Symbol not in legend",
             "where": "E2.1 legend block"}
 
 
-def _item(tag, name, status="ready", qty=10, warning=None):
+def _item(tag, name, status="ready", qty=10, warning=None, evidence_png_b64=None):
     return {"name": name, "system": "Power", "category": "Devices", "unit": "ea",
             "quantity": qty, "status": status, "sheet_id": "tk1:0", "symbol": "receptacle",
             "warning": warning, "x": 1000, "y": 750, "placements": [[1000, 750]], "tag": tag,
-            "material_cost": 10.0, "labor_hours": 1.0, "labor_cost": 78.0, "total_cost": 88.0}
+            "material_cost": 10.0, "labor_hours": 1.0, "labor_cost": 78.0, "total_cost": 88.0,
+            "evidence_png_b64": evidence_png_b64}
 
 
 def _payload(items):
@@ -406,3 +409,41 @@ def test_reprocess_suppresses_one_row_per_deletion_sharing_a_key(client, db, pro
                 json={"payload": _payload([_item("", "A"), _item("", "B"), _item("", "C")])})
     db.expire_all()
     assert _item_count(db, project) == 2
+
+
+def test_reprocess_sets_evidence_image_on_a_newly_inserted_item(client, db, project, signed_in_user):
+    png_b64 = base64.b64encode(b"new-item-png").decode("ascii")
+    _seed(client, project, [])
+    client.post(f"/api/projects/{project.id}/reprocess",
+                json={"payload": _payload([_item("R", "20A duplex receptacle", evidence_png_b64=png_b64)])})
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    image = db.get(ItemEvidenceImage, item.id)
+    assert image is not None and image.png == b"new-item-png"
+
+
+def test_reprocess_replaces_evidence_image_on_a_matched_unapproved_item(client, db, project, signed_in_user):
+    first_png = base64.b64encode(b"first-run-png").decode("ascii")
+    second_png = base64.b64encode(b"second-run-png").decode("ascii")
+    _seed(client, project, [_item("R", "20A duplex receptacle", evidence_png_b64=first_png)])
+    item_before = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    item_id = item_before.id
+
+    client.post(f"/api/projects/{project.id}/reprocess",
+                json={"payload": _payload([_item("R", "20A duplex receptacle", evidence_png_b64=second_png)])})
+
+    image = db.get(ItemEvidenceImage, item_id)
+    assert image is not None and image.png == b"second-run-png"
+
+
+def test_reprocess_clears_evidence_image_when_a_rerun_crop_fails(client, db, project, signed_in_user):
+    """A re-run whose crop generation failed this time must not leave the
+    previous run's image standing in for a takeoff it no longer matches."""
+    first_png = base64.b64encode(b"first-run-png").decode("ascii")
+    _seed(client, project, [_item("R", "20A duplex receptacle", evidence_png_b64=first_png)])
+    item_before = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    item_id = item_before.id
+
+    client.post(f"/api/projects/{project.id}/reprocess",
+                json={"payload": _payload([_item("R", "20A duplex receptacle")])})  # no evidence_png_b64
+
+    assert db.get(ItemEvidenceImage, item_id) is None

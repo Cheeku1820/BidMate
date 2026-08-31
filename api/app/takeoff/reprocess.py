@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.identity.models import User
 from app.takeoff import actions, undo
+from app.takeoff.evidence_images import upsert_evidence_image
 from app.takeoff.ingest import map_payload
 from app.takeoff.models import Action, Item, Project, ReviewStatus, Sheet, Warning, WarningReason
 
@@ -227,6 +228,7 @@ def _overwrite(item: Item, sheet: Sheet, row: dict) -> None:
     item.total_cost = row["total_cost"]
     item.ai_confirmed = row["ai_confirmed"]
     item.source_tag = row["source_tag"]
+    item.evidence = row["evidence"]
     # Bumped exactly like every other mutation that changes a row's
     # fields (review._apply_edit, undo_apply._apply_item_state) -- a
     # client holding a stale version must not write over this re-run.
@@ -324,6 +326,7 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
             changed = _changes_visibly(current, sheet, row, _warning_title(db, current.id))
             _overwrite(current, sheet, row)
             _replace_warning(db, current.id, row["warning"])
+            upsert_evidence_image(db, current.id, row["evidence_png"])
             if changed:
                 reclassified += 1
         elif deleted_by_key.get(key, 0) > 0:
@@ -346,9 +349,11 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
                 placements=row["placements"], material_cost=row["material_cost"],
                 labor_hours=row["labor_hours"], labor_cost=row["labor_cost"],
                 total_cost=row["total_cost"], ai_confirmed=row["ai_confirmed"],
-                source_tag=row["source_tag"],
+                source_tag=row["source_tag"], evidence=row["evidence"],
             )
             db.add(item)
+            db.flush()
+            upsert_evidence_image(db, item.id, row["evidence_png"])
             if row["warning"]:
                 w = row["warning"]
                 db.add(Warning(id=uuid.uuid4(), item_id=item.id, sheet_id=None,

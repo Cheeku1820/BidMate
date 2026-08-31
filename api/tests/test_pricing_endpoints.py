@@ -63,3 +63,55 @@ def test_patch_labor_404s_for_another_orgs_item(client, other_org_project, db, s
 
     response = client.patch(f"/api/items/{other_item.id}/labor", json={"hoursOverride": 1})
     assert response.status_code == 404
+
+
+def test_get_labor_lists_every_countable_item(client, db, project, item, signed_in_user):
+    response = client.get(f"/api/projects/{project.id}/labor")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["pricingSource"] is None
+    ids = [row["itemId"] for row in body["rows"]]
+    assert str(item.id) in ids
+
+
+def test_get_labor_row_missing_without_llm_pricing(client, project, item, signed_in_user):
+    response = client.get(f"/api/projects/{project.id}/labor")
+    row = next(r for r in response.json()["rows"] if r["itemId"] == str(item.id))
+    assert row["status"] == "missing"
+
+
+def test_get_labor_row_ready_when_project_priced_by_llm(client, db, project, item, signed_in_user):
+    from decimal import Decimal
+
+    project.pricing_source = "llm"
+    # The engine-computed baseline `resolve_labor` reads for "Estimated
+    # basis" is item.labor_hours -- the shared `item` fixture leaves it
+    # at its column default of 0, which is falsy and would otherwise
+    # skip straight past the llm branch into "missing" regardless of
+    # project.pricing_source. Set it here rather than on the shared
+    # fixture, since most other tests using `item` don't want a
+    # labor_hours baseline at all.
+    item.labor_hours = Decimal("5")
+    db.commit()
+    response = client.get(f"/api/projects/{project.id}/labor")
+    row = next(r for r in response.json()["rows"] if r["itemId"] == str(item.id))
+    assert row["status"] == "ready"
+    assert row["hoursSourceLabel"] == "Estimated basis"
+
+
+def test_get_material_pricing_lists_every_countable_item(client, project, item, signed_in_user):
+    response = client.get(f"/api/projects/{project.id}/material-pricing")
+    assert response.status_code == 200, response.text
+    ids = [row["itemId"] for row in response.json()["rows"]]
+    assert str(item.id) in ids
+
+
+def test_get_material_pricing_uses_company_price_when_present(client, db, org, project, item, signed_in_user):
+    from app.takeoff.models import CompanyMaterialPrice
+
+    db.add(CompanyMaterialPrice(org_id=org.id, item_name=item.name, unit_price=99, effective_date="2026-08-01"))
+    db.commit()
+    response = client.get(f"/api/projects/{project.id}/material-pricing")
+    row = next(r for r in response.json()["rows"] if r["itemId"] == str(item.id))
+    assert row["sourceLabel"] == "Company price"
+    assert float(row["unitPrice"]) == 99.0

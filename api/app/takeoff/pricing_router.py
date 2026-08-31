@@ -25,8 +25,17 @@ from app.takeoff.models import (
     ProjectLaborLine,
     ProjectMaterialPrice,
 )
+from app.takeoff.pricing import resolve_labor, resolve_material_price
 from app.takeoff.router import load_item, load_project, not_found
-from app.takeoff.schemas import LaborLineUpdateIn, MaterialPriceUpdateIn
+from app.takeoff.schemas import (
+    LaborLineUpdateIn,
+    LaborListOut,
+    LaborRowOut,
+    MaterialListOut,
+    MaterialPriceUpdateIn,
+    MaterialRowOut,
+)
+from app.takeoff.totals import countable_items
 
 router = APIRouter(prefix="/api", tags=["pricing"])
 
@@ -111,3 +120,67 @@ def patch_material_price(
     )
     db.commit()
     return {"itemId": str(item_id)}
+
+
+@router.get("/projects/{project_id}/labor", response_model=LaborListOut)
+def get_labor(project_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    project = load_project(project_id, db, user)
+    items = list(db.scalars(countable_items(project.id)))
+    lines = {row.item_id: row for row in db.scalars(
+        select(ProjectLaborLine).where(ProjectLaborLine.item_id.in_([i.id for i in items]))
+    )}
+    company_rates = db.get(CompanyLaborRate, user.org_id)
+    names = {i.name for i in items}
+    company_hours = {
+        row.item_name: row
+        for row in db.scalars(
+            select(CompanyLaborHoursOverride).where(
+                CompanyLaborHoursOverride.org_id == user.org_id,
+                CompanyLaborHoursOverride.item_name.in_(names),
+            )
+        )
+    }
+
+    rows = []
+    for item in items:
+        resolution = resolve_labor(
+            item, project, lines.get(item.id),
+            company_rates=company_rates, company_hours=company_hours.get(item.name),
+        )
+        rows.append(LaborRowOut(
+            item_id=item.id, item_name=item.name, quantity=item.quantity,
+            hours_per_unit=resolution.hours_per_unit, hours_source_label=resolution.hours_source_label,
+            rate=resolution.rate, rate_source_label=resolution.rate_source_label,
+            adjusted_hours=resolution.adjusted_hours, labor_cost=resolution.labor_cost,
+            status=resolution.status, basis_note=resolution.basis_note,
+        ))
+    return LaborListOut(pricing_source=project.pricing_source, pricing_note=project.pricing_note, rows=rows)
+
+
+@router.get("/projects/{project_id}/material-pricing", response_model=MaterialListOut)
+def get_material_pricing(project_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    project = load_project(project_id, db, user)
+    items = list(db.scalars(countable_items(project.id)))
+    overrides = {row.item_id: row for row in db.scalars(
+        select(ProjectMaterialPrice).where(ProjectMaterialPrice.item_id.in_([i.id for i in items]))
+    )}
+    names = {i.name for i in items}
+    company_prices = {
+        row.item_name: row
+        for row in db.scalars(
+            select(CompanyMaterialPrice).where(
+                CompanyMaterialPrice.org_id == user.org_id,
+                CompanyMaterialPrice.item_name.in_(names),
+            )
+        )
+    }
+
+    rows = []
+    for item in items:
+        resolution = resolve_material_price(item, project, overrides.get(item.id), company_prices.get(item.name))
+        rows.append(MaterialRowOut(
+            item_id=item.id, item_name=item.name, quantity=item.quantity,
+            unit_price=resolution.unit_price, source_label=resolution.source_label,
+            status=resolution.status, basis_note=resolution.basis_note,
+        ))
+    return MaterialListOut(pricing_source=project.pricing_source, pricing_note=project.pricing_note, rows=rows)

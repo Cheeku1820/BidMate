@@ -168,6 +168,10 @@ TENANCY_TABLE = [
     ("POST", "/api/projects/{project_id}/notes",
      lambda p, s, i: f"/api/projects/{p.id}/notes",
      lambda p, s, i: {"title": "t", "body": "b", "category": "existing_condition"}, None),
+    ("GET", "/api/projects/{project_id}/labor",
+     lambda p, s, i: f"/api/projects/{p.id}/labor", None, None),
+    ("GET", "/api/projects/{project_id}/material-pricing",
+     lambda p, s, i: f"/api/projects/{p.id}/material-pricing", None, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]

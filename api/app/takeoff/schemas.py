@@ -465,3 +465,47 @@ class MaterialPriceUpdateIn(BaseModel):
         if info.data.get("source") == "allowance" and not value.strip():
             raise ValueError("An allowance needs a reason -- state what it's standing in for.")
         return value
+
+
+class LaborRowOut(BaseModel):
+    item_id: uuid.UUID
+    item_name: str
+    quantity: Decimal
+    hours_per_unit: Decimal | None = None
+    hours_source_label: str | None = None
+    rate: Decimal | None = None
+    rate_source_label: str | None = None
+    adjusted_hours: Decimal | None = None
+    labor_cost: Decimal | None = None
+    status: str
+    basis_note: str = ""
+
+    model_config = CAMEL_MODEL_CONFIG
+
+
+class LaborListOut(BaseModel):
+    pricing_source: str | None
+    pricing_note: str
+    rows: list[LaborRowOut]
+
+    model_config = CAMEL_MODEL_CONFIG
+
+
+class MaterialRowOut(BaseModel):
+    item_id: uuid.UUID
+    item_name: str
+    quantity: Decimal
+    unit_price: Decimal | None = None
+    source_label: str | None = None
+    status: str
+    basis_note: str = ""
+
+    model_config = CAMEL_MODEL_CONFIG
+
+
+class MaterialListOut(BaseModel):
+    pricing_source: str | None
+    pricing_note: str
+    rows: list[MaterialRowOut]
+
+    model_config = CAMEL_MODEL_CONFIG

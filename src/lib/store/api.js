@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapItem, mapNote, mapProject, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
+import { mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProject, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -398,6 +398,73 @@ export function createApiStore() {
     return result;
   }
 
+  // Labor and Material Pricing (task-9-brief.md): the client half of
+  // pricing_router.py's endpoints (Tasks 4, 6, 7). request() already
+  // JSON.stringify()s whatever object is passed as `body` and already
+  // returns the parsed response body (see request()'s own definition
+  // above), so every call here passes `body` as a plain object rather
+  // than a pre-stringified string, and never re-parses the result the
+  // way a raw fetch() caller would need to.
+  //
+  // The two list endpoints return snake_case LaborRowOut/MaterialRowOut
+  // rows (schemas.py: no camelCase alias generator on those two output
+  // schemas, unlike the *In schemas below), so their rows are mapped
+  // through mapLaborRow/mapMaterialRow the same way every other wire
+  // shape in this file crosses into camelCase. The company-scoped GET
+  // endpoints are returned unmapped, exactly as task-9-brief.md
+  // specifies -- Tasks 10-11 own that mapping where they consume it.
+  async function getLaborRows(projectId) {
+    const body = await request(`/api/projects/${projectId}/labor`);
+    return { pricingSource: body.pricing_source, pricingNote: body.pricing_note, rows: body.rows.map(mapLaborRow) };
+  }
+
+  async function setLaborLine(itemId, changes) {
+    return request(`/api/items/${itemId}/labor`, { method: "PATCH", body: changes });
+  }
+
+  async function getMaterialRows(projectId) {
+    const body = await request(`/api/projects/${projectId}/material-pricing`);
+    return { pricingSource: body.pricing_source, pricingNote: body.pricing_note, rows: body.rows.map(mapMaterialRow) };
+  }
+
+  async function setMaterialPrice(itemId, changes) {
+    return request(`/api/items/${itemId}/material-price`, { method: "PATCH", body: changes });
+  }
+
+  async function getCompanyLaborRates() {
+    return request("/api/company/labor-rates");
+  }
+
+  async function setCompanyLaborRates(values) {
+    return request("/api/company/labor-rates", { method: "PUT", body: values });
+  }
+
+  async function getCompanyMaterialPrices() {
+    return request("/api/company/material-prices");
+  }
+
+  async function setCompanyMaterialPrice(itemName, values) {
+    return request(`/api/company/material-prices/${encodeURIComponent(itemName)}`, { method: "PUT", body: values });
+  }
+
+  async function deleteCompanyMaterialPrice(itemName) {
+    return request(`/api/company/material-prices/${encodeURIComponent(itemName)}`, { method: "DELETE" });
+  }
+
+  async function getCompanyLaborHoursOverrides() {
+    return request("/api/company/labor-hours-overrides");
+  }
+
+  async function setCompanyLaborHoursOverride(itemName, hoursPerUnit) {
+    return request(`/api/company/labor-hours-overrides/${encodeURIComponent(itemName)}`, {
+      method: "PUT", body: { hoursPerUnit },
+    });
+  }
+
+  async function deleteCompanyLaborHoursOverride(itemName) {
+    return request(`/api/company/labor-hours-overrides/${encodeURIComponent(itemName)}`, { method: "DELETE" });
+  }
+
   return {
     me,
     useProject,
@@ -421,5 +488,17 @@ export function createApiStore() {
     updateNote,
     deleteNote,
     reprocess,
+    getLaborRows,
+    setLaborLine,
+    getMaterialRows,
+    setMaterialPrice,
+    getCompanyLaborRates,
+    setCompanyLaborRates,
+    getCompanyMaterialPrices,
+    setCompanyMaterialPrice,
+    deleteCompanyMaterialPrice,
+    getCompanyLaborHoursOverrides,
+    setCompanyLaborHoursOverride,
+    deleteCompanyLaborHoursOverride,
   };
 }

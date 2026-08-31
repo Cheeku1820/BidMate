@@ -201,6 +201,41 @@ export function noteToWire(fields) {
   return body;
 }
 
+/** Wire LaborRowOut -> store shape (task-9-brief.md). LaborRowOut has no
+ *  camelCase alias generator (schemas.py), so every field is snake_case on
+ *  the wire; hours/rate/adjustedHours/laborCost are all nullable Decimal
+ *  strings that must survive a null basis (an item with no resolvable
+ *  hours or rate yet) without throwing. */
+export function mapLaborRow(r) {
+  return {
+    itemId: r.item_id,
+    itemName: r.item_name,
+    quantity: Number(r.quantity),
+    hoursPerUnit: r.hours_per_unit == null ? null : Number(r.hours_per_unit),
+    hoursSourceLabel: r.hours_source_label ?? null,
+    rate: r.rate == null ? null : Number(r.rate),
+    rateSourceLabel: r.rate_source_label ?? null,
+    adjustedHours: r.adjusted_hours == null ? null : Number(r.adjusted_hours),
+    laborCost: r.labor_cost == null ? null : Number(r.labor_cost),
+    status: r.status,
+    basisNote: r.basis_note ?? "",
+  };
+}
+
+/** Wire MaterialRowOut -> store shape (task-9-brief.md). Same nullable-
+ *  Decimal-string handling as mapLaborRow, for unitPrice. */
+export function mapMaterialRow(r) {
+  return {
+    itemId: r.item_id,
+    itemName: r.item_name,
+    quantity: Number(r.quantity),
+    unitPrice: r.unit_price == null ? null : Number(r.unit_price),
+    sourceLabel: r.source_label ?? null,
+    status: r.status,
+    basisNote: r.basis_note ?? "",
+  };
+}
+
 export function mapUser(u) {
   return { id: u.id, name: u.name, email: u.email, color: u.color };
 }

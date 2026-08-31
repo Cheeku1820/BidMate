@@ -377,6 +377,8 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
             removed += 1
 
     db.flush()
+    project.pricing_source = payload.get("source")
+    project.pricing_note = str(payload.get("location_note") or "")
     label = (f"Applied notes and re-ran the takeoff: {reclassified} reclassified, "
              f"{preserved} approved left unchanged")
     if skipped_deleted:

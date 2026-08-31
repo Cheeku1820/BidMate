@@ -447,3 +447,13 @@ def test_reprocess_clears_evidence_image_when_a_rerun_crop_fails(client, db, pro
                 json={"payload": _payload([_item("R", "20A duplex receptacle")])})  # no evidence_png_b64
 
     assert db.get(ItemEvidenceImage, item_id) is None
+
+
+def test_reprocess_updates_pricing_source_and_note(client, db, project, signed_in_user):
+    _seed(client, project, [_item("R", "20A duplex receptacle")])
+    payload = {**_payload([_item("R", "20A duplex receptacle")]), "source": "deterministic",
+               "location_note": "National average rate (no local data matched)."}
+    client.post(f"/api/projects/{project.id}/reprocess", json={"payload": payload})
+    db.refresh(project)
+    assert project.pricing_source == "deterministic"
+    assert project.pricing_note == "National average rate (no local data matched)."

@@ -119,6 +119,8 @@ def ingest_takeoff(
             ))
 
     project.stage = "review"
+    project.pricing_source = payload.get("source")
+    project.pricing_note = str(payload.get("location_note") or "")
 
     actions.commit(
         db, actor=actor, project_id=project.id, kind="ingest",

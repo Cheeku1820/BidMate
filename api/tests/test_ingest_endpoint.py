@@ -288,3 +288,20 @@ def test_ingest_without_a_crop_leaves_no_image_row(client, db, project, signed_i
     item = db.scalars(select(Item).where(Item.project_id == project.id)).one()
     assert item.evidence["has_image"] is False
     assert db.get(ItemEvidenceImage, item.id) is None
+
+
+def test_ingest_sets_pricing_source_and_note_from_the_payload(client, db, project, signed_in_user):
+    payload = {**PAYLOAD, "source": "llm", "location_note": "Rate based on Sacramento, CA area cost data."}
+    response = _ingest(client, project.id, payload=payload)
+    assert response.status_code == 200, response.text
+    db.refresh(project)
+    assert project.pricing_source == "llm"
+    assert project.pricing_note == "Rate based on Sacramento, CA area cost data."
+
+
+def test_ingest_without_a_source_field_leaves_pricing_source_none(client, db, project, signed_in_user):
+    response = _ingest(client, project.id)  # PAYLOAD has no "source" key
+    assert response.status_code == 200, response.text
+    db.refresh(project)
+    assert project.pricing_source is None
+    assert project.pricing_note == ""

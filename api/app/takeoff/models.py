@@ -100,6 +100,18 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # Which mechanism actually priced this takeoff -- "llm" or
+    # "deterministic" -- read from the engine payload's own `source`
+    # field at ingest/reprocess time. Labor and Material Pricing's
+    # precedence resolution treats a project's engine-computed
+    # material_cost/labor_hours as a trustworthy baseline ONLY when this
+    # is "llm": the deterministic fallback's numbers (catalog.py's fixed
+    # placeholder hours, regions.py's ~15-entry hardcoded rate table) are
+    # rough guesses this product cannot present as real pricing to a firm
+    # bidding real work. NULL (a project ingested before this column
+    # existed) is treated identically to "deterministic" everywhere.
+    pricing_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pricing_note: Mapped[str] = mapped_column(Text, default="", server_default="")
 
 
 class Sheet(Base):

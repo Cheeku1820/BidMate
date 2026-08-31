@@ -77,6 +77,34 @@ def test_evidence_crop_covers_every_placement_in_a_cluster(tmp_path):
     png = documents.render_evidence_crop(path, 0, 1000, 800, placements)
     assert png is not None
 
+    # The bounding box (with EVIDENCE_CLUSTER_MARGIN_PT margin, clamped
+    # to the page) is 930 x 730 points, wider than it is tall, so the
+    # oversized-bbox zoom-down path picks zoom = EVIDENCE_MAX_PX / 930
+    # rather than the unclamped default -- confirm the returned PNG's
+    # *pixel* dimensions actually reflect that, not just that a PNG
+    # came back. Decoding straight into a Pixmap (rather than opening
+    # the bytes as a one-page document and calling get_pixmap() on it)
+    # reads the image's real pixel grid; going through a re-opened
+    # page instead reports page.rect in points at 72 DPI, which is the
+    # pixel size scaled by 0.75 -- not what we want to assert against.
+    bbox_w, bbox_h = 930.0, 730.0
+    expected_zoom = documents.EVIDENCE_MAX_PX / max(bbox_w, bbox_h)
+    expected_zoom = max(documents.EVIDENCE_MIN_ZOOM, min(documents.EVIDENCE_MAX_ZOOM, expected_zoom))
+    expected_w = round(bbox_w * expected_zoom)
+    expected_h = round(bbox_h * expected_zoom)
+
+    # A tolerance of a couple pixels absorbs mupdf's own rounding of a
+    # fractional-pixel rect; it is nowhere near loose enough to pass if
+    # the zoom formula regressed (e.g. reverting to EVIDENCE_MAX_ZOOM
+    # unconditionally would be off by hundreds of pixels here).
+    pix = pymupdf.Pixmap(png)
+    assert abs(pix.width - expected_w) <= 2
+    assert abs(pix.height - expected_h) <= 2
+    # And the crop is not simply rendered at EVIDENCE_MAX_ZOOM -- the
+    # whole point of the oversized-bbox path is zooming *down* to fit
+    # the full cluster in frame.
+    assert pix.width <= documents.EVIDENCE_MAX_PX + 1
+
 
 def test_evidence_crop_clamps_to_the_page_at_a_corner(tmp_path):
     """A point right at the page edge must not ask pymupdf for a clip

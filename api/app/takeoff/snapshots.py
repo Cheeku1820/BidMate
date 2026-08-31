@@ -80,6 +80,29 @@ WARNING_SNAPSHOT_TYPES: dict[str, type] = {
     "where_": str,
 }
 
+LABOR_LINE_SNAPSHOT_TYPES: dict[str, type] = {
+    "item_id": uuid.UUID,
+    "hours_override": Decimal,
+    "crew_journeyman": int,
+    "crew_foreman": int,
+    "crew_apprentice": int,
+    "rate_override": Decimal,
+    "adjustment_percent": Decimal,
+    "adjustment_reason": str,
+    "notes": str,
+    "updated_by_user_id": uuid.UUID,
+    "updated_at": datetime,
+}
+
+MATERIAL_PRICE_SNAPSHOT_TYPES: dict[str, type] = {
+    "item_id": uuid.UUID,
+    "price_override": Decimal,
+    "source": str,
+    "reason": str,
+    "updated_by_user_id": uuid.UUID,
+    "updated_at": datetime,
+}
+
 # The key `before`/`after` nest a list of per-item snapshots under, for
 # any action recording more than one item's state in a single row
 # (`bulk.bulk_approve()`, `scale.set_scale()`). Lives here, not in either

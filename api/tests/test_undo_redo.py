@@ -653,3 +653,48 @@ def test_undoing_a_scale_on_an_item_with_both_a_scale_and_legend_warning_restore
     assert reasons == {WarningReason.SCALE, WarningReason.LEGEND}
     ids = {w.id for w in restored}
     assert legend_warning_id in ids, "the legend warning must be the same row, untouched -- not recreated"
+
+
+# --- Task 5: labor_edit / material_price_edit ---
+
+
+def test_undo_reverses_a_labor_edit_that_created_the_row(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectLaborLine
+
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    assert db.get(ProjectLaborLine, item.id) is not None
+
+    response = client.post(f"/api/projects/{item.project_id}/undo")
+    assert response.status_code == 200, response.text
+    assert db.get(ProjectLaborLine, item.id) is None
+
+
+def test_undo_reverses_a_labor_edit_that_merged_onto_an_existing_row(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectLaborLine
+
+    client.patch(f"/api/items/{item.id}/labor", json={"crewJourneyman": 1})
+    client.patch(f"/api/items/{item.id}/labor", json={"crewForeman": 2})
+
+    client.post(f"/api/projects/{item.project_id}/undo")
+    row = db.get(ProjectLaborLine, item.id)
+    assert row.crew_journeyman == 1 and row.crew_foreman is None
+
+
+def test_redo_restores_a_labor_edit_after_undo(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectLaborLine
+
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    client.post(f"/api/projects/{item.project_id}/undo")
+    assert db.get(ProjectLaborLine, item.id) is None
+
+    client.post(f"/api/projects/{item.project_id}/redo")
+    row = db.get(ProjectLaborLine, item.id)
+    assert float(row.hours_override) == 0.75
+
+
+def test_undo_reverses_a_material_price_edit(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectMaterialPrice
+
+    client.patch(f"/api/items/{item.id}/material-price", json={"priceOverride": 15.5, "source": "project_price"})
+    client.post(f"/api/projects/{item.project_id}/undo")
+    assert db.get(ProjectMaterialPrice, item.id) is None

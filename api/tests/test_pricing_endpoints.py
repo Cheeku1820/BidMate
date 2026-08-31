@@ -177,3 +177,24 @@ def test_put_company_labor_hours_override(client, db, org, signed_in_user):
         CompanyLaborHoursOverride.org_id == org.id, CompanyLaborHoursOverride.item_name == "20A duplex receptacle",
     )).one()
     assert float(row.hours_per_unit) == 0.6
+
+
+def test_patch_labor_rejects_a_negative_rate_or_hours(client, item, signed_in_user):
+    """Neither hours nor a rate has a negative reading. A minus sign in a
+    number field is a slip, and it would otherwise land in a total."""
+    assert client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": -1}).status_code == 422
+    assert client.patch(f"/api/items/{item.id}/labor", json={"rateOverride": -68}).status_code == 422
+
+
+def test_patch_labor_allows_a_negative_adjustment_down_to_minus_100(client, db, item, signed_in_user):
+    """A productivity credit is a legitimate negative -- -100% is the
+    floor, because that is already zero hours."""
+    assert client.patch(f"/api/items/{item.id}/labor", json={"adjustmentPercent": -15}).status_code == 200
+    assert float(db.get(ProjectLaborLine, item.id).adjustment_percent) == -15
+    assert client.patch(f"/api/items/{item.id}/labor", json={"adjustmentPercent": -101}).status_code == 422
+
+
+def test_patch_material_price_rejects_a_negative_price(client, item, signed_in_user):
+    response = client.patch(f"/api/items/{item.id}/material-price",
+                            json={"priceOverride": -5, "source": "project_price"})
+    assert response.status_code == 422

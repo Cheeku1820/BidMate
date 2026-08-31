@@ -427,12 +427,17 @@ class NoteUpdateIn(BaseModel):
 
 
 class LaborLineUpdateIn(BaseModel):
-    hours_override: Decimal | None = Field(default=None)
+    # Hours and a rate are quantities of work and money -- neither has a
+    # negative reading, and a minus sign typed into a number field is a
+    # slip, not an instruction. adjustment_percent is the exception: a
+    # productivity credit is a legitimate negative, and -100% is the floor
+    # because that is already zero hours.
+    hours_override: Decimal | None = Field(default=None, ge=0)
     crew_journeyman: int | None = Field(default=None, ge=0)
     crew_foreman: int | None = Field(default=None, ge=0)
     crew_apprentice: int | None = Field(default=None, ge=0)
-    rate_override: Decimal | None = Field(default=None)
-    adjustment_percent: Decimal | None = Field(default=None)
+    rate_override: Decimal | None = Field(default=None, ge=0)
+    adjustment_percent: Decimal | None = Field(default=None, ge=-100)
     adjustment_reason: str | None = Field(default=None)
     notes: str | None = Field(default=None)
 
@@ -440,7 +445,9 @@ class LaborLineUpdateIn(BaseModel):
 
 
 class MaterialPriceUpdateIn(BaseModel):
-    price_override: Decimal
+    # Required, and never negative -- a price below zero is a typo that
+    # would quietly subtract from the project total.
+    price_override: Decimal = Field(ge=0)
     source: Literal["project_price", "allowance"]
     reason: str = ""
 

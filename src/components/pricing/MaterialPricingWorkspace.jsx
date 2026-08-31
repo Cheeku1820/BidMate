@@ -158,7 +158,7 @@ export default function MaterialPricingWorkspace() {
                           {c.key === "itemName" && row.basisNote ? (
                             <>
                               {c.render(row)}
-                              <div className="muted labor-basis-note">{row.basisNote}</div>
+                              <div className="muted">{row.basisNote}</div>
                             </>
                           ) : c.key === "unitPrice" ? (
                             <>

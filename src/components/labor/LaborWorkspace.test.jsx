@@ -64,7 +64,11 @@ describe("LaborWorkspace", () => {
       setLaborLine: vi.fn(),
     };
     renderLabor({ store });
-    await waitFor(() => expect(screen.getByText("Estimated basis")).toBeInTheDocument());
+    // Both tier tags render verbatim, even when the two independent
+    // precedence chains land on the same tier. Paraphrasing the second as
+    // "same as hours" would read as one field deriving from the other.
+    await waitFor(() => expect(screen.getAllByText("Estimated basis")).toHaveLength(2));
+    expect(screen.getByText("Rate based on Sacramento, CA area cost data.")).toBeInTheDocument();
   });
 
   test("editing hours calls setLaborLine and refreshes the row", async () => {

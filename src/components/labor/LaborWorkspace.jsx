@@ -156,7 +156,7 @@ export default function LaborWorkspace() {
                           {c.key === "itemName" && row.basisNote ? (
                             <>
                               {c.render(row)}
-                              <div className="muted labor-basis-note">{row.basisNote}</div>
+                              <div className="muted">{row.basisNote}</div>
                             </>
                           ) : c.key === "hoursPerUnit" ? (
                             <input
@@ -193,17 +193,7 @@ export default function LaborWorkspace() {
                             )
                           ) : c.key === "rateSourceLabel" ? (
                             row.rateSourceLabel ? (
-                              // A tag repeated verbatim next to an identical one reads as a
-                              // rendering glitch, not as two independently-confirmed facts --
-                              // the two precedence chains (hours, rate) are resolved
-                              // independently (design doc, "Precedence resolution") and can
-                              // diverge, but when they land on the same tier this says so in
-                              // words instead of stamping the same tag twice.
-                              row.rateSourceLabel === row.hoursSourceLabel ? (
-                                <span className="muted">Same as hours</span>
-                              ) : (
-                                <span className="pill pill--neutral">{row.rateSourceLabel}</span>
-                              )
+                              <span className="pill pill--neutral">{row.rateSourceLabel}</span>
                             ) : (
                               c.render(row)
                             )

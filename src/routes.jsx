@@ -41,7 +41,7 @@ export function appRoutes({ store, me, onSignedOut }) {
       <Route path="/projects" element={<ProjectsDashboard store={store} me={me} onSignedOut={onSignedOut} />} />
       <Route path="/accuracy" element={<Accuracy />} />
       <Route path="/estimate" element={<EstimateDemo />} />
-      <Route path="/settings" element={<CompanySettings />} />
+      <Route path="/settings" element={<CompanySettings store={store} />} />
       <Route path="/projects/new" element={<NewProject store={store} />} />
       <Route path="/projects/:projectId" element={<ProjectOverview store={store} me={me} />} />
       <Route path="/projects/:projectId/settings" element={<ProjectSettings store={store} />} />

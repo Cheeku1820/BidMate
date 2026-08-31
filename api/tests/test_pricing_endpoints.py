@@ -69,14 +69,14 @@ def test_get_labor_lists_every_countable_item(client, db, project, item, signed_
     response = client.get(f"/api/projects/{project.id}/labor")
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["pricingSource"] is None
-    ids = [row["itemId"] for row in body["rows"]]
+    assert body["pricing_source"] is None
+    ids = [row["item_id"] for row in body["rows"]]
     assert str(item.id) in ids
 
 
 def test_get_labor_row_missing_without_llm_pricing(client, project, item, signed_in_user):
     response = client.get(f"/api/projects/{project.id}/labor")
-    row = next(r for r in response.json()["rows"] if r["itemId"] == str(item.id))
+    row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
     assert row["status"] == "missing"
 
 
@@ -94,15 +94,15 @@ def test_get_labor_row_ready_when_project_priced_by_llm(client, db, project, ite
     item.labor_hours = Decimal("5")
     db.commit()
     response = client.get(f"/api/projects/{project.id}/labor")
-    row = next(r for r in response.json()["rows"] if r["itemId"] == str(item.id))
+    row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
     assert row["status"] == "ready"
-    assert row["hoursSourceLabel"] == "Estimated basis"
+    assert row["hours_source_label"] == "Estimated basis"
 
 
 def test_get_material_pricing_lists_every_countable_item(client, project, item, signed_in_user):
     response = client.get(f"/api/projects/{project.id}/material-pricing")
     assert response.status_code == 200, response.text
-    ids = [row["itemId"] for row in response.json()["rows"]]
+    ids = [row["item_id"] for row in response.json()["rows"]]
     assert str(item.id) in ids
 
 
@@ -112,6 +112,6 @@ def test_get_material_pricing_uses_company_price_when_present(client, db, org, p
     db.add(CompanyMaterialPrice(org_id=org.id, item_name=item.name, unit_price=99, effective_date="2026-08-01"))
     db.commit()
     response = client.get(f"/api/projects/{project.id}/material-pricing")
-    row = next(r for r in response.json()["rows"] if r["itemId"] == str(item.id))
-    assert row["sourceLabel"] == "Company price"
-    assert float(row["unitPrice"]) == 99.0
+    row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
+    assert row["source_label"] == "Company price"
+    assert float(row["unit_price"]) == 99.0

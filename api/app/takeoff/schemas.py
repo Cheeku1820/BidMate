@@ -480,7 +480,7 @@ class LaborRowOut(BaseModel):
     status: str
     basis_note: str = ""
 
-    model_config = CAMEL_MODEL_CONFIG
+    model_config = MODEL_CONFIG
 
 
 class LaborListOut(BaseModel):
@@ -488,7 +488,7 @@ class LaborListOut(BaseModel):
     pricing_note: str
     rows: list[LaborRowOut]
 
-    model_config = CAMEL_MODEL_CONFIG
+    model_config = MODEL_CONFIG
 
 
 class MaterialRowOut(BaseModel):
@@ -500,7 +500,7 @@ class MaterialRowOut(BaseModel):
     status: str
     basis_note: str = ""
 
-    model_config = CAMEL_MODEL_CONFIG
+    model_config = MODEL_CONFIG
 
 
 class MaterialListOut(BaseModel):
@@ -508,4 +508,4 @@ class MaterialListOut(BaseModel):
     pricing_note: str
     rows: list[MaterialRowOut]
 
-    model_config = CAMEL_MODEL_CONFIG
+    model_config = MODEL_CONFIG

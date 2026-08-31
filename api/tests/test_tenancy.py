@@ -139,6 +139,8 @@ TENANCY_TABLE = [
     ("DELETE", "/api/items/{item_id}",
      lambda p, s, i: f"/api/items/{i.id}", None,
      lambda p, s, i: {"If-Match": str(i.version)}),
+    ("GET", "/api/items/{item_id}/evidence-image",
+     lambda p, s, i: f"/api/items/{i.id}/evidence-image", None, None),
     ("POST", "/api/projects/{project_id}/items/bulk-approve",
      lambda p, s, i: f"/api/projects/{p.id}/items/bulk-approve",
      lambda p, s, i: {"item_ids": [str(i.id)]}, None),

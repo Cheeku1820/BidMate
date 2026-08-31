@@ -22,7 +22,7 @@ import re
 import uuid
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Response
 from pydantic import BaseModel, ConfigDict, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
@@ -38,7 +38,7 @@ from app.takeoff import scale as scale_module
 from app.takeoff import snapshot as snapshot_module
 from app.takeoff import undo as undo_module
 from app.takeoff.ingest_service import ingest_takeoff
-from app.takeoff.models import Note, Project
+from app.takeoff.models import ItemEvidenceImage, Note, Project
 from app.takeoff.router import load_item, load_project, load_sheet, not_found
 from app.takeoff.schemas import (
     BulkApproveOut, ItemMutationOut, NoteCreateIn, NoteOut, NoteUpdateIn, ReprocessIn, ReprocessOut,
@@ -295,6 +295,22 @@ def delete(
     action = review.delete_item(db, user, item, expected_version)
     db.commit()
     return _item_mutation_response(db, project_id, action, None)
+
+
+@router.get("/items/{item_id}/evidence-image")
+def get_item_evidence_image(
+    item_id: uuid.UUID,
+    user: User = Depends(current_user),
+    db: DbSession = Depends(get_db),
+) -> Response:
+    item = load_item(item_id, db, user)
+    row = db.get(ItemEvidenceImage, item.id)
+    if row is None:
+        raise not_found()
+    return Response(
+        content=row.png, media_type="image/png",
+        headers={"Cache-Control": "max-age=86400, immutable"},
+    )
 
 
 @router.post("/projects/{project_id}/items/bulk-approve", response_model=BulkApproveOut)

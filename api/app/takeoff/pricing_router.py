@@ -5,7 +5,6 @@ endpoints and mutations.py is already at this project's file-size
 convention.
 """
 import uuid
-from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -21,12 +20,11 @@ from app.takeoff.models import (
     CompanyLaborHoursOverride,
     CompanyLaborRate,
     CompanyMaterialPrice,
-    Item,
     ProjectLaborLine,
     ProjectMaterialPrice,
 )
 from app.takeoff.pricing import resolve_labor, resolve_material_price
-from app.takeoff.router import load_item, load_project, not_found
+from app.takeoff.router import load_item, load_project
 from app.takeoff.schemas import (
     CompanyLaborHoursOverrideIn,
     CompanyLaborHoursOverrideOut,

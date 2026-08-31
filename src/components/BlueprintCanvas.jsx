@@ -26,7 +26,6 @@ function pathLength(points) {
 export default function BlueprintCanvas({
   sheet,
   items,
-  sheetImageUrl,
   selectedId,
   onSelect,
   layers,
@@ -184,18 +183,14 @@ export default function BlueprintCanvas({
       >
         <div className="sheetpaper" style={{ width: SHEET_W, height: SHEET_H }}>
           <svg width={SHEET_W} height={SHEET_H} viewBox={`0 0 ${SHEET_W} ${SHEET_H}`}>
-            {/* The rendered PDF page goes behind the markers (item
-                coordinates were normalized to this space at ingest, so
-                preserveAspectRatio="none" keeps them aligned). PlanDrawing
-                is the base layer underneath it, and for a sheet that came
-                from an uploaded document that base is deliberately blank:
-                an image that is slow or fails to load must reveal empty
-                paper, never geometry the estimator could mistake for their
-                own drawing. */}
+            {/* The base layer under every marker. Markers were normalized
+                to this same 1000x750 sheet space at ingest, so they land
+                correctly on it regardless of what PlanDrawing renders. For
+                every sheet from an uploaded document, PlanDrawing renders
+                nothing but the sheet number on blank paper -- there is no
+                drawn geometry that could honestly stand in for a page
+                nobody in this codebase has seen. */}
             <PlanDrawing sheet={sheet} />
-            {sheetImageUrl ? (
-              <image href={sheetImageUrl} x={0} y={0} width={SHEET_W} height={SHEET_H} preserveAspectRatio="none" />
-            ) : null}
 
             {/* measured runs */}
             {layers.measurements &&

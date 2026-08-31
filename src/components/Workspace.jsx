@@ -256,14 +256,6 @@ export default function Workspace() {
         <CanvasPane
           sheet={sheet}
           items={items}
-          sheetImageUrl={
-            // takeoffId alone decides this: pageIndex is a zero-based page
-            // number, so testing it for truthiness hid the first page of
-            // every processed set behind the blank fallback.
-            sheet?.takeoffId
-              ? `http://localhost:8100/sheet-image?takeoff_id=${encodeURIComponent(sheet.takeoffId)}&page=${sheet.pageIndex ?? 0}`
-              : null
-          }
           selId={selectedItemId}
           onSelect={select}
           layers={layers}

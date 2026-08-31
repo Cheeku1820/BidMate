@@ -33,7 +33,7 @@ const items = [
 ];
 
 const baseSnapshot = {
-  sheets: [{ id: "s1", number: "E1.1", title: "Level 1 power", superseded: false, scale: "1/8in = 1ft", scaleOptions: [] }],
+  sheets: [{ id: "s1", number: "E1.1", title: "Level 1 power", superseded: false, scale: "1/8in = 1ft", scaleOptions: [], takeoffId: "t1", pageIndex: 0 }],
   items,
   totals: { bySystem: {}, approvedCount: 1, remainingCount: 0, attentionCount: 0, missingCount: 0, approvedUnits: 12 },
   undo: { canUndo: false, canRedo: false, undoLabel: null, undoBy: null, redoLabel: null },
@@ -123,4 +123,13 @@ describe("Workspace — apply notes banner", () => {
     await Promise.resolve();
     expect(screen.queryByText(/marked to feed the takeoff/i)).not.toBeInTheDocument();
   });
+});
+
+it("the canvas never requests a sheet image from the engine", () => {
+  renderWorkspace();
+  expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  // No <image> SVG element (BlueprintCanvas renders markers as SVG, not
+  // <img>, so this also guards against a stray raster element inside
+  // the SVG tree specifically).
+  expect(document.querySelector("image")).toBeNull();
 });

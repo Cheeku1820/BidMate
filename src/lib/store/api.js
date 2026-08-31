@@ -419,7 +419,13 @@ export function createApiStore() {
   }
 
   async function setLaborLine(itemId, changes) {
-    return request(`/api/items/${itemId}/labor`, { method: "PATCH", body: changes });
+    // A labor edit changes the item's laborCost/totalCost, both of
+    // which mapItem carries and getSnapshot()'s cache can serve stale
+    // via a 304 -- invalidate exactly like mutateItem/attachEngineTakeoff/
+    // reprocess do, per invalidateCache()'s own comment above.
+    const result = await request(`/api/items/${itemId}/labor`, { method: "PATCH", body: changes });
+    invalidateCache();
+    return result;
   }
 
   async function getMaterialRows(projectId) {
@@ -428,7 +434,12 @@ export function createApiStore() {
   }
 
   async function setMaterialPrice(itemId, changes) {
-    return request(`/api/items/${itemId}/material-price`, { method: "PATCH", body: changes });
+    // Same reasoning as setLaborLine: a material-price edit changes the
+    // item's materialCost/totalCost, so the cache must not answer the
+    // next poll with the pre-edit figures.
+    const result = await request(`/api/items/${itemId}/material-price`, { method: "PATCH", body: changes });
+    invalidateCache();
+    return result;
   }
 
   async function getCompanyLaborRates() {

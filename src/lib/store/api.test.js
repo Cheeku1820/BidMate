@@ -469,3 +469,56 @@ describe("notes", () => {
     expect(body).not.toHaveProperty("appliedAt");
   });
 });
+
+describe("labor and material pricing cache invalidation", () => {
+  // Mirrors the "a 304 with an empty body yields the previously cached
+  // snapshot" test above, but from the other direction: that test pins
+  // that a cached version IS sent as If-None-Match when nothing has
+  // invalidated it; these pin that setLaborLine/setMaterialPrice DO
+  // invalidate it, the same way every other mutation in this file
+  // (mutateItem, attachEngineTakeoff, reprocess) already does --
+  // otherwise a getSnapshot() poll right after a successful labor or
+  // material-price edit can be answered with a 304 and serve the stale
+  // cached item.materialCost/laborCost/totalCost.
+  it("setLaborLine invalidates the cached snapshot, so the next getSnapshot() fetches unconditionally", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([PROJECT])) // ensureProjectId
+      .mockResolvedValueOnce(jsonResponse(snapshotBody())) // first getSnapshot
+      .mockResolvedValueOnce(jsonResponse({ itemId: "it-01" })) // setLaborLine
+      .mockResolvedValueOnce(jsonResponse(snapshotBody())); // second getSnapshot
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const first = await store.getSnapshot();
+    expect(first.version).toBe("v1");
+
+    await store.setLaborLine("it-01", { hoursOverride: 0.6 });
+    await store.getSnapshot();
+
+    // The second getSnapshot's request is the 4th fetch call overall
+    // (project lookup, first snapshot, the PATCH, second snapshot).
+    const secondSnapshotCall = fetchMock.mock.calls[3];
+    expect(secondSnapshotCall[0]).toBe(`/api/projects/${PROJECT.id}/snapshot`);
+    expect(secondSnapshotCall[1].headers["If-None-Match"]).toBeUndefined();
+  });
+
+  it("setMaterialPrice invalidates the cached snapshot, so the next getSnapshot() fetches unconditionally", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([PROJECT])) // ensureProjectId
+      .mockResolvedValueOnce(jsonResponse(snapshotBody())) // first getSnapshot
+      .mockResolvedValueOnce(jsonResponse({ itemId: "it-01" })) // setMaterialPrice
+      .mockResolvedValueOnce(jsonResponse(snapshotBody())); // second getSnapshot
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const first = await store.getSnapshot();
+    expect(first.version).toBe("v1");
+
+    await store.setMaterialPrice("it-01", { priceOverride: 12.5, source: "project_price" });
+    await store.getSnapshot();
+
+    const secondSnapshotCall = fetchMock.mock.calls[3];
+    expect(secondSnapshotCall[0]).toBe(`/api/projects/${PROJECT.id}/snapshot`);
+    expect(secondSnapshotCall[1].headers["If-None-Match"]).toBeUndefined();
+  });
+});

@@ -307,10 +307,7 @@ def get_item_evidence_image(
     row = db.get(ItemEvidenceImage, item.id)
     if row is None:
         raise not_found()
-    return Response(
-        content=row.png, media_type="image/png",
-        headers={"Cache-Control": "max-age=86400, immutable"},
-    )
+    return Response(content=row.png, media_type="image/png")
 
 
 @router.post("/projects/{project_id}/items/bulk-approve", response_model=BulkApproveOut)

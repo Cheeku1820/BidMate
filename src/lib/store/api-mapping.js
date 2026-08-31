@@ -56,10 +56,15 @@ export function mapItem(i) {
 }
 
 // Built from fields mapItem already carries unchanged from the wire
-// (evidence.has_image, id, version) -- version already increments on
-// every server-side rewrite of the item (approve/edit/reject/reprocess
-// all bump it), which makes it a correct cache-buster for free: a
-// re-run that replaces an item's image is guaranteed to change this URL.
+// (evidence.has_image, id, version). The API sends this endpoint back
+// with `Cache-Control: private, no-store` (it holds NDA'd drawing
+// content, per api/app/main.py's global response policy), so there is
+// no HTTP cache to bust here. The `?v=${item.version}` query param
+// exists only to change the URL string when React re-renders after an
+// item update, so an `<img src>` that would otherwise look unchanged
+// still triggers a fresh fetch -- version already increments on every
+// server-side rewrite of the item (approve/edit/reject/reprocess all
+// bump it), which makes it a correct trigger for free.
 export function evidenceImageUrl(item) {
   if (!item?.evidence?.has_image) return null;
   return `/api/items/${item.id}/evidence-image?v=${item.version}`;

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index,
-    Integer, LargeBinary, Numeric, String, Text, func, text,
+    Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -241,6 +241,100 @@ class ItemEvidenceImage(Base):
     )
     png: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CompanyLaborRate(Base):
+    """Singleton per org -- the three role rates and the productivity
+    factor CompanySettings.jsx's 'Labor rates'/'Labor adjustments' tabs
+    render, moved off localStorage (Task 13)."""
+
+    __tablename__ = "company_labor_rates"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True)
+    journeyman_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0, server_default="0")
+    foreman_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0, server_default="0")
+    apprentice_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0, server_default="0")
+    # A multiplier, not a percent -- matches settingsStore.js's existing
+    # productivityFactor field exactly (1.0 = neutral, 0.97 = 3% more
+    # efficient) so the migrated value means the same thing it always did.
+    productivity_factor: Mapped[Decimal] = mapped_column(Numeric(5, 3), default=1, server_default="1")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyLaborHoursOverride(Base):
+    """Sparse: only items the company has explicitly set custom hours
+    for get a row. Everything else falls through to the item's own
+    engine-computed labor_hours (when that's trustworthy -- see
+    Project.pricing_source)."""
+
+    __tablename__ = "company_labor_hours_overrides"
+    __table_args__ = (UniqueConstraint("org_id", "item_name", name="uq_company_labor_hours_item"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    item_name: Mapped[str] = mapped_column(String(300))
+    hours_per_unit: Mapped[Decimal] = mapped_column(Numeric(8, 3))
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyMaterialPrice(Base):
+    """Sparse, same shape as the hours override -- one row per item name
+    the company has priced. Replaces CompanySettings.jsx's 'Material
+    pricing' tab's single free-text field with a real list (Task 13)."""
+
+    __tablename__ = "company_material_prices"
+    __table_args__ = (UniqueConstraint("org_id", "item_name", name="uq_company_material_price_item"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    item_name: Mapped[str] = mapped_column(String(300))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    effective_date: Mapped[date] = mapped_column(Date)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProjectLaborLine(Base):
+    """Per-item labor overrides, one row per item at most. Every field is
+    nullable and independent: an estimator can override just the crew
+    mix and leave hours alone, or type a flat rate and leave everything
+    else at its default. Edited only through Task 4's mutation endpoint
+    and reversed only through Task 5's undo dispatch -- deliberately
+    outside Item's own column-walking delete-undo snapshot, the same
+    reasoning as ItemEvidenceImage."""
+
+    __tablename__ = "project_labor_lines"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
+    hours_override: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    crew_journeyman: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crew_foreman: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crew_apprentice: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rate_override: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    adjustment_percent: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    adjustment_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProjectMaterialPrice(Base):
+    """Per-item material price override, one row per item at most.
+    `source` distinguishes a typed project price from a deliberate
+    allowance -- both are the same mechanical override, the label is
+    what the estimator meant by it. Same undo/snapshot exclusion as
+    ProjectLaborLine above."""
+
+    __tablename__ = "project_material_prices"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
+    price_override: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    source: Mapped[str] = mapped_column(String(20))  # "project_price" | "allowance"
+    reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class Warning(Base):

@@ -116,3 +116,47 @@ def test_item_evidence_image_is_not_in_the_undo_snapshot_types():
 
     assert "evidence_image" not in ITEM_SNAPSHOT_TYPES
     assert "png" not in ITEM_SNAPSHOT_TYPES
+
+
+def test_project_labor_line_cascades_on_item_delete(db, item):
+    from app.takeoff.models import ProjectLaborLine
+
+    db.add(ProjectLaborLine(item_id=item.id, hours_override=1.5))
+    db.commit()
+    db.delete(item)
+    db.commit()
+    assert db.get(ProjectLaborLine, item.id) is None
+
+
+def test_project_material_price_cascades_on_item_delete(db, item):
+    from app.takeoff.models import ProjectMaterialPrice
+
+    db.add(ProjectMaterialPrice(item_id=item.id, price_override=12.5, source="project_price"))
+    db.commit()
+    db.delete(item)
+    db.commit()
+    assert db.get(ProjectMaterialPrice, item.id) is None
+
+
+def test_company_material_price_unique_per_org_and_item_name(db, org):
+    from sqlalchemy.exc import IntegrityError
+
+    from app.takeoff.models import CompanyMaterialPrice
+
+    db.add(CompanyMaterialPrice(org_id=org.id, item_name="20A duplex receptacle", unit_price=12.0, effective_date="2026-08-01"))
+    db.commit()
+    db.add(CompanyMaterialPrice(org_id=org.id, item_name="20A duplex receptacle", unit_price=13.0, effective_date="2026-08-15"))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_pricing_tables_are_not_in_the_undo_snapshot_types():
+    """These are sparse override rows a separate task's own mutation
+    endpoints and undo dispatch manage directly (Tasks 4-5) -- they must
+    stay outside Item's own delete-undo snapshot the same way
+    ItemEvidenceImage does."""
+    from app.takeoff.snapshots import ITEM_SNAPSHOT_TYPES
+
+    for leaked in ("hours_override", "crew_journeyman", "price_override", "journeyman_rate"):
+        assert leaked not in ITEM_SNAPSHOT_TYPES

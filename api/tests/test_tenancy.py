@@ -212,6 +212,18 @@ NON_PROJECT_SCOPED_ROUTES = {
     # since the thing being probed there is a user id, not a project id.
     ("GET", "/api/projects"),
     ("POST", "/api/projects"),
+    # Company-scoped routes (labor and material pricing configuration) --
+    # org-scoped by the caller's session like /api/projects above. These
+    # routes do not carry a project id in the path; they configure
+    # company-wide settings that apply across all projects in the org.
+    ("GET", "/api/company/labor-rates"),
+    ("PUT", "/api/company/labor-rates"),
+    ("GET", "/api/company/material-prices"),
+    ("PUT", "/api/company/material-prices/{item_name}"),
+    ("DELETE", "/api/company/material-prices/{item_name}"),
+    ("GET", "/api/company/labor-hours-overrides"),
+    ("PUT", "/api/company/labor-hours-overrides/{item_name}"),
+    ("DELETE", "/api/company/labor-hours-overrides/{item_name}"),
     # FastAPI's own framework routes -- docs UI, its OAuth2 redirect
     # target, the OpenAPI schema, and ReDoc. None of these take a
     # project id or touch tenant data; they exist the moment `FastAPI()`

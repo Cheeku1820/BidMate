@@ -58,8 +58,56 @@ describe("MaterialPricingWorkspace", () => {
     fireEvent.change(priceInput, { target: { value: "15.5" } });
     fireEvent.blur(priceInput);
     await waitFor(() =>
-      expect(store.setMaterialPrice).toHaveBeenCalledWith("i1", { priceOverride: 15.5, source: "project_price" })
+      expect(store.setMaterialPrice).toHaveBeenCalledWith("i1", {
+        priceOverride: 15.5,
+        source: "project_price",
+        reason: "",
+      })
     );
+  });
+
+  test("marking a price as an allowance sends source allowance and the reason", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: baseRows }),
+      setMaterialPrice: vi.fn().mockResolvedValue({}),
+    };
+    renderMaterialPricing({ store });
+    await waitFor(() => expect(screen.getByText("20A duplex receptacle")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText("Mark as allowance"));
+    fireEvent.change(screen.getByLabelText("Allowance reason"), {
+      target: { value: "Fixture package not yet selected" },
+    });
+
+    const priceInput = screen.getByLabelText(/unit price/i);
+    fireEvent.change(priceInput, { target: { value: "40" } });
+    fireEvent.blur(priceInput);
+
+    await waitFor(() =>
+      expect(store.setMaterialPrice).toHaveBeenCalledWith("i1", {
+        priceOverride: 40,
+        source: "allowance",
+        reason: "Fixture package not yet selected",
+      })
+    );
+  });
+
+  test("an allowance with no reason is not sent, and says why", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: baseRows }),
+      setMaterialPrice: vi.fn().mockResolvedValue({}),
+    };
+    renderMaterialPricing({ store });
+    await waitFor(() => expect(screen.getByText("20A duplex receptacle")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText("Mark as allowance"));
+
+    const priceInput = screen.getByLabelText(/unit price/i);
+    fireEvent.change(priceInput, { target: { value: "40" } });
+    fireEvent.blur(priceInput);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/needs a reason/i));
+    expect(store.setMaterialPrice).not.toHaveBeenCalled();
   });
 
   test("shows the source label and basis note when a row resolves from Regional baseline", async () => {

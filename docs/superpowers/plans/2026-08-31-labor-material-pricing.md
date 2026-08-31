@@ -1543,7 +1543,7 @@ Append to `api/tests/test_pricing_endpoints.py`:
 def test_get_company_labor_rates_defaults_to_zero(client, signed_in_user):
     response = client.get("/api/company/labor-rates")
     assert response.status_code == 200, response.text
-    assert response.json()["journeymanRate"] == "0.00" or float(response.json()["journeymanRate"]) == 0.0
+    assert response.json()["journeyman_rate"] == "0.00" or float(response.json()["journeyman_rate"]) == 0.0
 
 
 def test_put_company_labor_rates_persists(client, db, org, signed_in_user):
@@ -1583,7 +1583,7 @@ def test_delete_company_material_price(client, db, org, signed_in_user):
 def test_get_company_material_prices_lists_all(client, org, signed_in_user):
     client.put("/api/company/material-prices/20A%20duplex%20receptacle", json={"unitPrice": 13.5, "effectiveDate": "2026-08-01"})
     response = client.get("/api/company/material-prices")
-    names = [row["itemName"] for row in response.json()]
+    names = [row["item_name"] for row in response.json()]
     assert "20A duplex receptacle" in names
 
 

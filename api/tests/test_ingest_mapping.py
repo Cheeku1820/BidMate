@@ -267,6 +267,31 @@ def test_map_payload_does_not_flag_a_legitimate_word_containing_ai():
     assert mapped.items[0]["warning"]["found"] == warning["found"]
 
 
+def test_fallback_warning_is_always_grounded():
+    from app.takeoff.ingest import fallback_warning, is_warning_grounded
+
+    warning = fallback_warning("F2", 3, "E2.1")
+    assert is_warning_grounded(warning, {"E2.1"})
+
+
+def test_map_payload_replaces_a_warning_leaking_a_confidence_tier():
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E2.1, medium confidence match to the schedule.",
+               "why": "y", "fix": "z", "where": "E2.1"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
+def test_map_payload_does_not_flag_ordinary_use_of_the_word_confidence():
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E2.1; matched to the schedule with confidence.",
+               "why": "y", "fix": "z", "where": "E2.1"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["found"] == warning["found"]
+
+
 def test_map_payload_populates_evidence_metadata():
     payload = _payload()
     payload["items"][0]["evidence_png_b64"] = base64.b64encode(b"fake-png").decode("ascii")

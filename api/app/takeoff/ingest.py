@@ -47,7 +47,17 @@ BANNED_PHRASES = (
     re.compile(r"\bgemini\b", re.I),
     re.compile(r"\bllm\b", re.I),
     re.compile(r"\bai\b", re.I),
-    re.compile(r"\bconfidence\b", re.I),
+    # A bare \bconfidence\b would also flag the deterministic fallback's own
+    # "...matched to a schedule with confidence" prose (see
+    # fallback_warning() below and estimate.py's _unconfirmed_type_warning),
+    # causing the trusted fallback to fail its own groundedness check, and
+    # would discard any genuinely grounded model-written warning that uses
+    # "confidence" as an ordinary English word rather than a leaked tier
+    # label. CLAUDE.md's rule is "no confidence numbers" -- what can
+    # actually leak from this pipeline's internal scoring is a tier label
+    # (high/medium/low confidence), not the bare word, so that's what this
+    # matches. \d+\s*% below still catches a numeric percentage leak.
+    re.compile(r"\b(?:high|medium|low)[\s-]confidence\b", re.I),
     re.compile(r"\bi think\b", re.I),
     re.compile(r"\bi believe\b", re.I),
     re.compile(r"\d+\s*%"),

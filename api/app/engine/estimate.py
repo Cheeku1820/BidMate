@@ -313,11 +313,16 @@ def _unconfirmed_type_warning(tag: str, count: int, sheet_no: str) -> dict:
     """The four-field shape for an item the classifier could not place
     confidently. An attention item with no warning tells the estimator
     something is wrong but not what to do about it, which is the one
-    thing a warning exists to prevent."""
+    thing a warning exists to prevent.
+
+    Deliberately duplicated as ingest.py's fallback_warning() across the
+    engine/API module boundary -- the two must stay word for word
+    identical, which test_ingest_mapping.py asserts, since nothing in the
+    import graph ties them together."""
     return {
         "reason": "legend",
         "title": "Item type needs confirmation",
-        "found": f"Type {tag} appears {count} times on {sheet_no}, but its description could not be matched to a schedule with confidence.",
+        "found": f"Type {tag} appears {count} time(s) on {sheet_no}, but its description could not be matched to a schedule.",
         "why": "The exact item and its price can't be confirmed until the type is matched to the schedule.",
         "fix": "Confirm the item type against the schedule, then approve.",
         "where": f"{sheet_no} and the project schedules.",

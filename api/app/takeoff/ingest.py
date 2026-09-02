@@ -50,17 +50,10 @@ BANNED_PHRASES = (
     re.compile(r"\bgemini\b", re.I),
     re.compile(r"\bllm\b", re.I),
     re.compile(r"\bai\b", re.I),
-    # A bare \bconfidence\b would also flag the deterministic fallback's own
-    # "...matched to a schedule with confidence" prose (see
-    # fallback_warning() below and estimate.py's _unconfirmed_type_warning),
-    # causing the trusted fallback to fail its own groundedness check, and
-    # would discard any genuinely grounded model-written warning that uses
-    # "confidence" as an ordinary English word rather than a leaked tier
-    # label. CLAUDE.md's rule is "no confidence numbers" -- what can
-    # actually leak from this pipeline's internal scoring is a tier label
-    # (high/medium/low confidence), not the bare word, so that's what this
-    # matches. \d+\s*% below still catches a numeric percentage leak.
-    re.compile(r"\b(?:high|medium|low)[\s-]confidence\b", re.I),
+    # The internal scoring vocabulary, in any shape -- a tier label, a
+    # score, or the bare word. Neither fallback template says "confidence"
+    # any more, so nothing trusted trips this.
+    re.compile(r"\bconfidence\b", re.I),
     re.compile(r"\bi think\b", re.I),
     re.compile(r"\bi believe\b", re.I),
     re.compile(r"\d+\s*%"),
@@ -99,7 +92,7 @@ def fallback_warning(tag: str, count, sheet_number: str, reason: str = "legend")
     return {
         "reason": reason,
         "title": "Item type needs confirmation",
-        "found": f"Type {tag} appears {count} time(s) on {sheet_number}, but its description could not be matched to a schedule with confidence.",
+        "found": f"Type {tag} appears {count} time(s) on {sheet_number}, but its description could not be matched to a schedule.",
         "why": "The exact item and its price can't be confirmed until the type is matched to the schedule.",
         "fix": "Confirm the item type against the schedule, then approve.",
         "where": f"{sheet_number} and the project schedules.",

@@ -94,7 +94,7 @@ def test_row_from_spec_uses_the_models_own_reasoning_but_synthesizes_found_and_w
     assert row["warning"]["why"] == "F2's exact fixture and price depend on which schedule entry it matches."
     assert row["warning"]["fix"] == "Check the luminaire schedule for a type F2 entry, or confirm it against the legend."
     # found/where are always this cluster's own real data (tag F2, count 3, sheet "?" since sheets=[] in this test), never the model's:
-    assert "Type F2 appears 3 times on" in row["warning"]["found"]
+    assert "Type F2 appears 3 time(s) on" in row["warning"]["found"]
     assert "E9.9" not in row["warning"]["where"]
     assert row["warning"]["reason"] == "legend"
 
@@ -111,7 +111,7 @@ def test_row_from_spec_uses_a_three_field_model_warning():
     row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
     assert row["warning"]["why"] == "F2's exact fixture and price depend on which schedule entry it matches."
     assert row["warning"]["fix"] == "Check the luminaire schedule for a type F2 entry."
-    assert "Type F2 appears 3 times on" in row["warning"]["found"]
+    assert "Type F2 appears 3 time(s) on" in row["warning"]["found"]
     assert row["warning"]["where"]
 
 
@@ -120,7 +120,7 @@ def test_row_from_spec_falls_back_when_the_model_omits_a_warning():
             "unit": "ea", "confidence": "low", "material_cost": 120, "labor_hours": 0.5}
     row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
     assert row["warning"] is not None
-    assert "Type F2 appears 3 times on" in row["warning"]["found"]
+    assert "Type F2 appears 3 time(s) on" in row["warning"]["found"]
     assert row["warning"]["fix"] == "Confirm the item type against the schedule, then approve."
 
 

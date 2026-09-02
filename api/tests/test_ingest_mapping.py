@@ -277,6 +277,16 @@ def test_map_payload_does_not_flag_a_legitimate_word_containing_ai():
     assert mapped.items[0]["warning"]["found"] == warning["found"]
 
 
+def test_fallback_warning_text_matches_the_deterministic_engine_template():
+    """ingest.py's fallback_warning() and estimate.py's
+    _unconfirmed_type_warning() are a deliberate duplication across the
+    engine/API module boundary (ingest.py doesn't import app.engine) --
+    nothing else ties them together, so this asserts they stay aligned."""
+    from app.engine.estimate import _unconfirmed_type_warning
+    from app.takeoff.ingest import fallback_warning
+    assert fallback_warning("F2", 3, "E2.1") == _unconfirmed_type_warning("F2", 3, "E2.1")
+
+
 def test_fallback_warning_is_always_grounded():
     from app.takeoff.ingest import fallback_warning, is_warning_grounded
 
@@ -310,15 +320,6 @@ def test_map_payload_replaces_a_warning_leaking_a_confidence_tier():
     item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
     mapped = map_payload(_payload(items=[item]))
     assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
-
-
-def test_map_payload_does_not_flag_ordinary_use_of_the_word_confidence():
-    warning = {"reason": "legend", "title": "x",
-               "found": "Type F2 appears 3 times on E2.1; matched to the schedule with confidence.",
-               "why": "y", "fix": "z", "where": "E2.1"}
-    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
-    mapped = map_payload(_payload(items=[item]))
-    assert mapped.items[0]["warning"]["found"] == warning["found"]
 
 
 def test_map_payload_logs_the_fallback_count_for_a_document():

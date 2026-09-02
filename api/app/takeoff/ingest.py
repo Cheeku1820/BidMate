@@ -85,16 +85,19 @@ def is_warning_grounded(warning: dict, valid_sheet_numbers: set[str]) -> bool:
     return not any(p.search(all_text) for p in BANNED_PHRASES)
 
 
-def fallback_warning(tag: str, count, sheet_number: str) -> dict:
+def fallback_warning(tag: str, count, sheet_number: str, reason: str = "legend") -> dict:
     """The same generic-but-honest shape estimate.py's deterministic path
     already uses (`_unconfirmed_type_warning`), reconstructed here rather
     than imported -- ingest.py works off the payload contract only and
     does not import from app.engine. This is what a groundedness failure
-    falls back to."""
+    falls back to. Carries the original warning's own `reason` through --
+    WarningReason is load-bearing (scale.set_scale() clears only warnings
+    whose reason is "scale"), so a groundedness swap must never silently
+    reclassify what kind of evidence gap this is."""
     tag = tag or "?"
     sheet_number = sheet_number or "the sheet"
     return {
-        "reason": "legend",
+        "reason": reason,
         "title": "Item type needs confirmation",
         "found": f"Type {tag} appears {count} time(s) on {sheet_number}, but its description could not be matched to a schedule with confidence.",
         "why": "The exact item and its price can't be confirmed until the type is matched to the schedule.",
@@ -224,7 +227,7 @@ def _grounded_or_fallback(raw_warning, sheet_number: str, valid_sheet_numbers: s
     warning = validate_warning(raw_warning)
     if is_warning_grounded(warning, valid_sheet_numbers):
         return warning, False
-    return fallback_warning(tag, quantity, sheet_number), True
+    return fallback_warning(tag, quantity, sheet_number, warning["reason"]), True
 
 
 def map_payload(payload: dict) -> MappedTakeoff:

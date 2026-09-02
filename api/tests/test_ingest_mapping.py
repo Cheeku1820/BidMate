@@ -284,6 +284,25 @@ def test_fallback_warning_is_always_grounded():
     assert is_warning_grounded(warning, {"E2.1"})
 
 
+def test_grounded_or_fallback_preserves_the_warnings_own_reason():
+    """scale.set_scale() clears only warnings whose reason is "scale" -- a
+    groundedness swap that rewrote the reason would leave a Missing
+    information item with no path to resolution."""
+    from app.takeoff.ingest import fallback_warning
+    result = fallback_warning("F2", 3, "E2.1", reason="scale")
+    assert result["reason"] == "scale"
+
+
+def test_map_payload_carries_a_scale_reason_through_a_groundedness_swap():
+    warning = {"reason": "scale", "title": "x",
+               "found": "Type F2 appears 3 times on E9.9, an unknown sheet.",
+               "why": "y", "fix": "z", "where": "E9.9"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+    assert mapped.items[0]["warning"]["reason"] == "scale"
+
+
 def test_map_payload_replaces_a_warning_leaking_a_confidence_tier():
     warning = {"reason": "legend", "title": "x",
                "found": "Type F2 appears 3 times on E2.1, medium confidence match to the schedule.",

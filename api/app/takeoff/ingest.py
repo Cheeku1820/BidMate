@@ -18,11 +18,14 @@ against today.
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from dataclasses import dataclass
 
 from app.errors import DomainError
 from app.takeoff.models import WarningReason
+
+logger = logging.getLogger(__name__)
 
 SHEET_SPACE_W = 1000
 SHEET_SPACE_H = 750
@@ -205,17 +208,20 @@ def normalize_ai_reading(raw) -> dict | None:
     }
 
 
-def _grounded_or_fallback(raw_warning, sheet_number: str, valid_sheet_numbers: set[str], tag: str, quantity) -> dict | None:
+def _grounded_or_fallback(raw_warning, sheet_number: str, valid_sheet_numbers: set[str], tag: str, quantity) -> tuple[dict | None, bool]:
     """The single point map_payload calls once an item's own sheet number
     and the document's full valid-sheet set are both known: validate the
     warning's shape, then swap in the deterministic fallback if Layer 1's
-    groundedness check fails, otherwise keep the model's own text as-is."""
+    groundedness check fails, otherwise keep the model's own text as-is.
+    Returns (warning, fell_back) -- fell_back is True only when a
+    groundedness failure actually triggered the swap, so the caller can
+    count it without ever logging the warning's own content."""
     if not raw_warning:
-        return None
+        return None, False
     warning = validate_warning(raw_warning)
     if is_warning_grounded(warning, valid_sheet_numbers):
-        return warning
-    return fallback_warning(tag, quantity, sheet_number)
+        return warning, False
+    return fallback_warning(tag, quantity, sheet_number), True
 
 
 def map_payload(payload: dict) -> MappedTakeoff:
@@ -252,6 +258,11 @@ def map_payload(payload: dict) -> MappedTakeoff:
     valid_sheet_numbers = {s["number"] for s in sheets}
     fallback = sheets[0]["key"] if sheets else None
     items: list[dict] = []
+    # Counted, never contented: the design's section B asks for the
+    # fallback RATE to be visible as a metric over time, and a warning's
+    # own text is model-written prose about a customer's drawing set --
+    # it does not belong in a log line.
+    fallback_count = 0
 
     for raw in payload.get("items") or []:
         key = str(raw.get("sheet_id") or fallback or "")
@@ -273,6 +284,10 @@ def map_payload(payload: dict) -> MappedTakeoff:
         n_places = len(placements) or 1
         png_b64 = raw.get("evidence_png_b64")
         sheet_number = next((s["number"] for s in sheets if s["key"] == key), "")
+        item_warning, fell_back = _grounded_or_fallback(
+            warning, sheet_number, valid_sheet_numbers, str(raw.get("tag") or ""), raw.get("quantity") or 0
+        )
+        fallback_count += fell_back
         items.append({
             "sheet_key": key,
             "symbol": str(raw.get("symbol") or "") or infer_symbol(name, system),
@@ -297,7 +312,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
             # row carries one, so a missing tag maps to "" rather than
             # None or a KeyError.
             "source_tag": str(raw.get("tag") or ""),
-            "warning": _grounded_or_fallback(warning, sheet_number, valid_sheet_numbers, str(raw.get("tag") or ""), raw.get("quantity") or 0),
+            "warning": item_warning,
             "evidence": {
                 "detail": f"Counted from the drawing at {n_places} location{'s' if n_places != 1 else ''}",
                 "sheet": sheet_number,
@@ -305,5 +320,8 @@ def map_payload(payload: dict) -> MappedTakeoff:
             },
             "evidence_png": base64.b64decode(png_b64) if png_b64 else None,
         })
+
+    if fallback_count:
+        logger.info("warning groundedness fallback", extra={"fallback_count": fallback_count, "item_count": len(items)})
 
     return MappedTakeoff(sheets=sheets, items=items)

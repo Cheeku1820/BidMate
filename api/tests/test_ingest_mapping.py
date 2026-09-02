@@ -292,6 +292,29 @@ def test_map_payload_does_not_flag_ordinary_use_of_the_word_confidence():
     assert mapped.items[0]["warning"]["found"] == warning["found"]
 
 
+def test_map_payload_logs_the_fallback_count_for_a_document():
+    """The design asks for the fallback RATE to be visible over time, so a
+    swap has to leave a trace -- a count, never the warning's own text."""
+    from unittest.mock import patch
+
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E9.9, an unknown sheet.",
+               "why": "y", "fix": "z", "where": "E9.9"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    with patch("app.takeoff.ingest.logger") as mock_logger:
+        map_payload(_payload(items=[item]))
+    mock_logger.info.assert_called_once()
+    assert mock_logger.info.call_args.kwargs["extra"] == {"fallback_count": 1, "item_count": 1}
+
+
+def test_map_payload_does_not_log_when_no_warning_falls_back():
+    from unittest.mock import patch
+
+    with patch("app.takeoff.ingest.logger") as mock_logger:
+        map_payload(_payload())
+    mock_logger.info.assert_not_called()
+
+
 def test_map_payload_populates_evidence_metadata():
     payload = _payload()
     payload["items"][0]["evidence_png_b64"] = base64.b64encode(b"fake-png").decode("ascii")

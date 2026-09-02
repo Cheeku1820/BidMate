@@ -325,23 +325,41 @@ def _unconfirmed_type_warning(tag: str, count: int, sheet_no: str) -> dict:
 
 
 def _model_warning(raw: dict | None, tag: str, count: int, sheet_no: str) -> dict:
-    """The model was asked to write its own four-field warning alongside
-    the classification, in the same call (grounded-classification-
-    warnings-design.md). Falls back to the deterministic template if the
-    model omitted "warning" or returned something malformed -- an
-    attention item must never reach ingest with no warning, or the
-    estimator gets no recovery action."""
-    fields = ("title", "found", "why", "fix", "where")
-    if isinstance(raw, dict) and all(str(raw.get(f) or "").strip() for f in fields):
-        return {
-            "reason": "legend",
-            "title": str(raw["title"]).strip(),
-            "found": str(raw["found"]).strip(),
-            "why": str(raw["why"]).strip(),
-            "fix": str(raw["fix"]).strip(),
-            "where": str(raw["where"]).strip(),
-        }
-    return _unconfirmed_type_warning(tag, count, sheet_no)
+    """The model was asked to write its own warning alongside the
+    classification, in the same call (grounded-classification-warnings-
+    design.md) -- but it only ever sees the DOCUMENT-WIDE count for a tag
+    (_compute() aggregates tag_counts across every sheet before the call),
+    never a specific cluster's own count or sheet, and it isn't given a
+    sheet number to write "where" from at all. Trusting it for found/where
+    would mean the same warning -- including a count and a sheet that may
+    not match -- gets attached to every same-tag cluster across every
+    sheet in the document.
+
+    So found/where are never taken from the model, even when it returned
+    something complete: they're always synthesized from THIS cluster's own
+    real tag/count/sheet, the one thing that's actually true about the row
+    being built. title/why/fix are the model's reasoning about *why* the
+    classification is uncertain -- legitimately the same regardless of
+    which sheet instance triggered it -- so those are trusted when present
+    and complete. Falls back to the fully deterministic template if the
+    model omitted "warning" or any of those three fields.
+
+    Completeness is checked on title/why/fix only, not on all five: the
+    prompt no longer asks for found/where at all (llm.py's _prompt()), so
+    requiring them here would make every well-formed model warning fall
+    back and the model's reasoning would never reach an estimator."""
+    template = _unconfirmed_type_warning(tag, count, sheet_no)
+    fields = ("title", "why", "fix")
+    if not (isinstance(raw, dict) and all(str(raw.get(f) or "").strip() for f in fields)):
+        return template
+    return {
+        "reason": "legend",
+        "title": str(raw["title"]).strip(),
+        "found": template["found"],
+        "why": str(raw["why"]).strip(),
+        "fix": str(raw["fix"]).strip(),
+        "where": template["where"],
+    }
 
 
 def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_factor: float) -> dict:

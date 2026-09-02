@@ -113,7 +113,7 @@ Return ONLY a JSON object, no prose, of this exact shape:
       "material_cost": <number, national material $ per unit>,
       "labor_hours": <number, NECA-style install labor hours per unit>,
       "confidence": "<high|medium|low>",
-      "warning": <null if confidence is "high", otherwise an object: {{"title": "<short label, e.g. 'Fixture type needs confirmation'>", "found": "<what you actually found for THIS tag, citing its real count and sheet(s) from the tags/schedule text above>", "why": "<the real consequence of not resolving this, specific to this item>", "fix": "<the concrete next step an estimator should take>", "where": "<only sheet numbers that appear in the tags or schedule text above>"}}>
+      "warning": <null if confidence is "high", otherwise an object: {{"title": "<short label, e.g. 'Fixture type needs confirmation'>", "why": "<why this classification is uncertain -- a real, specific reason, not boilerplate>", "fix": "<the concrete next step an estimator should take>"}}>
     }}
   ]
 }}
@@ -123,7 +123,7 @@ Rules:
 - Confidence "high" for standard, unambiguous devices whose tag maps cleanly to one catalog item — receptacles, switches, junction boxes, data/telecom outlets, disconnects. These are counted the same way regardless of schedule.
 - Confidence "medium" for fixture-type letters (A-H): count them as luminaires, name them from the schedule when the text supports it, else "Luminaire type X" — the exact fixture still needs a person to confirm against the luminaire schedule.
 - Confidence "low" only for genuinely unrecognized or non-device tags.
-- When you set "warning" (any item below "high" confidence), ground every field only in the tag counts and schedule text given above. Never state a sheet number, schedule entry, or fact that was not provided to you.
+- When you set "warning" (any item below "high" confidence), ground "why" and "fix" only in the tag counts and schedule text given above. You were given a document-wide count for this tag, not a per-sheet one, and no sheet number at all -- never state a specific count or sheet number in "why" or "fix"; describe the uncertainty itself (e.g. what's missing from the schedule, what doesn't match) rather than citing numbers you cannot verify.
 - Write "warning" text the way a knowledgeable electrical estimator would explain it to a colleague: sentence case, plain construction language, no mention of models, confidence scores, or "I think" -- state it as a fact about the drawing, not a hedge about your own certainty.
 - "warning" is null when confidence is "high" -- a device the schedule and tags already confirm needs no explanation.
 - Do not include markup, overhead, profit, or tax. Material and labor only."""

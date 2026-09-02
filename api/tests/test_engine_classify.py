@@ -82,17 +82,37 @@ def test_row_from_spec_high_confidence_carries_no_warning():
     assert row["warning"] is None
 
 
-def test_row_from_spec_uses_the_models_own_warning_when_present():
+def test_row_from_spec_uses_the_models_own_reasoning_but_synthesizes_found_and_where():
     spec = {"name": "Type F luminaire", "system": "Lighting", "category": "Fixtures",
             "unit": "ea", "confidence": "low", "material_cost": 120, "labor_hours": 0.5,
             "warning": {"title": "Fixture type needs confirmation",
-                        "found": "Type F2 appears 3 times on E2.1 but the schedule only lists types A-E.",
+                        "found": "Type F2 appears 8 times across the document.",  # what the model saw -- document-wide, must be discarded
                         "why": "F2's exact fixture and price depend on which schedule entry it matches.",
                         "fix": "Check the luminaire schedule for a type F2 entry, or confirm it against the legend.",
-                        "where": "E2.1 and the luminaire schedule."}}
+                        "where": "E9.9"}}  # a sheet the model guessed -- must also be discarded
     row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
-    assert row["warning"]["found"] == "Type F2 appears 3 times on E2.1 but the schedule only lists types A-E."
+    assert row["warning"]["why"] == "F2's exact fixture and price depend on which schedule entry it matches."
+    assert row["warning"]["fix"] == "Check the luminaire schedule for a type F2 entry, or confirm it against the legend."
+    # found/where are always this cluster's own real data (tag F2, count 3, sheet "?" since sheets=[] in this test), never the model's:
+    assert "Type F2 appears 3 times on" in row["warning"]["found"]
+    assert "E9.9" not in row["warning"]["where"]
     assert row["warning"]["reason"] == "legend"
+
+
+def test_row_from_spec_uses_a_three_field_model_warning():
+    """The prompt now asks for title/why/fix only, so this is the shape a
+    well-behaved model actually returns -- it must be trusted, not treated
+    as incomplete and swapped for the deterministic template."""
+    spec = {"name": "Type F luminaire", "system": "Lighting", "category": "Fixtures",
+            "unit": "ea", "confidence": "low", "material_cost": 120, "labor_hours": 0.5,
+            "warning": {"title": "Fixture type needs confirmation",
+                        "why": "F2's exact fixture and price depend on which schedule entry it matches.",
+                        "fix": "Check the luminaire schedule for a type F2 entry."}}
+    row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
+    assert row["warning"]["why"] == "F2's exact fixture and price depend on which schedule entry it matches."
+    assert row["warning"]["fix"] == "Check the luminaire schedule for a type F2 entry."
+    assert "Type F2 appears 3 times on" in row["warning"]["found"]
+    assert row["warning"]["where"]
 
 
 def test_row_from_spec_falls_back_when_the_model_omits_a_warning():

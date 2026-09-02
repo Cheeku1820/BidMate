@@ -18,6 +18,7 @@ against today.
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass
 
 from app.errors import DomainError
@@ -28,6 +29,62 @@ SHEET_SPACE_H = 750
 
 WARNING_FIELDS = ("title", "found", "why", "fix", "where")
 VALID_REASONS = {r.value for r in WarningReason}
+
+# Mirrors app/engine/documents.py's SHEET_ID pattern -- ingest.py stays
+# engine-agnostic, working off the payload contract only, so this is a
+# deliberate small duplication rather than a cross-module import.
+SHEET_ID = re.compile(r"\bE\d{1,2}\.\d{1,2}\b")
+
+# A model-written warning must never carry this product's own forbidden
+# framing (CLAUDE.md: no model names, no confidence numbers, no "I
+# think," no processing internals). Matched case-insensitively on word
+# boundaries, so a real word like "detail" or "explain" is never a false
+# positive.
+BANNED_PHRASES = (
+    re.compile(r"\bclaude\b", re.I),
+    re.compile(r"\bgpt\b", re.I),
+    re.compile(r"\bchatgpt\b", re.I),
+    re.compile(r"\bgemini\b", re.I),
+    re.compile(r"\bllm\b", re.I),
+    re.compile(r"\bai\b", re.I),
+    re.compile(r"\bconfidence\b", re.I),
+    re.compile(r"\bi think\b", re.I),
+    re.compile(r"\bi believe\b", re.I),
+    re.compile(r"\d+\s*%"),
+)
+
+
+def is_warning_grounded(warning: dict, valid_sheet_numbers: set[str]) -> bool:
+    """Layer 1 of the grounded-classification-warnings design: a cheap,
+    deterministic check that a model-written warning didn't fabricate a
+    sheet reference or slip past this product's language rules. Runs on
+    every warning regardless of origin -- a deterministic-path warning
+    always passes trivially, since its `where` is always the item's own
+    real sheet number, sourced the same way this check verifies against."""
+    reference_text = " ".join(warning.get(f, "") for f in ("found", "where"))
+    referenced = set(SHEET_ID.findall(reference_text))
+    if referenced - valid_sheet_numbers:
+        return False
+    all_text = " ".join(warning.get(f, "") for f in ("title", "found", "why", "fix", "where"))
+    return not any(p.search(all_text) for p in BANNED_PHRASES)
+
+
+def fallback_warning(tag: str, count, sheet_number: str) -> dict:
+    """The same generic-but-honest shape estimate.py's deterministic path
+    already uses (`_unconfirmed_type_warning`), reconstructed here rather
+    than imported -- ingest.py works off the payload contract only and
+    does not import from app.engine. This is what a groundedness failure
+    falls back to."""
+    tag = tag or "?"
+    sheet_number = sheet_number or "the sheet"
+    return {
+        "reason": "legend",
+        "title": "Item type needs confirmation",
+        "found": f"Type {tag} appears {count} time(s) on {sheet_number}, but its description could not be matched to a schedule with confidence.",
+        "why": "The exact item and its price can't be confirmed until the type is matched to the schedule.",
+        "fix": "Confirm the item type against the schedule, then approve.",
+        "where": f"{sheet_number} and the project schedules.",
+    }
 
 
 @dataclass
@@ -138,6 +195,19 @@ def normalize_ai_reading(raw) -> dict | None:
     }
 
 
+def _grounded_or_fallback(raw_warning, sheet_number: str, valid_sheet_numbers: set[str], tag: str, quantity) -> dict | None:
+    """The single point map_payload calls once an item's own sheet number
+    and the document's full valid-sheet set are both known: validate the
+    warning's shape, then swap in the deterministic fallback if Layer 1's
+    groundedness check fails, otherwise keep the model's own text as-is."""
+    if not raw_warning:
+        return None
+    warning = validate_warning(raw_warning)
+    if is_warning_grounded(warning, valid_sheet_numbers):
+        return warning
+    return fallback_warning(tag, quantity, sheet_number)
+
+
 def map_payload(payload: dict) -> MappedTakeoff:
     """Engine payload -> domain rows, keyed by the engine's sheet ids.
 
@@ -169,6 +239,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
             "ai_reading": normalize_ai_reading(raw.get("ai_reading")),
         })
 
+    valid_sheet_numbers = {s["number"] for s in sheets}
     fallback = sheets[0]["key"] if sheets else None
     items: list[dict] = []
 
@@ -216,7 +287,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
             # row carries one, so a missing tag maps to "" rather than
             # None or a KeyError.
             "source_tag": str(raw.get("tag") or ""),
-            "warning": validate_warning(warning) if warning else None,
+            "warning": _grounded_or_fallback(warning, sheet_number, valid_sheet_numbers, str(raw.get("tag") or ""), raw.get("quantity") or 0),
             "evidence": {
                 "detail": f"Counted from the drawing at {n_places} location{'s' if n_places != 1 else ''}",
                 "sheet": sheet_number,

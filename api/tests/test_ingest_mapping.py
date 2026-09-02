@@ -228,6 +228,45 @@ def test_map_payload_tolerates_a_missing_tag():
     assert map_payload(payload).items[0]["source_tag"] == ""
 
 
+def test_map_payload_keeps_a_grounded_warning():
+    warning = {"reason": "legend", "title": "Fixture type needs confirmation",
+               "found": "Type F2 appears 3 times on E2.1, but the schedule only lists types A-E.",
+               "why": "F2's exact fixture and price depend on which schedule entry it matches.",
+               "fix": "Check the luminaire schedule for a type F2 entry.",
+               "where": "E2.1 and the luminaire schedule."}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["found"] == warning["found"]
+
+
+def test_map_payload_replaces_a_warning_that_references_an_unknown_sheet():
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E9.9, but the schedule only lists types A-E.",
+               "why": "y", "fix": "z", "where": "E9.9"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2", "quantity": 3}
+    mapped = map_payload(_payload(items=[item]))
+    assert "E9.9" not in mapped.items[0]["warning"]["found"]
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
+def test_map_payload_replaces_a_warning_carrying_ai_framing():
+    warning = {"reason": "legend", "title": "x",
+               "found": "The AI is not confident about type F2 on E2.1.",
+               "why": "y", "fix": "z", "where": "E2.1"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
+def test_map_payload_does_not_flag_a_legitimate_word_containing_ai():
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E2.1; explain the schedule detail before approving.",
+               "why": "y", "fix": "z", "where": "E2.1"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["found"] == warning["found"]
+
+
 def test_map_payload_populates_evidence_metadata():
     payload = _payload()
     payload["items"][0]["evidence_png_b64"] = base64.b64encode(b"fake-png").decode("ascii")

@@ -923,17 +923,20 @@ button {
    NotesWorkspace.jsx). Each rule below repeats the element+class pair
    (.warncard p.warncard__X) rather than the class alone, so it reliably
    wins over .warncard p regardless of source order -- a bare
-   .warncard__found has the SAME specificity as .warncard p and would
-   lose ties unpredictably. */
+   .warncard__found has STRICTLY LOWER specificity (0,1,0) than .warncard p
+   (0,1,1) and would always lose to it, deterministically, not just on a
+   source-order tie. */
 .warncard p.warncard__found {
   font-size: 13px;
   font-weight: 600;
   margin: 0 0 6px;
 }
 
+/* --ink-2, not --ink-3: at 11.5px on the amber/red card tints, --ink-3
+   falls under the 4.5:1 AA threshold. */
 .warncard p.warncard__why {
   font-size: 11.5px;
-  color: var(--ink-3);
+  color: var(--ink-2);
   margin: 0 0 10px;
 }
 
@@ -958,9 +961,14 @@ button {
   color: var(--ink-3);
 }
 
+/* Not --blue: this is a static citation sitting just below a real
+   "View evidence" link button, and the blue token is reserved for
+   primary actions, selection, and Ready to review -- it invited a click
+   that does nothing. Italic carries the citation reading instead. */
 .warncard p.warncard__where {
   font-size: 12px;
-  color: var(--blue);
+  color: var(--ink-2);
+  font-style: italic;
   margin: 0;
 }
 

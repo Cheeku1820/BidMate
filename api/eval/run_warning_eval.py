@@ -42,14 +42,22 @@ def main() -> int:
 
         for item in result.get("items", []):
             warning = item.get("warning")
+            # Reported on its own line, deliberately outside the pass-rate
+            # totals: a warning firing where none belongs is a regression
+            # in WHETHER a warning fires, not in the quality of one that
+            # did, and averaging the two together hides both.
+            if warning is not None and not case.get("expect_warning", True):
+                print(f"[{case['id']}] tag {item.get('tag')}: expected no warning, but one was generated")
             if not warning:
                 continue
-            warned += 1
             try:
                 verdict = grade(case["tags"], case["schedule_text"], warning)
             except Exception as exc:  # noqa: BLE001 -- one bad judge call must not stop the run
                 print(f"[{case['id']}] tag {item.get('tag')}: judge call failed: {exc}")
                 continue
+            # Counted only once a verdict actually exists, so the printed
+            # total never overstates how many warnings were graded.
+            warned += 1
             print(f"[{case['id']}] tag {item.get('tag')}: {verdict}")
             for c in CRITERIA:
                 totals[c][1] += 1

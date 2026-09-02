@@ -25,6 +25,9 @@ CASES = [
         "tags": [{"tag": "R", "count": 22}],
         "schedule_text": "",
         "location": "Denver, CO",
+        # The one case whose expectation is the ABSENCE of a warning; the
+        # runner reports a mismatch rather than silently skipping it.
+        "expect_warning": False,
     },
     {
         "id": "fixture-letter-in-schedule",

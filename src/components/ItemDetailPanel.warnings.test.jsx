@@ -66,6 +66,12 @@ describe("ItemDetailPanel — warning card", () => {
     expect(where).toHaveClass("warncard__where");
   });
 
+  it("gives why and where an accessible label for screen readers", () => {
+    render(<ItemDetailPanel {...baseProps} sel={sel} />);
+    expect(screen.getByText(/why it matters/i)).toBeInTheDocument();
+    expect(screen.getByText(/where to look/i)).toBeInTheDocument();
+  });
+
   it("renders every warning when an item carries more than one", () => {
     const twoWarnings = {
       ...sel,

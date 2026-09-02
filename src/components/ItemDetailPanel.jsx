@@ -141,12 +141,12 @@ export default function ItemDetailPanel({
               <div key={w.id} className={"warncard warncard--" + (sel.status === "missing" ? "missing" : "attention")}>
                 <h4>{w.title}</h4>
                 <p className="warncard__found">{w.found}</p>
-                <p className="warncard__why">{w.why}</p>
+                <p className="warncard__why"><span className="sr-only">Why it matters: </span>{w.why}</p>
                 <div className="warncard__fix">
                   <span className="warncard__fix-label">What to do</span>
                   <span>{w.fix}</span>
                 </div>
-                <p className="warncard__where">{w.where}</p>
+                <p className="warncard__where"><span className="sr-only">Where to look: </span>{w.where}</p>
               </div>
             ))}
 

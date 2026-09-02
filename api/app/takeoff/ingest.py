@@ -74,11 +74,14 @@ def is_warning_grounded(warning: dict, valid_sheet_numbers: set[str]) -> bool:
     every warning regardless of origin -- a deterministic-path warning
     always passes trivially, since its `where` is always the item's own
     real sheet number, sourced the same way this check verifies against."""
-    reference_text = " ".join(warning.get(f, "") for f in ("found", "where"))
-    referenced = set(SHEET_ID.findall(reference_text))
+    all_text = " ".join(warning.get(f, "") for f in ("title", "found", "why", "fix", "where"))
+    # Every field, not just found/where: those two are now always
+    # synthesized from the real cluster upstream (estimate.py's
+    # _model_warning), so a fabricated sheet number can only reach here
+    # inside the model-written title/why/fix.
+    referenced = set(SHEET_ID.findall(all_text))
     if referenced - valid_sheet_numbers:
         return False
-    all_text = " ".join(warning.get(f, "") for f in ("title", "found", "why", "fix", "where"))
     return not any(p.search(all_text) for p in BANNED_PHRASES)
 
 

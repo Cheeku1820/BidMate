@@ -249,6 +249,16 @@ def test_map_payload_replaces_a_warning_that_references_an_unknown_sheet():
     assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
 
 
+def test_map_payload_replaces_a_warning_that_references_an_unknown_sheet_in_fix():
+    """found/where are synthesized upstream now, so a fabricated sheet
+    number can only arrive inside the model-written title/why/fix."""
+    warning = {"reason": "legend", "title": "x", "found": "y",
+               "why": "z", "fix": "Check the schedule on E9.9 for this type.", "where": "v"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
 def test_map_payload_replaces_a_warning_carrying_ai_framing():
     warning = {"reason": "legend", "title": "x",
                "found": "The AI is not confident about type F2 on E2.1.",

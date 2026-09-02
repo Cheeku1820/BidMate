@@ -324,6 +324,26 @@ def _unconfirmed_type_warning(tag: str, count: int, sheet_no: str) -> dict:
     }
 
 
+def _model_warning(raw: dict | None, tag: str, count: int, sheet_no: str) -> dict:
+    """The model was asked to write its own four-field warning alongside
+    the classification, in the same call (grounded-classification-
+    warnings-design.md). Falls back to the deterministic template if the
+    model omitted "warning" or returned something malformed -- an
+    attention item must never reach ingest with no warning, or the
+    estimator gets no recovery action."""
+    fields = ("title", "found", "why", "fix", "where")
+    if isinstance(raw, dict) and all(str(raw.get(f) or "").strip() for f in fields):
+        return {
+            "reason": "legend",
+            "title": str(raw["title"]).strip(),
+            "found": str(raw["found"]).strip(),
+            "why": str(raw["why"]).strip(),
+            "fix": str(raw["fix"]).strip(),
+            "where": str(raw["where"]).strip(),
+        }
+    return _unconfirmed_type_warning(tag, count, sheet_no)
+
+
 def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_factor: float) -> dict:
     qty = cluster.count
     unit_material = float(spec.get("material_cost", 0) or 0) * material_factor
@@ -333,7 +353,7 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
     labor = round(hours * labor_rate, 2)
     status = "ready" if spec.get("confidence") == "high" else "attention"
     sheet_no = _sheet_no(sheets, cluster.sheet_page_index)
-    warning = None if status == "ready" else _unconfirmed_type_warning(cluster.tag, qty, sheet_no)
+    warning = None if status == "ready" else _model_warning(spec.get("warning"), cluster.tag, qty, sheet_no)
     return {
         "name": spec.get("name", f"Symbol {cluster.tag}"),
         "system": spec.get("system", "Unknown"),

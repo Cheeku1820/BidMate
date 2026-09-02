@@ -80,3 +80,33 @@ def test_row_from_spec_high_confidence_carries_no_warning():
     row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
     assert row["status"] == "ready"
     assert row["warning"] is None
+
+
+def test_row_from_spec_uses_the_models_own_warning_when_present():
+    spec = {"name": "Type F luminaire", "system": "Lighting", "category": "Fixtures",
+            "unit": "ea", "confidence": "low", "material_cost": 120, "labor_hours": 0.5,
+            "warning": {"title": "Fixture type needs confirmation",
+                        "found": "Type F2 appears 3 times on E2.1 but the schedule only lists types A-E.",
+                        "why": "F2's exact fixture and price depend on which schedule entry it matches.",
+                        "fix": "Check the luminaire schedule for a type F2 entry, or confirm it against the legend.",
+                        "where": "E2.1 and the luminaire schedule."}}
+    row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
+    assert row["warning"]["found"] == "Type F2 appears 3 times on E2.1 but the schedule only lists types A-E."
+    assert row["warning"]["reason"] == "legend"
+
+
+def test_row_from_spec_falls_back_when_the_model_omits_a_warning():
+    spec = {"name": "Type F luminaire", "system": "Lighting", "category": "Fixtures",
+            "unit": "ea", "confidence": "low", "material_cost": 120, "labor_hours": 0.5}
+    row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
+    assert row["warning"] is not None
+    assert "Type F2 appears 3 times on" in row["warning"]["found"]
+    assert row["warning"]["fix"] == "Confirm the item type against the schedule, then approve."
+
+
+def test_row_from_spec_falls_back_when_the_models_warning_is_missing_a_field():
+    spec = {"name": "Type F luminaire", "system": "Lighting", "category": "Fixtures",
+            "unit": "ea", "confidence": "low", "material_cost": 120, "labor_hours": 0.5,
+            "warning": {"title": "x", "found": "y", "why": "z", "fix": "", "where": "E2.1"}}
+    row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
+    assert row["warning"]["fix"] == "Confirm the item type against the schedule, then approve."

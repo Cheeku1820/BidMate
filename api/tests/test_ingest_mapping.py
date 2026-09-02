@@ -228,6 +228,123 @@ def test_map_payload_tolerates_a_missing_tag():
     assert map_payload(payload).items[0]["source_tag"] == ""
 
 
+def test_map_payload_keeps_a_grounded_warning():
+    warning = {"reason": "legend", "title": "Fixture type needs confirmation",
+               "found": "Type F2 appears 3 times on E2.1, but the schedule only lists types A-E.",
+               "why": "F2's exact fixture and price depend on which schedule entry it matches.",
+               "fix": "Check the luminaire schedule for a type F2 entry.",
+               "where": "E2.1 and the luminaire schedule."}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["found"] == warning["found"]
+
+
+def test_map_payload_replaces_a_warning_that_references_an_unknown_sheet():
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E9.9, but the schedule only lists types A-E.",
+               "why": "y", "fix": "z", "where": "E9.9"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2", "quantity": 3}
+    mapped = map_payload(_payload(items=[item]))
+    assert "E9.9" not in mapped.items[0]["warning"]["found"]
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
+def test_map_payload_replaces_a_warning_that_references_an_unknown_sheet_in_fix():
+    """found/where are synthesized upstream now, so a fabricated sheet
+    number can only arrive inside the model-written title/why/fix."""
+    warning = {"reason": "legend", "title": "x", "found": "y",
+               "why": "z", "fix": "Check the schedule on E9.9 for this type.", "where": "v"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
+def test_map_payload_replaces_a_warning_carrying_ai_framing():
+    warning = {"reason": "legend", "title": "x",
+               "found": "The AI is not confident about type F2 on E2.1.",
+               "why": "y", "fix": "z", "where": "E2.1"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
+def test_map_payload_does_not_flag_a_legitimate_word_containing_ai():
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E2.1; explain the schedule detail before approving.",
+               "why": "y", "fix": "z", "where": "E2.1"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["found"] == warning["found"]
+
+
+def test_fallback_warning_text_matches_the_deterministic_engine_template():
+    """ingest.py's fallback_warning() and estimate.py's
+    _unconfirmed_type_warning() are a deliberate duplication across the
+    engine/API module boundary (ingest.py doesn't import app.engine) --
+    nothing else ties them together, so this asserts they stay aligned."""
+    from app.engine.estimate import _unconfirmed_type_warning
+    from app.takeoff.ingest import fallback_warning
+    assert fallback_warning("F2", 3, "E2.1") == _unconfirmed_type_warning("F2", 3, "E2.1")
+
+
+def test_fallback_warning_is_always_grounded():
+    from app.takeoff.ingest import fallback_warning, is_warning_grounded
+
+    warning = fallback_warning("F2", 3, "E2.1")
+    assert is_warning_grounded(warning, {"E2.1"})
+
+
+def test_grounded_or_fallback_preserves_the_warnings_own_reason():
+    """scale.set_scale() clears only warnings whose reason is "scale" -- a
+    groundedness swap that rewrote the reason would leave a Missing
+    information item with no path to resolution."""
+    from app.takeoff.ingest import fallback_warning
+    result = fallback_warning("F2", 3, "E2.1", reason="scale")
+    assert result["reason"] == "scale"
+
+
+def test_map_payload_carries_a_scale_reason_through_a_groundedness_swap():
+    warning = {"reason": "scale", "title": "x",
+               "found": "Type F2 appears 3 times on E9.9, an unknown sheet.",
+               "why": "y", "fix": "z", "where": "E9.9"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+    assert mapped.items[0]["warning"]["reason"] == "scale"
+
+
+def test_map_payload_replaces_a_warning_leaking_a_confidence_tier():
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E2.1, medium confidence match to the schedule.",
+               "why": "y", "fix": "z", "where": "E2.1"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
+def test_map_payload_logs_the_fallback_count_for_a_document():
+    """The design asks for the fallback RATE to be visible over time, so a
+    swap has to leave a trace -- a count, never the warning's own text."""
+    from unittest.mock import patch
+
+    warning = {"reason": "legend", "title": "x",
+               "found": "Type F2 appears 3 times on E9.9, an unknown sheet.",
+               "why": "y", "fix": "z", "where": "E9.9"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    with patch("app.takeoff.ingest.logger") as mock_logger:
+        map_payload(_payload(items=[item]))
+    mock_logger.info.assert_called_once()
+    assert mock_logger.info.call_args.kwargs["extra"] == {"fallback_count": 1, "item_count": 1}
+
+
+def test_map_payload_does_not_log_when_no_warning_falls_back():
+    from unittest.mock import patch
+
+    with patch("app.takeoff.ingest.logger") as mock_logger:
+        map_payload(_payload())
+    mock_logger.info.assert_not_called()
+
+
 def test_map_payload_populates_evidence_metadata():
     payload = _payload()
     payload["items"][0]["evidence_png_b64"] = base64.b64encode(b"fake-png").decode("ascii")

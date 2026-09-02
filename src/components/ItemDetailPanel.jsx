@@ -140,15 +140,13 @@ export default function ItemDetailPanel({
             {sel.warnings?.map((w) => (
               <div key={w.id} className={"warncard warncard--" + (sel.status === "missing" ? "missing" : "attention")}>
                 <h4>{w.title}</h4>
-                <p>{w.found}</p>
-                <dl style={{ margin: 0 }}>
-                  <dt>Why it matters</dt>
-                  <dd>{w.why}</dd>
-                  <dt>What to do</dt>
-                  <dd>{w.fix}</dd>
-                  <dt>Where to look</dt>
-                  <dd>{w.where}</dd>
-                </dl>
+                <p className="warncard__found">{w.found}</p>
+                <p className="warncard__why">{w.why}</p>
+                <div className="warncard__fix">
+                  <span className="warncard__fix-label">What to do</span>
+                  <span>{w.fix}</span>
+                </div>
+                <p className="warncard__where">{w.where}</p>
               </div>
             ))}
 

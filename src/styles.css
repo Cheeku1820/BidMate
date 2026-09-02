@@ -917,18 +917,51 @@ button {
   color: var(--ink-1);
 }
 
-.warncard dt {
+/* Specificity note: .warncard p already sets font-size/color/margin for
+   every <p> inside any .warncard (shared by ConfirmDrawings.jsx,
+   ExportPreview.jsx, UploadDocuments.jsx, NoteForm.jsx, NewProject.jsx,
+   NotesWorkspace.jsx). Each rule below repeats the element+class pair
+   (.warncard p.warncard__X) rather than the class alone, so it reliably
+   wins over .warncard p regardless of source order -- a bare
+   .warncard__found has the SAME specificity as .warncard p and would
+   lose ties unpredictably. */
+.warncard p.warncard__found {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.warncard p.warncard__why {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  margin: 0 0 10px;
+}
+
+.warncard__fix {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 9px;
+  margin: 0 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  font-size: 12.5px;
+}
+
+.warncard__fix-label {
+  flex: none;
   font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--ink-3);
-  margin-top: 7px;
 }
 
-.warncard dd {
-  margin: 1px 0 0;
-  font-size: 12.5px;
+.warncard p.warncard__where {
+  font-size: 12px;
+  color: var(--blue);
+  margin: 0;
 }
 
 .actions {

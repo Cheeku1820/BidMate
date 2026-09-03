@@ -128,3 +128,16 @@ def test_the_takeoff_prices_the_devices_it_counted():
     assert sum(p.item.quantity for p in jb) == 55
     assert all(p.total_direct_cost > 0 for p in jb)
     assert result.total_direct_cost > 20_000
+
+    # WP is what the precedence fix alone gates. J is protected by the
+    # legend parser's _WORDY rule independently -- "J" no longer pairs with
+    # "1" -- so the junction-box assertions above pass even under the
+    # broken precedence, leaving the aggregate bound as the only guard. WP
+    # is in TAG_TO_CATALOG as a GFCI receptacle *and* in the legend as
+    # WEATHERPROOF, so it is the tag that must keep its catalog device
+    # identity rather than being demoted to an unpriced modifier.
+    wp = [p for p in result.items if p.item.source_tag == "WP"]
+    assert wp, "WP should still be counted on this set"
+    assert all(p.item.catalog_id == "receptacle_gfci" for p in wp), \
+        "WP must keep its catalog device identity, not become a modifier"
+    assert all(p.total_direct_cost > 0 for p in wp)

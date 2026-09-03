@@ -201,7 +201,7 @@ def test_the_wiring_assumption_is_disclosed_on_the_project():
     names as the thing this product exists to prevent."""
     from app.engine.assemblies import FEET_PER_DEVICE
 
-    note = estimate._wiring_note(assembly_applied=True, bare_names=set())
+    note = estimate._wiring_note(assembly_applied=True)
     assert f"{FEET_PER_DEVICE:g} feet per device" in note
     assert "conduit" in note.lower() and "wire" in note.lower()
 
@@ -213,7 +213,7 @@ def test_the_wiring_note_names_nothing_the_estimator_cannot_act_on():
     must not send an estimator looking for one."""
     from app.takeoff.ingest import BANNED_PHRASES
 
-    note = estimate._wiring_note(assembly_applied=True, bare_names={"Wall pack"})
+    note = estimate._wiring_note(assembly_applied=True) + " " + estimate._unmatched_note({"Wall pack"})
     # The same patterns the API boundary already enforces on every
     # warning, applied to the note that sits beside them. Matched on word
     # boundaries there, which is why "against" does not read as "AI".
@@ -226,14 +226,15 @@ def test_the_wiring_note_names_nothing_the_estimator_cannot_act_on():
 
 
 def test_items_priced_without_a_rough_in_are_counted_in_the_note():
-    note = estimate._wiring_note(assembly_applied=True, bare_names={"Wall pack", "Nurse call station"})
+    note = estimate._unmatched_note({"Wall pack", "Nurse call station"})
     assert "2 item types" in note
-    one = estimate._wiring_note(assembly_applied=True, bare_names={"Wall pack"})
+    one = estimate._unmatched_note({"Wall pack"})
     assert "1 item type" in one and "was priced" in one
 
 
 def test_no_note_when_nothing_was_assumed():
-    assert estimate._wiring_note(assembly_applied=False, bare_names=set()) == ""
+    assert estimate._wiring_note(assembly_applied=False) == ""
+    assert estimate._unmatched_note(set()) == ""
 
 
 def test_the_disclosure_is_not_a_per_item_warning():
@@ -284,7 +285,7 @@ def test_the_model_path_prices_rough_in_when_the_catalog_id_resolves(monkeypatch
         assert row["material_cost"] > 12.0 * row["quantity"] * meta["material_factor"], \
             "a resolved row is still priced as a bare device"
     assert "30 feet per device" in meta["wiring_note"]
-    assert "could not be matched" not in meta["wiring_note"]
+    assert meta["unmatched_note"] == ""
 
 
 @needs_bid_set
@@ -303,8 +304,8 @@ def test_the_model_path_discloses_what_it_could_not_rough_in(monkeypatch):
     for row in rows:
         assert row["material_cost"] == pytest.approx(
             40.0 * row["quantity"] * meta["material_factor"], abs=0.02)
-    assert "1 item type (Nurse call station) could not be matched" in meta["wiring_note"]
-    assert "30 feet per device" not in meta["wiring_note"], \
+    assert "1 item type (Nurse call station) could not be matched" in meta["unmatched_note"]
+    assert meta["wiring_note"] == "", \
         "nothing carried an assembly, so nothing assumed a wiring length"
 
 
@@ -375,9 +376,48 @@ def test_the_note_names_the_items_it_could_not_match():
     """A count tells an estimator a correction is needed; a name tells
     them where. Capped so a bad set cannot turn the basis note into a
     list."""
-    one = estimate._wiring_note(True, {"Wall pack"})
+    one = estimate._unmatched_note({"Wall pack"})
     assert "(Wall pack)" in one
 
-    many = estimate._wiring_note(True, {"Wall pack", "Nurse call station", "Isolated power panel", "Patient headwall"})
-    assert "and 1 others" in many or "and 1 other" in many
-    assert "Isolated power panel" in many
+    # Exactly one over the cap is the boundary the plural got wrong: this
+    # read "and 1 others", and the test that was meant to catch it
+    # accepted either spelling and so encoded the bug instead.
+    four = estimate._unmatched_note({"Wall pack", "Nurse call station", "Isolated power panel", "Patient headwall"})
+    assert "and 1 other)" in four
+    assert "and 1 others" not in four
+
+    five = estimate._unmatched_note({"A pack", "B pack", "C pack", "D pack", "E pack"})
+    assert "and 2 others)" in five
+
+
+def test_a_device_priced_at_zero_material_still_gets_its_assembly():
+    """The guard's boundary, and the reason it reads `and` rather than
+    `or`. A device the model priced at zero material but real hours has
+    not been declined -- an owner-furnished fixture the contractor still
+    installs is exactly that -- and stripping its rough-in would understate
+    a real device. Changing the guard to `or` leaves every other test in
+    this module green, so this is the one that pins it."""
+    assert estimate.resolve_assembly_parent({**SPEC, "material_cost": 0}) == "receptacle_20a"
+    assert estimate.resolve_assembly_parent({**SPEC, "labor_hours": 0}) == "receptacle_20a"
+
+
+def test_a_bad_item_name_cannot_silence_the_wiring_disclosure():
+    """`bare_names` is filled from row["name"], which on the model path is
+    model output, and it is interpolated into a note the API boundary
+    drops wholesale when it fails the language rules. Joined into one
+    field, an item named "Fan, 80% speed" would take the feet-per-device
+    sentence down with it -- silencing the exact disclosure that exists
+    to stop a quantity being assumed in silence.
+
+    Two individually correct rules, coupled through one field. Split, the
+    blast radius of a bad name is that name's own sentence."""
+    from app.takeoff.ingest import basis_note
+
+    note = basis_note({
+        "location_note": "Rate based on Unalaska, AK area cost data.",
+        "wiring_note": estimate._wiring_note(True),
+        "unmatched_note": estimate._unmatched_note({"Fan, 80% speed"}),
+    })
+    assert "30 feet per device" in note, "a model-written item name silenced the engine's own disclosure"
+    assert "Rate based on Unalaska" in note
+    assert "80%" not in note

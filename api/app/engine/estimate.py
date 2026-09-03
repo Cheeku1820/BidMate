@@ -182,7 +182,7 @@ def _consolidate(rows: list[dict]) -> list[dict]:
     return out
 
 
-def _wiring_note(assembly_applied: bool, bare_names: set[str]) -> str:
+def _wiring_note(assembly_applied: bool) -> str:
     """The project-level disclosure that branch wiring was assumed rather
     than measured.
 
@@ -200,39 +200,55 @@ def _wiring_note(assembly_applied: bool, bare_names: set[str]) -> str:
     would still be four, but one of them would no longer separate
     anything.
 
-    The second sentence appears only when something was priced without a
-    rough-in, and names how many, so an understated line is disclosed
-    rather than merely being low.
+    Every character of this sentence is written here. It carries no
+    model output at all, which is what lets it survive the language
+    check at the API boundary independently of the note beside it --
+    see `_unmatched_note`.
     """
-    if not assembly_applied and not bare_names:
+    if not assembly_applied:
         return ""
-    parts = []
-    if assembly_applied:
-        feet = assemblies.FEET_PER_DEVICE
-        feet_text = f"{feet:g}"
-        parts.append(
-            f"Branch wiring is estimated at {feet_text} feet per device. Conduit and wire "
-            "quantities follow that rule rather than a measured route, so check them "
-            "against the job before the total is relied on."
-        )
-    if bare_names:
-        n = len(bare_names)
-        subject = f"{n} item types" if n != 1 else "1 item type"
-        verb = "were" if n != 1 else "was"
-        pronoun = "them" if n != 1 else "it"
-        # Named, not just counted: "2 item types" tells an estimator a
-        # correction is needed but not where to make it, and the point of
-        # this sentence is that the low line can be found. Capped at three
-        # so a bad set cannot turn the basis note into a list.
-        shown = sorted(bare_names)[:_NAMED_IN_NOTE]
-        listed = ", ".join(shown)
-        if n > len(shown):
-            listed += f" and {n - len(shown)} others"
-        parts.append(
-            f"{subject} ({listed}) could not be matched to a standard assembly and {verb} "
-            f"priced as the device alone, with no box, wire or conduit behind {pronoun}."
-        )
-    return " ".join(parts)
+    feet_text = f"{assemblies.FEET_PER_DEVICE:g}"
+    return (
+        f"Branch wiring is estimated at {feet_text} feet per device. Conduit and wire "
+        "quantities follow that rule rather than a measured route, so check them "
+        "against the job before the total is relied on."
+    )
+
+
+def _unmatched_note(bare_names: set[str]) -> str:
+    """What was priced without a rough-in, and which items those were.
+
+    A separate field from `_wiring_note`, deliberately, and this is the
+    whole reason: item names on the model-classified path are model
+    output, they are interpolated here, and `ingest.basis_note` drops any
+    note that fails the product language rules. Joined into one string, a
+    single item named with a percentage or the word "confidence" would
+    take the feet-per-device disclosure down with it -- silencing the
+    exact sentence that exists to stop a quantity being assumed in
+    silence. Two individually correct rules, coupled through one field.
+
+    Split, the blast radius of a bad item name is this sentence alone.
+    The engine's own disclosure is unaffected by anything a model wrote.
+
+    Naming beats counting: "2 item types" tells an estimator a correction
+    is needed but not where to make it. Capped at `_NAMED_IN_NOTE` so a
+    bad set cannot turn the basis note into a list.
+    """
+    if not bare_names:
+        return ""
+    n = len(bare_names)
+    subject = f"{n} item types" if n != 1 else "1 item type"
+    verb = "were" if n != 1 else "was"
+    pronoun = "them" if n != 1 else "it"
+    shown = sorted(bare_names)[:_NAMED_IN_NOTE]
+    listed = ", ".join(shown)
+    remaining = n - len(shown)
+    if remaining:
+        listed += f" and {remaining} other{'s' if remaining != 1 else ''}"
+    return (
+        f"{subject} ({listed}) could not be matched to a standard assembly and {verb} "
+        f"priced as the device alone, with no box, wire or conduit behind {pronoun}."
+    )
 
 
 def _sheet_no(sheets, page_index) -> str:
@@ -328,7 +344,8 @@ def _compute(path: str, location: str, context: str = "", estimator_notes: list[
     meta = {
         "location": location,
         "location_note": location_note,
-        "wiring_note": _wiring_note(assembly_applied, bare_names),
+        "wiring_note": _wiring_note(assembly_applied),
+        "unmatched_note": _unmatched_note(bare_names),
         "labor_rate": round(labor_rate, 2),
         "material_factor": round(material_factor, 3),
         "source": source,

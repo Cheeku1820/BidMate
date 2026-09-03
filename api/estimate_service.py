@@ -238,7 +238,7 @@ async def estimate_project_endpoint(
         for takeoff_id, path, _fname in drawings:
             payload = estimate_mod.full_takeoff(path, location, context, notes)
             if meta is None:
-                meta = {k: payload[k] for k in ("location", "location_note", "wiring_note", "labor_rate", "material_factor", "source")}
+                meta = {k: payload[k] for k in ("location", "location_note", "wiring_note", "unmatched_note", "labor_rate", "material_factor", "source")}
             for sheet in payload["sheets"]:
                 merged_sheets.append({**sheet, "id": f"{takeoff_id}:{sheet['id']}", "takeoff_id": takeoff_id})
             for item in payload["items"]:
@@ -252,7 +252,7 @@ async def estimate_project_endpoint(
         _reconcile_vision(merged_sheets, merged_items)
 
         return {
-            **(meta or {"location": location, "labor_rate": 78.0, "material_factor": 1.0, "source": "deterministic", "location_note": "", "wiring_note": ""}),
+            **(meta or {"location": location, "labor_rate": 78.0, "material_factor": 1.0, "source": "deterministic", "location_note": "", "wiring_note": "", "unmatched_note": ""}),
             "sheets": merged_sheets,
             "items": merged_items,
             "totals": _totals(merged_items),

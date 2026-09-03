@@ -107,10 +107,17 @@ def basis_note(payload: dict) -> str:
     says that branch wiring was assumed at a fixed length per device
     rather than measured, which is the largest unstated assumption in the
     total (ROADMAP 2.1: guessing a length silently is the failure this
-    product exists to prevent). Both are basis, so both belong in the
+    product exists to prevent). `unmatched_note` names the items priced
+    without a rough-in. All three are basis, so all three belong in the
     basis note the pricing screens already show; the engine keeps them
     apart as separate fields, and they are joined here, at the boundary,
     rather than concatenated upstream.
+
+    Kept apart because they are checked apart. Two of the three can carry
+    model-written text -- the location note wholly, the unmatched note
+    through the item names inside it -- and the feet-per-device sentence
+    carries none. Joined upstream, one bad item name would drop the
+    engine's own disclosure along with it.
 
     A payload carrying neither yields "", which is what a payload that
     repriced nothing has always yielded.
@@ -129,7 +136,7 @@ def basis_note(payload: dict) -> str:
     a fabricated basis line is worse than an absent one.
     """
     parts = []
-    for key in ("location_note", "wiring_note"):
+    for key in ("location_note", "wiring_note", "unmatched_note"):
         text = str(payload.get(key) or "").strip()
         if not text:
             continue

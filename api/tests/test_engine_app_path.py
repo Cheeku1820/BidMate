@@ -12,11 +12,16 @@ Everything here except the last two cases runs without the real bid set,
 so the guard holds in a container that has no drawings.
 """
 
+import os
+
 import pytest
 
 from app.engine import estimate
 from app.engine.catalog import CATALOG
 from app.engine.contracts import ClassifiedItem, DetectedSheet, DeviceCluster, Placement
+from tests.bid_set import BID
+
+needs_bid_set = pytest.mark.skipif(not os.path.exists(BID), reason="real bid set not present")
 
 SHEET = DetectedSheet(
     page_index=0, number="E2.1", title="Power plan", discipline="Electrical",
@@ -236,3 +241,65 @@ def test_the_disclosure_is_not_a_per_item_warning():
     row = estimate._row_from_catalog(_item(), _cluster(), [SHEET], labor_rate=68.0, material_factor=1.0)
     assert row["status"] == "ready"
     assert row["warning"] is None
+
+
+# --- the model-classified branch of _compute, end to end ----------------
+#
+# The two cases above exercise the row builder and the resolver directly.
+# These run the branch itself against the real set, with the model call
+# stubbed, because the wiring between them -- which spec reaches which
+# cluster, what gets counted as unresolved -- is where this path was
+# broken and is not covered by testing either half alone.
+
+def _stub_llm(monkeypatch, item_for):
+    from app.engine import llm
+
+    def fake_estimate(tags, schedule_text, location):
+        return {
+            "location_labor_rate": 98.0,
+            "material_factor": 1.35,
+            "location_note": "Rate based on Unalaska, AK area cost data.",
+            "items": [item_for(t["tag"]) for t in tags],
+        }
+
+    monkeypatch.setattr(llm, "available", lambda: True)
+    monkeypatch.setattr(llm, "estimate", fake_estimate)
+
+
+@needs_bid_set
+def test_the_model_path_prices_rough_in_when_the_catalog_id_resolves(monkeypatch):
+    _stub_llm(monkeypatch, lambda tag: {
+        "tag": tag, "name": "20A duplex receptacle", "catalog_id": "receptacle_20a",
+        "system": "Power", "category": "Devices", "unit": "ea",
+        "material_cost": 12.0, "labor_hours": 0.5, "confidence": "high",
+    })
+    rows, _sheets, meta = estimate._compute(BID, "Unalaska, AK")
+
+    assert meta["source"] == "llm"
+    assert rows, "the model path produced no rows"
+    for row in rows:
+        assert row["material_cost"] > 12.0 * row["quantity"] * meta["material_factor"], \
+            "a resolved row is still priced as a bare device"
+    assert "30 feet per device" in meta["wiring_note"]
+    assert "could not be matched" not in meta["wiring_note"]
+
+
+@needs_bid_set
+def test_the_model_path_discloses_what_it_could_not_rough_in(monkeypatch):
+    """An unresolved item is priced bare, which understates it. The
+    understatement is stated on the project rather than left to be
+    noticed as a low number."""
+    _stub_llm(monkeypatch, lambda tag: {
+        "tag": tag, "name": "Nurse call station", "catalog_id": "none",
+        "system": "Low voltage", "category": "Devices", "unit": "ea",
+        "material_cost": 40.0, "labor_hours": 0.9, "confidence": "high",
+    })
+    rows, _sheets, meta = estimate._compute(BID, "Unalaska, AK")
+
+    assert rows
+    for row in rows:
+        assert row["material_cost"] == pytest.approx(
+            40.0 * row["quantity"] * meta["material_factor"], abs=0.02)
+    assert "1 item type could not be matched" in meta["wiring_note"]
+    assert "30 feet per device" not in meta["wiring_note"], \
+        "nothing carried an assembly, so nothing assumed a wiring length"

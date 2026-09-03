@@ -149,6 +149,10 @@ export default function EstimateDemo() {
                   <dd>{result.source === "llm" ? "Automated (Claude)" : "Regional table"}</dd>
                 </dl>
                 <p className="muted">{result.location_note}</p>
+                {/* Branch wiring is estimated per device rather than routed
+                    off the drawing, and the basis card is where an
+                    assumption behind the number belongs. */}
+                {result.wiring_note ? <p className="muted">{result.wiring_note}</p> : null}
               </section>
               <section className="card">
                 <h2>Coverage</h2>

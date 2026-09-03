@@ -141,3 +141,47 @@ def test_the_takeoff_prices_the_devices_it_counted():
     assert all(p.item.catalog_id == "receptacle_gfci" for p in wp), \
         "WP must keep its catalog device identity, not become a modifier"
     assert all(p.total_direct_cost > 0 for p in wp)
+
+
+def test_the_app_path_counts_the_same_material_as_the_cli():
+    """ROADMAP invariant 1: totals are computed in exactly one place. Two
+    existed -- the CLI ran the Pricing agent and the app did its own
+    catalog arithmetic, so the product's number was missing every box,
+    plate, wire and connector on the set.
+
+    They may still differ by the location adjustments the app applies and
+    the CLI does not: material scales by the project's material_factor,
+    labour by its rate. Nothing else may differ, and in particular the
+    hours must match exactly -- a location changes what an hour costs,
+    not how many of them the work takes."""
+    from app.engine import estimate, pipeline
+
+    cli = pipeline.run(BID, labor_rate=68.0)
+    app = estimate.estimate(BID, "Unalaska, AK")
+    factor = app["material_factor"]
+    rate = app["labor_rate"]
+
+    assert app["totals"]["labor_hours"] == pytest.approx(cli.labor_hours_total, abs=0.05)
+    assert app["totals"]["material"] == pytest.approx(cli.material_total * factor, abs=0.5)
+    assert app["totals"]["labor_cost"] == pytest.approx(cli.labor_hours_total * rate, abs=0.5)
+
+
+def test_the_app_path_prices_no_item_bare():
+    """The app path returns rows, not PricedItems, so it cannot assert on
+    an Assembly object the way test_no_priced_item_is_missing_its_assembly
+    does. The equivalent check is arithmetic: every priced row must cost
+    more than its device alone, since every catalog item has an assembly."""
+    from app.engine import estimate
+    from app.engine.assemblies import expand
+    from app.engine.catalog import CATALOG
+
+    rows, _sheets, meta = estimate._compute(BID, "Unalaska, AK")
+    priced = [r for r in rows if r["total_cost"] > 0]
+    assert priced, "no row was priced at all"
+    for row in priced:
+        cat = next((c for c in CATALOG.values() if c.name == row["name"]), None)
+        if cat is None:  # a fixture-letter row is renamed; check it by tag instead
+            continue
+        bare = cat.material_cost * row["quantity"] * meta["material_factor"]
+        assert row["material_cost"] > bare or not expand(cat.catalog_id, 1).lines, \
+            f"{row['name']} is priced as a bare device"

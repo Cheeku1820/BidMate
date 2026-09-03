@@ -13,7 +13,7 @@ import base64
 import re
 from collections import defaultdict
 
-from . import classification, counting, documents, llm, regions
+from . import classification, counting, documents, llm, pricing, regions
 from .catalog import CATALOG
 
 # llm._prompt() truncates whatever blob this function builds to its own
@@ -401,13 +401,27 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
 
 
 def _row_from_catalog(item, cluster, sheets, labor_rate: float, material_factor: float) -> dict:
-    cat = CATALOG.get(item.catalog_id)
+    """Price one classified cluster through the Pricing agent.
+
+    The cost arithmetic is `pricing.price_item`'s, not this module's, so
+    the app and the CLI count the same material: the device *and* its
+    assembly -- box, plate, wire, conduit, connectors. Pricing a bare
+    device understates the job, and it understated it here for as long
+    as this function did the multiplication itself.
+
+    `material_factor` is the caller's, because `price_item` does not know
+    about locations. It is applied once, to the whole material figure:
+    material costs 45% more in Unalaska for a box and a reel of #12
+    exactly as much as for the receptacle they land on. Labour is already
+    at the caller's location rate -- `labor_rate` is passed into
+    `price_item`, not left at its national default -- and a location does
+    not change how many hours an install takes, so no factor applies to
+    it."""
+    priced = pricing.price_item(item, labor_rate)
     qty = item.quantity
-    unit_material = (cat.material_cost if cat else 0.0) * material_factor
-    unit_hours = cat.labor_hours if cat else 0.0
-    material = round(unit_material * qty, 2)
-    hours = round(unit_hours * qty, 2)
-    labor = round(hours * labor_rate, 2)
+    material = round(priced.material_cost * material_factor, 2)
+    hours = priced.labor_hours
+    labor = priced.labor_cost
     return {
         "name": item.name,
         "system": item.system,

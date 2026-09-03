@@ -19,6 +19,8 @@ does not change anything downstream.
 
 from __future__ import annotations
 
+import re
+
 from .catalog import CATALOG, TAG_TO_CATALOG, is_fixture_type
 from .contracts import ClassifiedItem, DetectedSheet, DeviceCluster
 
@@ -79,6 +81,32 @@ def _ambiguous_tag_warning(tag: str, count: int, sheet_no: str) -> dict:
     }
 
 
+def _legend_corroborates(catalog_name: str, description: str) -> bool:
+    """A legend that defines WP as weatherproof agrees with the catalog's
+    weatherproof receptacle -- that is good drafting, not a conflict. Only a
+    description that shares no significant word with the catalog item is
+    worth an estimator's attention.
+
+    A legend defining R as RECEPTACLE and S as SWITCH is entirely ordinary,
+    and without this every receptacle and every switch on a well-drafted set
+    would be flagged: the better the drafting, the noisier the review.
+
+    Known limit, and it is the example this rule was written for. WP does
+    *not* corroborate: the catalog name for WP is "20A GFCI receptacle",
+    whose significant words are "gfci" and "receptacle", and neither appears
+    in "weatherproof". The word-overlap test cannot see that a weatherproof
+    receptacle is a GFCI one -- that fact lives in TAG_TO_CATALOG and in the
+    NEC, not in either string. So WP keeps its warning. Teaching the rule
+    that specific equivalence means curating a list of legend spellings per
+    catalog item, which is a deliberate catalog decision rather than
+    something to smuggle in here; and warning when unsure is the safe
+    direction, since the cost is one review prompt rather than a collision
+    the estimator is never told about."""
+    words = {w for w in re.findall(r"[a-z]{4,}", catalog_name.lower())}
+    text = description.lower()
+    return any(w in text for w in words)
+
+
 def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list[ClassifiedItem]:
     sheet_no = {s.page_index: (s.number or f"page {s.page_index + 1}") for s in sheets}
     # First definition wins, matching parse_legend's own policy: a legend
@@ -102,7 +130,7 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
         # zeroed out as a modifier.
         if c.tag in TAG_TO_CATALOG:
             cat = CATALOG[TAG_TO_CATALOG[c.tag]]
-            if c.tag in abbrev:
+            if c.tag in abbrev and not _legend_corroborates(cat.name, abbrev[c.tag]):
                 items.append(_item(cat, c, "attention", _ambiguous_tag_warning(c.tag, c.count, no)))
             else:
                 items.append(_item(cat, c, "ready", None))

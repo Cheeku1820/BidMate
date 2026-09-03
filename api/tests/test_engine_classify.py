@@ -217,15 +217,103 @@ def test_the_first_sheets_legend_definition_wins_across_the_set():
     items = classification.classify([cluster], [legend_sheet, later_sheet])
 
     # No parsed description reaches estimator copy at all now, so neither
-    # spelling can be asserted here. What this case still pins is that the
-    # multi-sheet path stays leak-free in both sheet orders; the sharper
-    # pin on *which* definition wins is
-    # test_the_first_definition_decides_whether_the_legend_corroborates,
-    # where corroboration makes the precedence observable again.
+    # spelling can be asserted here. This case pins that the multi-sheet
+    # path stays leak-free; the sharper pin on *which* definition wins is
+    # test_the_first_definition_decides_whether_the_legend_corroborates.
     for field in ("found", "why", "fix", "where"):
         text = items[0].warning[field].lower()
         assert "weatherproof" not in text and "see enlarged" not in text, \
             f"{field} quotes a parsed legend description"
+
+
+def test_the_first_definition_decides_whether_the_legend_corroborates():
+    """The sharper first-wins pin. Corroboration reads the description, so
+    which definition won is observable again in the item's status: the
+    legend sheet's R -> RECEPTACLE agrees with the catalog and leaves the
+    item ready, while a later sheet's mis-paired R -> ROOM FINISH SCHEDULE
+    does not. Under last-wins this item would be attention."""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    legend_sheet = DetectedSheet(
+        page_index=0, number="E0.1", title="Legend", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="R", description="RECEPTACLE", kind="abbreviation")],
+    )
+    later_sheet = DetectedSheet(
+        page_index=1, number="E5.1", title="Power plan", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="R", description="ROOM FINISH SCHEDULE", kind="abbreviation")],
+    )
+    cluster = DeviceCluster(tag="R", sheet_page_index=1, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [legend_sheet, later_sheet])
+
+    assert items[0].catalog_id == "receptacle_20a"
+    assert items[0].status == "ready"
+    assert items[0].warning is None
+
+    # ...and reversed, the conflicting definition wins and does warn.
+    flipped = classification.classify([cluster], [later_sheet, legend_sheet])
+    assert flipped[0].status == "attention"
+
+
+def test_a_corroborating_legend_leaves_a_device_ready():
+    """WP -> WEATHERPROOF, R -> RECEPTACLE and S -> SWITCH are well-drafted
+    legends confirming what the catalog already says. Flagging them makes
+    the review noisier the better the drafting is."""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    def _classify(tag, description):
+        sheet = DetectedSheet(
+            page_index=0, number="E0.1", title="Legend", discipline="Electrical",
+            scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+            legend=[LegendEntry(symbol=tag, description=description, kind="abbreviation")],
+        )
+        cluster = DeviceCluster(tag=tag, sheet_page_index=0, placements=[Placement(1, 1)] * 3)
+        return classification.classify([cluster], [sheet])[0]
+
+    for tag, description in (("R", "RECEPTACLE"), ("S", "SWITCH")):
+        item = _classify(tag, description)
+        assert item.status == "ready", f"{tag} -> {description} is good drafting, not a conflict"
+        assert item.warning is None
+
+
+def test_a_conflicting_legend_still_warns():
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    sheet = DetectedSheet(
+        page_index=0, number="E0.1", title="Legend", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="R", description="ROOM FINISH SCHEDULE", kind="abbreviation")],
+    )
+    cluster = DeviceCluster(tag="R", sheet_page_index=0, placements=[Placement(1, 1)] * 3)
+    item = classification.classify([cluster], [sheet])[0]
+    assert item.status == "attention"
+    assert item.warning is not None
+    assert item.warning["title"] == "Tag also appears in the legend"
+
+
+def test_weatherproof_does_not_corroborate_a_gfci_receptacle():
+    """Pins a known limit rather than a desired behaviour, so the next
+    person meets it deliberately.
+
+    Finding 6 was written around WP -> WEATHERPROOF as its example of good
+    drafting that should stay ready. The word-overlap rule does not deliver
+    that: WP's catalog name is "20A GFCI receptacle", whose significant
+    words are "gfci" and "receptacle", and neither appears in
+    "weatherproof". That a weatherproof receptacle is a GFCI one lives in
+    TAG_TO_CATALOG and in the NEC, not in either string.
+
+    So WP keeps its warning on the real set. If a curated list of legend
+    spellings per catalog item is ever added, this test is the one to
+    revisit -- deliberately, not by accident."""
+    from app.engine.classification import _legend_corroborates
+
+    assert not _legend_corroborates("20A GFCI receptacle", "WEATHERPROOF")
+    assert _legend_corroborates("20A duplex receptacle", "RECEPTACLE")
+    assert _legend_corroborates("Single-pole switch", "SWITCH")
 
 
 def test_a_known_device_tag_is_unaffected_by_the_legend():

@@ -19,6 +19,7 @@ import re
 import pymupdf
 
 from .contracts import DetectedSheet
+from .legend import parse_legend
 
 # A sheet number like E2.1 / E0.2 / E10.1.
 SHEET_ID = re.compile(r"\bE\d{1,2}\.\d{1,2}\b")
@@ -114,7 +115,7 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
             DetectedSheet(
                 page_index=pno, number=_sheet_number(page, text), title="Electrical plan",
                 discipline="Electrical", scale=_scale(text), width_pt=w, height_pt=h,
-                region=region, schedule_text=sched,
+                region=region, schedule_text=sched, legend=parse_legend(sched),
             )
         )
     return sheets

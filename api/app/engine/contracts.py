@@ -27,6 +27,7 @@ class DetectedSheet:
     # are counted within, excluding the title-block strip and border.
     region: tuple[float, float, float, float]
     schedule_text: str = ""  # raw schedule/legend text for Classification
+    legend: list["LegendEntry"] = field(default_factory=list)  # parsed rows from schedule_text
     unreadable_reason: str = ""  # set when the sheet could not be read
 
 

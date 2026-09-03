@@ -45,12 +45,37 @@ def _unknown_warning(tag: str, count: int, sheet_no: str) -> dict:
     }
 
 
+def _modifier_warning(tag: str, description: str, count: int, sheet_no: str) -> dict:
+    return {
+        "reason": "legend",
+        "title": "Modifier, not a standalone device",
+        "found": f"Tag {tag} appears {count} times on {sheet_no}.",
+        "why": f"{tag} is listed in the abbreviations as {description.lower()}, so it labels another device rather than being counted as one.",
+        "fix": "Trace each one to the device symbol it labels so it is not double counted, or reject it.",
+        "where": f"{sheet_no} and the legend sheet.",
+    }
+
+
 def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list[ClassifiedItem]:
     sheet_no = {s.page_index: (s.number or f"page {s.page_index + 1}") for s in sheets}
+    abbrev = {
+        e.symbol: e.description
+        for s in sheets
+        for e in s.legend
+        if e.kind == "abbreviation"
+    }
     items: list[ClassifiedItem] = []
     for c in clusters:
         no = sheet_no.get(c.sheet_page_index, "?")
-        if c.tag in TAG_TO_CATALOG:
+        if c.tag in abbrev:
+            items.append(ClassifiedItem(
+                catalog_id="unclassified", name=f"{c.tag} — {abbrev[c.tag].title()}",
+                system="Unknown", category="Unclassified", unit="ea", symbol="generic",
+                quantity=c.count, sheet_page_index=c.sheet_page_index, placements=c.placements,
+                status="attention", warning=_modifier_warning(c.tag, abbrev[c.tag], c.count, no),
+                source_tag=c.tag,
+            ))
+        elif c.tag in TAG_TO_CATALOG:
             cat = CATALOG[TAG_TO_CATALOG[c.tag]]
             items.append(_item(cat, c, "ready", None))
         elif is_fixture_type(c.tag):

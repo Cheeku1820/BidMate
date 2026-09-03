@@ -130,3 +130,40 @@ def test_row_from_spec_falls_back_when_the_models_warning_is_missing_a_field():
             "warning": {"title": "x", "found": "y", "why": "z", "fix": "", "where": "E2.1"}}
     row = estimate_mod._row_from_spec(spec, _FakeCluster(), [], 78.0, 1.0)
     assert row["warning"]["fix"] == "Confirm the item type against the schedule, then approve."
+
+
+def test_an_abbreviation_tag_is_classified_as_a_modifier():
+    """WP is in the abbreviations block as WEATHERPROOF. It labels another
+    device rather than being one, so counting it as a device double counts.
+    Classification -- not Counting -- makes this call, because a letter can
+    be both an abbreviation and a fixture type (design spec 11.6)."""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    sheet = DetectedSheet(
+        page_index=0, number="E7.1", title="Power", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="WP", description="WEATHERPROOF", kind="abbreviation")],
+    )
+    cluster = DeviceCluster(tag="WP", sheet_page_index=0, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [sheet])
+
+    assert items[0].status == "attention"
+    assert items[0].warning is not None
+    assert "weatherproof" in items[0].warning["why"].lower()
+    assert "double" in items[0].warning["fix"].lower()
+
+
+def test_a_known_device_tag_is_unaffected_by_the_legend():
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    sheet = DetectedSheet(
+        page_index=0, number="E7.1", title="Power", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="WP", description="WEATHERPROOF", kind="abbreviation")],
+    )
+    cluster = DeviceCluster(tag="R", sheet_page_index=0, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [sheet])
+    assert items[0].status == "ready"
+    assert items[0].catalog_id == "receptacle_20a"

@@ -316,6 +316,24 @@ def test_weatherproof_does_not_corroborate_a_gfci_receptacle():
     assert _legend_corroborates("Single-pole switch", "SWITCH")
 
 
+def test_a_longer_word_containing_a_catalog_word_does_not_corroborate():
+    """The substring version read SWITCHBOARD as agreeing with
+    "Single-pole switch", so a legend reusing S for a piece of gear
+    suppressed the collision warning entirely -- the estimator was never
+    told that some of those S placements are a switchboard rather than a
+    switch. Suppression is the dangerous direction for this rule: a
+    missing warning is silent, a spurious one is merely noise.
+
+    A trailing plural still corroborates, because a legend row reading
+    RECEPTACLES is the good drafting this rule exists to leave alone."""
+    from app.engine.classification import _legend_corroborates
+
+    assert not _legend_corroborates("Single-pole switch", "SWITCHBOARD")
+    assert _legend_corroborates("Panelboard", "PANELBOARDS AND SWITCHBOARDS")
+    assert _legend_corroborates("20A duplex receptacle", "DUPLEX RECEPTACLES")
+    assert _legend_corroborates("Single-pole switch", "SWITCHES")
+
+
 def test_a_known_device_tag_is_unaffected_by_the_legend():
     from app.engine import classification
     from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement

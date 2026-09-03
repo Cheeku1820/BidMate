@@ -120,10 +120,21 @@ def _legend_corroborates(catalog_name: str, description: str) -> bool:
     catalog item, which is a deliberate catalog decision rather than
     something to smuggle in here; and warning when unsure is the safe
     direction, since the cost is one review prompt rather than a collision
-    the estimator is never told about."""
+    the estimator is never told about.
+
+    The match is on whole words, not substrings. `"switch" in text` is
+    true of "SWITCHBOARD", so a legend defining S as a switchboard
+    corroborated the catalog's "Single-pole switch" and the collision --
+    a device tag reused for a piece of gear -- was silently suppressed.
+    That is the failure this function must never produce: it exists to
+    quiet *agreement*, and a substring is not agreement. An English
+    plural suffix is allowed because a legend row reading RECEPTACLES or
+    SWITCHES agrees with a receptacle and a switch, and refusing the
+    plural would flag well-drafted sets -- the exact noise the rule was
+    written to prevent. "switches" matches; "switchboard" does not."""
     words = {w for w in re.findall(r"[a-z]{4,}", catalog_name.lower())}
     text = description.lower()
-    return any(w in text for w in words)
+    return any(re.search(rf"\b{re.escape(w)}(?:e?s)?\b", text) for w in words)
 
 
 def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list[ClassifiedItem]:

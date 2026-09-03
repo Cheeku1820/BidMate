@@ -53,11 +53,15 @@ def test_wire_and_conduit_reach_the_total():
 
 
 def test_the_seal_is_gone_from_the_whole_set():
-    """Measured against the real Unalaska set, the rotation filter removes
+    """Measured against the real Unalaska set, the seal filter removes
     509 placements across the 14 sheets -- about 36 per sheet on average
     (509 / 14), mostly the engineer's-seal glyph (design spec 11.2's
     earlier estimate of 41 candidates per sheet was Task 3's starting
-    figure, not the measured removed count). Before the filter, the raw
+    figure, not the measured removed count). What ships is a font-and-
+    proximity filter -- a condensed face is the seal ring's typographic
+    signature, and the inner ring is caught by nearness to a confirmed
+    condensed-font glyph -- not the rotation filter these docstrings used
+    to name; see counting.py's _stamp_centres. Before the filter, the raw
     count across the set was 812; with it applied, 303. The threshold is
     tightened to a measured fact rather than a loose bound: 800 would
     tolerate restoring 496 of the 509 removed placements and still pass.
@@ -67,7 +71,7 @@ def test_the_seal_is_gone_from_the_whole_set():
 
     sheets = documents.detect_sheets(BID)
     total = sum(c.count for c in counting.count(BID, sheets))
-    assert total < 400, f"expected the rotation filter's ~509 removed placements to hold (812 -> 303), got {total}"
+    assert total < 400, f"expected the seal filter's ~509 removed placements to hold (812 -> 303), got {total}"
 
 
 def test_no_parsed_legend_text_reaches_an_item_name_or_a_warning():

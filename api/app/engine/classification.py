@@ -5,12 +5,31 @@ catalog item and assigns a review status. This is the one language step in
 the pipeline, and even here it only *proposes* -- a person approves. It
 never sets status APPROVED.
 
-v1 uses the deterministic tag map in catalog.py. A recognized device
-(receptacle, switch, junction) is Ready to review. A fixture-type letter
-whose description was not read from a schedule is Needs attention -- its
-exact fixture is a decision, not a guess. An unrecognized tag stays a
-visible, unpriced Needs-attention item rather than being dropped
-(CLAUDE.md: unfamiliar symbols remain in the review queue).
+v1 uses the deterministic tag map in catalog.py. The chain below is
+ordered, and the order is load-bearing: curated Division 26 knowledge
+outranks a parsed abbreviation, because TAG_TO_CATALOG and the
+fixture-letter range are hand-built device knowledge while a legend
+abbreviation is a heuristic read off messy sheet text. Reversing the first
+and third branches once zeroed 43 of 45 items on a real set.
+
+1. The tag is a known device (TAG_TO_CATALOG) -> that catalog item.
+   Ready to review, unless the legend also defines the tag *and* the
+   definition shares no significant word with the catalog item, in which
+   case it is a genuine collision: Needs attention, priced, with the
+   ambiguity warning. A legend that agrees (R -> RECEPTACLE) is good
+   drafting and stays ready.
+2. The tag is a fixture-type letter -> the generic luminaire, named for
+   its type. Needs attention: which fixture it is comes from the luminaire
+   schedule, and that is a decision rather than a guess.
+3. The tag is only a legend abbreviation -> unclassified and unpriced,
+   Needs attention, with the modifier warning. It most likely labels
+   another device rather than being one.
+4. Anything else -> unclassified and unpriced, Needs attention, with the
+   unknown-symbol warning. It stays visible in the review queue rather
+   than being dropped (CLAUDE.md: unfamiliar symbols remain reviewable).
+
+No branch quotes parsed sheet text in an item name or a warning field;
+see the comment above the warning builders for why.
 
 The signature (clusters + sheets -> items) is what a real LLM classifier
 would also satisfy, reading the schedule text on the sheet; swapping it in

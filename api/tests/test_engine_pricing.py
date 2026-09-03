@@ -56,3 +56,9 @@ def test_an_unclassified_item_is_still_unpriced():
     priced = price_item(_item(catalog_id="unclassified", qty=5), labor_rate=68.0)
     assert priced.material_cost == 0.0
     assert priced.total_direct_cost == 0.0
+    # An unpriced item carries no assembly at all -- not an empty one.
+    # That distinction is the shape that would have caught fixtures being
+    # priced bare: a catalog item with no ASSEMBLIES entry expands to an
+    # Assembly with zero lines, which is not None and passed every
+    # `assembly is not None` assertion in the suite.
+    assert priced.assembly is None

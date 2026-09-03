@@ -170,18 +170,42 @@ def test_the_app_path_prices_no_item_bare():
     """The app path returns rows, not PricedItems, so it cannot assert on
     an Assembly object the way test_no_priced_item_is_missing_its_assembly
     does. The equivalent check is arithmetic: every priced row must cost
-    more than its device alone, since every catalog item has an assembly."""
+    more than its device alone, since every catalog item has an assembly.
+
+    Resolution is by TAG, not by item name. Matching `row["name"]` against
+    catalog names skipped every fixture row -- classification renames
+    those to "Luminaire type A".."H", so none of them matches a catalog
+    name -- which left 16 of 27 priced rows unchecked behind a `continue`
+    whose comment said it would check them by tag and then did not.
+    Deleting all four luminaire assemblies left that version green.
+
+    The count assertion is the part that keeps it honest: a future skip
+    cannot quietly shrink the coverage without failing here."""
     from app.engine import estimate
     from app.engine.assemblies import expand
-    from app.engine.catalog import CATALOG
+    from app.engine.catalog import CATALOG, TAG_TO_CATALOG, is_fixture_type
+
+    def catalog_for(row):
+        """The same resolution classification.py itself uses, so a renamed
+        fixture row still resolves to the item it was priced from."""
+        tag = row.get("tag") or ""
+        if tag in TAG_TO_CATALOG:
+            return CATALOG[TAG_TO_CATALOG[tag]]
+        if is_fixture_type(tag):
+            return CATALOG["luminaire_generic"]
+        return None
 
     rows, _sheets, meta = estimate._compute(BID, "Unalaska, AK")
     priced = [r for r in rows if r["total_cost"] > 0]
     assert priced, "no row was priced at all"
+
+    checked = 0
     for row in priced:
-        cat = next((c for c in CATALOG.values() if c.name == row["name"]), None)
-        if cat is None:  # a fixture-letter row is renamed; check it by tag instead
-            continue
+        cat = catalog_for(row)
+        assert cat is not None, f"{row['name']} (tag {row['tag']!r}) was priced but resolves to no catalog item"
+        checked += 1
         bare = cat.material_cost * row["quantity"] * meta["material_factor"]
-        assert row["material_cost"] > bare or not expand(cat.catalog_id, 1).lines, \
-            f"{row['name']} is priced as a bare device"
+        assert row["material_cost"] > bare, f"{row['name']} is priced as a bare device"
+
+    assert checked == len(priced), "some priced row was skipped rather than checked"
+    assert checked >= 20, f"only {checked} rows checked; this guard is meant to cover the whole set"

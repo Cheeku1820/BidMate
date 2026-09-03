@@ -71,18 +71,30 @@ _CONDENSED_FONT = "narrow"
 # between two well-apart clusters, not a fitted number.
 _STAMP_RADIUS = 100.0
 
-# A stamp occupies a small share of a sheet's text. Measured on the real
-# set: the seal's own condensed spans peak at 32/134 = 23.9% of a sheet's
-# total spans (E6.1, page_index 83, its sparsest sheet). 0.25 sits just
-# above that, so a real stamp always passes, while a sheet whose ordinary
-# device tags are themselves set in a condensed font -- the failure this
-# guards against -- would clear it easily, since tags are most of a
-# sheet's text once titles and notes are set aside.
+# A conservative safety valve, not a measured separator like
+# `_STAMP_RADIUS`. Across the 14 real sheets the seal's condensed spans
+# are 4.2-12.5% of a sheet's total spans on 13 of them, and 23.9% on the
+# 14th (page_index 83, 32 condensed spans against only 134 total -- one
+# outlier driven by that sheet being sparse overall, not by the seal being
+# larger there). That is one data point near the 25% line, not a gap with
+# margin on both sides, so this constant is deliberately biased toward the
+# safe failure: when it trips, the seal filter switches off for that sheet
+# only, ~41 phantom seal-glyph candidates appear as ordinary (wrong)
+# device placements, and a reviewer sees and rejects them at review --
+# exactly the trade this guard exists to make. The Critical this guards
+# against (a whole sheet's real tags deleted silently, no cluster, no
+# warning, no `unreadable_reason`) does not return at any share value, so
+# getting this constant's exact number wrong costs visible false
+# positives, never silent data loss.
 _MAX_STAMP_SHARE = 0.25
 
 # ...and a small part of the page, not scattered across it. Measured: the
 # seal's condensed spans span 43x104pt, identical on all 14 sheets, on a
-# 2448x1584pt page.
+# 2448x1584pt page -- genuine headroom, unlike the share guard above. This
+# takes max-min over every condensed-font span on the page, so one stray
+# narrow-font note in a far corner (unrelated to any stamp) would inflate
+# the extent and disable the seal filter for that whole sheet. Same safe
+# failure direction as the share guard, and not observed on the real set.
 _MAX_STAMP_EXTENT = 400.0
 
 

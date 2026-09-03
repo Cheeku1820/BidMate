@@ -107,10 +107,15 @@ def test_seal_ring_removed_but_separated_real_tags_survive(tmp_path):
         page.insert_text((50 + (i % 5) * 150, 550 + (i // 5) * 20), "ROOM", fontname="helv")
 
     # The ring: four identical single characters, tag-shaped, clustered
-    # tightly in one corner, standing alone on their own line -- same
-    # shape a stamp's ring glyphs have. Renamed to a condensed font below.
+    # tightly in one corner, each standing alone on its own text line --
+    # same shape a stamp's ring glyphs have. 20pt vertical steps keep them
+    # on separate lines (verified: MuPDF groups closer spacing, e.g. 8pt,
+    # onto one shared line, which the pre-existing MAX_LINE_WORDS prose
+    # filter would then reject on its own -- making this test pass for an
+    # unrelated reason without ever exercising _stamp_points). Renamed to
+    # a condensed font below.
     for i in range(4):
-        page.insert_text((700 + i * 8, 700 + i * 8), "S", fontname="cour")
+        page.insert_text((700, 700 + i * 20), "S", fontname="cour")
     _rename_font(doc, page, "Courier", "ArialNarrow")
 
     path = tmp_path / "ring.pdf"

@@ -140,14 +140,49 @@ def test_a_trailing_zip_code_does_not_hide_the_state():
     assert lookup("Fairbanks, AK 99701")[:2] == _TABLE["AK"]
 
 
-def test_a_state_code_resolves_from_anywhere_in_the_string_not_only_the_end():
-    """Matching only the *trailing* token lost the state whenever anything
-    followed it -- a zip, a country -- and fell to the national default.
-    Safe, but wrong, and silent. The protection was never the position: it
-    is that whole tokens are compared, so CONCORD is one token and is not
-    equal to NC no matter where it sits."""
+def test_a_state_code_is_read_from_the_end_of_the_address_only():
+    """A trailing zip or country word must not hide the state, but nothing
+    earlier in the string may stand in for it.
+
+    Widening the match to *any* token fixed the first half and broke the
+    second: "CO" and "MI" are ordinary words -- a company, a county road,
+    "Mi Casa" -- and only fifteen states are in the table, so every job in
+    a state that is absent silently took some other state's rate. All four
+    of these returned the national default before that widening and must
+    again."""
+    assert lookup("Smith & Co, Manchester, NH")[:2] == NATIONAL
+    assert lookup("Acme Co, Portland, OR")[:2] == NATIONAL
+    assert lookup("123 Co Rd 5, Bend, OR")[:2] == NATIONAL
+    assert lookup("Mi Casa Plaza, Portland, OR")[:2] == NATIONAL
+    # OR is absent from the table, so naming it correctly is still national.
+    assert lookup("Portland, OR, USA")[:2] == NATIONAL
+
+
+def test_a_trailing_country_word_does_not_hide_the_state():
+    """The break that motivated the widening, fixed without it: a short,
+    explicit set of trailing words is discarded before the last token is
+    read."""
     assert lookup("Springfield, IL 62701 USA")[:2] == _TABLE["IL"]
     assert lookup("Boston, MA, USA")[:2] == _TABLE["BOSTON"]
     assert lookup("Unalaska, AK 99685")[:2] == _TABLE["UNALASKA"]
-    # And the guard it must not cost: a code buried in a word is still not a token.
     assert lookup("Concord, NH 03301 USA")[:2] == NATIONAL
+
+
+def test_a_state_code_earlier_in_the_string_never_beats_the_real_one():
+    """The structural guard, widened.
+
+    The substring sweep below could not see this class at all: "CO" in
+    "Acme Co" is a genuine whole token, so nothing about tokenisation
+    rules it out -- only its position does. For every code in the table,
+    assert that the code appearing as a non-final token loses to whatever
+    actually ends the address, whether that is another table state or a
+    state the table does not carry.
+    """
+    leaks = []
+    for key in (k for k in _TABLE if len(k) == 2):
+        other = "TX" if key != "TX" else "CA"
+        if lookup(f"{key} Company, Springfield, {other}")[:2] != _TABLE[other]:
+            leaks.append((key, f"beat the real trailing {other}"))
+        if lookup(f"{key} Company, Springfield, ZZ")[:2] != NATIONAL:
+            leaks.append((key, "won from a non-final position"))
+    assert leaks == [], f"codes matched away from the end of the address: {leaks}"

@@ -153,8 +153,16 @@ def test_an_abbreviation_tag_is_classified_as_a_modifier():
 
     assert items[0].status == "attention"
     assert items[0].warning is not None
-    assert "circuit" in items[0].warning["why"].lower()
     assert "double" in items[0].warning["fix"].lower()
+    # The warning names the legend; it never quotes it. The abbreviations
+    # block is a line-pair heuristic over messy sheet text, so the parsed
+    # expansion is not evidence the estimator can be sent to look for.
+    assert "CKT" in items[0].warning["found"]
+    for field in ("found", "why", "fix", "where"):
+        assert "circuit" not in items[0].warning[field].lower(), \
+            f"{field} quotes the parsed legend description"
+    # ...and the name comes from the taxonomy, not from the sheet text.
+    assert items[0].name == "Unclassified symbol (CKT)"
 
 
 def test_a_device_tag_that_is_also_an_abbreviation_is_priced_and_flagged():
@@ -178,7 +186,10 @@ def test_a_device_tag_that_is_also_an_abbreviation_is_priced_and_flagged():
     assert items[0].catalog_id == "receptacle_gfci"
     assert items[0].status == "attention"
     assert items[0].warning is not None
-    assert "weatherproof" in items[0].warning["found"].lower()
+    assert "WP" in items[0].warning["found"]
+    for field in ("found", "why", "fix", "where"):
+        assert "weatherproof" not in items[0].warning[field].lower(), \
+            f"{field} quotes the parsed legend description"
 
 
 def test_the_first_sheets_legend_definition_wins_across_the_set():
@@ -205,8 +216,16 @@ def test_the_first_sheets_legend_definition_wins_across_the_set():
     cluster = DeviceCluster(tag="WP", sheet_page_index=1, placements=[Placement(1, 1)] * 3)
     items = classification.classify([cluster], [legend_sheet, later_sheet])
 
-    assert "weatherproof" in items[0].warning["found"].lower()
-    assert "see enlarged" not in items[0].warning["found"].lower()
+    # No parsed description reaches estimator copy at all now, so neither
+    # spelling can be asserted here. What this case still pins is that the
+    # multi-sheet path stays leak-free in both sheet orders; the sharper
+    # pin on *which* definition wins is
+    # test_the_first_definition_decides_whether_the_legend_corroborates,
+    # where corroboration makes the precedence observable again.
+    for field in ("found", "why", "fix", "where"):
+        text = items[0].warning[field].lower()
+        assert "weatherproof" not in text and "see enlarged" not in text, \
+            f"{field} quotes a parsed legend description"
 
 
 def test_a_known_device_tag_is_unaffected_by_the_legend():

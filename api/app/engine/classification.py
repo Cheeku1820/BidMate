@@ -45,23 +45,35 @@ def _unknown_warning(tag: str, count: int, sheet_no: str) -> dict:
     }
 
 
-def _modifier_warning(tag: str, description: str, count: int, sheet_no: str) -> dict:
+# Neither warning below quotes the parsed description, and neither takes
+# it as an argument -- you cannot interpolate what you were not given.
+#
+# The abbreviations block is read off messy sheet text by a line-pair
+# heuristic, and on a real set it mis-pairs: this set yields R -> "Aaron
+# S. Jordan" (the engineer of record, lifted off a seal block), C ->
+# "(c)2020 ECI, Inc.", G -> "STACKS/ADULT" (a room name), M -> "TOTAL NEC
+# AMPS: 39 A". A warning's `found` is contractually *what was found*, so
+# stating one of those pairings in the estimator's own words is worse than
+# saying nothing: they will go looking for a legend row that is not there.
+# Naming the legend without quoting it costs the estimator one glance at a
+# sheet they can already open, and cannot be wrong.
+def _modifier_warning(tag: str, count: int, sheet_no: str) -> dict:
     return {
         "reason": "legend",
         "title": "Modifier, not a standalone device",
-        "found": f"Tag {tag} appears {count} times on {sheet_no}.",
-        "why": f"{tag} is listed in the abbreviations as {description.lower()}, so it labels another device rather than being counted as one.",
+        "found": f"Tag {tag} appears {count} times on {sheet_no}, and {tag} is also defined in the legend's abbreviations block.",
+        "why": f"{tag} reads as an abbreviation here, so it most likely labels another device rather than being one itself.",
         "fix": "Trace each one to the device symbol it labels so it is not double counted, or reject it.",
         "where": f"{sheet_no} and the legend sheet.",
     }
 
 
-def _ambiguous_tag_warning(tag: str, description: str, count: int, sheet_no: str) -> dict:
+def _ambiguous_tag_warning(tag: str, count: int, sheet_no: str) -> dict:
     return {
         "reason": "legend",
         "title": "Tag also appears in the legend",
-        "found": f"Tag {tag} appears {count} times on {sheet_no}, and the legend also lists {tag} as {description.lower()}.",
-        "why": "The same tag is used for a device and for a legend entry, so some of these placements may not be devices.",
+        "found": f"Tag {tag} appears {count} times on {sheet_no}, and {tag} is also defined in the legend.",
+        "why": f"{tag} is used both for a device and for a legend entry, so some of these placements may be a label rather than a device.",
         "fix": "Spot check a few against the plan; correct the quantity if some are not devices, then approve.",
         "where": f"{sheet_no} and the legend sheet.",
     }
@@ -91,7 +103,7 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
         if c.tag in TAG_TO_CATALOG:
             cat = CATALOG[TAG_TO_CATALOG[c.tag]]
             if c.tag in abbrev:
-                items.append(_item(cat, c, "attention", _ambiguous_tag_warning(c.tag, abbrev[c.tag], c.count, no)))
+                items.append(_item(cat, c, "attention", _ambiguous_tag_warning(c.tag, c.count, no)))
             else:
                 items.append(_item(cat, c, "ready", None))
         elif is_fixture_type(c.tag):
@@ -99,11 +111,16 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
             cat = _rename(cat, f"Luminaire type {c.tag}")
             items.append(_item(cat, c, "attention", _fixture_warning(c.tag, c.count, no)))
         elif c.tag in abbrev:
+            # The name comes from the catalog taxonomy, never from parsed
+            # sheet text -- interpolating the abbreviation's expansion is
+            # how "AMP — Pole Va - Phase A" reached the CLI as an item
+            # name. Same name the sibling unclassified branch uses; the
+            # warning is what distinguishes the two readings.
             items.append(ClassifiedItem(
-                catalog_id="unclassified", name=f"{c.tag} — {abbrev[c.tag].title()}",
+                catalog_id="unclassified", name=f"Unclassified symbol ({c.tag})",
                 system="Unknown", category="Unclassified", unit="ea", symbol="generic",
                 quantity=c.count, sheet_page_index=c.sheet_page_index, placements=c.placements,
-                status="attention", warning=_modifier_warning(c.tag, abbrev[c.tag], c.count, no),
+                status="attention", warning=_modifier_warning(c.tag, c.count, no),
                 source_tag=c.tag,
             ))
         else:

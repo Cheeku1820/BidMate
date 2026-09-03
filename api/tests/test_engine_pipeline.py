@@ -71,6 +71,48 @@ def test_the_seal_is_gone_from_the_whole_set():
     assert total < 400, f"expected the rotation filter's ~509 removed placements to hold (812 -> 303), got {total}"
 
 
+def test_no_parsed_legend_text_reaches_an_item_name_or_a_warning():
+    """The abbreviations block is a line-pair heuristic over messy sheet
+    text, and on this set it mis-pairs badly: R -> "Aaron S. Jordan" (the
+    engineer of record, off a seal block), C -> "(c)2020 ECI, Inc.", G ->
+    "STACKS/ADULT" (a room name), M -> "TOTAL NEC AMPS: 39 A".
+
+    A warning's `found` is contractually what was found, so a fabricated
+    pairing stated in the estimator's own words is worse than no warning --
+    they go looking for a legend row that is not there. And an item's name
+    must come from the catalog taxonomy: interpolating the expansion is how
+    "AMP — Pole Va - Phase A" reached the CLI as an item name.
+
+    Scanned against the *distinctive* parsed descriptions only -- those
+    carrying a space, digit or punctuation. A description that is one plain
+    English word cannot be told apart from ordinary template copy by
+    substring: this set parses "DESCRIPTION" (a legend column header) as an
+    expansion, and the fixture warning legitimately says "its description
+    wasn't read from a schedule". The single-word cases that matter
+    (WEATHERPROOF, CIRCUIT) are pinned exactly in test_engine_classify.py
+    instead, where the legend is a fixture rather than 124 parsed rows.
+    """
+    import re
+
+    from app.engine import classification, counting, documents
+
+    sheets = documents.detect_sheets(BID)
+    descriptions = {e.description for s in sheets for e in s.legend
+                    if e.kind == "abbreviation" and len(e.description) > 3
+                    and re.search(r"[\s\d./(),]", e.description)}
+    assert descriptions, "no legend rows parsed -- this test would be vacuous"
+
+    items = classification.classify(counting.count(BID, sheets), sheets)
+    for it in items:
+        for d in descriptions:
+            assert d.lower() not in it.name.lower(), \
+                f"item name {it.name!r} carries parsed legend text {d!r}"
+            if it.warning:
+                for field in ("found", "why", "fix", "where"):
+                    assert d.lower() not in it.warning[field].lower(), \
+                        f"warning {field} carries parsed legend text {d!r}"
+
+
 def test_the_takeoff_prices_the_devices_it_counted():
     """total_direct_cost > 0 was true at $1,643 while 43 of 45 items were
     silently zeroed, so it pins nothing. Junction box is the check: 55

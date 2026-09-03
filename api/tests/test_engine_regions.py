@@ -138,3 +138,16 @@ def test_a_trailing_zip_code_does_not_hide_the_state():
     whitespace-delimited chunk, so a posted address still resolves."""
     assert lookup("Unalaska, AK 99685")[:2] == _TABLE["UNALASKA"]
     assert lookup("Fairbanks, AK 99701")[:2] == _TABLE["AK"]
+
+
+def test_a_state_code_resolves_from_anywhere_in_the_string_not_only_the_end():
+    """Matching only the *trailing* token lost the state whenever anything
+    followed it -- a zip, a country -- and fell to the national default.
+    Safe, but wrong, and silent. The protection was never the position: it
+    is that whole tokens are compared, so CONCORD is one token and is not
+    equal to NC no matter where it sits."""
+    assert lookup("Springfield, IL 62701 USA")[:2] == _TABLE["IL"]
+    assert lookup("Boston, MA, USA")[:2] == _TABLE["BOSTON"]
+    assert lookup("Unalaska, AK 99685")[:2] == _TABLE["UNALASKA"]
+    # And the guard it must not cost: a code buried in a word is still not a token.
+    assert lookup("Concord, NH 03301 USA")[:2] == NATIONAL

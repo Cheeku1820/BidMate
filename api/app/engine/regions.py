@@ -16,8 +16,8 @@ class has landed in this engine: `conversation.py` matched "is a" inside
 "this area", and `classification.py` read SWITCHBOARD as confirming a
 switch. All three were substring matching where token matching was
 meant, and all three failed quietly rather than loudly. `lookup` below
-matches a state code only as the location's trailing token and every
-other key on word boundaries; keep any new key inside that rule.
+matches a state code only as a whole token of the location string, and
+every other key on word boundaries; keep any new key inside that rule.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ _TABLE: dict[str, tuple[float, float]] = {
     "OH": (74.0, 0.98), "MI": (76.0, 0.99), "AZ": (72.0, 0.99), "CO": (82.0, 1.04),
 }
 
-# Two-letter keys are state codes and are matched as a trailing token
-# rather than as a substring. No name in the table is this length.
+# Two-letter keys are state codes and are matched as a whole token rather
+# than as a substring. No name in the table is this length.
 _STATE_CODE_LEN = 2
 
 NATIONAL = (78.0, 1.00)
@@ -50,17 +50,23 @@ NATIONAL = (78.0, 1.00)
 def lookup(location: str) -> tuple[float, float, str]:
     """Returns (labor_rate, material_factor, note) for a location string."""
     up = (location or "").upper()
-    # Alpha runs, so a zip code or a stray period cannot become the
-    # trailing token: "Unalaska, AK 99685" still ends on AK.
-    tokens = re.findall(r"[A-Z]+", up)
-    trailing = tokens[-1] if tokens else ""
+    # Alpha runs, so punctuation and digits cannot form or hide a token:
+    # "Unalaska, AK 99685" and "Springfield, IL 62701 USA" both still
+    # carry their state as a token of their own.
+    tokens = set(re.findall(r"[A-Z]+", up))
 
-    # A state code is a trailing token ("Concord, NH"), never a substring:
+    # A state code is a whole token ("Concord, NH"), never a substring:
     # scanning for "NC" anywhere matched inside CONCORD and priced a New
     # Hampshire job against North Carolina, silently, since NH is not in
     # the table and would otherwise have fallen to the national default.
     # City and state names match on word boundaries for the same reason --
     # ALASKA must not match inside UNALASKA.
+    #
+    # Matching a code against ANY token rather than only the last one is
+    # what makes "Springfield, IL 62701 USA" resolve; it is safe for the
+    # same reason the trailing rule was, since the protection comes from
+    # comparing whole tokens rather than from the position -- CONCORD is
+    # one token and is not equal to NC.
     #
     # Longest match still wins, so UNALASKA beats ALASKA when a location
     # names both, and any name beats the state code it sits above. Every
@@ -70,7 +76,7 @@ def lookup(location: str) -> tuple[float, float, str]:
     matches = []
     for key, value in _TABLE.items():
         if len(key) == _STATE_CODE_LEN:
-            if key == trailing:
+            if key in tokens:
                 matches.append((key, value))
         elif re.search(rf"\b{re.escape(key)}\b", up):
             matches.append((key, value))

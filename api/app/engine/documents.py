@@ -15,6 +15,7 @@ vector sheets only; a raster page is flagged, never silently counted.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 import pymupdf
 
@@ -115,7 +116,10 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
             DetectedSheet(
                 page_index=pno, number=_sheet_number(page, text), title="Electrical plan",
                 discipline="Electrical", scale=_scale(text), width_pt=w, height_pt=h,
-                region=region, schedule_text=sched, legend=parse_legend(sched),
+                region=region, schedule_text=sched,
+                # parse_legend reads text and cannot know which page it came
+                # from; the caller does, so it stamps each row here.
+                legend=[replace(e, page_index=pno) for e in parse_legend(sched)],
             )
         )
     return sheets

@@ -22,9 +22,28 @@ import re
 
 from .contracts import LegendEntry
 
-# An abbreviation key: short, uppercase, possibly carrying the punctuation
-# a drafter uses (C. for conduit, (E) for existing, C.O. for conduit only).
-KEY = re.compile(r"^[A-Z][A-Z0-9./()\-]{0,5}$")
+# An abbreviation key: short, uppercase, no trailing dot. The dot is out
+# of the character class entirely, which costs the two real abbreviations
+# C. and C.O. -- that is the intended trade, because admitting a trailing
+# dot admits every sentence-final word in a numbered general-notes block,
+# and this set produced BOX., NOTED., OWNER. and REUSE. as keys, each
+# paired with the note line following it. Capped at four characters for
+# the same reason: APPROX, BUTTON, FEEDER, LEGEND, PANEL and two dozen
+# more were parsing as keys off prose.
+KEY = re.compile(r"^[A-Z][A-Z0-9/()\-]{0,3}$")
+
+# What cannot be an *expansion* is a separate question from what can be a
+# key, and this pattern is deliberately the looser, older key shape.
+#
+# Tying the two together looks tidy and is wrong: tightening KEY alone
+# means every line the tighter pattern stops recognising -- "J-BOX",
+# "PMP-3", "M-23" -- becomes eligible as an expansion, and the parser
+# invents new pairs faster than the tighter key removes old ones. Measured
+# on the real set, sharing one pattern yields 91 keys including five new
+# mis-pairings, among them S -> "J-BOX"; S is the switch tag, so that one
+# alone would flag every switch on the set for review. Keeping the
+# rejection loose yields 86 keys and no new mis-pairings at all.
+_NOT_AN_EXPANSION = re.compile(r"^[A-Z][A-Z0-9./()\-]{0,5}$")
 
 # An expansion is words, not a number or a callout. Requiring a run of
 # three or more letters admits real single-word expansions (CIRCUIT,
@@ -36,7 +55,7 @@ _WORDY = re.compile(r"[A-Za-z]{3,}")
 
 
 def _is_expansion(line: str) -> bool:
-    return bool(_WORDY.search(line)) and not KEY.match(line)
+    return bool(_WORDY.search(line)) and not _NOT_AN_EXPANSION.match(line)
 
 
 def parse_legend(schedule_text: str) -> list[LegendEntry]:

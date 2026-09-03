@@ -120,6 +120,11 @@ class LegendEntry:
     symbol: str
     description: str
     kind: str  # "symbol" | "abbreviation"
+    # Which sheet this definition was read from, so a warning can name the
+    # sheet the definition actually came from rather than the sheet the
+    # device was counted on. Defaults to -1 (unknown): parse_legend is
+    # handed text, not a page, so its caller in documents.py fills this in.
+    page_index: int = -1
 
 
 @dataclass

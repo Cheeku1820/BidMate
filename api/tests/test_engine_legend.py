@@ -57,6 +57,49 @@ def test_still_accepts_a_single_word_expansion():
     assert [(r.symbol, r.description) for r in rows] == [("CKT", "CIRCUIT")]
 
 
+def test_rejects_a_sentence_terminal_word_as_a_key():
+    """A numbered general-notes block ends lines with a period, and the old
+    key pattern accepted the trailing dot -- so BOX., NOTED., OWNER. and
+    REUSE. parsed as keys off this set, each paired with the note line
+    following it. The dot is out of the character class entirely now, which
+    costs the real abbreviations C. and C.O.: that is the trade, because
+    admitting a trailing dot admits every sentence-final word."""
+    assert parse_legend("BOX.\nSHALL BE FLUSH MOUNTED") == []
+    assert parse_legend("NOTED.\nEXCEPT WHERE OTHERWISE SHOWN") == []
+    assert parse_legend("C.\nCONDUIT") == [], "the known cost of dropping the dot"
+
+
+def test_rejects_a_long_word_as_a_key():
+    """APPROX, BUTTON, FEEDER, LEGEND, PANEL and two dozen more parsed as
+    keys off prose. A key is four characters at most."""
+    assert parse_legend("PANEL\nLINE WORK CONVENTION") == []
+    assert parse_legend("APPROX\nAPPROXIMATE LOCATION") == []
+    assert [r.symbol for r in parse_legend("CKT\nCIRCUIT")] == ["CKT"], "four or fewer still parses"
+
+
+def test_tightening_the_key_does_not_widen_what_counts_as_an_expansion():
+    """The two questions are separate, and sharing one pattern for both is
+    a trap: every line a tighter key stops recognising becomes eligible as
+    an expansion, so the parser invents new pairs faster than the tighter
+    key removes old ones. Measured on the real set, sharing the pattern
+    gave 91 keys including five new mis-pairings; keeping the rejection
+    loose gives 86 and none.
+
+    S -> J-BOX is the case that matters: S is the switch tag, so this one
+    mis-pairing alone would flag every switch on the set for review."""
+    assert parse_legend("S\nJ-BOX") == []
+    assert parse_legend("J2\nPMP-3") == []
+    assert parse_legend("M\nM-23") == []
+
+
+def test_a_row_records_which_page_it_was_read_from():
+    """parse_legend is handed text, not a page, so it cannot know. The
+    default is an explicit -1 rather than 0, which would be a wrong sheet
+    id stated as a real one."""
+    rows = parse_legend("CKT\nCIRCUIT")
+    assert rows[0].page_index == -1
+
+
 import os
 import pytest
 
@@ -78,3 +121,21 @@ def test_real_set_legend_sheet_yields_known_abbreviations():
     assert rows.get("AFF") == "ABOVE FINISHED FLOOR"
     assert rows.get("EL") == "EMERGENCY LIGHT"
     assert len(rows) > 30, f"expected a substantial abbreviations block, got {len(rows)}"
+
+
+@pytest.mark.skipif(not os.path.exists(BID), reason="real bid set not present")
+def test_every_real_row_names_the_sheet_it_came_from():
+    """A definition read off E0.1 and a device counted on E7.1 are two
+    different sheets, and a warning that sends the estimator to the wrong
+    one costs more than saying nothing. documents.py stamps each row, so
+    nothing on a real set should still carry the -1 default."""
+    from app.engine import documents
+
+    sheets = documents.detect_sheets(BID)
+    rows = [r for s in sheets for r in s.legend]
+    assert rows, "no legend rows parsed -- this test would be vacuous"
+    assert all(r.page_index >= 0 for r in rows)
+    by_page = {s.page_index: s.number for s in sheets}
+    wp = [r for s in sheets for r in s.legend if r.symbol == "WP"]
+    assert wp and by_page[wp[0].page_index] == "E0.1", \
+        "WP's real definition is on the legend sheet E0.1"

@@ -55,7 +55,10 @@ ASSEMBLIES: dict[str, list[tuple[str, float]]] = {
     "switch_sp": [("box_4sq", 1), ("mudring_1g", 1), ("plate_1g", 1), *_BRANCH_WIRE],
     "data_outlet": [("box_4sq", 1), ("mudring_1g", 1), ("plate_1g", 1),
                     ("emt_1_2", FEET_PER_DEVICE), ("conn_emt_1_2", 2.0)],
-    "junction_box": [("box_4sq", 1), ("wirenut", 3.0),
+    # No box line here: the catalog item *is* the box (category "Boxes",
+    # $6.00). A receptacle is a device that needs a box, so its assembly
+    # carries one; a junction box carrying one counted the box twice.
+    "junction_box": [("wirenut", 3.0),
                      ("emt_1_2", FEET_PER_DEVICE / 2), ("conn_emt_1_2", 2.0)],
     # Fixtures land on a whip rather than a device plate, but they carry the
     # same conductor model as a device: a switched hot, a neutral, and a

@@ -67,6 +67,25 @@ def test_every_catalog_device_that_gets_installed_has_an_assembly():
     assert missing == [], f"catalog items with no assembly: {missing}"
 
 
+def test_a_box_does_not_carry_another_box():
+    """junction_box shipped as catalog "Junction box" ($6.00, category
+    Boxes) *plus* a box_4sq line in its assembly -- two boxes for one
+    junction box, about $170 and 8.25 crew hours on the real set's 55
+    units.
+
+    The rule is not "no assembly contains a box": a receptacle is a device
+    that needs one, and its assembly is right to carry it. It is that an
+    item which already *is* the box must not also drag one along."""
+    from app.engine.catalog import CATALOG
+
+    boxes = {"box_4sq"}
+    for catalog_id, item in CATALOG.items():
+        if item.category != "Boxes":
+            continue
+        ids = {material_id for material_id, _qty in ASSEMBLIES.get(catalog_id, [])}
+        assert not (ids & boxes), f"{catalog_id} is a box and also carries {ids & boxes}"
+
+
 def test_an_assembly_with_circuit_conductors_carries_a_ground():
     """The rule is not "everything has a ground" -- it is that you never run
     current-carrying conductors without an equipment grounding conductor

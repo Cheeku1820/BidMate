@@ -31,6 +31,9 @@ MATERIALS: dict[str, AssemblyLine] = {
     "plate_1g":     AssemblyLine("plate_1g", "1-gang device plate", 1, "ea", 0.90, 0.04),
     "thhn_12":      AssemblyLine("thhn_12", "#12 THHN conductor", 1, "ft", 0.18, 0.004),
     "thhn_10":      AssemblyLine("thhn_10", "#10 THHN conductor", 1, "ft", 0.28, 0.005),
+    # Feeder conductor. A panelboard feeder is not #10 -- that is off by
+    # several conductor sizes, not a rounding.
+    "thhn_4":       AssemblyLine("thhn_4", "#4 THHN conductor", 1, "ft", 1.35, 0.011),
     "emt_1_2":      AssemblyLine("emt_1_2", '1/2in EMT conduit', 1, "ft", 0.62, 0.030),
     "conn_emt_1_2": AssemblyLine("conn_emt_1_2", '1/2in EMT connector', 1, "ea", 0.85, 0.03),
     "whip_6ft":     AssemblyLine("whip_6ft", "6ft fixture whip", 1, "ea", 8.50, 0.10),
@@ -66,12 +69,12 @@ ASSEMBLIES: dict[str, list[tuple[str, float]]] = {
     # conductor count is too -- an asymmetry here would be arbitrary rather
     # than a measurement, and FEET_PER_DEVICE is already openly a firm's
     # rule rather than a routed length.
-    # A fixture's rough-in does not depend on which fixture it turns out to
-    # be: the whip, the wire nuts, the conductors and the ground are the
-    # same whether the schedule later calls it a troffer or a pendant. So
-    # the generic fixture -- which is what every fixture-type letter on a
-    # real set resolves to until its schedule row is read -- carries the
-    # same assembly rather than being priced as a bare fixture.
+    #
+    # luminaire_generic carries the same rough-in as a named fixture, and
+    # must: it is what every fixture-type letter resolves to until its
+    # schedule row is read, so on a real set it is nearly every fixture.
+    # The whip, the wire nuts, the conductors and the ground do not depend
+    # on which fixture the schedule later says it is.
     "luminaire_generic": [("whip_6ft", 1), ("wirenut", 3.0),
                           ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
     "luminaire_troffer": [("whip_6ft", 1), ("wirenut", 3.0),
@@ -81,7 +84,9 @@ ASSEMBLIES: dict[str, list[tuple[str, float]]] = {
     "exit_sign": [("whip_6ft", 1), ("wirenut", 3.0),
                   ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
     # Gear is fed, not branch-wired: heavier conductor, no device trim.
-    "panel": [("thhn_10", FEET_PER_DEVICE * 3), ("emt_1_2", FEET_PER_DEVICE),
+    # #4 for the panel, which is the $850 line item where conductor size
+    # matters most; disconnect stays on #10, defensible for a small one.
+    "panel": [("thhn_4", FEET_PER_DEVICE * 3), ("emt_1_2", FEET_PER_DEVICE),
               ("conn_emt_1_2", 4.0), ("ground_12", FEET_PER_DEVICE)],
     "disconnect": [("thhn_10", FEET_PER_DEVICE), ("emt_1_2", FEET_PER_DEVICE / 2),
                    ("conn_emt_1_2", 2.0), ("ground_12", FEET_PER_DEVICE / 2)],

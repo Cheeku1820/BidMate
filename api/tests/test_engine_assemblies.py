@@ -67,6 +67,18 @@ def test_every_catalog_device_that_gets_installed_has_an_assembly():
     assert missing == [], f"catalog items with no assembly: {missing}"
 
 
+def test_gear_is_fed_with_a_feeder_conductor_not_branch_wire():
+    """A panelboard feeder on #10 is off by several conductor sizes, not a
+    rounding, and panel is the $850 line item where it matters most.
+    Everything else in the table is order-of-magnitude defensible."""
+    panel = {l.catalog_id for l in expand("panel", 1).lines}
+    assert "thhn_4" in panel
+    assert "thhn_12" not in panel and "thhn_10" not in panel, \
+        "a panel feeder is not branch wire"
+    # A small disconnect on #10 is defensible and deliberately unchanged.
+    assert "thhn_10" in {l.catalog_id for l in expand("disconnect", 1).lines}
+
+
 def test_a_box_does_not_carry_another_box():
     """junction_box shipped as catalog "Junction box" ($6.00, category
     Boxes) *plus* a box_4sq line in its assembly -- two boxes for one
@@ -98,7 +110,9 @@ def test_an_assembly_with_circuit_conductors_carries_a_ground():
     point whose conductors belong to the device assembly feeding through
     it -- grounding either here would double count.
     """
-    conductors = {"thhn_12", "thhn_10"}
+    # thhn_4 belongs here too: adding a feeder conductor without adding it
+    # to this set would quietly exempt panel from the rule it is under.
+    conductors = {"thhn_12", "thhn_10", "thhn_4"}
     for parent, lines in ASSEMBLIES.items():
         ids = {material_id for material_id, _qty in lines}
         if ids & conductors:

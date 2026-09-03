@@ -59,3 +59,13 @@ def test_every_catalog_device_that_gets_installed_has_an_assembly():
     unpriced = {"luminaire_generic"}  # a generic placeholder, intentionally bare
     missing = [cid for cid in CATALOG if cid not in ASSEMBLIES and cid not in unpriced]
     assert missing == [], f"catalog items with no assembly: {missing}"
+
+
+def test_every_installed_assembly_carries_a_ground():
+    """An equipment grounding conductor is not optional on a Division 26
+    installation. exit_sign shipped without one because nothing asserted
+    this -- a table this size needs the rule checked rather than eyeballed."""
+    grounds = {"ground_12"}
+    for parent, lines in ASSEMBLIES.items():
+        ids = {material_id for material_id, _qty in lines}
+        assert ids & grounds, f"{parent} has no grounding conductor"

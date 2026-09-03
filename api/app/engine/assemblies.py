@@ -57,12 +57,18 @@ ASSEMBLIES: dict[str, list[tuple[str, float]]] = {
                     ("emt_1_2", FEET_PER_DEVICE), ("conn_emt_1_2", 2.0)],
     "junction_box": [("box_4sq", 1), ("wirenut", 3.0),
                      ("emt_1_2", FEET_PER_DEVICE / 2), ("conn_emt_1_2", 2.0)],
-    # Fixtures land on a whip rather than a device plate.
+    # Fixtures land on a whip rather than a device plate, but they carry the
+    # same conductor model as a device: a switched hot, a neutral, and a
+    # ground over FEET_PER_DEVICE. The rule of thumb is uniform, so the
+    # conductor count is too -- an asymmetry here would be arbitrary rather
+    # than a measurement, and FEET_PER_DEVICE is already openly a firm's
+    # rule rather than a routed length.
     "luminaire_troffer": [("whip_6ft", 1), ("wirenut", 3.0),
-                          ("thhn_12", FEET_PER_DEVICE), ("ground_12", FEET_PER_DEVICE / 2)],
+                          ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
     "luminaire_highbay": [("whip_6ft", 1), ("wirenut", 3.0),
-                          ("thhn_10", FEET_PER_DEVICE), ("ground_12", FEET_PER_DEVICE / 2)],
-    "exit_sign": [("whip_6ft", 1), ("wirenut", 3.0), ("thhn_12", FEET_PER_DEVICE / 2)],
+                          ("thhn_10", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
+    "exit_sign": [("whip_6ft", 1), ("wirenut", 3.0),
+                  ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
     # Gear is fed, not branch-wired: heavier conductor, no device trim.
     "panel": [("thhn_10", FEET_PER_DEVICE * 3), ("emt_1_2", FEET_PER_DEVICE),
               ("conn_emt_1_2", 4.0), ("ground_12", FEET_PER_DEVICE)],

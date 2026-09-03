@@ -146,7 +146,13 @@ export default function EstimateDemo() {
                   <dt>Material factor</dt>
                   <dd className="tabular">{result.material_factor}×</dd>
                   <dt>Pricing</dt>
-                  <dd>{result.source === "llm" ? "Automated (Claude)" : "Regional table"}</dd>
+                  {/* What the number rests on, never which vendor computed
+                      it (CLAUDE.md: no model names anywhere in the
+                      product). "Estimated basis" is the tier label the
+                      Labor and Material pricing workspaces already use for
+                      exactly this source, so this reuses the product's own
+                      vocabulary rather than inventing another word. */}
+                  <dd>{result.source === "llm" ? "Estimated basis" : "Regional table"}</dd>
                 </dl>
                 <p className="muted">{result.location_note}</p>
                 {/* Branch wiring is estimated per device rather than routed

@@ -80,6 +80,7 @@ class PricedItem:
     labor_hours: float  # quantity * unit labor hours
     labor_cost: float  # labor_hours * blended rate
     total_direct_cost: float  # material_cost + labor_cost
+    assembly: "Assembly | None" = None  # the supporting material behind this item
 
 
 @dataclass

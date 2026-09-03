@@ -120,7 +120,7 @@ Return ONLY a JSON object, no prose, of this exact shape:
     {{
       "tag": "<the tag>",
       "name": "<catalog item name, e.g. '2x4 LED troffer', '20A duplex receptacle'>",
-      "catalog_id": "<the closest match from this list, or the string none: {catalog_ids}>",
+      "catalog_id": "<the catalog id if one on this list is genuinely the same kind of item, otherwise the string none: {catalog_ids}>",
       "system": "<Lighting|Power|Distribution|Low voltage|Life safety|Unknown>",
       "category": "<Fixtures|Devices|Boxes|Equipment|Unclassified>",
       "unit": "ea",

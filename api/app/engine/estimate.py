@@ -10,11 +10,14 @@ multiplies counts by unit costs here, in one place.
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from collections import defaultdict
 
 from . import assemblies, classification, counting, documents, llm, pricing, regions
 from .catalog import CATALOG
+
+logger = logging.getLogger(__name__)
 
 # llm._prompt() truncates whatever blob this function builds to its own
 # [:6000] before it ever reaches the model -- that slice, not any cap
@@ -34,6 +37,9 @@ NOTES_CAP = 1200
 # (schedule-notes, notes-context) can land before the notes block ends.
 _SEPARATOR_SLACK = 4
 CONTEXT_CAP = 12000
+# How many unmatched item names the basis note lists before summarising
+# the rest -- enough to act on, not enough to become a list.
+_NAMED_IN_NOTE = 3
 
 # Any run of "===...===", wherever it sits within a line -- not only a
 # line composed of nothing else, and not anchored to whitespace of a
@@ -214,9 +220,17 @@ def _wiring_note(assembly_applied: bool, bare_names: set[str]) -> str:
         subject = f"{n} item types" if n != 1 else "1 item type"
         verb = "were" if n != 1 else "was"
         pronoun = "them" if n != 1 else "it"
+        # Named, not just counted: "2 item types" tells an estimator a
+        # correction is needed but not where to make it, and the point of
+        # this sentence is that the low line can be found. Capped at three
+        # so a bad set cannot turn the basis note into a list.
+        shown = sorted(bare_names)[:_NAMED_IN_NOTE]
+        listed = ", ".join(shown)
+        if n > len(shown):
+            listed += f" and {n - len(shown)} others"
         parts.append(
-            f"{subject} could not be matched to a standard assembly and {verb} priced "
-            f"as the device alone, with no box, wire or conduit behind {pronoun}."
+            f"{subject} ({listed}) could not be matched to a standard assembly and {verb} "
+            f"priced as the device alone, with no box, wire or conduit behind {pronoun}."
         )
     return " ".join(parts)
 
@@ -287,7 +301,13 @@ def _compute(path: str, location: str, context: str = "", estimator_notes: list[
             source = "llm"
         except Exception as exc:  # noqa: BLE001 -- any failure falls back, demo must not break
             used_llm = False
-            location_note += f"  (Automated pricing unavailable: {type(exc).__name__}; used regional table.)"
+            # The exception class name is a processing internal and used to
+            # render verbatim ("...unavailable: JSONDecodeError..."), which
+            # ROADMAP invariant 7 stops at the API boundary. It is logged
+            # server-side, where it is useful, and the estimator is told the
+            # thing they can act on: which cost basis the number came from.
+            logger.warning("automated pricing unavailable (%s); used regional table", type(exc).__name__)
+            location_note += "  Automated pricing wasn't available, so regional cost data was used."
 
     if not used_llm:
         classified = classification.classify(clusters, sheets)
@@ -428,6 +448,17 @@ def _model_warning(raw: dict | None, tag: str, count: int, sheet_no: str) -> dic
     }
 
 
+def _num(value) -> float:
+    """A model-supplied number, or 0.0. Model output is data: a string, a
+    null, or a nonsense value must not raise out of the middle of a
+    takeoff, and reading it as zero fails toward "unpriced", which is the
+    direction pricing.py already refuses to guess in."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def resolve_assembly_parent(spec: dict) -> str | None:
     """Which catalog item's assembly belongs to a model-classified row --
     the box, plate, wire and conduit it drags along -- or None.
@@ -471,8 +502,32 @@ def resolve_assembly_parent(spec: dict) -> str | None:
     beats a confident total carrying rough-in for the wrong item. It is
     not left silent either. `_compute` counts these and the project's
     basis note says how many were priced that way.
+
+    The opposite direction is refused outright. The prompt tells the model
+    two separate things about a non-device tag -- report it Unclassified
+    with no material and no hours, *and* pick catalog_id "none" -- and
+    obeying the first without the second turned a $0 row into a full
+    receptacle rough-in. On the real set 18 of 45 clusters are exactly
+    those tags (VA, CKT, AMP, USB, NOT, OFF), so this is the common case
+    rather than an edge one. A row the classifier itself declined to
+    price gets no assembly: pricing.py's principle is that an unpriced
+    visible item is recoverable and a fabricated price in a submitted bid
+    is not, and an `attention` status riding along is a mitigation, not a
+    guard.
     """
-    raw = str(spec.get("catalog_id") or "").strip()
+    # Checked before any resolution, because the question "which assembly"
+    # does not arise for an item the classifier did not treat as a device.
+    if str(spec.get("category") or "").strip().casefold() == "unclassified":
+        return None
+    if _num(spec.get("material_cost")) <= 0 and _num(spec.get("labor_hours")) <= 0:
+        return None
+
+    raw = str(spec.get("catalog_id") or "").strip().casefold()
+    # An explicit opt-out is an answer, not a gap: the name resolver must
+    # not overturn it. Without this, a model that correctly declined to
+    # pick an id had its decision reversed by its own item name.
+    if raw == "none":
+        return None
     if raw in CATALOG:
         return raw
     name = str(spec.get("name") or "").strip().casefold()
@@ -490,8 +545,8 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
     # book's. material_factor applies once, to the whole figure -- a reel
     # of #12 costs 45% more in Unalaska exactly as the receptacle does.
     asm = assemblies.expand(assembly_parent, qty) if assembly_parent else None
-    device_material = float(spec.get("material_cost", 0) or 0) * qty
-    device_hours = float(spec.get("labor_hours", 0) or 0) * qty
+    device_material = _num(spec.get("material_cost")) * qty
+    device_hours = _num(spec.get("labor_hours")) * qty
     material = round((device_material + (asm.material_cost if asm else 0.0)) * material_factor, 2)
     hours = round(device_hours + (asm.labor_hours if asm else 0.0), 2)
     labor = round(hours * labor_rate, 2)

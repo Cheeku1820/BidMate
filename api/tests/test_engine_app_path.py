@@ -166,7 +166,10 @@ def test_the_symbol_field_is_not_used_as_the_assembly_key():
 
     assert CATALOG["panel"].symbol == CATALOG["disconnect"].symbol
     assert expand("panel", 1).material_cost > expand("disconnect", 1).material_cost * 5
-    assert estimate.resolve_assembly_parent({"symbol": "receptacle", "name": "Something else"}) is None
+    assert estimate.resolve_assembly_parent(
+        {"symbol": "receptacle", "name": "Something else", "category": "Devices",
+         "material_cost": 40.0, "labor_hours": 0.9}
+    ) is None
 
 
 def test_a_model_classified_row_carries_its_assembly():
@@ -300,6 +303,81 @@ def test_the_model_path_discloses_what_it_could_not_rough_in(monkeypatch):
     for row in rows:
         assert row["material_cost"] == pytest.approx(
             40.0 * row["quantity"] * meta["material_factor"], abs=0.02)
-    assert "1 item type could not be matched" in meta["wiring_note"]
+    assert "1 item type (Nurse call station) could not be matched" in meta["wiring_note"]
     assert "30 feet per device" not in meta["wiring_note"], \
         "nothing carried an assembly, so nothing assumed a wiring length"
+
+
+# --- an item the classifier declined to price gets no assembly ----------
+
+
+UNCLASSIFIED_SPEC = {
+    "tag": "VA", "name": "20A duplex receptacle", "catalog_id": "receptacle_20a",
+    "system": "Unknown", "category": "Unclassified", "unit": "ea",
+    "material_cost": 0, "labor_hours": 0, "confidence": "low",
+}
+
+
+def test_an_item_the_model_reported_unclassified_gets_no_assembly():
+    """The prompt tells the model two things about a non-device tag: report
+    it Unclassified with no cost, and pick catalog_id "none". Obeying the
+    first and not the second turned a $0 row into a full receptacle
+    rough-in -- $2,773.64 on a 12-count VA tag at the Unalaska index.
+
+    18 of the 45 clusters on the real set are exactly these tags, so this
+    is the common case rather than an edge one, and it runs opposite to
+    every other refusal in the engine: pricing.py declines to guess a
+    price for an unclassified item, and this fabricated one."""
+    assert estimate.resolve_assembly_parent(UNCLASSIFIED_SPEC) is None
+
+    row = estimate._row_from_spec(
+        UNCLASSIFIED_SPEC, _cluster("VA", 12), [SHEET], 110.0, 1.45,
+        estimate.resolve_assembly_parent(UNCLASSIFIED_SPEC),
+    )
+    assert row["material_cost"] == 0
+    assert row["labor_hours"] == 0
+    assert row["total_cost"] == 0
+
+
+def test_an_item_priced_at_zero_gets_no_assembly_whatever_its_category():
+    """The category is one signal and the cost is the other. A model that
+    labels a junk tag "Devices" but prices it at nothing has still
+    declined to treat it as a device."""
+    spec = {**UNCLASSIFIED_SPEC, "system": "Power", "category": "Devices"}
+    assert estimate.resolve_assembly_parent(spec) is None
+
+
+def test_a_real_device_is_unaffected_by_the_guard():
+    """The guard must refuse only what the classifier refused."""
+    assert estimate.resolve_assembly_parent(SPEC) == "receptacle_20a"
+
+
+def test_an_explicit_none_is_not_overturned_by_the_item_name():
+    """"none" is an answer, not a gap. The name resolver exists for a
+    response that omitted the id, not to reverse one that declined it."""
+    spec = {**SPEC, "catalog_id": "none"}
+    assert estimate.resolve_assembly_parent(spec) is None
+
+
+def test_a_catalog_id_resolves_whatever_its_case():
+    assert estimate.resolve_assembly_parent({**SPEC, "catalog_id": "PANEL"}) == "panel"
+    assert estimate.resolve_assembly_parent({**SPEC, "catalog_id": " Receptacle_20A "}) == "receptacle_20a"
+
+
+def test_a_nonsense_cost_reads_as_unpriced_rather_than_raising():
+    """Model output is data. A string where a number belongs must not
+    raise out of the middle of a takeoff, and reading it as zero fails
+    toward unpriced -- the direction the engine already refuses in."""
+    assert estimate.resolve_assembly_parent({**SPEC, "material_cost": "n/a", "labor_hours": None}) is None
+
+
+def test_the_note_names_the_items_it_could_not_match():
+    """A count tells an estimator a correction is needed; a name tells
+    them where. Capped so a bad set cannot turn the basis note into a
+    list."""
+    one = estimate._wiring_note(True, {"Wall pack"})
+    assert "(Wall pack)" in one
+
+    many = estimate._wiring_note(True, {"Wall pack", "Nurse call station", "Isolated power panel", "Patient headwall"})
+    assert "and 1 others" in many or "and 1 other" in many
+    assert "Isolated power panel" in many

@@ -31,7 +31,16 @@ NATIONAL = (78.0, 1.00)
 def lookup(location: str) -> tuple[float, float, str]:
     """Returns (labor_rate, material_factor, note) for a location string."""
     up = (location or "").upper()
-    for key, (rate, factor) in _TABLE.items():
-        if key in up:
-            return rate, factor, f"Rate based on {location} area cost data."
+    # Longest match wins. Scanning in insertion order let the two-letter
+    # state code shadow every city under it -- "AK" matches inside
+    # "UNALASKA, AK" and is listed first, so "UNALASKA" and "ANCHORAGE"
+    # were both unreachable and the whole city half of this table was
+    # dead. Sorting the table by hand would have fixed the symptom and
+    # left the same trap for whoever adds the next city; preferring the
+    # most specific key that matches removes the ordering dependency
+    # altogether.
+    matches = [(key, value) for key, value in _TABLE.items() if key in up]
+    if matches:
+        _key, (rate, factor) = max(matches, key=lambda kv: len(kv[0]))
+        return rate, factor, f"Rate based on {location} area cost data."
     return (*NATIONAL, "National average rate (no local data matched).")

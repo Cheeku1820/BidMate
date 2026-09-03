@@ -33,19 +33,32 @@ def test_proposal_carries_targets_and_never_a_write():
 
 
 def test_assembly_rounding_is_load_bearing():
-    """Values chosen to produce real floating-point residue, so this fails
-    if material_cost stops rounding to 2 places or labor_hours to 3. The
-    simple case above passes at any precision, which makes it readable but
-    not a guard -- assemblies feed every material total, so the contract
-    needs one test that actually holds it."""
+    """Values chosen so the 2-decimal and 3-decimal roundings genuinely
+    differ, which the simple case above cannot show: its numbers are float
+    exact, so it passes at any precision. Assemblies feed every material
+    total, so the contract needs one test that actually holds it.
+
+    material: 0.185*3 + 0.125*1 = 0.6799999999999999 -> 0.68 at 2 places,
+    0.680 at 3; the residue is real, and the third decimal line below shows
+    why precision matters.
+    labor:    0.0013*3 + 0.0 = 0.0039 -> 0.004 at 3 places, 0.00 at 2.
+    """
     a = Assembly(parent_catalog_id="receptacle_20a", lines=[
-        AssemblyLine("thhn_12", "#12 THHN", 3, "ft", 0.1, 0.0013),
-        AssemblyLine("wirenut", "Wire connector", 7, "ea", 0.1, 0.0013),
+        AssemblyLine("thhn_12", "#12 THHN", 3, "ft", 0.185, 0.0013),
+        AssemblyLine("wirenut", "Wire connector", 1, "ea", 0.125, 0.0),
     ])
-    # raw material sum is 0.1*3 + 0.1*7 = 1.0000000000000002 in float
-    assert a.material_cost == 1.0
-    # raw hours sum is 0.0013*3 + 0.0013*7 = 0.013000000000000001 -> 0.013 at 3 places
-    assert a.labor_hours == 0.013
+    assert a.material_cost == 0.68
+    assert a.labor_hours == 0.004
+
+
+def test_assembly_material_cost_keeps_two_decimals_not_three():
+    """A material sum carrying a third decimal must land on cents. If
+    material_cost rounded to 3 places instead, this returns 0.555 rather
+    than 0.55 -- a half-cent error repeated across every line of a takeoff."""
+    a = Assembly(parent_catalog_id="x", lines=[
+        AssemblyLine("thhn_12", "#12 THHN", 3, "ft", 0.185, 0.0),
+    ])
+    assert a.material_cost == 0.55, "material must round to cents, not thousandths"
 
 
 def test_assembly_labor_hours_keeps_three_decimals_not_two():

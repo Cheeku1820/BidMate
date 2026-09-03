@@ -24,18 +24,25 @@ v1 matches phrasing deterministically. A language version replaces
 
 from __future__ import annotations
 
+import re
+
 from .contracts import Proposal
 
 INTENTS = ("reclassify", "exclude", "set_context", "unknown")
 
-_EXCLUDE = ("ignore", "existing to remain", "not in contract", "not doing",
-            "exclude", "out of scope", "by others")
+_EXCLUDE = ("ignore", "existing", "existing to remain", "not in contract",
+            "not doing", "exclude", "out of scope", "by others")
 _RECLASSIFY = ("are all", "is a", "are type", "all type", "these are", "should be")
 _CONTEXT = ("ceiling", "feet", "height", "mounting", "voltage", "in here")
 
 
 def _match(text: str, needles: tuple[str, ...]) -> bool:
-    return any(n in text for n in needles)
+    """Word-boundary matching, not substring. An unanchored `"is a" in text`
+    fires inside "th-is a-rea", which routed "the ceiling in this area is 14
+    feet" -- a near-verbatim rewording of the design spec's own worked
+    example -- to reclassify instead of set_context. Routing is this agent's
+    only job, so a phrase must match as words or not at all."""
+    return any(re.search(rf"\b{re.escape(n)}\b", text) for n in needles)
 
 
 def route(message: str, anchor_item_ids: list[str]) -> Proposal:
@@ -47,6 +54,11 @@ def route(message: str, anchor_item_ids: list[str]) -> Proposal:
 
     # Exclusion is checked first: "ignore these, they're type F" is a scope
     # exclusion that happens to name a type, not a reclassification.
+    #
+    # "existing" is in _EXCLUDE on its own, not only as "existing to
+    # remain": on a drawing set an estimator saying an area "is existing"
+    # is excluding it. Without it, word-boundary matching routes "this
+    # area is existing" to unknown rather than exclude.
     if _match(text, _EXCLUDE):
         return Proposal(intent="exclude", target_item_ids=targets, field="status",
                         value="rejected",

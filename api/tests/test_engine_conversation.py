@@ -88,8 +88,28 @@ def test_the_module_imports_nothing_that_could_write():
     # relative import (level=1), which ast reports with module="contracts",
     # not "app.engine.contracts". That one import is the record this agent
     # hands off; nothing else in the module imports anything.
-    allowed = {"__future__", "contracts"}
+    # "re" is the standard-library regex module, added when _match moved
+    # from substring to word-boundary matching. It is pure text matching
+    # with no I/O, so it does not widen the write surface this test guards.
+    allowed = {"__future__", "re", "contracts"}
     assert imported <= allowed, f"conversation.py imports beyond its boundary: {imported - allowed}"
+
+
+def test_a_phrase_only_matches_as_words_not_as_a_substring():
+    """`"is a" in text` fires inside "th-is a-rea". Both cases below routed
+    to reclassify, and the first is a near-verbatim rewording of the design
+    spec's own worked example for project context. Routing is this agent's
+    only job, so these are the regression."""
+    assert route("the ceiling in this area is 14 feet", ["x"]).intent == "set_context"
+    assert route("this area is existing", ["x"]).intent == "exclude"
+    assert route("mounting height is 12 feet", ["x"]).intent == "set_context"
+
+
+def test_a_real_reclassification_still_routes_to_reclassify():
+    """The word-boundary fix must not cost the phrasings it exists to
+    protect: "is a" as actual words still routes to reclassify."""
+    assert route("this one is a junction box", ["x"]).intent == "reclassify"
+    assert route("these six are all type F", ["x"]).intent == "reclassify"
 
 
 def test_no_anchor_yields_an_empty_target_list_not_a_guess():

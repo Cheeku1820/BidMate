@@ -28,6 +28,20 @@ def test_every_priced_device_carries_its_assembly():
     assert all(p.assembly is not None for p in priced)
 
 
+def test_no_priced_item_is_missing_its_assembly():
+    """A priced item with no assembly is a device costed bare -- no box, no
+    wire, no conduit. Every fixture on this set was priced that way because
+    luminaire_generic had no assembly entry and the coverage test whitelisted
+    it. `test_every_priced_device_carries_its_assembly` did not catch it:
+    an item with no assembly lines still carries a non-None Assembly."""
+    from app.engine import pipeline
+
+    result = pipeline.run(BID, labor_rate=68.0)
+    bare = [p for p in result.items
+            if p.total_direct_cost > 0 and (p.assembly is None or not p.assembly.lines)]
+    assert bare == [], f"{len(bare)} priced items carry no assembly"
+
+
 def test_wire_and_conduit_reach_the_total():
     """The material an electrical estimator most needs and the engine
     previously omitted entirely."""

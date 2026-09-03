@@ -63,6 +63,14 @@ ASSEMBLIES: dict[str, list[tuple[str, float]]] = {
     # conductor count is too -- an asymmetry here would be arbitrary rather
     # than a measurement, and FEET_PER_DEVICE is already openly a firm's
     # rule rather than a routed length.
+    # A fixture's rough-in does not depend on which fixture it turns out to
+    # be: the whip, the wire nuts, the conductors and the ground are the
+    # same whether the schedule later calls it a troffer or a pendant. So
+    # the generic fixture -- which is what every fixture-type letter on a
+    # real set resolves to until its schedule row is read -- carries the
+    # same assembly rather than being priced as a bare fixture.
+    "luminaire_generic": [("whip_6ft", 1), ("wirenut", 3.0),
+                          ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
     "luminaire_troffer": [("whip_6ft", 1), ("wirenut", 3.0),
                           ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
     "luminaire_highbay": [("whip_6ft", 1), ("wirenut", 3.0),

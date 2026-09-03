@@ -53,11 +53,17 @@ def test_every_assembly_line_names_a_known_material():
 
 def test_every_catalog_device_that_gets_installed_has_an_assembly():
     """A device with no assembly is priced as a bare device, which
-    understates it. This asserts the gap is deliberate, not forgotten."""
+    understates it.
+
+    This test previously carried a whitelist exempting `luminaire_generic`
+    as "a generic placeholder, intentionally bare" -- and that id is what
+    every fixture-type letter on a real set resolves to, so the exemption
+    hid 97 fixture units being priced with no whip, no wire and no ground.
+    There is no whitelist now: every catalog item an estimator can be shown
+    is an item that gets installed, so every one needs an assembly."""
     from app.engine.catalog import CATALOG
 
-    unpriced = {"luminaire_generic"}  # a generic placeholder, intentionally bare
-    missing = [cid for cid in CATALOG if cid not in ASSEMBLIES and cid not in unpriced]
+    missing = [cid for cid in CATALOG if cid not in ASSEMBLIES]
     assert missing == [], f"catalog items with no assembly: {missing}"
 
 

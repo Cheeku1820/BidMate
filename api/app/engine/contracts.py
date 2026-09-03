@@ -104,3 +104,61 @@ class TakeoffResult:
     @property
     def total_direct_cost(self) -> float:
         return round(sum(p.total_direct_cost for p in self.items), 2)
+
+
+@dataclass
+class LegendEntry:
+    """Documents agent output: one row of a legend or abbreviations block,
+    read as structured data rather than left as a wall of text. `kind`
+    separates a drawn symbol ("S" = single pole switch) from a written
+    abbreviation ("WP" = weatherproof), because the two mean different
+    things to Classification: a symbol names a device, an abbreviation
+    usually modifies one."""
+
+    symbol: str
+    description: str
+    kind: str  # "symbol" | "abbreviation"
+
+
+@dataclass
+class AssemblyLine:
+    """One material line inside an assembly -- the box, the connector, the
+    wire. Division 26 only."""
+
+    catalog_id: str
+    name: str
+    quantity: float
+    unit: str
+    material_cost: float  # dollars per unit
+    labor_hours: float  # crew hours per unit
+
+
+@dataclass
+class Assembly:
+    """Pricing agent output: what a device actually costs to install once
+    its supporting material is counted. A receptacle is not a receptacle --
+    it is a receptacle, a box, a plate, wire, and connectors (spec 2.4)."""
+
+    parent_catalog_id: str
+    lines: list[AssemblyLine] = field(default_factory=list)
+
+    @property
+    def material_cost(self) -> float:
+        return round(sum(l.material_cost * l.quantity for l in self.lines), 2)
+
+    @property
+    def labor_hours(self) -> float:
+        return round(sum(l.labor_hours * l.quantity for l in self.lines), 3)
+
+
+@dataclass
+class Proposal:
+    """Conversation agent output. It proposes; a person applies it through
+    the same path a manual edit takes (spec 2.5, ROADMAP invariant 9).
+    Deliberately carries no method that writes anything."""
+
+    intent: str  # "reclassify" | "exclude" | "set_context" | "unknown"
+    target_item_ids: list[str]
+    field: str
+    value: str
+    summary: str

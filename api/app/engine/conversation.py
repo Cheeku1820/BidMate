@@ -30,7 +30,7 @@ from .contracts import Proposal
 
 INTENTS = ("reclassify", "exclude", "set_context", "unknown")
 
-_EXCLUDE = ("ignore", "existing", "existing to remain", "not in contract",
+_EXCLUDE = ("ignore", "is existing", "existing to remain", "not in contract",
             "not doing", "exclude", "out of scope", "by others")
 _RECLASSIFY = ("are all", "is a", "are type", "all type", "these are", "should be")
 _CONTEXT = ("ceiling", "feet", "height", "mounting", "voltage", "in here")
@@ -55,10 +55,16 @@ def route(message: str, anchor_item_ids: list[str]) -> Proposal:
     # Exclusion is checked first: "ignore these, they're type F" is a scope
     # exclusion that happens to name a type, not a reclassification.
     #
-    # "existing" is in _EXCLUDE on its own, not only as "existing to
-    # remain": on a drawing set an estimator saying an area "is existing"
-    # is excluding it. Without it, word-boundary matching routes "this
-    # area is existing" to unknown rather than exclude.
+    # The needle is "is existing", not a bare "existing": on a drawing set
+    # an estimator saying an area "is existing" is excluding it, and
+    # without any needle for that phrasing word-boundary matching routes
+    # "this area is existing" to unknown. But a bare "existing" is a
+    # modifier that appears in sentences meaning the opposite -- "replace
+    # the existing panel" is scope being *added*, and "these are all type
+    # F in the existing wing" is a reclassification -- and because
+    # _EXCLUDE is tested first, both were captured as exclusions. The
+    # predicate an estimator actually uses to exclude is "is existing";
+    # "existing" as an adjective in front of a noun is not one.
     if _match(text, _EXCLUDE):
         return Proposal(intent="exclude", target_item_ids=targets, field="status",
                         value="rejected",

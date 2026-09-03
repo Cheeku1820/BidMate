@@ -105,6 +105,19 @@ def test_a_phrase_only_matches_as_words_not_as_a_substring():
     assert route("mounting height is 12 feet", ["x"]).intent == "set_context"
 
 
+def test_existing_as_an_adjective_is_not_an_exclusion():
+    """A bare "existing" needle in _EXCLUDE over-captured. _EXCLUDE is
+    tested before _RECLASSIFY, so every sentence that merely *mentions*
+    existing work was routed to exclude -- including one that adds scope
+    and one that is a reclassification. "is existing" is the predicate an
+    estimator uses to exclude; "existing" in front of a noun is not."""
+    assert route("replace the existing panel", ["x"]).intent != "exclude"
+    assert route("these are all type F in the existing wing", ["x"]).intent == "reclassify"
+    # The finding the needle was added for still routes correctly.
+    assert route("this area is existing", ["x"]).intent == "exclude"
+    assert route("ignore this wing, it's existing to remain", ["x"]).intent == "exclude"
+
+
 def test_a_real_reclassification_still_routes_to_reclassify():
     """The word-boundary fix must not cost the phrasings it exists to
     protect: "is a" as actual words still routes to reclassify."""

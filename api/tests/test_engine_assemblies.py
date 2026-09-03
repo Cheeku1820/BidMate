@@ -61,11 +61,20 @@ def test_every_catalog_device_that_gets_installed_has_an_assembly():
     assert missing == [], f"catalog items with no assembly: {missing}"
 
 
-def test_every_installed_assembly_carries_a_ground():
-    """An equipment grounding conductor is not optional on a Division 26
-    installation. exit_sign shipped without one because nothing asserted
-    this -- a table this size needs the rule checked rather than eyeballed."""
-    grounds = {"ground_12"}
+def test_an_assembly_with_circuit_conductors_carries_a_ground():
+    """The rule is not "everything has a ground" -- it is that you never run
+    current-carrying conductors without an equipment grounding conductor
+    beside them. exit_sign shipped with thhn_12 and no ground because
+    nothing checked this.
+
+    Assemblies with no circuit conductor are exempt by the rule itself,
+    not by an exemption list: data_outlet is a Division 26 rough-in for a
+    Division 27 cable another trade pulls, and junction_box is a splice
+    point whose conductors belong to the device assembly feeding through
+    it -- grounding either here would double count.
+    """
+    conductors = {"thhn_12", "thhn_10"}
     for parent, lines in ASSEMBLIES.items():
         ids = {material_id for material_id, _qty in lines}
-        assert ids & grounds, f"{parent} has no grounding conductor"
+        if ids & conductors:
+            assert "ground_12" in ids, f"{parent} runs conductors with no ground"

@@ -57,93 +57,61 @@ def _in_region(x: float, y: float, region: tuple[float, float, float, float]) ->
 
 # A condensed/narrow font is the typographic choice a title-block stamp
 # uses to fit ring text around a seal -- an ordinary device tag is set in
-# the sheet's regular annotation font. See `_stamp_points` for why this
-# replaced a rotation check.
+# the sheet's regular annotation font.
 _CONDENSED_FONT = "narrow"
 
 # A professional engineer's seal draws its ring text in two concentric
 # passes -- one in the condensed font, one in the sheet's regular font --
 # so a lone condensed-font check leaves the inner ring's glyphs still
-# tag-shaped and still counted. Every stamp glyph measured on the real set
-# sat within 71pt of its nearest condensed-font neighbour; every real
-# device tag measured sat over 500pt away. 100pt sits in the middle of
-# that gap with wide margin either side (identical results from 75pt to
-# 150pt -- see `_stamp_points`), so it is a threshold, not a tuning.
+# tag-shaped and still counted. Measured on the real set: the farthest a
+# removed seal glyph sat from its nearest condensed-font neighbour was
+# 71.1pt; the nearest a real, correctly-kept device tag sat was 212.3pt
+# ("ASJ" on E0.2). 100pt sits in that empty band with wide margin on both
+# sides -- identical results from 75pt to 150pt -- so it is a separator
+# between two well-apart clusters, not a fitted number.
 _STAMP_RADIUS = 100.0
+
+# A stamp occupies a small share of a sheet's text. Measured on the real
+# set: the seal's own condensed spans peak at 32/134 = 23.9% of a sheet's
+# total spans (E6.1, page_index 83, its sparsest sheet). 0.25 sits just
+# above that, so a real stamp always passes, while a sheet whose ordinary
+# device tags are themselves set in a condensed font -- the failure this
+# guards against -- would clear it easily, since tags are most of a
+# sheet's text once titles and notes are set aside.
+_MAX_STAMP_SHARE = 0.25
+
+# ...and a small part of the page, not scattered across it. Measured: the
+# seal's condensed spans span 43x104pt, identical on all 14 sheets, on a
+# 2448x1584pt page.
+_MAX_STAMP_EXTENT = 400.0
 
 
 def _stamp_points(page) -> set[tuple[int, int]]:
     """Centres of every text span that belongs to a title-block seal or
-    stamp, not to a device tag. (Function name kept as the brief's
-    `_rotated_points` would suggest a rotation check; see the deviation
-    note below for why this checks font and proximity instead.)
+    stamp, not to a device tag.
 
-    Original design (brief task-3): a drafter sets a device tag
-    horizontally, so text on a curve -- the perimeter of a professional
-    engineer's seal, a north arrow -- should be identifiable from
-    `line["dir"]` in `get_text("dict")`. Two problems surfaced verifying
-    that against the real set (spec 11.2's "87 placements across 14
-    sheets"):
+    Signal: font (a condensed face is the seal ring's typographic
+    signature -- see `_CONDENSED_FONT`) plus proximity (a small inner ring
+    is set in the ordinary font, caught by nearness to a confirmed
+    condensed-font glyph -- see `_STAMP_RADIUS`). This replaced an
+    earlier design based on `line["dir"]` from `get_text("dict")` --
+    rejecting text whose line isn't horizontal -- which proved unreliable
+    for isolated single-character spans on this document (a verified,
+    upright real device tag reported a raw `dir` of 45 degrees) and
+    removed real devices along with the seal. Full chronicle of that
+    investigation, with measurements, is in task-3-report.md rather than
+    here, since it documents a path not taken rather than the mechanism
+    that shipped.
 
-    1. `line["dir"]` is reported in the page's *unrotated* content-stream
-       space, but this set is 90 degrees rotated (`page.rotation == 90`)
-       and `get_text("words")` bboxes -- what a `dir`-based filter would
-       get matched against -- are already in display (rotated) space.
-       Testing `abs(dy) <= 0.01` against the raw `dir` flagged 330 of 482
-       words on E1.1 as "rotated," including its ordinary horizontal
-       tags, and emptied the sheet outright. Transforming `dir` through
-       `page.rotation_matrix` fixes that specific symptom.
-
-    2. That fix is not sufficient by itself. `line["dir"]` for a line
-       holding a single character -- which is what every tag-shaped
-       candidate is, real device tag or seal glyph alike, per the
-       brief's own description of the seal ("each letter... stands alone
-       on its own text line") -- is unreliable on this document even
-       after the rotation-matrix correction: the same upright,
-       correctly-placed letter reports different `dir` values in
-       different instances (e.g. "F" was seen at (0.707, -0.707),
-       (0.0, -1.0), and (-0.707, -0.707) across its six real placements
-       on sheet E4.1), and a verified real "F" device tag next to a
-       demolition symbol at (696, 1287) on that sheet -- confirmed
-       upright by rendering the page -- reports a raw `dir` of exactly
-       45 degrees. Applied document-wide, the rotation-matrix-corrected
-       filter removed 499 of 812 placements (61%), not the ~87 (11%) the
-       brief's design spec measured, taking real devices with it. This
-       is most likely MuPDF's line-grouping conflating nearby, unrelated
-       single-character spans on a dense CAD sheet -- not evidence that
-       these tags are genuinely rotated.
-
-    Rotation was therefore replaced with font: the seal's outer ring is
-    set in `ArialNarrow` at a consistent ~8.26pt, confined to an
-    identical 43x104pt bounding box (x: 956-999, y: 47-151) repeated
-    verbatim on every one of the 14 electrical sheets (32 `ArialNarrow`
-    spans/sheet, 448 total -- a single reused stamp graphic, not
-    scattered devices). Every sampled real device tag, including the "F"
-    above, is set in plain `Arial`. `ArialNarrow` is the *only* condensed
-    font anywhere in the document (`Arial`, `Arial,Bold`, `CenturyGothic`,
-    `CenturyGothic,Bold`, `Calibri,Bold`, `Helvetica-Bold`, `Symbol`,
-    `RomanS` are the rest), so this is not tuned to one coordinate
-    window; it is the seal's actual typographic signature.
-
-    Font alone still left 4 of the seal's inner-ring characters in plain
-    `Arial` -- e.g. an "A" at (909, 53) -- passing every other filter, so
-    a sheet with the seal still failed the zero-glyphs assertion. Those
-    residual glyphs sit within `_STAMP_RADIUS` of the confirmed
-    `ArialNarrow` ring (58-71pt away); every real device tag checked sits
-    over 500pt from it. This is a text-layer proximity check against a
-    signature the filter already found on the page, not a check against
-    drawn vector geometry, so it does not revive the rejected "adjacent
-    vector geometry" filter (spec 11.2), and it does not change how
-    placements are found -- still the text layer, not shape clustering --
-    so it does not cross into Tier-B geometry counting either.
-
-    Measured impact of the combined font-and-proximity filter across the
-    real set: 574 of 812 raw tag-shaped candidates removed, identically
-    41 per sheet across all 14 sheets regardless of each sheet's actual
-    floor-plan content -- strong evidence the filter is isolating one
-    reused stamp graphic and nothing sheet-specific. This is a materially
-    larger removal than the brief's ~87 estimate; see the task report for
-    the full accounting.
+    Guarded against the opposite failure: if the condensed-font spans are
+    most of a sheet's text, or spread widely across it, there is no stamp
+    -- the sheet simply uses a condensed face for its ordinary annotation,
+    and returning anything here would silently delete every device tag on
+    it with no cluster, no warning, no `unreadable_reason`. An unfiltered
+    seal is recoverable (a reviewer sees phantom devices and rejects
+    them); a deleted sheet is not, and silence reads as completeness
+    (BUILD-STAGES stage 1). See `_MAX_STAMP_SHARE` and
+    `_MAX_STAMP_EXTENT`.
 
     Positions are rounded to whole points so they can be matched against
     the word list, which reports the same coordinates.
@@ -158,6 +126,23 @@ def _stamp_points(page) -> set[tuple[int, int]]:
                 spans.append(centre)
                 if _CONDENSED_FONT in span["font"].lower():
                     condensed.append(centre)
+
+    total_spans = len(spans)
+
+    # A stamp is a small, localised minority of a sheet's text. If the
+    # condensed spans are most of the page, or spread across it, then the
+    # sheet simply uses a narrow face for its ordinary annotation and
+    # there is no stamp here -- return nothing rather than deleting the
+    # drawing. Getting this wrong in the other direction is recoverable:
+    # an unfiltered seal shows up as phantom devices a reviewer can see
+    # and reject. Deleting real tags is silent, and silence reads as
+    # completeness (BUILD-STAGES stage 1).
+    if not condensed or len(condensed) > total_spans * _MAX_STAMP_SHARE:
+        return set()
+    xs = [p[0] for p in condensed]
+    ys = [p[1] for p in condensed]
+    if (max(xs) - min(xs)) > _MAX_STAMP_EXTENT or (max(ys) - min(ys)) > _MAX_STAMP_EXTENT:
+        return set()
 
     out: set[tuple[int, int]] = set()
     for cx, cy in spans:

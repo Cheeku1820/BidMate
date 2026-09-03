@@ -40,16 +40,32 @@ def test_wire_and_conduit_reach_the_total():
 
 
 def test_the_seal_is_gone_from_the_whole_set():
-    """Measured against the real Unalaska set, the engineer's-seal glyph
-    accounts for roughly 41 spurious placements per sheet across all 14
-    sheets (design spec 11.2) -- about 509 in total. Before the rotation
-    filter (Task 3), the raw count across the set was 812; with the filter
-    applied it is 303. The threshold below is deliberately loose (a
-    measured fact, not a tuned one) -- it only needs to distinguish
-    "the seal filter is wired up" from "it silently regressed," not pin
-    the exact count sheet layout changes could shift."""
+    """Measured against the real Unalaska set, the rotation filter removes
+    509 placements across the 14 sheets -- about 36 per sheet on average
+    (509 / 14), mostly the engineer's-seal glyph (design spec 11.2's
+    earlier estimate of 41 candidates per sheet was Task 3's starting
+    figure, not the measured removed count). Before the filter, the raw
+    count across the set was 812; with it applied, 303. The threshold is
+    tightened to a measured fact rather than a loose bound: 800 would
+    tolerate restoring 496 of the 509 removed placements and still pass.
+    400 leaves headroom for sheet-layout variance while still catching a
+    real regression in the filter."""
     from app.engine import counting, documents
 
     sheets = documents.detect_sheets(BID)
     total = sum(c.count for c in counting.count(BID, sheets))
-    assert total < 800, f"expected the seal's ~509 placements gone from 812, got {total}"
+    assert total < 400, f"expected the rotation filter's ~509 removed placements to hold (812 -> 303), got {total}"
+
+
+def test_the_takeoff_prices_the_devices_it_counted():
+    """total_direct_cost > 0 was true at $1,643 while 43 of 45 items were
+    silently zeroed, so it pins nothing. Junction box is the check: 55
+    placements across the set, counted independently, and it is a plain
+    device tag that must never lose to a parsed legend entry."""
+    from app.engine import pipeline
+
+    result = pipeline.run(BID, labor_rate=68.0)
+    jb = [p for p in result.items if p.item.catalog_id == "junction_box"]
+    assert sum(p.item.quantity for p in jb) == 55
+    assert all(p.total_direct_cost > 0 for p in jb)
+    assert result.total_direct_cost > 20_000

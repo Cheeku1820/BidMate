@@ -61,20 +61,23 @@ def _ambiguous_tag_warning(tag: str, description: str, count: int, sheet_no: str
         "reason": "legend",
         "title": "Tag also appears in the legend",
         "found": f"Tag {tag} appears {count} times on {sheet_no}, and the legend also lists {tag} as {description.lower()}.",
-        "why": "The same letter is used for a device and for a legend entry, so some of these placements may not be devices.",
-        "fix": "Spot check a few against the plan to confirm they are devices, then approve or reject the ones that are not.",
+        "why": "The same tag is used for a device and for a legend entry, so some of these placements may not be devices.",
+        "fix": "Spot check a few against the plan; correct the quantity if some are not devices, then approve.",
         "where": f"{sheet_no} and the legend sheet.",
     }
 
 
 def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list[ClassifiedItem]:
     sheet_no = {s.page_index: (s.number or f"page {s.page_index + 1}") for s in sheets}
-    abbrev = {
-        e.symbol: e.description
-        for s in sheets
-        for e in s.legend
-        if e.kind == "abbreviation"
-    }
+    # First definition wins, matching parse_legend's own policy: a legend
+    # sheet carries the real definitions, and a later sheet's mis-paired
+    # callout must not overwrite one. A dict comprehension here would be
+    # last-wins, which put 'SEE ENLARGED' over 'WEATHERPROOF' for WP.
+    abbrev: dict[str, str] = {}
+    for sheet in sheets:
+        for entry in sheet.legend:
+            if entry.kind == "abbreviation":
+                abbrev.setdefault(entry.symbol, entry.description)
     items: list[ClassifiedItem] = []
     for c in clusters:
         no = sheet_no.get(c.sheet_page_index, "?")

@@ -41,6 +41,22 @@ def test_empty_text_yields_no_rows():
     assert parse_legend("   \n\n  ") == []
 
 
+def test_rejects_an_expansion_that_is_not_words():
+    """The parser pairs a key-shaped line with the line after it, which on a
+    real sheet matches coincidental adjacency -- a detail bubble above its
+    number, a grid letter above a room name. Requiring a run of letters is
+    what separates CIRCUIT from '1'. Without this, J parsed as an
+    abbreviation meaning '1' and outranked the junction-box catalog entry."""
+    assert parse_legend("J\n1") == []
+    assert parse_legend("A\n3.") == []
+    assert parse_legend("F\nM-20,22,24") == []
+
+
+def test_still_accepts_a_single_word_expansion():
+    rows = parse_legend("CKT\nCIRCUIT")
+    assert [(r.symbol, r.description) for r in rows] == [("CKT", "CIRCUIT")]
+
+
 import os
 import pytest
 
@@ -51,8 +67,10 @@ BID = ("/Users/nikhit/Documents/Sumedh-Nikhit Start-Up/bid_example/"
 @pytest.mark.skipif(not os.path.exists(BID), reason="real bid set not present")
 def test_real_set_legend_sheet_yields_known_abbreviations():
     """The Unalaska set's E0.1 carries an abbreviations block. These three
-    are read directly off that sheet and are what the classifier used to
-    explain WP as a modifier rather than a device."""
+    are read directly off that sheet. WP is one of the rows here -- under
+    the current classification precedence WP is priced as a device (a
+    GFCI receptacle) with an ambiguity flag, not demoted to a modifier,
+    since it is also a known catalog tag."""
     from app.engine import documents
 
     sheets = documents.detect_sheets(BID)

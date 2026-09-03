@@ -181,6 +181,34 @@ def test_a_device_tag_that_is_also_an_abbreviation_is_priced_and_flagged():
     assert "weatherproof" in items[0].warning["found"].lower()
 
 
+def test_the_first_sheets_legend_definition_wins_across_the_set():
+    """parse_legend documents first-definition-wins within one sheet (a
+    legend sheet repeats headers, and a later accidental match must not
+    overwrite a real definition). classify() must honor the same policy
+    across sheets -- a dict comprehension over all sheets' legends is
+    last-wins, which on the real set let a mis-paired plan callout on a
+    later sheet ('WP' -> 'SEE ENLARGED') silently overwrite the real
+    legend-sheet definition ('WP' -> 'WEATHERPROOF')."""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    legend_sheet = DetectedSheet(
+        page_index=0, number="E0.1", title="Legend", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="WP", description="WEATHERPROOF", kind="abbreviation")],
+    )
+    later_sheet = DetectedSheet(
+        page_index=1, number="E5.1", title="Power plan", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="WP", description="SEE ENLARGED", kind="abbreviation")],
+    )
+    cluster = DeviceCluster(tag="WP", sheet_page_index=1, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [legend_sheet, later_sheet])
+
+    assert "weatherproof" in items[0].warning["found"].lower()
+    assert "see enlarged" not in items[0].warning["found"].lower()
+
+
 def test_a_known_device_tag_is_unaffected_by_the_legend():
     from app.engine import classification
     from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement

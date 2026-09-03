@@ -370,3 +370,40 @@ def test_map_payload_evidence_detail_is_singular_for_one_location():
     mapped = map_payload(payload)
     assert "1 location" in mapped.items[0]["evidence"]["detail"]
     assert "1 locations" not in mapped.items[0]["evidence"]["detail"]
+
+
+def test_the_basis_note_carries_both_engine_notes():
+    """`location_note` says what the costs are indexed to; `wiring_note`
+    says branch wiring was assumed rather than measured. Both are pricing
+    basis, both belong in the note the pricing screens show, and the
+    engine keeps them as separate fields so neither is buried in the
+    other's sentence upstream."""
+    from app.takeoff.ingest import basis_note
+
+    note = basis_note({
+        "location_note": "Rate based on Unalaska, AK area cost data.",
+        "wiring_note": "Branch wiring is estimated at 30 feet per device.",
+    })
+    assert note == ("Rate based on Unalaska, AK area cost data. "
+                    "Branch wiring is estimated at 30 feet per device.")
+
+
+def test_a_payload_with_neither_note_yields_an_empty_basis_note():
+    """A payload that repriced nothing has always yielded "", and that is
+    load-bearing: ingest_service falls back to the project's existing note
+    rather than clearing it, and clearing flips every labor and material
+    row to Missing information."""
+    from app.takeoff.ingest import basis_note
+
+    assert basis_note({}) == ""
+    assert basis_note({"location_note": None, "wiring_note": ""}) == ""
+
+
+def test_a_payload_from_before_the_wiring_note_still_maps():
+    """Every stored payload and every test fixture written before this
+    field existed carries only location_note. Those must map to exactly
+    what they always did."""
+    from app.takeoff.ingest import basis_note
+
+    assert basis_note({"location_note": "National average rate (no local data matched)."}) == \
+        "National average rate (no local data matched)."

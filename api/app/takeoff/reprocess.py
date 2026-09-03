@@ -52,7 +52,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.identity.models import User
 from app.takeoff import actions, undo
 from app.takeoff.evidence_images import upsert_evidence_image
-from app.takeoff.ingest import map_payload
+from app.takeoff.ingest import basis_note, map_payload
 from app.takeoff.models import (
     Action,
     Item,
@@ -405,7 +405,7 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
     # anything, and clearing this flips every labor and material row
     # on the project to Missing information.
     project.pricing_source = payload.get("source", project.pricing_source)
-    project.pricing_note = str(payload.get("location_note") or "")
+    project.pricing_note = basis_note(payload)
     label = (f"Applied notes and re-ran the takeoff: {reclassified} reclassified, "
              f"{preserved} approved left unchanged")
     if skipped_deleted:

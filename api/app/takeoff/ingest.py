@@ -99,6 +99,26 @@ def fallback_warning(tag: str, count, sheet_number: str, reason: str = "legend")
     }
 
 
+def basis_note(payload: dict) -> str:
+    """The one paragraph a project carries about how its numbers were
+    arrived at, assembled from the engine's separate note fields.
+
+    `location_note` says what the costs are indexed to. `wiring_note`
+    says that branch wiring was assumed at a fixed length per device
+    rather than measured, which is the largest unstated assumption in the
+    total (ROADMAP 2.1: guessing a length silently is the failure this
+    product exists to prevent). Both are basis, so both belong in the
+    basis note the pricing screens already show; the engine keeps them
+    apart as separate fields, and they are joined here, at the boundary,
+    rather than concatenated upstream.
+
+    A payload carrying neither yields "", which is what a payload that
+    repriced nothing has always yielded.
+    """
+    parts = [str(payload.get(k) or "").strip() for k in ("location_note", "wiring_note")]
+    return " ".join(p for p in parts if p)
+
+
 @dataclass
 class MappedTakeoff:
     sheets: list[dict]

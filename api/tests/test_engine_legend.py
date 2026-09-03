@@ -103,8 +103,7 @@ def test_a_row_records_which_page_it_was_read_from():
 import os
 import pytest
 
-BID = ("/Users/nikhit/Documents/Sumedh-Nikhit Start-Up/bid_example/"
-       "21_1001_unalaska_library_cd_biddrawings.pdf")
+from tests.bid_set import BID
 
 
 @pytest.mark.skipif(not os.path.exists(BID), reason="real bid set not present")

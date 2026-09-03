@@ -161,8 +161,7 @@ def test_narrow_font_device_tags_are_not_treated_as_a_stamp(tmp_path):
     assert clusters.get("R") == 3, "a narrow-font device tag was wrongly treated as a stamp"
 
 
-BID = ("/Users/nikhit/Documents/Sumedh-Nikhit Start-Up/bid_example/"
-       "21_1001_unalaska_library_cd_biddrawings.pdf")
+from tests.bid_set import BID
 
 
 @pytest.mark.skipif(not os.path.exists(BID), reason="real bid set not present")

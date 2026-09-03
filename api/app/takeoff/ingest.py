@@ -114,9 +114,30 @@ def basis_note(payload: dict) -> str:
 
     A payload carrying neither yields "", which is what a payload that
     repriced nothing has always yielded.
+
+    Both halves are run through BANNED_PHRASES before they are joined,
+    and a failing half is dropped rather than the whole note. On the LLM
+    path `location_note` is *written by the model*, and this function is
+    what puts it on an estimator's screen -- so the phrase rules the API
+    boundary already enforces on every model-written warning apply here
+    for exactly the same reason. Without it a note reading "confidence in
+    this rate is 80%" rendered untouched, while the code-generated half
+    beside it was the only part anything checked.
+
+    Dropping rather than rewriting is deliberate: the alternative is
+    inventing a cost basis to stand in for one that failed the rules, and
+    a fabricated basis line is worse than an absent one.
     """
-    parts = [str(payload.get(k) or "").strip() for k in ("location_note", "wiring_note")]
-    return " ".join(p for p in parts if p)
+    parts = []
+    for key in ("location_note", "wiring_note"):
+        text = str(payload.get(key) or "").strip()
+        if not text:
+            continue
+        if any(pattern.search(text) for pattern in BANNED_PHRASES):
+            logger.warning("dropped %s from the basis note: failed the product language rules", key)
+            continue
+        parts.append(text)
+    return " ".join(parts)
 
 
 @dataclass

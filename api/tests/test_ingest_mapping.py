@@ -407,3 +407,37 @@ def test_a_payload_from_before_the_wiring_note_still_maps():
 
     assert basis_note({"location_note": "National average rate (no local data matched)."}) == \
         "National average rate (no local data matched)."
+
+
+def test_a_model_written_note_that_breaks_the_language_rules_is_dropped():
+    """On the LLM path `location_note` is written by the model, and
+    basis_note is what puts it on an estimator's screen. BANNED_PHRASES
+    was applied only to warnings, so a note naming a model or quoting a
+    confidence figure crossed the boundary untouched -- while the
+    code-written half beside it was the only part anything checked."""
+    from app.takeoff.ingest import basis_note
+
+    wiring = "Branch wiring is estimated at 30 feet per device."
+    for bad in ("Confidence in this rate is 80%.", "Claude priced this location.",
+                "I think this is about right.", "Rate set by the LLM."):
+        note = basis_note({"location_note": bad, "wiring_note": wiring})
+        assert note == wiring, f"{bad!r} reached the estimator"
+
+
+def test_a_clean_note_is_untouched_by_the_language_check():
+    from app.takeoff.ingest import basis_note
+
+    note = basis_note({"location_note": "Rate based on Unalaska, AK area cost data.",
+                       "wiring_note": "Branch wiring is estimated at 30 feet per device."})
+    assert note.startswith("Rate based on Unalaska, AK area cost data.")
+
+
+def test_the_engine_half_is_kept_when_the_model_half_fails():
+    """Dropping the failing half rather than the whole note: the wiring
+    assumption is the one an estimator most needs, and it is not the half
+    that broke the rules."""
+    from app.takeoff.ingest import basis_note
+
+    assert basis_note({"location_note": "Confidence 90%.", "wiring_note": "Branch wiring is estimated."}) \
+        == "Branch wiring is estimated."
+    assert basis_note({"location_note": "Confidence 90%."}) == ""

@@ -56,6 +56,17 @@ def _modifier_warning(tag: str, description: str, count: int, sheet_no: str) -> 
     }
 
 
+def _ambiguous_tag_warning(tag: str, description: str, count: int, sheet_no: str) -> dict:
+    return {
+        "reason": "legend",
+        "title": "Tag also appears in the legend",
+        "found": f"Tag {tag} appears {count} times on {sheet_no}, and the legend also lists {tag} as {description.lower()}.",
+        "why": "The same letter is used for a device and for a legend entry, so some of these placements may not be devices.",
+        "fix": "Spot check a few against the plan to confirm they are devices, then approve or reject the ones that are not.",
+        "where": f"{sheet_no} and the legend sheet.",
+    }
+
+
 def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list[ClassifiedItem]:
     sheet_no = {s.page_index: (s.number or f"page {s.page_index + 1}") for s in sheets}
     abbrev = {
@@ -67,7 +78,24 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
     items: list[ClassifiedItem] = []
     for c in clusters:
         no = sheet_no.get(c.sheet_page_index, "?")
-        if c.tag in abbrev:
+        # Curated Division 26 knowledge outranks a parsed abbreviation: a
+        # tag in TAG_TO_CATALOG or the fixture-letter range is hand-built
+        # device knowledge, while a legend abbreviation is a heuristic read
+        # off messy sheet text. The curated reading wins the classification
+        # and the price, but a genuine collision still surfaces so the
+        # estimator can spot check it rather than the tag being silently
+        # zeroed out as a modifier.
+        if c.tag in TAG_TO_CATALOG:
+            cat = CATALOG[TAG_TO_CATALOG[c.tag]]
+            if c.tag in abbrev:
+                items.append(_item(cat, c, "attention", _ambiguous_tag_warning(c.tag, abbrev[c.tag], c.count, no)))
+            else:
+                items.append(_item(cat, c, "ready", None))
+        elif is_fixture_type(c.tag):
+            cat = CATALOG["luminaire_generic"]
+            cat = _rename(cat, f"Luminaire type {c.tag}")
+            items.append(_item(cat, c, "attention", _fixture_warning(c.tag, c.count, no)))
+        elif c.tag in abbrev:
             items.append(ClassifiedItem(
                 catalog_id="unclassified", name=f"{c.tag} — {abbrev[c.tag].title()}",
                 system="Unknown", category="Unclassified", unit="ea", symbol="generic",
@@ -75,13 +103,6 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
                 status="attention", warning=_modifier_warning(c.tag, abbrev[c.tag], c.count, no),
                 source_tag=c.tag,
             ))
-        elif c.tag in TAG_TO_CATALOG:
-            cat = CATALOG[TAG_TO_CATALOG[c.tag]]
-            items.append(_item(cat, c, "ready", None))
-        elif is_fixture_type(c.tag):
-            cat = CATALOG["luminaire_generic"]
-            cat = _rename(cat, f"Luminaire type {c.tag}")
-            items.append(_item(cat, c, "attention", _fixture_warning(c.tag, c.count, no)))
         else:
             items.append(
                 ClassifiedItem(

@@ -133,10 +133,37 @@ def test_row_from_spec_falls_back_when_the_models_warning_is_missing_a_field():
 
 
 def test_an_abbreviation_tag_is_classified_as_a_modifier():
-    """WP is in the abbreviations block as WEATHERPROOF. It labels another
-    device rather than being one, so counting it as a device double counts.
-    Classification -- not Counting -- makes this call, because a letter can
-    be both an abbreviation and a fixture type (design spec 11.6)."""
+    """CKT is in the abbreviations block as CIRCUIT, and CKT is not a known
+    device tag or fixture-type letter -- it is abbreviation-only, so the
+    modifier rule is the only reading that applies and should fire. (WP was
+    the original example here, but WP is also in TAG_TO_CATALOG as a GFCI
+    receptacle; curated device knowledge now outranks a parsed abbreviation
+    for a tag like that -- see test_a_device_tag_that_is_also_an_abbreviation_is_priced_and_flagged
+    below -- so WP no longer exercises the modifier-only path.)"""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    sheet = DetectedSheet(
+        page_index=0, number="E7.1", title="Power", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="CKT", description="CIRCUIT", kind="abbreviation")],
+    )
+    cluster = DeviceCluster(tag="CKT", sheet_page_index=0, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [sheet])
+
+    assert items[0].status == "attention"
+    assert items[0].warning is not None
+    assert "circuit" in items[0].warning["why"].lower()
+    assert "double" in items[0].warning["fix"].lower()
+
+
+def test_a_device_tag_that_is_also_an_abbreviation_is_priced_and_flagged():
+    """WP resolves to a real catalog device (GFCI receptacle) via
+    TAG_TO_CATALOG, and the same sheet's legend also lists WP as an
+    abbreviation. Curated device knowledge wins the classification and the
+    price -- the item is not silently zeroed to a modifier -- but the
+    collision still surfaces as an attention warning so the estimator can
+    spot check it."""
     from app.engine import classification
     from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
 
@@ -148,10 +175,10 @@ def test_an_abbreviation_tag_is_classified_as_a_modifier():
     cluster = DeviceCluster(tag="WP", sheet_page_index=0, placements=[Placement(1, 1)] * 3)
     items = classification.classify([cluster], [sheet])
 
+    assert items[0].catalog_id == "receptacle_gfci"
     assert items[0].status == "attention"
     assert items[0].warning is not None
-    assert "weatherproof" in items[0].warning["why"].lower()
-    assert "double" in items[0].warning["fix"].lower()
+    assert "weatherproof" in items[0].warning["found"].lower()
 
 
 def test_a_known_device_tag_is_unaffected_by_the_legend():

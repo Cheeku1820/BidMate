@@ -26,14 +26,17 @@ from .contracts import LegendEntry
 # a drafter uses (C. for conduit, (E) for existing, C.O. for conduit only).
 KEY = re.compile(r"^[A-Z][A-Z0-9./()\-]{0,5}$")
 
-# An expansion: not itself key-shaped, so a run of keys with no
-# descriptions never pairs up with itself. A multi-word line can never
-# match KEY (no spaces allowed there); a single-word expansion still
-# clears this as long as it's longer than a plausible abbreviation code
-# ("CIRCUIT", "WEATHERPROOF") -- only a short all-caps single word is
-# genuinely ambiguous with a key, and that's excluded on purpose.
+# An expansion is words, not a number or a callout. Requiring a run of
+# three or more letters admits real single-word expansions (CIRCUIT,
+# WEATHERPROOF) while rejecting the coincidental pairings a flat
+# key-line/next-line scan otherwise invents on a drawing sheet -- a
+# detail bubble followed by its number ("J" then "1"), a grid letter
+# followed by a room name.
+_WORDY = re.compile(r"[A-Za-z]{3,}")
+
+
 def _is_expansion(line: str) -> bool:
-    return not KEY.match(line)
+    return bool(_WORDY.search(line)) and not KEY.match(line)
 
 
 def parse_legend(schedule_text: str) -> list[LegendEntry]:

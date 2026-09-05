@@ -47,6 +47,10 @@ class ProjectRow:
     items_approved: int
     warnings_open: int
     missing_info: int
+    # The pricing basis note. Carried on the dashboard row because the
+    # export preview reads the project off this shape, and that is where
+    # the branch-wiring assumption most needs to be visible.
+    pricing_note: str
 
 
 def list_projects(
@@ -150,6 +154,7 @@ def list_projects(
                 items_approved=approved,
                 warnings_open=attention,
                 missing_info=missing,
+                pricing_note=project.pricing_note or "",
             )
         )
     return rows

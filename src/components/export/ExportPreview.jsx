@@ -191,6 +191,13 @@ export default function ExportPreview() {
                     Material and labor only — markup, overhead, and profit are your layer.
                     {project?.pricingSource === "llm" ? " Priced automatically for the location." : ""}
                   </p>
+                  {/* The basis these totals rest on -- the location index,
+                      and that branch wiring was estimated per device
+                      rather than routed off the drawing. It belongs here
+                      most of all: this is the number that leaves the
+                      building, and an assumption nobody is shown is one
+                      nobody can check. */}
+                  {project?.pricingNote ? <p className="muted">{project.pricingNote}</p> : null}
                 </section>
               ) : null}
 

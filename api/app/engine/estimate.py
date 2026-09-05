@@ -10,11 +10,14 @@ multiplies counts by unit costs here, in one place.
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from collections import defaultdict
 
-from . import classification, counting, documents, llm, regions
+from . import assemblies, classification, counting, documents, llm, pricing, regions
 from .catalog import CATALOG
+
+logger = logging.getLogger(__name__)
 
 # llm._prompt() truncates whatever blob this function builds to its own
 # [:6000] before it ever reaches the model -- that slice, not any cap
@@ -34,6 +37,9 @@ NOTES_CAP = 1200
 # (schedule-notes, notes-context) can land before the notes block ends.
 _SEPARATOR_SLACK = 4
 CONTEXT_CAP = 12000
+# How many unmatched item names the basis note lists before summarising
+# the rest -- enough to act on, not enough to become a list.
+_NAMED_IN_NOTE = 3
 
 # Any run of "===...===", wherever it sits within a line -- not only a
 # line composed of nothing else, and not anchored to whitespace of a
@@ -176,6 +182,75 @@ def _consolidate(rows: list[dict]) -> list[dict]:
     return out
 
 
+def _wiring_note(assembly_applied: bool) -> str:
+    """The project-level disclosure that branch wiring was assumed rather
+    than measured.
+
+    `assemblies.FEET_PER_DEVICE` drives most of the assembly material and
+    labour on a set, and it is a rule of thumb: the drawing shows a
+    homerun arrow, not a route, so the length is judgment from ceiling
+    height and building geometry and is not in the file for anyone to
+    read (ROADMAP 2.1). Producing that quantity without saying so is
+    exactly the silent guess this product exists to prevent.
+
+    It is said once, on the project, and not as a per-item warning. A
+    warning is tied to non-`ready` status, so warning every item that
+    carries wire would move essentially the whole takeoff to *Needs
+    attention* and empty the review queue of meaning -- the four labels
+    would still be four, but one of them would no longer separate
+    anything.
+
+    Every character of this sentence is written here. It carries no
+    model output at all, which is what lets it survive the language
+    check at the API boundary independently of the note beside it --
+    see `_unmatched_note`.
+    """
+    if not assembly_applied:
+        return ""
+    feet_text = f"{assemblies.FEET_PER_DEVICE:g}"
+    return (
+        f"Branch wiring is estimated at {feet_text} feet per device. Conduit and wire "
+        "quantities follow that rule rather than a measured route, so check them "
+        "against the job before the total is relied on."
+    )
+
+
+def _unmatched_note(bare_names: set[str]) -> str:
+    """What was priced without a rough-in, and which items those were.
+
+    A separate field from `_wiring_note`, deliberately, and this is the
+    whole reason: item names on the model-classified path are model
+    output, they are interpolated here, and `ingest.basis_note` drops any
+    note that fails the product language rules. Joined into one string, a
+    single item named with a percentage or the word "confidence" would
+    take the feet-per-device disclosure down with it -- silencing the
+    exact sentence that exists to stop a quantity being assumed in
+    silence. Two individually correct rules, coupled through one field.
+
+    Split, the blast radius of a bad item name is this sentence alone.
+    The engine's own disclosure is unaffected by anything a model wrote.
+
+    Naming beats counting: "2 item types" tells an estimator a correction
+    is needed but not where to make it. Capped at `_NAMED_IN_NOTE` so a
+    bad set cannot turn the basis note into a list.
+    """
+    if not bare_names:
+        return ""
+    n = len(bare_names)
+    subject = f"{n} item types" if n != 1 else "1 item type"
+    verb = "were" if n != 1 else "was"
+    pronoun = "them" if n != 1 else "it"
+    shown = sorted(bare_names)[:_NAMED_IN_NOTE]
+    listed = ", ".join(shown)
+    remaining = n - len(shown)
+    if remaining:
+        listed += f" and {remaining} other{'s' if remaining != 1 else ''}"
+    return (
+        f"{subject} ({listed}) could not be matched to a standard assembly and {verb} "
+        f"priced as the device alone, with no box, wire or conduit behind {pronoun}."
+    )
+
+
 def _sheet_no(sheets, page_index) -> str:
     for s in sheets:
         if s.page_index == page_index:
@@ -209,6 +284,9 @@ def _compute(path: str, location: str, context: str = "", estimator_notes: list[
     schedule_text = build_classifier_context(schedule_text, context, estimator_notes)
 
     rows: list[dict] = []
+    # Item names priced without their assembly -- see resolve_assembly_parent.
+    bare_names: set[str] = set()
+    assembly_applied = False
     source = "deterministic"
     labor_rate, material_factor, location_note = regions.lookup(location)
 
@@ -224,16 +302,34 @@ def _compute(path: str, location: str, context: str = "", estimator_notes: list[
                 spec = by_tag.get(c.tag)
                 if not spec:
                     continue
-                rows.append(_row_from_spec(spec, c, sheets, labor_rate, material_factor))
+                parent = resolve_assembly_parent(spec)
+                if parent and assemblies.expand(parent, 1).lines:
+                    assembly_applied = True
+                row = _row_from_spec(spec, c, sheets, labor_rate, material_factor, parent)
+                # A priced row whose classification matched no catalog
+                # item carries no rough-in. That understates it, so it is
+                # counted here and disclosed on the project rather than
+                # left to be noticed as a low number.
+                if row["total_cost"] > 0 and not parent:
+                    bare_names.add(row["name"])
+                rows.append(row)
             used_llm = True
             source = "llm"
         except Exception as exc:  # noqa: BLE001 -- any failure falls back, demo must not break
             used_llm = False
-            location_note += f"  (Automated pricing unavailable: {type(exc).__name__}; used regional table.)"
+            # The exception class name is a processing internal and used to
+            # render verbatim ("...unavailable: JSONDecodeError..."), which
+            # ROADMAP invariant 7 stops at the API boundary. It is logged
+            # server-side, where it is useful, and the estimator is told the
+            # thing they can act on: which cost basis the number came from.
+            logger.warning("automated pricing unavailable (%s); used regional table", type(exc).__name__)
+            location_note += "  Automated pricing wasn't available, so regional cost data was used."
 
     if not used_llm:
         classified = classification.classify(clusters, sheets)
         for c, item in zip(clusters, classified):
+            if assemblies.expand(item.catalog_id, 1).lines:
+                assembly_applied = True
             rows.append(_row_from_catalog(item, c, sheets, labor_rate, material_factor))
 
     if with_evidence:
@@ -248,6 +344,8 @@ def _compute(path: str, location: str, context: str = "", estimator_notes: list[
     meta = {
         "location": location,
         "location_note": location_note,
+        "wiring_note": _wiring_note(assembly_applied),
+        "unmatched_note": _unmatched_note(bare_names),
         "labor_rate": round(labor_rate, 2),
         "material_factor": round(material_factor, 3),
         "source": source,
@@ -367,12 +465,107 @@ def _model_warning(raw: dict | None, tag: str, count: int, sheet_no: str) -> dic
     }
 
 
-def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_factor: float) -> dict:
+def _num(value) -> float:
+    """A model-supplied number, or 0.0. Model output is data: a string, a
+    null, or a nonsense value must not raise out of the middle of a
+    takeoff, and reading it as zero fails toward "unpriced", which is the
+    direction pricing.py already refuses to guess in."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def resolve_assembly_parent(spec: dict) -> str | None:
+    """Which catalog item's assembly belongs to a model-classified row --
+    the box, plate, wire and conduit it drags along -- or None.
+
+    Assemblies are keyed by catalog id and this path had none, so with an
+    API key configured (the normal case for a real project) every device
+    was priced bare while the CLI counted its rough-in. The key has to
+    come from somewhere, and there are only three candidates:
+
+    - **The `symbol` field.** Rejected. The classifier is not asked for
+      one, so it never returns one -- `spec["symbol"]` is always absent
+      today. Worse, the symbol vocabulary does not separate the items
+      whose assemblies differ: `panel` covers both the panelboard
+      ($147.70 of #4 feeder and conduit per unit) and the disconnect
+      ($21.50 of #10), so whichever way that one cell is written, one of
+      them is wrong by about seven times. A mapping that is right six
+      times and badly wrong the seventh is the fabricated mapping this
+      decision exists to avoid.
+    - **The cluster's tag, through TAG_TO_CATALOG.** Rejected. It resolves
+      cleanly, but it is a *second* classifier running beside the model
+      and disagreeing with it silently: if the model reads tag DS off the
+      schedule as a panelboard, the tag map still says disconnect, and the
+      row would be named one thing and roughed in as another. The
+      assembly must follow the classification that produced the item.
+    - **Asking the classifier for the catalog id.** Taken. Assemblies are
+      keyed by catalog id, so the classifier is asked for a catalog id,
+      from the closed list enumerated out of CATALOG itself (llm.py's
+      `_prompt`), with "none" available and recommended whenever nothing
+      on the list is genuinely the same kind of item.
+
+    Whatever comes back is validated against CATALOG rather than trusted:
+    model output is data. An exact catalog *name* is accepted as a second
+    resolver, so a response that omits the id but names a real catalog
+    item still gets its rough-in; the match is exact against a closed set,
+    so it cannot resolve to something the model did not name.
+
+    Failure mode, and it is deliberate: an item that resolves to neither
+    is priced as the bare device -- material and hours for the device
+    only, no box, no wire, no conduit -- which *understates* it. That is
+    the direction to fail in: a visibly low line an estimator corrects
+    beats a confident total carrying rough-in for the wrong item. It is
+    not left silent either. `_compute` counts these and the project's
+    basis note says how many were priced that way.
+
+    The opposite direction is refused outright. The prompt tells the model
+    two separate things about a non-device tag -- report it Unclassified
+    with no material and no hours, *and* pick catalog_id "none" -- and
+    obeying the first without the second turned a $0 row into a full
+    receptacle rough-in. On the real set 18 of 45 clusters are exactly
+    those tags (VA, CKT, AMP, USB, NOT, OFF), so this is the common case
+    rather than an edge one. A row the classifier itself declined to
+    price gets no assembly: pricing.py's principle is that an unpriced
+    visible item is recoverable and a fabricated price in a submitted bid
+    is not, and an `attention` status riding along is a mitigation, not a
+    guard.
+    """
+    # Checked before any resolution, because the question "which assembly"
+    # does not arise for an item the classifier did not treat as a device.
+    if str(spec.get("category") or "").strip().casefold() == "unclassified":
+        return None
+    if _num(spec.get("material_cost")) <= 0 and _num(spec.get("labor_hours")) <= 0:
+        return None
+
+    raw = str(spec.get("catalog_id") or "").strip().casefold()
+    # An explicit opt-out is an answer, not a gap: the name resolver must
+    # not overturn it. Without this, a model that correctly declined to
+    # pick an id had its decision reversed by its own item name.
+    if raw == "none":
+        return None
+    if raw in CATALOG:
+        return raw
+    name = str(spec.get("name") or "").strip().casefold()
+    if name:
+        for catalog_id, cat in CATALOG.items():
+            if cat.name.casefold() == name:
+                return catalog_id
+    return None
+
+
+def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_factor: float,
+                   assembly_parent: str | None = None) -> dict:
     qty = cluster.count
-    unit_material = float(spec.get("material_cost", 0) or 0) * material_factor
-    unit_hours = float(spec.get("labor_hours", 0) or 0)
-    material = round(unit_material * qty, 2)
-    hours = round(unit_hours * qty, 2)
+    # The device's own cost is the model's; its rough-in is the price
+    # book's. material_factor applies once, to the whole figure -- a reel
+    # of #12 costs 45% more in Unalaska exactly as the receptacle does.
+    asm = assemblies.expand(assembly_parent, qty) if assembly_parent else None
+    device_material = _num(spec.get("material_cost")) * qty
+    device_hours = _num(spec.get("labor_hours")) * qty
+    material = round((device_material + (asm.material_cost if asm else 0.0)) * material_factor, 2)
+    hours = round(device_hours + (asm.labor_hours if asm else 0.0), 2)
     labor = round(hours * labor_rate, 2)
     status = "ready" if spec.get("confidence") == "high" else "attention"
     sheet_no = _sheet_no(sheets, cluster.sheet_page_index)
@@ -401,13 +594,27 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
 
 
 def _row_from_catalog(item, cluster, sheets, labor_rate: float, material_factor: float) -> dict:
-    cat = CATALOG.get(item.catalog_id)
+    """Price one classified cluster through the Pricing agent.
+
+    The cost arithmetic is `pricing.price_item`'s, not this module's, so
+    the app and the CLI count the same material: the device *and* its
+    assembly -- box, plate, wire, conduit, connectors. Pricing a bare
+    device understates the job, and it understated it here for as long
+    as this function did the multiplication itself.
+
+    `material_factor` is the caller's, because `price_item` does not know
+    about locations. It is applied once, to the whole material figure:
+    material costs 45% more in Unalaska for a box and a reel of #12
+    exactly as much as for the receptacle they land on. Labour is already
+    at the caller's location rate -- `labor_rate` is passed into
+    `price_item`, not left at its national default -- and a location does
+    not change how many hours an install takes, so no factor applies to
+    it."""
+    priced = pricing.price_item(item, labor_rate)
     qty = item.quantity
-    unit_material = (cat.material_cost if cat else 0.0) * material_factor
-    unit_hours = cat.labor_hours if cat else 0.0
-    material = round(unit_material * qty, 2)
-    hours = round(unit_hours * qty, 2)
-    labor = round(hours * labor_rate, 2)
+    material = round(priced.material_cost * material_factor, 2)
+    hours = priced.labor_hours
+    labor = priced.labor_cost
     return {
         "name": item.name,
         "system": item.system,

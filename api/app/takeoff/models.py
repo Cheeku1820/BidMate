@@ -300,10 +300,14 @@ class ProjectLaborLine(Base):
     """Per-item labor overrides, one row per item at most. Every field is
     nullable and independent: an estimator can override just the crew
     mix and leave hours alone, or type a flat rate and leave everything
-    else at its default. Edited only through Task 4's mutation endpoint
-    and reversed only through Task 5's undo dispatch -- deliberately
-    outside Item's own column-walking delete-undo snapshot, the same
-    reasoning as ItemEvidenceImage."""
+    else at its default. Edited through Task 4's mutation endpoint and
+    reversed through Task 5's undo dispatch for a `labor_edit` action.
+
+    Also cascades away with its parent `Item` (`ON DELETE CASCADE`
+    above), so `review._apply_delete()` captures this row explicitly in
+    the delete snapshot, and `undo_apply._apply_delete()` restores it on
+    undo -- unlike `ItemEvidenceImage`, which is deliberately left out of
+    that snapshot (see its own docstring)."""
 
     __tablename__ = "project_labor_lines"
 
@@ -324,8 +328,8 @@ class ProjectMaterialPrice(Base):
     """Per-item material price override, one row per item at most.
     `source` distinguishes a typed project price from a deliberate
     allowance -- both are the same mechanical override, the label is
-    what the estimator meant by it. Same undo/snapshot exclusion as
-    ProjectLaborLine above."""
+    what the estimator meant by it. Same delete-snapshot/undo coverage
+    as ProjectLaborLine above."""
 
     __tablename__ = "project_material_prices"
 

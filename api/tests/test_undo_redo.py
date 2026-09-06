@@ -744,3 +744,45 @@ def test_redoing_a_labor_edit_after_the_item_was_since_deleted_raises_a_domain_e
     assert redo_response.status_code == 409, redo_response.text
     assert redo_response.json()["detail"]["code"] == "item_no_longer_exists"
     assert db.get(ProjectLaborLine, item.id) is None, "the failed reversal must not have inserted a row"
+
+
+# --- Task 2: a delete's cascade must not silently destroy a typed price ---
+
+
+def test_undoing_a_delete_restores_a_typed_price(client, db, project, item, signed_in_user):
+    """ProjectLaborLine and ProjectMaterialPrice cascade on item delete, so
+    without capturing them in the delete snapshot an estimator's own typed
+    figures are destroyed by a delete and never come back. The item returns
+    priced at nothing, which reads as a real answer rather than a loss."""
+    from app.takeoff.models import ProjectLaborLine, ProjectMaterialPrice
+
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 1.25})
+    client.patch(f"/api/items/{item.id}/material-price",
+                 json={"priceOverride": 42.5, "source": "project_price"})
+
+    client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
+    client.post(f"/api/projects/{project.id}/undo")
+
+    db.expire_all()
+    labor = db.get(ProjectLaborLine, item.id)
+    price = db.get(ProjectMaterialPrice, item.id)
+    assert labor is not None and float(labor.hours_override) == 1.25
+    assert price is not None and float(price.price_override) == 42.5
+
+
+def test_redoing_a_delete_removes_a_restored_price_again(client, db, project, item, signed_in_user):
+    """The cascade that destroyed the pricing rows on the original delete
+    fires again on redo -- nothing in undo_apply needs to delete them a
+    second time by hand."""
+    from app.takeoff.models import ProjectLaborLine, ProjectMaterialPrice
+
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 1.25})
+    client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
+    client.post(f"/api/projects/{project.id}/undo")
+    db.expire_all()
+    assert db.get(ProjectLaborLine, item.id) is not None
+
+    client.post(f"/api/projects/{project.id}/redo")
+    db.expire_all()
+    assert db.get(Item, item.id) is None
+    assert db.get(ProjectLaborLine, item.id) is None

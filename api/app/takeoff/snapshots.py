@@ -62,6 +62,19 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "source_tag": str,
     "updated_at": datetime,
     "warnings": list,
+    # Both optional, `None` when the item never had that override.
+    # `decode_snapshot()` raises for any key with no type entry, so
+    # these two need one even though nothing here decodes their
+    # contents field-by-field -- that happens separately, in
+    # undo_apply._apply_delete(), against LABOR_LINE_SNAPSHOT_TYPES /
+    # MATERIAL_PRICE_SNAPSHOT_TYPES below, the same two-step split
+    # "warnings" already uses (decoded as a list here, each element
+    # decoded against WARNING_SNAPSHOT_TYPES elsewhere). `dict` is
+    # inert to decode_snapshot_value() -- it isn't Decimal/Enum/
+    # datetime/date/UUID, so the encoded dict passes through
+    # unchanged, exactly like "evidence" above.
+    "labor_line": dict,
+    "material_price": dict,
 }
 
 # Counterpart for decoding one element of the nested "warnings" list.

@@ -31,7 +31,7 @@ from app.identity.models import User
 from app.takeoff.actions import commit, encode_snapshot
 from app.takeoff.concurrency import check_version, lock_item
 from app.takeoff.edit_validation import EDITABLE_FIELDS, validate_edit
-from app.takeoff.models import Action, Item, ReviewStatus, Warning
+from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPrice, ReviewStatus, Warning
 from app.takeoff.snapshots import _column_snapshot
 
 
@@ -229,11 +229,22 @@ def _apply_delete(db: DbSession, item: Item, expected_version: int) -> tuple[dic
     check_version(db, locked, expected_version)
 
     warnings = db.execute(select(Warning).where(Warning.item_id == locked.id)).scalars().all()
+    # ProjectLaborLine and ProjectMaterialPrice both cascade on the
+    # item's delete (ON DELETE CASCADE), so if they are not captured
+    # here they cannot be restored by any later undo -- the item comes
+    # back priced at nothing, which reads as an answer rather than a
+    # loss. Each is at most one row (its primary key is the item's id),
+    # so unlike warnings this is a single optional dict, not a list --
+    # None when the estimator never typed an override for this item.
+    labor_line = db.get(ProjectLaborLine, locked.id)
+    material_price = db.get(ProjectMaterialPrice, locked.id)
     snapshot = _column_snapshot(locked)
     snapshot.pop("version", None)
     before = {
         **snapshot,
         "warnings": [encode_snapshot(_column_snapshot(w)) for w in warnings],
+        "labor_line": encode_snapshot(_column_snapshot(labor_line)) if labor_line is not None else None,
+        "material_price": encode_snapshot(_column_snapshot(material_price)) if material_price is not None else None,
     }
     locked.version += 1
     db.delete(locked)

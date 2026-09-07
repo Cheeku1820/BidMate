@@ -44,7 +44,7 @@ a conversation about.
 `llm.py`'s `estimate()` already receives every counted tag, the schedule
 text, and the project location in one call, and returns a classification
 and confidence per tag. Extend its JSON schema so each item below `"high"`
-confidence also returns the four warning fields in that same response —
+confidence also returns three warning fields in that same response —
 no new call, no new latency beyond a larger response body:
 
 ```json
@@ -54,17 +54,30 @@ no new call, no new latency beyond a larger response body:
   "material_cost": 0, "labor_hours": 0, "confidence": "medium",
   "warning": {
     "title": "...",
-    "found": "specific to what's actually in the schedule/tags for THIS item",
     "why": "the real consequence, not boilerplate",
-    "fix": "the actual next step",
-    "where": "the real sheet number(s) this tag appeared on"
+    "fix": "the actual next step"
   }
 }
 ```
 
-`estimate.py`'s `_row_from_spec` reads `spec["warning"]` directly, instead
-of calling `_unconfirmed_type_warning()`. `_row_from_catalog` (the
-deterministic path) is untouched.
+**As shipped, the model is asked for `title`/`why`/`fix` only** — the
+five-field shape sketched at design time did not survive final review.
+The model sees a tag's document-wide count, aggregated across every sheet
+before the call, and is never given a sheet number at all, so it was
+never in a position to write `found` or `where` correctly: trusting it
+for either would attach the same count and a possibly-fabricated sheet to
+every same-tag cluster across the whole document. `found` and `where` are
+synthesized instead, per cluster, from that cluster's own real
+tag/count/sheet — the one thing that's actually true about the row being
+built.
+
+`estimate.py`'s `_row_from_spec` passes `spec["warning"]` into
+`_model_warning()`, which supplies the synthesized `found`/`where` on top
+of the model's `title`/`why`/`fix`, and falls back to
+`_unconfirmed_type_warning()` wholesale if the model omitted `warning` or
+any of those three fields — replacing the old `_row_from_spec` codepath
+that called `_unconfirmed_type_warning()` unconditionally.
+`_row_from_catalog` (the deterministic path) is untouched.
 
 The prompt in `llm.py`'s `_prompt()` gets new, explicit rules alongside its
 existing classification instructions:
@@ -108,10 +121,14 @@ item, not per document — a single bad warning degrades gracefully rather
 than failing the whole response:
 
 - **Sheet-reference check.** Extract sheet-number-shaped tokens (the same
-  pattern the title-block parser uses, e.g. `E2.1`) from `found` and
-  `where`, and confirm each one is actually in this document's sheet list.
-  A referenced sheet that doesn't exist in the set is a fabrication.
-- **Banned-phrase check.** Scan all four fields against a fixed list: model
+  pattern the title-block parser uses, e.g. `E2.1`) from all five warning
+  fields — `title`, `found`, `why`, `fix`, and `where` — and confirm each
+  one is actually in this document's sheet list. Not just `found` and
+  `where`: those two are now always synthesized from the real cluster
+  (section A), so a fabricated sheet number can only reach this check
+  inside the model-written `title`/`why`/`fix`. A referenced sheet that
+  doesn't exist in the set is a fabrication.
+- **Banned-phrase check.** Scan all five fields against a fixed list: model
   names, the literal word "AI," "confidence," "I think"/"I believe,"
   percentage-shaped tokens (`\d+%`). This is CLAUDE.md's existing language
   rule, enforced in code rather than trusted to prompt-following alone.
@@ -137,9 +154,12 @@ text per CLAUDE.md — this is a hierarchy pass, not a new visual system):
 - `fix` — pulled out visually distinct from the other three, since it's the
   one field that's an instruction rather than a fact — closer in treatment
   to a call-to-action than to prose.
-- `where` — rendered like a citation, similar in weight/style to the
-  existing "View evidence" link, since it now names something concrete on
-  a real sheet rather than a generic sheet label.
+- `where` — rendered as a muted, italic citation line, since it now names
+  something concrete on a real sheet rather than a generic sheet label.
+  **Not styled like the "View evidence" link as originally specified
+  here** — blue on a warning card read as clickable when `where` is plain
+  text, so the citation uses the muted ink token and italics instead,
+  deliberately distinct from the link treatment.
 
 No new component: this is a restructure of the existing warning-card JSX
 and its CSS, not a new pattern introduced into the design system.

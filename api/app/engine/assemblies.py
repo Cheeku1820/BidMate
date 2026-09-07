@@ -93,6 +93,17 @@ ASSEMBLIES: dict[str, list[tuple[str, float]]] = {
     # invariant that actually holds: every assembly key names a real
     # catalog item, checked against CATALOG rather than against the
     # deterministic classifier's narrower reach.
+    #
+    # They are also not interchangeable with luminaire_generic, which is
+    # the other half of what made deleting them look safe. luminaire_troffer
+    # happens to be identical to the generic row today, but luminaire_highbay
+    # is not: it runs thhn_10, not thhn_12, because a high bay is a
+    # higher-wattage fixture that draws more current than the branch-wire
+    # default. Collapsing it onto the generic row would silently downsize
+    # its conductor. test_resolve_assembly_parent_reaches_the_named_
+    # luminaires in test_engine_app_path.py pins both ids' round-trip
+    # through the LLM path and their non-empty expansion; a reader who
+    # finds this comment should find that test too, and the reverse.
     "luminaire_troffer": [("whip_6ft", 1), ("wirenut", 3.0),
                           ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
     "luminaire_highbay": [("whip_6ft", 1), ("wirenut", 3.0),

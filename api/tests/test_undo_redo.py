@@ -756,12 +756,16 @@ def test_undoing_a_delete_restores_a_typed_price(client, db, project, item, sign
     priced at nothing, which reads as a real answer rather than a loss."""
     from app.takeoff.models import ProjectLaborLine, ProjectMaterialPrice
 
-    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 1.25})
-    client.patch(f"/api/items/{item.id}/material-price",
-                 json={"priceOverride": 42.5, "source": "project_price"})
+    labor_response = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 1.25})
+    assert labor_response.status_code == 200, labor_response.text
+    price_response = client.patch(f"/api/items/{item.id}/material-price",
+                                   json={"priceOverride": 42.5, "source": "project_price"})
+    assert price_response.status_code == 200, price_response.text
 
-    client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
-    client.post(f"/api/projects/{project.id}/undo")
+    delete_response = client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
+    assert delete_response.status_code == 200, delete_response.text
+    undo_response = client.post(f"/api/projects/{project.id}/undo")
+    assert undo_response.status_code == 200, undo_response.text
 
     db.expire_all()
     labor = db.get(ProjectLaborLine, item.id)
@@ -774,15 +778,64 @@ def test_redoing_a_delete_removes_a_restored_price_again(client, db, project, it
     """The cascade that destroyed the pricing rows on the original delete
     fires again on redo -- nothing in undo_apply needs to delete them a
     second time by hand."""
-    from app.takeoff.models import ProjectLaborLine, ProjectMaterialPrice
+    from app.takeoff.models import ProjectLaborLine
 
-    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 1.25})
-    client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
-    client.post(f"/api/projects/{project.id}/undo")
+    labor_response = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 1.25})
+    assert labor_response.status_code == 200, labor_response.text
+    delete_response = client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
+    assert delete_response.status_code == 200, delete_response.text
+    undo_response = client.post(f"/api/projects/{project.id}/undo")
+    assert undo_response.status_code == 200, undo_response.text
     db.expire_all()
     assert db.get(ProjectLaborLine, item.id) is not None
 
-    client.post(f"/api/projects/{project.id}/redo")
+    redo_response = client.post(f"/api/projects/{project.id}/redo")
+    assert redo_response.status_code == 200, redo_response.text
     db.expire_all()
     assert db.get(Item, item.id) is None
     assert db.get(ProjectLaborLine, item.id) is None
+
+
+def test_undoing_a_delete_action_with_no_pricing_keys_does_not_raise(db, dana, project, item):
+    """Every delete action recorded before this fix's `review.py` change
+    has a `before` dict shaped like `_column_snapshot(item)` plus
+    `"warnings"` only -- no `"labor_line"`/`"material_price"` keys exist
+    at all, because nothing wrote them yet. `undo_apply._apply_delete()`
+    reads both with `.get()` and must treat a missing key exactly like an
+    explicit `None`: nothing to restore, not a `KeyError`, and it must
+    not fabricate a pricing row that was never in the snapshot to begin
+    with.
+
+    Built directly with `actions.commit()` rather than by editing a
+    committed row -- the `actions` table's append-only trigger blocks any
+    `UPDATE`, but `commit()` itself takes whatever `before` dict a caller
+    hands it, which is exactly how a pre-fix `review.delete_item()` would
+    have called it. No trigger workaround needed."""
+    from app.takeoff.actions import commit
+    from app.takeoff.models import ProjectLaborLine, ProjectMaterialPrice
+    from app.takeoff.snapshots import _column_snapshot
+
+    item_id = item.id
+    old_style_before = _column_snapshot(item)
+    old_style_before.pop("version", None)
+    old_style_before["warnings"] = []
+    # Deliberately absent: "labor_line" / "material_price" -- the shape
+    # written before review._apply_delete() started capturing them.
+    assert "labor_line" not in old_style_before
+    assert "material_price" not in old_style_before
+
+    db.delete(item)
+    db.flush()
+    commit(
+        db, actor=dana, project_id=project.id, kind="delete",
+        label=f"Deleted {old_style_before['name']}",
+        before=old_style_before, after={}, item_id=item_id,
+    )
+    db.flush()
+
+    undo.undo(db, dana, project.id)
+    db.flush()
+
+    assert db.get(Item, item_id) is not None
+    assert db.get(ProjectLaborLine, item_id) is None, "a missing key must not fabricate a pricing row"
+    assert db.get(ProjectMaterialPrice, item_id) is None, "a missing key must not fabricate a pricing row"

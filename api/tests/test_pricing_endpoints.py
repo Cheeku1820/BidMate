@@ -1,6 +1,9 @@
 """PATCH /api/items/{item_id}/labor and /material-price -- the two
-project-level override mutations."""
-from sqlalchemy import select
+project-level override mutations -- plus the five company-scoped pricing
+mutations and their audit log (CompanyAction)."""
+import pytest
+from sqlalchemy import select, text
+from sqlalchemy.exc import InternalError, ProgrammingError
 
 from app.takeoff.models import Action, ProjectLaborLine, ProjectMaterialPrice
 
@@ -248,3 +251,151 @@ def test_patch_labor_clears_a_text_field_sent_as_null(client, db, item, signed_i
     row = db.get(ProjectLaborLine, item.id)
     db.refresh(row)
     assert row.adjustment_reason == "" and row.notes == ""
+
+
+def test_company_material_price_change_is_recorded_with_full_precision(client, db, org, signed_in_user):
+    """Same precision hazard as the labor-rates route: the "after"
+    snapshot must reflect what Postgres actually stored (14.00 for a
+    Numeric(10, 2) column), not whatever bare precision the request body
+    carried (14) before the row was refreshed."""
+    from app.takeoff.models import CompanyAction
+
+    client.put("/api/company/material-prices/20A%20duplex%20receptacle",
+               json={"unitPrice": 13.5, "effectiveDate": "2026-08-01"})
+    client.put("/api/company/material-prices/20A%20duplex%20receptacle",
+               json={"unitPrice": 14, "effectiveDate": "2026-08-15"})
+
+    rows = db.query(CompanyAction).filter(
+        CompanyAction.org_id == org.id, CompanyAction.kind == "company_material_price_edit",
+    ).order_by(CompanyAction.seq).all()
+    assert len(rows) == 2
+    assert rows[1].before["unit_price"] == "13.50"
+    assert rows[1].after["unit_price"] == "14.00"
+    assert rows[1].actor_user_id == signed_in_user.id
+
+
+def test_deleting_a_company_material_price_records_before_with_empty_after(client, db, org, signed_in_user):
+    from app.takeoff.models import CompanyAction
+
+    client.put("/api/company/material-prices/20A%20duplex%20receptacle",
+               json={"unitPrice": 13.5, "effectiveDate": "2026-08-01"})
+    response = client.delete("/api/company/material-prices/20A%20duplex%20receptacle")
+    assert response.status_code == 204
+
+    rows = db.query(CompanyAction).filter(
+        CompanyAction.org_id == org.id, CompanyAction.kind == "company_material_price_delete",
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].before["unit_price"] == "13.50"
+    assert rows[0].after == {}
+
+
+def test_deleting_a_nonexistent_company_material_price_records_nothing(client, db, org, signed_in_user):
+    """A DELETE against a row that never existed is a no-op today (the
+    route silently succeeds with 204). It must not manufacture an audit
+    row for a change that never happened."""
+    from app.takeoff.models import CompanyAction
+
+    response = client.delete("/api/company/material-prices/never-priced")
+    assert response.status_code == 204
+    rows = db.query(CompanyAction).filter(CompanyAction.org_id == org.id).all()
+    assert rows == []
+
+
+def test_company_labor_hours_override_change_is_recorded_with_full_precision(client, db, org, signed_in_user):
+    """Same precision hazard, on the Numeric(8, 3) hours_per_unit
+    column: a bare `1` in the request body must be recorded as the
+    persisted "1.000", not "1"."""
+    from app.takeoff.models import CompanyAction
+
+    client.put("/api/company/labor-hours-overrides/20A%20duplex%20receptacle", json={"hoursPerUnit": 0.6})
+    client.put("/api/company/labor-hours-overrides/20A%20duplex%20receptacle", json={"hoursPerUnit": 1})
+
+    rows = db.query(CompanyAction).filter(
+        CompanyAction.org_id == org.id, CompanyAction.kind == "company_labor_hours_override_edit",
+    ).order_by(CompanyAction.seq).all()
+    assert len(rows) == 2
+    assert rows[1].before["hours_per_unit"] == "0.600"
+    assert rows[1].after["hours_per_unit"] == "1.000"
+    assert rows[1].actor_user_id == signed_in_user.id
+
+
+def test_deleting_a_company_labor_hours_override_records_before_with_empty_after(client, db, org, signed_in_user):
+    from app.takeoff.models import CompanyAction
+
+    client.put("/api/company/labor-hours-overrides/20A%20duplex%20receptacle", json={"hoursPerUnit": 0.6})
+    response = client.delete("/api/company/labor-hours-overrides/20A%20duplex%20receptacle")
+    assert response.status_code == 204
+
+    rows = db.query(CompanyAction).filter(
+        CompanyAction.org_id == org.id, CompanyAction.kind == "company_labor_hours_override_delete",
+    ).all()
+    assert len(rows) == 1
+    assert rows[0].before["hours_per_unit"] == "0.600"
+    assert rows[0].after == {}
+
+
+def test_deleting_a_nonexistent_company_labor_hours_override_records_nothing(client, db, org, signed_in_user):
+    from app.takeoff.models import CompanyAction
+
+    response = client.delete("/api/company/labor-hours-overrides/never-overridden")
+    assert response.status_code == 204
+    rows = db.query(CompanyAction).filter(CompanyAction.org_id == org.id).all()
+    assert rows == []
+
+
+def test_the_database_refuses_to_update_a_company_action(db, org, dana):
+    """Mirrors test_action_log.py's guard tests for `actions`, against
+    `company_actions` -- the append-only claim in CompanyAction's
+    docstring is only true if the database enforces it too."""
+    from app.takeoff.models import CompanyAction
+
+    action = CompanyAction(org_id=org.id, actor_user_id=dana.id, kind="company_labor_rates_edit",
+                            label="Changed labor rates", before={}, after={})
+    db.add(action)
+    db.flush()
+
+    with pytest.raises((InternalError, ProgrammingError)):
+        db.execute(text("update company_actions set label = 'rewritten' where id = :id"), {"id": action.id})
+
+
+def test_the_database_refuses_to_delete_a_company_action(db, org, dana):
+    from app.takeoff.models import CompanyAction
+
+    action = CompanyAction(org_id=org.id, actor_user_id=dana.id, kind="company_labor_rates_edit",
+                            label="Changed labor rates", before={}, after={})
+    db.add(action)
+    db.flush()
+
+    with pytest.raises((InternalError, ProgrammingError)):
+        db.execute(text("delete from company_actions where id = :id"), {"id": action.id})
+
+
+def test_the_database_refuses_to_truncate_company_actions(db, org, dana):
+    from app.takeoff.models import CompanyAction
+
+    action = CompanyAction(org_id=org.id, actor_user_id=dana.id, kind="company_labor_rates_edit",
+                            label="Changed labor rates", before={}, after={})
+    db.add(action)
+    db.flush()
+
+    with pytest.raises((InternalError, ProgrammingError)):
+        db.execute(text("truncate company_actions"))
+
+
+def test_the_company_action_guard_survives_session_replication_role_replica(db, org, dana):
+    """ORIGIN triggers stop firing under session_replication_role =
+    replica; the guard was created ENABLE ALWAYS specifically so this
+    doesn't open a bypass -- see test_action_log.py's equivalent test for
+    `actions`. SET LOCAL so the setting is scoped to this transaction and
+    undone automatically when the fixture rolls back."""
+    from app.takeoff.models import CompanyAction
+
+    action = CompanyAction(org_id=org.id, actor_user_id=dana.id, kind="company_labor_rates_edit",
+                            label="Changed labor rates", before={}, after={})
+    db.add(action)
+    db.flush()
+    db.execute(text("set local session_replication_role = replica"))
+
+    with pytest.raises((InternalError, ProgrammingError)):
+        db.execute(text("update company_actions set label = 'rewritten' where id = :id"), {"id": action.id})

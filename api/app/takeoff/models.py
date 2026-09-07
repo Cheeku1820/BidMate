@@ -423,6 +423,55 @@ class CompanyAction(Base):
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+# Single source of truth for company_actions' append-only guard, mirroring
+# app.takeoff.actions.ACTION_LOG_GUARD_DDL for `actions` exactly -- same
+# trigger shape, same ENABLE ALWAYS (so a session_replication_role =
+# replica apply worker can't bypass it), same privilege REVOKE as a second
+# line of defense beyond the trigger. Two callers read this constant
+# rather than duplicating the SQL: migrations/versions/0017_company_
+# action_log_guard.py runs it against the real database, and
+# tests/conftest.py's `db` fixture re-runs it after Base.metadata.create_
+# all, which does not execute migrations. `CompanyAction`'s docstring
+# above claims "append-only" -- this is what makes that claim true rather
+# than a convention nothing enforces.
+COMPANY_ACTION_LOG_GUARD_DDL = """
+create or replace function company_actions_are_append_only() returns trigger as $$
+begin
+    raise exception 'company_actions is append-only: % is not permitted', tg_op;
+end;
+$$ language plpgsql;
+
+drop trigger if exists company_actions_no_update on company_actions;
+drop trigger if exists company_actions_no_delete on company_actions;
+drop trigger if exists company_actions_no_truncate on company_actions;
+
+create trigger company_actions_no_update before update on company_actions
+    for each statement execute function company_actions_are_append_only();
+create trigger company_actions_no_delete before delete on company_actions
+    for each statement execute function company_actions_are_append_only();
+create trigger company_actions_no_truncate before truncate on company_actions
+    for each statement execute function company_actions_are_append_only();
+
+alter table company_actions enable always trigger company_actions_no_update;
+alter table company_actions enable always trigger company_actions_no_delete;
+alter table company_actions enable always trigger company_actions_no_truncate;
+
+-- Same two limits as ACTION_LOG_GUARD_DDL's revoke: a no-op while the
+-- connecting role is a Postgres superuser (this project's docker-compose
+-- setup), and not proof against the table owner granting the privilege
+-- back to itself -- a guard against accidents and casual application-
+-- level tampering, not a determined holder of the database credentials.
+revoke update, delete, truncate on company_actions from current_user;
+"""
+
+COMPANY_ACTION_LOG_GUARD_TEARDOWN_DDL = """
+drop trigger if exists company_actions_no_update on company_actions;
+drop trigger if exists company_actions_no_delete on company_actions;
+drop trigger if exists company_actions_no_truncate on company_actions;
+drop function if exists company_actions_are_append_only();
+"""
+
+
 class Note(Base):
     """Something the drawings do not say, recorded by a person.
 

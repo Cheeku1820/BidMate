@@ -68,6 +68,9 @@ def test_a_company_rate_change_is_recorded(client, db, org, signed_in_user):
     assert rows[1].before["journeyman_rate"] == "68.00"
     assert rows[1].after["journeyman_rate"] == "72.00"
     assert rows[1].actor_user_id == signed_in_user.id
+    # Estimator-facing copy (product language rules, CLAUDE.md) -- not a
+    # route name or an HTTP verb.
+    assert rows[1].label == "Changed labor rates"
 
 
 def test_patch_labor_404s_for_another_orgs_item(client, other_org_project, db, signed_in_user):
@@ -272,6 +275,9 @@ def test_company_material_price_change_is_recorded_with_full_precision(client, d
     assert rows[1].before["unit_price"] == "13.50"
     assert rows[1].after["unit_price"] == "14.00"
     assert rows[1].actor_user_id == signed_in_user.id
+    # Estimator-facing copy (product language rules, CLAUDE.md) -- not a
+    # route name or an HTTP verb.
+    assert rows[1].label == "Changed the material price for 20A duplex receptacle"
 
 
 def test_deleting_a_company_material_price_records_before_with_empty_after(client, db, org, signed_in_user):
@@ -288,6 +294,7 @@ def test_deleting_a_company_material_price_records_before_with_empty_after(clien
     assert len(rows) == 1
     assert rows[0].before["unit_price"] == "13.50"
     assert rows[0].after == {}
+    assert rows[0].label == "Removed the material price for 20A duplex receptacle"
 
 
 def test_deleting_a_nonexistent_company_material_price_records_nothing(client, db, org, signed_in_user):
@@ -318,6 +325,9 @@ def test_company_labor_hours_override_change_is_recorded_with_full_precision(cli
     assert rows[1].before["hours_per_unit"] == "0.600"
     assert rows[1].after["hours_per_unit"] == "1.000"
     assert rows[1].actor_user_id == signed_in_user.id
+    # Estimator-facing copy (product language rules, CLAUDE.md) -- not a
+    # route name or an HTTP verb.
+    assert rows[1].label == "Changed the labor hours override for 20A duplex receptacle"
 
 
 def test_deleting_a_company_labor_hours_override_records_before_with_empty_after(client, db, org, signed_in_user):
@@ -333,6 +343,7 @@ def test_deleting_a_company_labor_hours_override_records_before_with_empty_after
     assert len(rows) == 1
     assert rows[0].before["hours_per_unit"] == "0.600"
     assert rows[0].after == {}
+    assert rows[0].label == "Removed the labor hours override for 20A duplex receptacle"
 
 
 def test_deleting_a_nonexistent_company_labor_hours_override_records_nothing(client, db, org, signed_in_user):

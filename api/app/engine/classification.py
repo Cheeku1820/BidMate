@@ -78,25 +78,42 @@ def _unknown_warning(tag: str, count: int, sheet_no: str) -> dict:
 # saying nothing: they will go looking for a legend row that is not there.
 # Naming the legend without quoting it costs the estimator one glance at a
 # sheet they can already open, and cannot be wrong.
-def _modifier_warning(tag: str, count: int, sheet_no: str) -> dict:
+def _where_with_legend(sheet_no: str, legend_sheet_no: str | None) -> str:
+    """`where` is contractually which sheet holds the evidence, so once the
+    defining sheet is known, name it instead of the generic "the legend
+    sheet" -- on a 14-sheet set that generic phrase sends an estimator
+    hunting. `legend_sheet_no` is None when LegendEntry.page_index could
+    not be resolved to a sheet; a confidently wrong citation is worse than
+    a vague one, so that case keeps the old generic wording rather than
+    guessing. When the definition lives on the same sheet as the device
+    itself, naming it twice ("E7.1 and E7.1") is redundant, so it is named
+    once."""
+    if legend_sheet_no is None:
+        return f"{sheet_no} and the legend sheet."
+    if legend_sheet_no == sheet_no:
+        return f"{sheet_no}."
+    return f"{sheet_no} and {legend_sheet_no}."
+
+
+def _modifier_warning(tag: str, count: int, sheet_no: str, legend_sheet_no: str | None = None) -> dict:
     return {
         "reason": "legend",
         "title": "Modifier, not a standalone device",
         "found": f"Tag {tag} appears {count} times on {sheet_no}, and {tag} is also defined in the legend's abbreviations block.",
         "why": f"{tag} reads as an abbreviation here, so it most likely labels another device rather than being one itself.",
         "fix": "Trace each one to the device symbol it labels so it is not double counted, or reject it.",
-        "where": f"{sheet_no} and the legend sheet.",
+        "where": _where_with_legend(sheet_no, legend_sheet_no),
     }
 
 
-def _ambiguous_tag_warning(tag: str, count: int, sheet_no: str) -> dict:
+def _ambiguous_tag_warning(tag: str, count: int, sheet_no: str, legend_sheet_no: str | None = None) -> dict:
     return {
         "reason": "legend",
         "title": "Tag also appears in the legend",
         "found": f"Tag {tag} appears {count} times on {sheet_no}, and {tag} is also defined in the legend.",
         "why": f"{tag} is used both for a device and for a legend entry, so some of these placements may be a label rather than a device.",
         "fix": "Spot check a few against the plan; correct the quantity if some are not devices, then approve.",
-        "where": f"{sheet_no} and the legend sheet.",
+        "where": _where_with_legend(sheet_no, legend_sheet_no),
     }
 
 
@@ -137,17 +154,33 @@ def _legend_corroborates(catalog_name: str, description: str) -> bool:
     return any(re.search(rf"\b{re.escape(w)}(?:e?s)?\b", text) for w in words)
 
 
+def _resolve_legend_sheet(page_index: int, sheet_no: dict[int, str]) -> str | None:
+    """The sheet number a legend definition was read from, or None when it
+    can't be determined. `page_index` defaults to -1 on a LegendEntry
+    whose caller didn't supply one (parse_legend is handed text, not a
+    page); a page_index a caller did supply should always be one of the
+    sheets passed to classify(), but the lookup still falls back to None
+    rather than raising if it somehow is not, since naming no sheet is
+    safe and naming the wrong one is not."""
+    if page_index < 0:
+        return None
+    return sheet_no.get(page_index)
+
+
 def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list[ClassifiedItem]:
     sheet_no = {s.page_index: (s.number or f"page {s.page_index + 1}") for s in sheets}
     # First definition wins, matching parse_legend's own policy: a legend
     # sheet carries the real definitions, and a later sheet's mis-paired
     # callout must not overwrite one. A dict comprehension here would be
     # last-wins, which put 'SEE ENLARGED' over 'WEATHERPROOF' for WP.
-    abbrev: dict[str, str] = {}
+    # Carries the defining entry's page_index alongside its description so
+    # a warning can name the sheet the definition came from -- widening
+    # the value, not the key, so which definition wins is unchanged.
+    abbrev: dict[str, tuple[str, int]] = {}
     for sheet in sheets:
         for entry in sheet.legend:
             if entry.kind == "abbreviation":
-                abbrev.setdefault(entry.symbol, entry.description)
+                abbrev.setdefault(entry.symbol, (entry.description, entry.page_index))
     items: list[ClassifiedItem] = []
     for c in clusters:
         no = sheet_no.get(c.sheet_page_index, "?")
@@ -160,8 +193,13 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
         # zeroed out as a modifier.
         if c.tag in TAG_TO_CATALOG:
             cat = CATALOG[TAG_TO_CATALOG[c.tag]]
-            if c.tag in abbrev and not _legend_corroborates(cat.name, abbrev[c.tag]):
-                items.append(_item(cat, c, "attention", _ambiguous_tag_warning(c.tag, c.count, no)))
+            if c.tag in abbrev:
+                description, def_page = abbrev[c.tag]
+                if not _legend_corroborates(cat.name, description):
+                    legend_no = _resolve_legend_sheet(def_page, sheet_no)
+                    items.append(_item(cat, c, "attention", _ambiguous_tag_warning(c.tag, c.count, no, legend_no)))
+                else:
+                    items.append(_item(cat, c, "ready", None))
             else:
                 items.append(_item(cat, c, "ready", None))
         elif is_fixture_type(c.tag):
@@ -174,11 +212,13 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
             # how "AMP — Pole Va - Phase A" reached the CLI as an item
             # name. Same name the sibling unclassified branch uses; the
             # warning is what distinguishes the two readings.
+            _, def_page = abbrev[c.tag]
+            legend_no = _resolve_legend_sheet(def_page, sheet_no)
             items.append(ClassifiedItem(
                 catalog_id="unclassified", name=f"Unclassified symbol ({c.tag})",
                 system="Unknown", category="Unclassified", unit="ea", symbol="generic",
                 quantity=c.count, sheet_page_index=c.sheet_page_index, placements=c.placements,
-                status="attention", warning=_modifier_warning(c.tag, c.count, no),
+                status="attention", warning=_modifier_warning(c.tag, c.count, no, legend_no),
                 source_tag=c.tag,
             ))
         else:

@@ -46,7 +46,7 @@ export function EvidenceModal({ item, onClose }) {
             {item.evidence.detail}, {item.evidence.sheet}
           </p>
           <p className="value value--muted" style={{ margin: 0 }}>
-            No drawing crop was captured for this item.
+            No drawing crop is available for this item.
           </p>
         </div>
       )}

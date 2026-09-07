@@ -230,8 +230,10 @@ class ItemEvidenceImage(Base):
     dict says an image exists and it does not. The frontend already
     handles this gracefully: `EvidenceModal` (MiscModals.jsx) requests
     the image, the fetch 404s, and the `onError` fallback shows the
-    evidence detail/sheet text with copy that says no drawing crop was
-    captured, rather than crashing or claiming no evidence exists.
+    evidence detail/sheet text with copy that says no drawing crop is
+    *available* -- not that one was never captured, which this
+    round trip can make false -- rather than crashing or claiming no
+    evidence exists.
     """
 
     __tablename__ = "item_evidence_images"

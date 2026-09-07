@@ -362,7 +362,12 @@ class Warning(Base):
 
 
 class Action(Base):
-    """Append-only. Undo appends a compensating row; nothing is ever rewritten."""
+    """Append-only. Undo appends a compensating row; nothing is ever rewritten.
+
+    Project-scoped mutations only. Org-level pricing edits go through
+    `CompanyAction`/`company_actions` instead -- see that class's
+    docstring for why, and for the cost of splitting the compliance
+    record across two tables."""
 
     __tablename__ = "actions"
     __table_args__ = (

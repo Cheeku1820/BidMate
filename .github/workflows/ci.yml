@@ -33,9 +33,17 @@ jobs:
       - name: Run migrations
         working-directory: api
         run: alembic upgrade head
+      # This job never sets BIDMATE_BID_SET, so the engine regression tests
+      # (test_engine_pipeline.py plus the counting and legend regressions --
+      # the guards on a defect that once silently zeroed 43 of 45 items on a
+      # real drawing set) skip here. That bid set lives outside the repo and
+      # committing it is ruled out by bid confidentiality (ROADMAP.md §3.3).
+      # BIDMATE_BID_SET is how a runner with a local copy opts in -- see
+      # tests/bid_set.py. -rs prints every skip's reason so a green build
+      # here does not read as "the engine was checked."
       - name: Run tests
         working-directory: api
-        run: pytest -q
+        run: pytest -q -rs
 
   frontend:
     runs-on: ubuntu-latest

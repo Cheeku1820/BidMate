@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 // Two topologies run this file (task-16-brief.md §2):
@@ -36,6 +37,6 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/setupTests.js"],
-    exclude: ["**/node_modules/**", "**/dist/**", "**/.claude/worktrees/**"],
+    exclude: [...configDefaults.exclude, "**/.claude/worktrees/**"],
   },
 });

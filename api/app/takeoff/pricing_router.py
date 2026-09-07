@@ -115,6 +115,7 @@ def patch_labor(
         setattr(row, key, value)
     row.updated_by_user_id = user.id
     db.flush()
+    db.refresh(row)  # normalize Numeric precision before snapshotting -- see put_company_labor_rates
     after = _snapshot(ProjectLaborLine, item_id, db)
 
     actions.commit(
@@ -146,6 +147,7 @@ def patch_material_price(
     row.reason = body.reason
     row.updated_by_user_id = user.id
     db.flush()
+    db.refresh(row)  # normalize Numeric precision before snapshotting -- see put_company_labor_rates
     after = _snapshot(ProjectMaterialPrice, item_id, db)
 
     actions.commit(

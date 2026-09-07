@@ -399,3 +399,24 @@ def test_the_company_action_guard_survives_session_replication_role_replica(db, 
 
     with pytest.raises((InternalError, ProgrammingError)):
         db.execute(text("update company_actions set label = 'rewritten' where id = :id"), {"id": action.id})
+
+
+def test_patch_labor_records_the_persisted_precision_not_the_request_bodys(client, db, item, signed_in_user):
+    """Same hazard as the company routes' "after" snapshot: hours_override
+    is Numeric(8, 3), so a bare `1` in the request body must be recorded
+    as the persisted "1.000" once Postgres normalizes it -- not "1", which
+    is what the in-memory attribute would still hold immediately after
+    flush and before a refresh."""
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 1})
+    action = db.scalars(select(Action).where(Action.kind == "labor_edit", Action.item_id == item.id)).one()
+    assert action.after["hours_override"] == "1.000"
+
+
+def test_patch_material_price_records_the_persisted_precision_not_the_request_bodys(client, db, item, signed_in_user):
+    """price_override is Numeric(10, 2); a bare `15` must be recorded as
+    the persisted "15.00", not "15"."""
+    client.patch(f"/api/items/{item.id}/material-price", json={"priceOverride": 15, "source": "project_price"})
+    action = db.scalars(select(Action).where(
+        Action.kind == "material_price_edit", Action.item_id == item.id,
+    )).one()
+    assert action.after["price_override"] == "15.00"

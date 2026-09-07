@@ -33,6 +33,12 @@ jobs:
       - name: Run migrations
         working-directory: api
         run: alembic upgrade head
+      # 0016 was renamed by hand after being applied, and 0017 is DDL-only
+      # with a hand-written teardown -- this guards against either kind of
+      # migration silently failing to reverse.
+      - name: Check the migration chain reverses
+        working-directory: api
+        run: alembic downgrade -1 && alembic upgrade head
       # This job never sets BIDMATE_BID_SET, so the engine regression tests
       # (test_engine_pipeline.py plus the counting and legend regressions --
       # the guards on a defect that once silently zeroed 43 of 45 items on a

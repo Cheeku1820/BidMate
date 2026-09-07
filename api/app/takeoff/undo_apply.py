@@ -57,9 +57,13 @@ from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPr
 from app.takeoff.snapshots import (
     ITEM_SNAPSHOT_TYPES,
     ITEMS_SNAPSHOT_KEY,
+    LABOR_LINE_KEY,
     LABOR_LINE_SNAPSHOT_TYPES,
+    MATERIAL_PRICE_KEY,
     MATERIAL_PRICE_SNAPSHOT_TYPES,
+    NESTED_SNAPSHOT_KEYS,
     WARNING_SNAPSHOT_TYPES,
+    WARNINGS_KEY,
 )
 
 # The one message this module and review.py._apply_approve() both use
@@ -384,7 +388,7 @@ def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
     """
     if direction == "before":
         state = action.before
-        item_fields = {key: value for key, value in state.items() if key not in ("warnings", "labor_line", "material_price")}
+        item_fields = {key: value for key, value in state.items() if key not in NESTED_SNAPSHOT_KEYS}
         # No "version" key reaches here: review._apply_delete() pops it
         # from the snapshot before it is ever recorded, deliberately, so
         # the reconstructed row below gets the ordinary column default
@@ -394,21 +398,28 @@ def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
         # lineage at 1 is both simplest and safe.
         decoded = decode_snapshot(item_fields, ITEM_SNAPSHOT_TYPES)
         _restore_row_if_missing(db, Item, decoded)
-        for encoded_warning in state.get("warnings", []):
+        for encoded_warning in state.get(WARNINGS_KEY, []):
             warning_fields = decode_snapshot(encoded_warning, WARNING_SNAPSHOT_TYPES)
             _restore_row_if_missing(db, Warning, warning_fields)
 
-        encoded_labor_line = state.get("labor_line")
+        # Both pricing rows take their identity from `decoded["id"]`, the
+        # same item id the row above was just restored under, rather than
+        # from `action.item_id` -- a second source for what should always
+        # be the same value. The two can't diverge today (both come from
+        # the same delete), but keying all three restores off one value
+        # removes the question instead of leaving it for a later reader
+        # to work out is safe.
+        encoded_labor_line = state.get(LABOR_LINE_KEY)
         if encoded_labor_line is not None:
             decoded_labor_line = decode_snapshot(encoded_labor_line, LABOR_LINE_SNAPSHOT_TYPES)
             decoded_labor_line.pop("item_id", None)
-            _restore_sparse_row_if_missing(db, ProjectLaborLine, action.item_id, decoded_labor_line)
+            _restore_sparse_row_if_missing(db, ProjectLaborLine, decoded["id"], decoded_labor_line)
 
-        encoded_material_price = state.get("material_price")
+        encoded_material_price = state.get(MATERIAL_PRICE_KEY)
         if encoded_material_price is not None:
             decoded_material_price = decode_snapshot(encoded_material_price, MATERIAL_PRICE_SNAPSHOT_TYPES)
             decoded_material_price.pop("item_id", None)
-            _restore_sparse_row_if_missing(db, ProjectMaterialPrice, action.item_id, decoded_material_price)
+            _restore_sparse_row_if_missing(db, ProjectMaterialPrice, decoded["id"], decoded_material_price)
     else:
         item = db.execute(
             select(Item).where(Item.id == action.item_id)

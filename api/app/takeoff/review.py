@@ -32,7 +32,7 @@ from app.takeoff.actions import commit, encode_snapshot
 from app.takeoff.concurrency import check_version, lock_item
 from app.takeoff.edit_validation import EDITABLE_FIELDS, validate_edit
 from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPrice, ReviewStatus, Warning
-from app.takeoff.snapshots import _column_snapshot
+from app.takeoff.snapshots import LABOR_LINE_KEY, MATERIAL_PRICE_KEY, WARNINGS_KEY, _column_snapshot
 
 
 def _apply_approve(db: DbSession, actor: User, item: Item, expected_version: int | None) -> tuple[dict, dict]:
@@ -242,9 +242,9 @@ def _apply_delete(db: DbSession, item: Item, expected_version: int) -> tuple[dic
     snapshot.pop("version", None)
     before = {
         **snapshot,
-        "warnings": [encode_snapshot(_column_snapshot(w)) for w in warnings],
-        "labor_line": encode_snapshot(_column_snapshot(labor_line)) if labor_line is not None else None,
-        "material_price": encode_snapshot(_column_snapshot(material_price)) if material_price is not None else None,
+        WARNINGS_KEY: [encode_snapshot(_column_snapshot(w)) for w in warnings],
+        LABOR_LINE_KEY: encode_snapshot(_column_snapshot(labor_line)) if labor_line is not None else None,
+        MATERIAL_PRICE_KEY: encode_snapshot(_column_snapshot(material_price)) if material_price is not None else None,
     }
     locked.version += 1
     db.delete(locked)

@@ -397,6 +397,32 @@ class Action(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class CompanyAction(Base):
+    """Append-only audit of org-level pricing changes.
+
+    Deliberately separate from `actions`: that table is project-scoped by a
+    non-nullable FK and is also the undo stack, and a company edit is
+    neither undoable nor part of any project's history. Keeping them apart
+    means undo cannot see these rows at all.
+
+    The cost, recorded here so it is not rediscovered: the compliance
+    record now spans two tables, and an audit of "everything that changed"
+    has to read both.
+    """
+
+    __tablename__ = "company_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id"), index=True)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String(40))
+    label: Mapped[str] = mapped_column(Text)
+    before: Mapped[dict] = mapped_column(JSONB, default=dict)
+    after: Mapped[dict] = mapped_column(JSONB, default=dict)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Note(Base):
     """Something the drawings do not say, recorded by a person.
 

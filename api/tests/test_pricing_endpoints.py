@@ -48,6 +48,25 @@ def test_patch_material_price_allowance_with_reason_succeeds(client, db, item, s
     assert row.source == "allowance" and row.reason == "no vendor quote yet"
 
 
+def test_a_company_rate_change_is_recorded(client, db, org, signed_in_user):
+    """Attribution on the row says who touched it last; it cannot say what
+    the rate was before, or that it changed twice. A pricing change moves
+    every total on every project in the org, which is the kind of change an
+    audit asks about."""
+    from app.takeoff.models import CompanyAction
+
+    client.put("/api/company/labor-rates", json={
+        "journeymanRate": 68, "foremanRate": 82, "apprenticeRate": 41, "productivityFactor": 1.0})
+    client.put("/api/company/labor-rates", json={
+        "journeymanRate": 72, "foremanRate": 82, "apprenticeRate": 41, "productivityFactor": 1.0})
+
+    rows = db.query(CompanyAction).filter(CompanyAction.org_id == org.id).order_by(CompanyAction.seq).all()
+    assert len(rows) == 2
+    assert rows[1].before["journeyman_rate"] == "68.00"
+    assert rows[1].after["journeyman_rate"] == "72.00"
+    assert rows[1].actor_user_id == signed_in_user.id
+
+
 def test_patch_labor_404s_for_another_orgs_item(client, other_org_project, db, signed_in_user):
     from app.takeoff.models import Item, ReviewStatus, Sheet
 

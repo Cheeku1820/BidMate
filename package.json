@@ -2,6 +2,9 @@
   "name": "takeoff-review",
   "private": true,
   "version": "0.1.0",
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "description": "Blueprint review workspace prototype for Division 26 electrical takeoff",
   "scripts": {

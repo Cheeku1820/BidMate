@@ -21,10 +21,18 @@ class DetectedSheet:
     title: str
     discipline: str
     scale: str  # "" when none was found in the title block
+    # Page size in points, as *displayed*. A sheet drawn portrait and
+    # displayed landscape (/Rotate 90, how a real E-size set is built)
+    # reports the landscape dimensions here, because displayed space is
+    # the one every consumer works in: the rendered page image, the
+    # marker positions normalized against these dimensions, and the clip
+    # an evidence crop is cut with. Anything reading unrotated
+    # coordinates out of the file converts before it emits them.
     width_pt: float
     height_pt: float
-    # Drawing region in page points (x0, y0, x1, y1): the area device tags
-    # are counted within, excluding the title-block strip and border.
+    # Drawing region in displayed page points (x0, y0, x1, y1): the area
+    # device tags are counted within, excluding the title-block strip and
+    # border.
     region: tuple[float, float, float, float]
     schedule_text: str = ""  # raw schedule/legend text for Classification
     unreadable_reason: str = ""  # set when the sheet could not be read

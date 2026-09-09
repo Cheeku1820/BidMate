@@ -60,6 +60,16 @@ def count_sheet(path: str, sheet: DetectedSheet) -> list[DeviceCluster]:
     doc = pymupdf.open(path)
     page = doc[sheet.page_index]
     words = page.get_text("words")  # (x0,y0,x1,y1, word, block_no, line_no, word_no)
+    # Text extraction reports *unrotated* coordinates, but a placement is
+    # only ever used in the *displayed* space: it is normalized into sheet
+    # space against the sheet's width_pt/height_pt (which come from
+    # page.rect), it is drawn over the rendered page image, and
+    # render_evidence_crop cuts its crop with a displayed-space clip. On a
+    # real E-size set -- drawn portrait, displayed landscape through
+    # /Rotate 90 -- those are different pages, so convert here, at the one
+    # point coordinates enter the agent. sheet.region is already in
+    # displayed space, so the filter below then compares like with like.
+    to_display = page.rotation_matrix
 
     # How many words share each text line, so a candidate sitting in a
     # sentence (a note, a title) can be told from one standing alone by a
@@ -73,7 +83,8 @@ def count_sheet(path: str, sheet: DetectedSheet) -> list[DeviceCluster]:
             continue
         if line_len[(block_no, line_no)] > MAX_LINE_WORDS:
             continue  # prose, not a device tag
-        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        r = pymupdf.Rect(x0, y0, x1, y1) * to_display
+        cx, cy = (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2
         if not _in_region(cx, cy, sheet.region):
             continue
         by_tag[t].append(Placement(int(cx), int(cy)))

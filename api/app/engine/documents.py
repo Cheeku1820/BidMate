@@ -56,29 +56,63 @@ def _is_raster(page: pymupdf.Page) -> bool:
     return cover > 0.6 and len(page.get_drawings()) < 50
 
 
+def _sheet_id_spans(page: pymupdf.Page) -> list[tuple[str, float, pymupdf.Rect]]:
+    """Every E-number on the page, with the type size it is set in and
+    where it sits on the *displayed* sheet.
+
+    Extracted text carries unrotated coordinates while `page.rect` is the
+    displayed rect, and on an E-size set those are different pages: the
+    sheet is drawn portrait and displayed landscape through /Rotate 90.
+    Mapping each span through `page.rotation_matrix` puts both in one
+    space, so a title-block test written against `page.rect` means what
+    it reads as.
+    """
+    to_display = page.rotation_matrix
+    spans: list[tuple[str, float, pymupdf.Rect]] = []
+    for block in page.get_text("dict").get("blocks", ()):
+        if block.get("type") != 0:   # 0 is text; images have no spans
+            continue
+        for line in block.get("lines", ()):
+            for span in line.get("spans", ()):
+                rect = pymupdf.Rect(span["bbox"]) * to_display
+                size = float(span.get("size") or 0.0)
+                for match in SHEET_ID.finditer(span.get("text", "")):
+                    spans.append((match.group(0), size, rect))
+    return spans
+
+
 def _sheet_number(page: pymupdf.Page, text: str) -> str:
     """The sheet's own number, read from its title block first.
 
     The title block is the one place on the page an E-number is
     guaranteed to name *this* sheet rather than a sheet it references —
-    a detail callout bubble ("see 2/E5.1") can otherwise repeat a
-    different sheet's number more often than the title block states this
-    one's, and the most-frequent heuristic below would pick the wrong
-    sheet. RIGHT_STRIP is the same boundary `detect_sheets` already uses
-    to exclude the title block from device counting, reused here rather
-    than duplicated so the two never drift apart.
+    a detail callout bubble ("see 2/E5.1") or a general note ("IAW SHEET
+    E5.1") can otherwise repeat a different sheet's number more often
+    than the title block states this one's. RIGHT_STRIP is the same
+    boundary `detect_sheets` already uses to exclude the title block from
+    device counting, reused here rather than duplicated so the two never
+    drift apart.
+
+    Within the strip the *largest* type wins rather than the most
+    frequent. The number box is set several times larger than any
+    reference near it, and frequency is precisely the signal that let
+    the callouts through in the first place. Ties fall to the first
+    occurrence in reading order, never to set-iteration order, so a
+    sheet's identity does not change between processes reading the same
+    file.
     """
-    w, h = page.rect.width, page.rect.height
-    tb_text = page.get_text("text", clip=pymupdf.Rect(w * RIGHT_STRIP, 0, w, h))
-    ids = SHEET_ID.findall(tb_text)
-    if not ids:
-        # Some sets have no machine-readable text in a consistent
-        # title-block box -- fall back to the whole page rather than
-        # returning nothing.
-        ids = SHEET_ID.findall(text)
-    if not ids:
-        return ""
-    return max(set(ids), key=ids.count)
+    spans = _sheet_id_spans(page)
+    title_block = [s for s in spans if s[2].x0 >= page.rect.width * RIGHT_STRIP]
+    # Some sets have no machine-readable E-number in a consistent
+    # title-block box -- fall back to the whole page rather than
+    # returning nothing.
+    for pool in (title_block, spans):
+        if pool:
+            largest = max(range(len(pool)), key=lambda i: (pool[i][1], -i))
+            return pool[largest][0]
+    # Last resort, for a page whose text carries no spans at all.
+    ids = SHEET_ID.findall(text)
+    return ids[0] if ids else ""
 
 
 def _scale(text: str) -> str:

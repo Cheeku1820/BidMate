@@ -106,3 +106,25 @@ def test_strip_with_no_family_token_yields_empty(tmp_path):
 ])
 def test_sheet_id_family(token, ok):
     assert bool(title_block.SHEET_ID.fullmatch(token)) is ok
+
+
+def test_title_reads_the_cell_next_to_the_number(tmp_path):
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((880, 700), "FIRST FLOOR")
+    page.insert_text((880, 725), "POWER PLAN")
+    page.insert_text((900, 770), "E2.1")
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.title(tb, "E2.1") == "First floor power plan"
+
+
+def test_title_rejects_address_and_seal_lines(tmp_path):
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((860, 700), "3909 ARCTIC BOULEVARD, SUITE 103")
+    page.insert_text((860, 725), "REGISTERED PROFESSIONAL ENGINEER")
+    page.insert_text((900, 770), "E2.1")
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.title(tb, "E2.1") == ""

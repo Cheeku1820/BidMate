@@ -109,6 +109,39 @@ def sheet_number(tb: TitleBlock) -> str:
     ).text
 
 
+# Words that mark an address, a signature line or a seal -- never a title.
+_NOT_TITLE = {
+    "SUITE", "BOULEVARD", "STREET", "AVENUE", "PHONE", "FAX", "CHECKED", "DRAWN",
+    "DATE", "REGISTERED", "PROFESSIONAL", "ENGINEER", "SHEET", "PROJECT", "NO.",
+}
+# How far from the number cell the title cell may sit, in points.
+_TITLE_REACH = 120.0
+
+
 def title(tb: TitleBlock, number: str) -> str:
-    """Filled in by Task 4."""
-    return ""
+    """The title cell: uppercase lines within _TITLE_REACH of the number
+    cell, joined, sentence-cased. "" when nothing passes the sanity check
+    (2-10 words, no digits-only tokens, none of _NOT_TITLE)."""
+    cell = next((w for w in tb.words if w.text == number), None)
+    if cell is None:
+        return ""
+    near = [
+        w for w in tb.words
+        if w.text != number
+        and abs(w.cx - cell.cx) <= _TITLE_REACH
+        and abs(w.cy - cell.cy) <= _TITLE_REACH
+        and w.text.isupper()
+    ]
+    # Group by text line, keep reading order.
+    lines: dict[tuple[int, int], list[str]] = {}
+    for w in near:
+        lines.setdefault((w.block, w.line), []).append(w.text)
+    words: list[str] = [t for _, ts in sorted(lines.items()) for t in ts]
+    if not 2 <= len(words) <= 10:
+        return ""
+    if any(t.isdigit() for t in words):
+        return ""
+    if any(t.strip(",.:") in _NOT_TITLE for t in words):
+        return ""
+    text = " ".join(words).strip(" ,.")
+    return text[:1].upper() + text[1:].lower()

@@ -26,6 +26,10 @@ class DetectedSheet:
     # Drawing region in page points (x0, y0, x1, y1): the area device tags
     # are counted within, excluding the title-block strip and border.
     region: tuple[float, float, float, float]
+    # What the sheet is: "plan" | "schedule" | "legend" | "diagram" | "other"
+    # (sheet_kind.KINDS). Counting runs only on a plan. A sheet property
+    # on its own axis -- never one of the four review labels.
+    kind: str = "plan"
     schedule_text: str = ""  # raw schedule/legend text for Classification
     legend: list["LegendEntry"] = field(default_factory=list)  # parsed rows from schedule_text
     unreadable_reason: str = ""  # set when the sheet could not be read

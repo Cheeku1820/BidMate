@@ -14,3 +14,8 @@ __pycache__/
 *.pyc
 .venv/
 api/.venv/
+
+# Real contractor bid sets. NDA'd drawings -- bid confidentiality rules
+# committing them out (ROADMAP.md 3.3). The engine regression tests read
+# from here via tests/bid_set.py; the files never leave this machine.
+bid_examples/

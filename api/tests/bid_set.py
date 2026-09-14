@@ -14,6 +14,8 @@ import os
 
 BID = os.environ.get(
     "BIDMATE_BID_SET",
-    "/Users/nikhit/Documents/Sumedh-Nikhit Start-Up/bid_example/"
-    "21_1001_unalaska_library_cd_biddrawings.pdf",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "bid_examples", "Unalaska Bid", "21_1001_unalaska_library_cd_biddrawings.pdf",
+    ),
 )

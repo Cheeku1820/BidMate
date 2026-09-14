@@ -1,0 +1,129 @@
+# Engine sheet fidelity — design
+
+**Date:** 2026-09-14
+**Status:** Approved for planning.
+**Supersedes:** the diagnosis in `2026-09-08-engine-sheet-fidelity-findings.md`, which measured five defects on one set. This design reaches the root cause under three of them, adds one the findings missed, and widens the target from one set to every vector set in `bid_examples/`.
+
+## 1. What is wrong, measured
+
+### 1.1 The root cause: geometry in the wrong frame
+
+Every page in the Unalaska set is rotated 90°; TSC Nutrition and United Utility mix 0°, 90° and 270° within one file. PyMuPDF's `page.rect` reports the **visual** frame (2448 × 1584 for a rotated Unalaska page) while `page.get_text()` returns coordinates in the **unrotated mediabox** frame (1584 × 2448). `documents.py` builds every clip and region from `page.rect` and applies them to text in the other frame. Three consequences:
+
+| Consequence | Measured |
+|---|---|
+| The title-block clip (`RIGHT_STRIP`) selects nothing, so `_sheet_number` always falls back to whole-page frequency, ties are common, and `max(set(...))` breaks them in hash order | Page 89 resolved to `E7.1`, `E6.2`, `E4.1` on three consecutive processes. 14 pages collapse to 11 numbers. Page 87 is really `E2.1`. |
+| The counting region excludes the visual right ~37 % of every sheet instead of the 18 % title strip it meant to | 98 of 626 tag-shaped words on the five plan pages (16 %) are dropped before counting runs. A silent under-count. |
+| Placements are unrotated-frame coordinates; `ingest.py` normalises them against the rotated `width_pt` / `height_pt` | Markers land squashed into the left two-thirds of sheet space, run off the bottom edge, and are not rotated. Evidence crops are right because `render_evidence_crop` clips in the frame the coordinates came from. **This is the original complaint** — issues not landing on the blueprint. |
+
+### 1.2 Non-plan sheets counted as plans
+
+No field says what kind of sheet a page is. Schedules, the legend sheet, the one-line and the lighting-controls sheet are counted as device plans: 106 of 303 Unalaska placements (35 %) are `VA`, `CKT`, `AMP`, `ON / OFF` and legend entries.
+
+### 1.3 Titles are a constant
+
+Every sheet is titled "Electrical plan". Nothing reads the title cell.
+
+### 1.4 Sheet-number conventions — the reason nothing else in the corpus is read
+
+`SHEET_ID` is `\bE\d{1,2}\.\d{1,2}\b`. Surveyed 2026-09-14 across `bid_examples/`:
+
+| Set | Electrical PDF | Pages | Rotation | Convention | Detected today |
+|---|---|---|---|---|---|
+| Unalaska | `21_1001_unalaska_library_cd_biddrawings.pdf` | 94 (14 electrical) | 0 / 90 / 270 | `E1.1` | 14 |
+| Kittles Saxony | `PLANS/Electrical Plans.pdf` | 11 | 0 | `E-101`, `EL101`, `EP101`, `EF-1` | **0** |
+| Pulte Sagebriar | `PLANS/…Electrical.pdf` | 10 | 0 | `E-101`, `EX1`, `EX10`, `EF-1` | **0** |
+| TSC Nutrition & Technology | `PLANS/…100__CD_Set.pdf` | 78, mixed disciplines | 0 / 90 / 270 | `E101`, `EQ101`, `ES101`, `EL101` | **0** |
+| United Utility Supply | `PLANS/0_DRAWING SET…pdf` | 66, mixed disciplines | 0 / 90 | `E-101`, `EF-1`, `EP-1`, `ED-101` | **0** |
+| FedEx, Gerber, TSC Harrison | — | — | — | raster; no text layer | 0 (correctly unreadable) |
+
+Architectural and civil PDFs in the same folders *reference* E-sheets ("SEE E-101"), so a widened regex applied to whole-page text would pull non-electrical pages in. The sheet's own number — the one in its title block — is the only reliable discriminator.
+
+## 2. Design
+
+### 2.1 One frame: the visual one
+
+All geometry in the Documents and Counting agents is in the **visual frame** — `page.rect`, what the estimator sees and what a rendered page image shows. The transform happens once, at the extraction boundary: word and drawing coordinates from PyMuPDF are mapped through `page.rotation_matrix` before anything reads them. Clips are expressed visually and mapped back through `page.derotation_matrix` where PyMuPDF needs mediabox-frame input. `DetectedSheet.width_pt` / `height_pt` remain visual (they already are). Placements become visual. `ingest.py`'s normalisation is then correct with no change.
+
+`render_evidence_crop` receives visual coordinates and must derotate its clip; the rendered pixmap already follows page rotation.
+
+Rejected: derotating only the clips (leaves the marker bug); keeping everything in the mediabox frame and rotating in the client (pushes page-rotation knowledge into the canvas, which will render page images that are already rotated).
+
+### 2.2 Locating the title block
+
+A title block is a strip along one edge of the visual page. Which edge varies by firm. Detection, per page:
+
+1. For each of the four edge strips (outer 18 % of width or height), count sheet-number-family tokens (§2.5) plus the labels `SHEET`, `DRAWN`, `CHECKED`, `DATE`, `PROJECT`, `REVISION`.
+2. The strip with the highest count is the title block. If no strip scores, the page has no readable title block and **is not detected as an electrical sheet**. This is deliberately conservative: an electrical page with an unreadable title block is a page the per-set fixture test (§3.1) will name, and a fix can be aimed at it; an architectural page pulled in because it says "SEE E-101" is a phantom sheet nobody looks for.
+
+The counting region is the visual page minus a 3 % border minus the detected strip. `RIGHT_STRIP` stops being a constant.
+
+### 2.3 Sheet number — deterministic
+
+Within the title-block strip: the sheet-number-family token **nearest the page corner the strip ends at** — bottom-right for a bottom or right strip, top-right for a top strip, bottom-left for a left strip; drafting convention puts the number cell there. Ties broken by frequency within the strip, then by first appearance in reading order. No `set()` iteration anywhere in the path — a regression test runs `detect_sheets` in three subprocesses with different `PYTHONHASHSEED` and asserts identical output.
+
+A strip that holds no family token means the page is not an electrical sheet (§2.5).
+
+### 2.4 Sheet kind
+
+`DetectedSheet.kind`, closed set: `plan`, `schedule`, `legend`, `diagram`, `other`. Decided in order:
+
+1. **Title-block title** (§2.6) — contains `SCHEDULE` → `schedule`; `LEGEND`, `SYMBOLS`, `ABBREVIATIONS` → `legend`; `ONE-LINE`, `ONE LINE`, `RISER`, `DIAGRAM`, `DETAILS`, `CONTROLS` → `diagram`; `PLAN` → `plan`; `COVER`, `INDEX`, `NOTES` → `other`.
+2. **Content markers**, when the title decides nothing — ≥ 2 distinct schedule headers (`PANEL SCHEDULE`, `LUMINAIRE SCHEDULE`, `FIXTURE SCHEDULE`, `EQUIPMENT SCHEDULE`, `MECHANICAL SCHEDULE`) and no scale label → `schedule`; `ON / OFF` repeated ≥ 4 times and no scale → `diagram`; a scale label present → `plan`.
+3. **Unsure → `plan`.** Over-counting is visible in review; omission is silent.
+
+`count_sheet` returns `[]` for any sheet whose kind is not `plan`. The legend sheet still feeds `parse_legend` — it stops contributing devices, nothing else.
+
+### 2.5 Sheet-number family
+
+`SHEET_ID` becomes `\bE[A-Z]{0,2}-?\d{1,3}(?:\.\d{1,2})?\b`, covering every convention in §1.4. Because the family is broad enough to match device tags (`E1`) and equipment tags (`EQ101`), it is **never** applied to whole-page text to decide whether a page is electrical. A page is an electrical sheet when, and only when, the token in its title-block number cell (§2.3) is in the family. There is no whole-page fallback.
+
+### 2.6 Title
+
+From the title cell: uppercase text lines in the title-block strip adjacent to the number cell, joined with spaces, sanity-checked — 2 to 10 words, no digits-only tokens, none of `SUITE`, `BOULEVARD`, `STREET`, `PHONE`, `CHECKED`, `DRAWN`, `DATE`, `REGISTERED`, `PROFESSIONAL`, `ENGINEER`. When the check fails, the title is the kind label: `Electrical plan`, `Schedule`, `Legend`, `Diagram`, `Sheet`. Titles are sentence case on the wire (`Panel schedule`, not `PANEL SCHEDULE`) per the copy rule.
+
+### 2.7 Store and interface
+
+- `Sheet.kind` column, `String(20)`, default `plan`, server default `plan`; migration `0018`, reversible.
+- Wire: `estimate.full_takeoff` emits `kind` per sheet → `ingest.py` validates it against the closed set (unknown → `plan`, and a log line) → `SheetOut.kind` → `api-mapping.mapSheet` → `sheet.kind`.
+- `SheetsRail`: for `kind !== "plan"`, render the kind label after the number in the existing secondary text style — `E0.3 · Panel schedule`. No new filter, no new colour, no status component. Kind is a sheet property on its own axis; the four review labels are untouched.
+
+### 2.8 Out of scope, named
+
+- Schedule *blocks* embedded on plan sheets (the remaining residue of the old finding #5).
+- Two pages genuinely carrying the same sheet number — that is revision handling.
+- Raster sets (FedEx, Gerber, TSC Harrison) — they remain `unreadable_reason`, correctly. This design must not change that.
+- Discipline detection beyond "the number is in the E family."
+
+## 3. Testing
+
+**Counting is tested, not trained.** Every assertion below is against a value a person can verify by opening the PDF.
+
+### 3.1 Per-set fixtures
+
+For each of the five vector sets, a checked-in fixture `api/tests/fixtures/sheets/<set>.json` records, per electrical page: `page_index`, `number`, `kind`, `rotation`. The implementer writes each fixture **by reading the title blocks**, not by running the engine and copying its output. The fixture is the answer key.
+
+A parametrised test loads each set (via `BIDMATE_BID_SET`'s directory, `bid_examples/`, skipping with a printed reason when absent) and asserts:
+
+- the detected page set equals the fixture's page set — no architectural or civil page leaks in, no electrical page is missed;
+- every detected `number` and `kind` equals the fixture's;
+- numbers within a set are distinct (with the fixture allowed to declare a known duplicate explicitly, so a revision reissue is a recorded fact rather than a test failure).
+
+### 3.2 Determinism
+
+`detect_sheets` on Unalaska in three subprocesses with `PYTHONHASHSEED` = 0, 1, 2: byte-identical output.
+
+### 3.3 Frame correctness
+
+- Every placement on every vector set lies inside `[0, width_pt] × [0, height_pt]`.
+- On one rotated Unalaska plan page and one 270° TSC Nutrition page, a hand-chosen device tag's visual coordinate, when a small square around it is rendered from the page's rotated pixmap, contains that tag's glyph (assert via `page.get_textbox` on the derotated clip returning the tag). This is the test that proves markers will sit on the drawing.
+- Unalaska plan placements after the fix: **≥ 197 and ≤ 320** on the seven plan pages — the lower bound is what the mis-framed region left, the upper bound guards against the seal and schedules coming back.
+
+### 3.4 Kind gating
+
+- Unalaska: pages 80, 81, 82, 83, 90, 91 produce zero placements; page 80 still yields a non-empty `legend`.
+- Raster sets: every page detected carries `unreadable_reason`; none carries placements.
+
+### 3.5 Existing regression tests
+
+`test_engine_counting.py`, `test_engine_legend.py`, `test_engine_pipeline.py` keep passing. Where an asserted count changes because the region is now correct, the new value is verified by hand before the assertion moves.

@@ -83,6 +83,66 @@ def test_title_falls_back_to_the_kind_label(tmp_path):
     assert s.title == "Electrical plan"
 
 
+def test_a_sparse_riser_diagram_is_still_a_sheet(tmp_path):
+    """Pulte Sagebriar E-700 is a riser diagram drawn with 323 vector
+    paths. A page whose title-block number cell holds a family token is
+    an electrical sheet whatever its path count; the old 500-path
+    "text-only page" gate dropped it silently."""
+    path = _sheet(tmp_path, "E-700", title_lines=("ELECTRICAL RISER", "DIAGRAM"), drawings=300, scale=False)
+    (s,) = documents.detect_sheets(path)
+    assert s.number == "E-700"
+    assert s.kind == "diagram"
+
+
+def _scan(tmp_path, bands, width=612, height=792, text=""):
+    """A scanned page: one or more image bands and nothing else. FedEx
+    and Gerber split each scan into two bands, neither covering more
+    than half the page."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=width, height=height)
+    img = pymupdf.open()
+    ip = img.new_page(width=200, height=100)
+    ip.draw_rect(pymupdf.Rect(10, 10, 190, 90), color=(0, 0, 0), fill=(0.5, 0.5, 0.5))
+    pix = ip.get_pixmap()
+    for y0, y1 in bands:
+        page.insert_image(pymupdf.Rect(0, y0, width, y1), pixmap=pix)
+    if text:
+        page.insert_text((300, 700), text)
+    path = tmp_path / "scan.pdf"
+    doc.save(path)
+    return str(path)
+
+
+def test_a_scanned_page_is_detected_and_unreadable(tmp_path):
+    """No text, no title block, only pixels: the page is still emitted,
+    with no number and an unreadable reason. Silence would read as
+    "nothing electrical here" (CLAUDE.md)."""
+    path = _scan(tmp_path, bands=[(0, 792)])
+    (s,) = documents.detect_sheets(path)
+    assert s.number == ""
+    assert s.title == "Scanned sheet"
+    assert s.kind == "other"
+    assert s.unreadable_reason
+
+
+def test_a_scan_split_into_two_bands_is_still_a_scan(tmp_path):
+    """FedEx's letter-portrait pages carry a landscape scan as two bands
+    covering 55 % of the page between them and never more than 29 % each.
+    Coverage is summed over every image, not taken from the largest."""
+    path = _scan(tmp_path, bands=[(177, 405), (405, 615)])
+    (s,) = documents.detect_sheets(path)
+    assert s.unreadable_reason
+
+
+def test_a_blank_page_is_not_a_scan(tmp_path):
+    """No image, no text, no drawing: nothing to flag."""
+    doc = pymupdf.open()
+    doc.new_page(width=612, height=792)
+    path = tmp_path / "blank.pdf"
+    doc.save(path)
+    assert documents.detect_sheets(str(path)) == []
+
+
 def _one_page_pdf(tmp_path, width=1000, height=800):
     doc = pymupdf.open()
     doc.new_page(width=width, height=height)

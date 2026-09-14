@@ -45,16 +45,33 @@ EVIDENCE_MAX_ZOOM = 4.0
 
 SCHEDULE_KEYWORDS = ("SCHEDULE", "LUMINAIRE", "FIXTURE", "LEGEND", "MANUFACTURER")
 
+SCANNED_REASON = "Scanned sheet — vector reading isn't available yet, so it was not counted."
+
+
+# A page is a scan when it is pixels and next to nothing else: under
+# RASTER_MAX_DRAWINGS vector paths, and either its images cover more than
+# RASTER_COVER of the page or it carries no text at all. Coverage is
+# summed over every image -- FedEx and Gerber split each scan into two
+# bands, neither covering more than half the page, and the largest band
+# alone said "not a scan" for every one of their pages.
+RASTER_MAX_DRAWINGS = 50
+RASTER_COVER = 0.6
+
 
 def _is_raster(page: pymupdf.Page) -> bool:
-    area = page.rect.width * page.rect.height or 1
+    if len(page.get_drawings()) >= RASTER_MAX_DRAWINGS:
+        return False
+    box = pymupdf.Rect(page.mediabox)  # image bboxes are in the unrotated frame
+    area = box.width * box.height or 1
     cover = 0.0
     for im in page.get_image_info():
         b = im.get("bbox")
         if b:
-            r = pymupdf.Rect(b)
-            cover = max(cover, (r.width * r.height) / area)
-    return cover > 0.6 and len(page.get_drawings()) < 50
+            r = pymupdf.Rect(b) & box
+            cover += (r.width * r.height) / area
+    if cover <= 0:
+        return False
+    return cover > RASTER_COVER or not page.get_text("text").strip()
 
 
 def _scale(text: str) -> str:
@@ -77,6 +94,18 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
         tb = title_block.locate(words, w, h)
         number = title_block.sheet_number(tb) if tb else ""
         if not number:
+            # A scanned page has no text to find a title block in. It is
+            # still a page of the set, so it is emitted as a sheet nobody
+            # can read rather than dropped: silence reads as completeness.
+            if _is_raster(page):
+                sheets.append(
+                    DetectedSheet(
+                        page_index=pno, number="", title="Scanned sheet",
+                        discipline="Electrical", scale="", width_pt=w, height_pt=h,
+                        region=_border(w, h), kind="other",
+                        unreadable_reason=SCANNED_REASON,
+                    )
+                )
             continue
 
         region = _region(w, h, tb.strip)
@@ -86,12 +115,14 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
                     page_index=pno, number=number, title="Electrical",
                     discipline="Electrical", scale="", width_pt=w, height_pt=h, region=region,
                     kind="plan",  # nothing on a scanned page has been read; unsure is plan
-                    unreadable_reason="Scanned sheet — vector reading isn't available yet, so it was not counted.",
+                    unreadable_reason=SCANNED_REASON,
                 )
             )
             continue
-        if len(page.get_drawings()) < 500:
-            continue  # a text-only page, not a drawing
+        # No path-count gate here. A page whose title-block number cell
+        # holds a family token is an electrical sheet however sparse it
+        # is -- Pulte Sagebriar's E-700 riser diagram is 323 paths, and a
+        # general-notes sheet is none.
 
         scale = _scale(text)
         raw_title = title_block.title(tb, number)
@@ -110,11 +141,16 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
     return sheets
 
 
+def _border(w: float, h: float) -> tuple[float, float, float, float]:
+    """The visual page minus the border, for a page with no title block."""
+    return (w * BORDER, h * BORDER, w * (1 - BORDER), h * (1 - BORDER))
+
+
 def _region(w: float, h: float, strip: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
     """The visual page minus a border minus the located title-block
     strip. Replaces the old fixed right strip, which was built in the
     rotated frame and applied to unrotated text (spec 1.1)."""
-    x0, y0, x1, y1 = w * BORDER, h * BORDER, w * (1 - BORDER), h * (1 - BORDER)
+    x0, y0, x1, y1 = _border(w, h)
     sx0, sy0, sx1, sy1 = strip
     if sx0 > 0 and sx1 >= w:      # right strip
         x1 = min(x1, sx0)

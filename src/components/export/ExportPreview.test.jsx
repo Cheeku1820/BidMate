@@ -121,4 +121,43 @@ describe("ExportPreview", () => {
     renderExport();
     expect(screen.queryByRole("heading", { name: /estimated total direct cost/i })).toBeNull();
   });
+
+  it("shows the pricing basis note beside the totals that rest on it", () => {
+    /* The export is where the branch-wiring assumption most needs to be
+       visible: this is the number that leaves the building. The card it
+       sits in only renders when something is priced, so this fixture has
+       to carry a totalCost -- every other fixture in this file lacks one,
+       which is why an earlier version of this assertion could not have
+       failed. */
+    const note =
+      "Rate based on Unalaska, AK area cost data. Branch wiring is estimated at 30 feet per device.";
+    context = makeContext({
+      snapshot: {
+        ...makeContext().snapshot,
+        items: [
+          { id: "c1", sheetId: "s1", name: "Panel LP-1", description: "", system: "Distribution", quantity: 1, unit: "ea", status: "approved", rejected: false, warnings: [], materialCost: 600, laborHours: 10, laborCost: 400, totalCost: 1000 },
+        ],
+      },
+      project: { id: "p1", name: "Cedar Ridge Warehouse", revisionSetLabel: "E1.1 Rev 3", pricingNote: note },
+    });
+    renderExport();
+
+    const card = screen.getByRole("heading", { name: /estimated total direct cost/i }).closest("section");
+    expect(within(card).getByText(/Branch wiring is estimated at 30 feet per device/)).toBeTruthy();
+  });
+
+  it("shows no basis note when the project carries none", () => {
+    context = makeContext({
+      snapshot: {
+        ...makeContext().snapshot,
+        items: [
+          { id: "c1", sheetId: "s1", name: "Panel LP-1", description: "", system: "Distribution", quantity: 1, unit: "ea", status: "approved", rejected: false, warnings: [], materialCost: 600, laborHours: 10, laborCost: 400, totalCost: 1000 },
+        ],
+      },
+    });
+    renderExport();
+
+    const card = screen.getByRole("heading", { name: /estimated total direct cost/i }).closest("section");
+    expect(within(card).queryByText(/Branch wiring is estimated/)).toBeNull();
+  });
 });

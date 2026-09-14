@@ -165,6 +165,11 @@ class ProjectOut(BaseModel):
     items_approved: int
     warnings_open: int
     missing_info: int
+    # The pricing basis note -- what the costs are indexed to, and that
+    # branch wiring was assumed rather than measured. It reaches the
+    # export preview through this field, because an assumption that
+    # changes the exported number is worst of all invisible there.
+    pricing_note: str
 
     model_config = CAMEL_MODEL_CONFIG
 

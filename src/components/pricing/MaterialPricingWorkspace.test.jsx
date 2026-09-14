@@ -21,6 +21,9 @@ const baseRows = [
   },
 ];
 
+const NOTE =
+  "Rate based on Unalaska, AK area cost data. Branch wiring is estimated at 30 feet per device. Conduit and wire quantities follow that rule rather than a measured route, so check them against the job before the total is relied on.";
+
 let context;
 
 vi.mock("../project/useWorkspaceContext.js", () => ({
@@ -182,5 +185,35 @@ describe("MaterialPricingWorkspace", () => {
     renderMaterialPricing({ store });
     await waitFor(() => expect(screen.getByText("Regional baseline")).toBeInTheDocument());
     expect(screen.getByText("Price based on Sacramento, CA area cost data.")).toBeInTheDocument();
+  });
+
+
+  test("shows the pricing basis note on a deterministic project, not only an automated one", async () => {
+    /* The note was gated behind pricingSource === "llm", so a project
+       priced from the regional table -- no key configured, or any
+       automated attempt that fell back, which is how this repo runs
+       today -- wrote the note and never displayed it. That note is where
+       the 30-ft-per-device branch wiring assumption is disclosed, and it
+       is half the material on a real set. */
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({
+        pricingSource: "deterministic", pricingNote: NOTE, rows: baseRows,
+      }),
+      setMaterialPrice: vi.fn(),
+    };
+    renderMaterialPricing({ store });
+    await waitFor(() => expect(screen.getByText(/Branch wiring is estimated/)).toBeInTheDocument());
+    // Both facts belong on screen: the note, and that nothing was estimated automatically.
+    expect(screen.getByText(/no automatic regional price estimate/)).toBeInTheDocument();
+  });
+
+  test("shows no basis note when the project carries none", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: "deterministic", pricingNote: "", rows: baseRows }),
+      setMaterialPrice: vi.fn(),
+    };
+    renderMaterialPricing({ store });
+    await waitFor(() => expect(screen.getByText(/no automatic regional price estimate/)).toBeInTheDocument());
+    expect(screen.queryByText(/Branch wiring is estimated/)).not.toBeInTheDocument();
   });
 });

@@ -20,7 +20,7 @@ from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import actions
 from app.takeoff.evidence_images import upsert_evidence_image
-from app.takeoff.ingest import map_payload
+from app.takeoff.ingest import basis_note, map_payload
 from app.takeoff.models import Item, Project, ReviewStatus, Sheet, Warning, WarningReason
 
 
@@ -124,7 +124,7 @@ def ingest_takeoff(
     # anything, and clearing this flips every labor and material row
     # on the project to Missing information.
     project.pricing_source = payload.get("source", project.pricing_source)
-    project.pricing_note = str(payload.get("location_note") or "")
+    project.pricing_note = basis_note(payload)
 
     actions.commit(
         db, actor=actor, project_id=project.id, kind="ingest",

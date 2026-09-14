@@ -265,5 +265,6 @@ export function mapProject(raw) {
     itemsApproved: Number(raw.itemsApproved ?? 0),
     warningsOpen: Number(raw.warningsOpen ?? 0),
     missingInfo: Number(raw.missingInfo ?? 0),
+    pricingNote: raw.pricingNote ?? "",
   };
 }

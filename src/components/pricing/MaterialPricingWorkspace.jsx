@@ -108,14 +108,20 @@ export default function MaterialPricingWorkspace() {
       <div className="page">
         <h1 className="page-heading">Material pricing</h1>
 
+        {/* Two different facts, so two independent renders. The basis
+            note used to be gated behind the automatic source, which meant
+            a project priced from the regional table -- no key configured,
+            or any automated attempt that fell back -- wrote the note and
+            then never showed it. That is where the branch-wiring
+            assumption lives, and it is 27 of 45 items and half the labour
+            hours on a real set. */}
         {pricingSource !== "llm" ? (
           <p className="muted">
             This project has no automatic regional price estimate. Set a price directly on each row below, or
             reprocess the project once a pricing assistant is configured.
           </p>
-        ) : pricingNote ? (
-          <p className="muted">{pricingNote}</p>
         ) : null}
+        {pricingNote ? <p className="muted">{pricingNote}</p> : null}
 
         {loadError ? (
           <div className="load-error" role="alert">

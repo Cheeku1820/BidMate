@@ -40,6 +40,8 @@ def main() -> int:
     print("-" * 82)
     print(f"Items: {len(result.items)}  ({len(flagged)} need attention before approval)")
     print(f"Material:            ${result.material_total:>12,.2f}")
+    asm_material = round(sum(p.assembly.material_cost for p in result.items if p.assembly), 2)
+    print(f"  of which assembly: ${asm_material:>12,.2f}  (boxes, wire, conduit, connectors)")
     print(f"Labor:  {result.labor_hours_total:>8,.1f} hrs @ ${result.labor_rate:.0f}  ${result.labor_cost_total:>12,.2f}")
     print(f"TOTAL DIRECT COST:   ${result.total_direct_cost:>12,.2f}")
     print("(markup, overhead, and profit are the estimator's layer — not included)")

@@ -99,6 +99,54 @@ def fallback_warning(tag: str, count, sheet_number: str, reason: str = "legend")
     }
 
 
+def basis_note(payload: dict) -> str:
+    """The one paragraph a project carries about how its numbers were
+    arrived at, assembled from the engine's separate note fields.
+
+    `location_note` says what the costs are indexed to. `wiring_note`
+    says that branch wiring was assumed at a fixed length per device
+    rather than measured, which is the largest unstated assumption in the
+    total (ROADMAP 2.1: guessing a length silently is the failure this
+    product exists to prevent). `unmatched_note` names the items priced
+    without a rough-in. All three are basis, so all three belong in the
+    basis note the pricing screens already show; the engine keeps them
+    apart as separate fields, and they are joined here, at the boundary,
+    rather than concatenated upstream.
+
+    Kept apart because they are checked apart. Two of the three can carry
+    model-written text -- the location note wholly, the unmatched note
+    through the item names inside it -- and the feet-per-device sentence
+    carries none. Joined upstream, one bad item name would drop the
+    engine's own disclosure along with it.
+
+    A payload carrying neither yields "", which is what a payload that
+    repriced nothing has always yielded.
+
+    Both halves are run through BANNED_PHRASES before they are joined,
+    and a failing half is dropped rather than the whole note. On the LLM
+    path `location_note` is *written by the model*, and this function is
+    what puts it on an estimator's screen -- so the phrase rules the API
+    boundary already enforces on every model-written warning apply here
+    for exactly the same reason. Without it a note reading "confidence in
+    this rate is 80%" rendered untouched, while the code-generated half
+    beside it was the only part anything checked.
+
+    Dropping rather than rewriting is deliberate: the alternative is
+    inventing a cost basis to stand in for one that failed the rules, and
+    a fabricated basis line is worse than an absent one.
+    """
+    parts = []
+    for key in ("location_note", "wiring_note", "unmatched_note"):
+        text = str(payload.get(key) or "").strip()
+        if not text:
+            continue
+        if any(pattern.search(text) for pattern in BANNED_PHRASES):
+            logger.warning("dropped %s from the basis note: failed the product language rules", key)
+            continue
+        parts.append(text)
+    return " ".join(parts)
+
+
 @dataclass
 class MappedTakeoff:
     sheets: list[dict]

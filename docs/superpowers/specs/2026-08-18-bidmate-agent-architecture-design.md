@@ -1,9 +1,14 @@
 # Agent architecture — design
 
 **Date:** 2026-08-18
-**Status:** proposed, awaiting approval
+**Status:** accepted. Amended 2026-09-03 against a real bid set — see §11.
 **Scope:** stage 1 engine boundaries — see [`BUILD-STAGES.md`](../../../BUILD-STAGES.md)
 **Supersedes:** nothing. Extends [`docs/mvp-approach.md`](../../mvp-approach.md) §1 and [`ROADMAP.md`](../../../ROADMAP.md) §2.1 and §2.6.
+
+> **Read §11 first if you are implementing.** The five boundaries below still
+> hold, but running the engine against a real 208-page set on 2026-09-03
+> answered this document's largest open question and falsified one claim in
+> §2.2. §11 records what changed and what the code actually does today.
 
 ---
 
@@ -48,6 +53,13 @@ The shell is deterministic — page splitting, embedded-text extraction. The cor
 
 Finds symbol placements and their coordinates. On a vector sheet these are *in the file*; they are read, not estimated. Where symbols have been exploded into loose line work, identical geometry is clustered. Where the sheet is raster, this degrades and says so.
 
+> **Amended 2026-09-03 (§11.1).** "They are read, not estimated" holds only for
+> tier A — a set carrying reusable symbol definitions. The first real bid set
+> examined is tier B, fully exploded, where there is no placement to read and
+> the clustering sentence above is the whole job rather than a fallback. The
+> shipped code does neither: it matches tag-shaped text tokens, a third method
+> this section never contemplated, and it counts an engineer's seal as devices.
+
 **Counting does not know what anything is.** It outputs *one cluster of 47 identical shapes at 47 coordinates* — a shape signature and a position list, unlabelled. Naming them is Classification's job.
 
 This is the agent whose failures are most expensive to trust. A marker whose position came from a guess sits slightly off the symbol, and one visibly wrong marker costs the estimator's confidence in every other marker on the page. It therefore gets asserted counts on known sets, not a tuned score.
@@ -63,6 +75,14 @@ This is the genuinely uncertain work and where a model belongs.
 Expands each approved item into its assembly — a fixture becomes box, cover, wire, connector, conduit, labour — then applies NECA labour units and supplier pricing to produce direct cost.
 
 Almost all of this is arithmetic over lookup tables, which is why live totals are affordable (§4.2). The one language component is matching a supplier's quote line to a catalog item, and it runs once at classification time rather than on every recompute.
+
+> **Amended 2026-09-03 (§11.3).** The shipped code contradicts this: unit
+> material cost, labour hours, the location labour rate and the material
+> factor all come back from the Classification model call, not from a lookup.
+> That was a deliberate product decision — no hardcoded price table may be
+> shown to an estimator as though it were real pricing — and it is recorded
+> rather than quietly tolerated. Assembly expansion, the part that turns a
+> fixture into box, wire, conduit and connector, is not built at all.
 
 ### 2.5 Conversation
 
@@ -288,4 +308,117 @@ Also: the diagram's Agent 2 spans counting and matching, and Agent 3 spans prici
 - **The cross-customer default threshold.** §8.5 says several independent firms must agree before a resolution becomes a default anywhere. How many, and over what window, is undecided. It must be settled before the shared library is built, not after.
 - **Whether Documents should split.** Its deterministic shell and language core are kept together on the argument that the shell fails loudly. If page splitting or embedded-text extraction turns out to fail *quietly* on real sets, that argument dissolves and it splits like Agent 2 did.
 - **The unmeasured time claim.** The workflow diagram asserts 3–5 days becomes 2–4 hours. [`BUILD-STAGES.md`](../../../BUILD-STAGES.md) requires review time be measured, not asserted, and names it an exit criterion. The claim should carry no number until a design partner produces one.
-- **Which PDF tier real bid sets arrive in.** Carried forward from [`docs/mvp-approach.md`](../../mvp-approach.md) §9, still deferred. Counting's whole design rests on the answer, so this remains the highest-value unknown in the project.
+- ~~**Which PDF tier real bid sets arrive in.**~~ **Answered 2026-09-03 — see §11.1.** The first real set is tier B: vector, fully exploded, no reusable symbol definitions. One observation is not a distribution, so the question narrows rather than closes — but the tier that Counting's design most depends on is now a measured fact for at least one set, not a guess.
+
+---
+
+## 11. Amendments from the first real bid set (2026-09-03)
+
+The engine was run against the Unalaska Public Library expansion package — 208
+pages, 14 electrical sheets — twice: once deterministic, once with the
+classification model live. What follows is measured, not argued.
+
+### 11.1 The PDF tier is B, and §2.2's central claim does not survive it
+
+Two representative sheets:
+
+| Sheet | Vector paths | Raster images | Form XObjects |
+|---|---|---|---|
+| E1.1 lighting plan | 33,410 | 2 | 1 |
+| E6.1 | 68,601 | 2 | 1 |
+
+One XObject per sheet, and it is not a symbol block. So every symbol is
+exploded into loose line work: **tier B** in [`docs/mvp-approach.md`](../../mvp-approach.md) §1.
+
+This matters because §2.2 says placements "are *in the file*; they are read,
+not estimated." On tier B nothing is placed — there is no instance to read.
+Grouping fragments back into symbols is the entire job, and it is a materially
+harder one. A first attempt measured this directly: signature-matching whole
+path objects reduced 33,410 paths to 365 distinct shapes, but only **20
+placements** across four clusters once filtered to symbol-sized multi-stroke
+shapes, because exploded CAD emits each stroke as its own path object. Real
+tier-B counting needs spatial grouping of fragments before any signature is
+computed.
+
+**Consequence for planning.** Geometry-based counting is a research task, not a
+task. It is explicitly out of the "basic version of each agent" scope and
+should be planned on its own, against this set as the test fixture.
+
+### 11.2 What the shipped Counting agent actually does, and what it costs
+
+It matches text tokens shaped like a tag (`^[A-Z]{1,3}\d{0,2}$`) that stand
+alone on their own text line inside the drawing region. On this set that
+counted 812 placements, of which at least 21% are identifiably not devices:
+
+| Source | Placements | What it is |
+|---|---|---|
+| Engineer's seal | 87 | The perimeter text of a professional engineer's stamp, set on a curve, so each letter is its own rotated single-character span. Reads as "State of Alaska · Registered Professional Engineer". `A` became *Luminaire type A*, `S` a switch, `T` a data outlet, `R` a receptacle — on all 14 sheets. |
+| Panel-schedule headers | 35 | `VA`, `CKT`, `AMP` |
+| Prose in general notes | 11 | `NOT`, `OFF` |
+
+**Two candidate filters were tested; only one works.**
+
+- **Reject rotated glyphs — works.** Every seal letter carries its own text
+  direction vector; a drafter sets a device tag horizontally. This removes all
+  87 seal placements with no plausible false positive.
+- **Require adjacent vector geometry — does not work, and the idea should not
+  be revived without new evidence.** The intuition is that a real tag sits
+  beside a symbol. Measured on E1.1, every counted tag has 35–49 strokes within
+  14 points, seal letters included, because a plan carrying 33,000 paths has
+  geometry everywhere. The filter does not discriminate on a dense sheet.
+
+### 11.3 Pricing is currently a language call
+
+`llm.estimate()` returns `material_cost`, `labor_hours`, `location_labor_rate`
+and `material_factor` — the whole of Pricing's output — inside the
+Classification call. §2.4 describes Pricing as lookup arithmetic with one
+language component.
+
+This is a deliberate deviation, not drift. The alternative was a small
+hardcoded regional table, and showing an estimator a fabricated number as
+though it were real pricing is the failure this product exists to prevent. The
+guard that makes it safe is already built and verified on this set: a project
+records which mechanism priced it, and one not priced by the model shows
+*Missing information* on every labour and material row rather than a borrowed
+figure.
+
+The deviation stands until there is a real pricing source to look up against —
+see [`docs/superpowers/specs/2026-09-01-...`] and the pricing-source survey.
+**What is genuinely missing is assembly expansion:** a fixture is priced as a
+fixture, with no box, whip, connector, wire or conduit behind it. For an
+electrical subcontractor that is the largest hole in the estimate, since wire
+and conduit are a large share of material cost.
+
+### 11.4 Where the model does help, measured
+
+With classification live, distinct warning titles went from 2 to 14 across 106
+warnings, and the text became specific enough to act on:
+
+- `NOT` → *"part of general note wording such as not to scale or not in contract"* → **exclude from the takeoff**
+- `WP` → *"listed in the abbreviations as weatherproof, so it modifies another device rather than being counted on its own"* → **trace each to the device it labels so it is not double counted**
+- `O` → *"appears in the legend as an occupancy sensor symbol but is also in the range of letters used for fixture types, so the count may mix lighting controls with luminaires"*
+
+Eight tags came back titled *Not a device*. **Classification can see a
+substantial part of Counting's noise and say so, without being able to remove
+it** — the separation in §2.6 is what forces that, and it is the right trade:
+a flagged phantom is one click to reject, a silent one is a wrong bid.
+
+### 11.5 Documents produces text, not rows
+
+§2.1 calls structured legend and schedule extraction "the highest-leverage
+thing this agent produces." Today `schedule_text` is a raw blob concatenated
+across sheets and handed to the model. Every *"type F needs confirmation"*
+warning on this set traces to that gap: the model is reading an unparsed wall
+of text and correctly declining to guess.
+
+### 11.6 What "a basic version of each" means, given the above
+
+| Agent | Basic version scoped here |
+|---|---|
+| Documents | Parse the extracted schedule text into typed rows — type letter, description, mounting — instead of a blob |
+| Counting | The rotated-glyph filter and schedule-region exclusion. **Not** geometry clustering, which is §11.1's separate research task |
+| Classification | Read those typed rows, and persist a resolution to a project-scoped symbol library so one correction holds |
+| Pricing | Assembly expansion as a real lookup: a device becomes its box, connector, whip, wire and conduit |
+| Conversation | Intent routing to a typed proposal record. No panel, no writes |
+
+Division 26 remains the boundary. Every material this produces is electrical.

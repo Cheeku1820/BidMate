@@ -55,37 +55,33 @@ def test_no_strip_means_none(tmp_path):
 
 def test_number_prefers_the_corner_over_frequency(tmp_path):
     """A revision table in the strip repeats another sheet's number three
-    times; the number cell at the corner still wins."""
+    times, in body type; the number cell at the corner, in display type,
+    still wins. (Set all four at one size and the strip is an index --
+    see test_a_drawing_index_in_the_strip_is_not_a_number_cell -- which
+    is the layout no real title block has.)"""
     doc, page = _page(tmp_path)
     page.insert_text((900, 100), "SHEET")
     for y in (200, 230, 260):
-        page.insert_text((900, y), "E1.0")     # references, mid-strip
-    page.insert_text((900, 770), "E2.1")       # the number cell, at the corner
+        page.insert_text((900, y), "E1.0", fontsize=9)     # references, mid-strip
+    page.insert_text((900, 770), "E2.1", fontsize=20)      # the number cell, at the corner
     words, w, h = _words(doc, page, tmp_path)
     assert title_block.sheet_number(title_block.locate(words, w, h)) == "E2.1"
 
 
-def test_ties_break_by_frequency_then_first_seen(tmp_path):
-    """Two tokens equidistant from the corner: the more frequent wins;
-    still tied, the first in reading order wins. Never hash order."""
+def test_two_numbers_at_the_largest_size_are_an_index_not_a_tie(tmp_path):
+    """Two different tokens in the strip's largest face, equidistant from
+    the corner: there is no tiebreak to reach for, because a number cell
+    is one number and two is an index. Frequency and reading order still
+    order the *instances* of one number (a callout bubble set as large
+    as the cell), never hash order -- see
+    test_the_number_cell_may_repeat_but_not_be_two_numbers."""
     doc, page = _page(tmp_path)
     page.insert_text((900, 100), "SHEET")
-    # Corner of the right strip is (1000, 800). Both tokens sit ~72pt from
-    # it -- (40, 60) and (60, 40) away -- so distance cannot separate them.
     page.insert_text((960, 740), "E3.1")
     page.insert_text((940, 760), "E3.2")
-    page.insert_text((900, 300), "E3.2")       # E3.2 appears twice overall
+    page.insert_text((900, 300), "E3.2")
     words, w, h = _words(doc, page, tmp_path)
-    assert title_block.sheet_number(title_block.locate(words, w, h)) == "E3.2"
-
-
-def test_ties_at_equal_frequency_take_the_first_in_reading_order(tmp_path):
-    doc, page = _page(tmp_path)
-    page.insert_text((900, 100), "SHEET")
-    page.insert_text((940, 760), "E3.1")       # inserted first
-    page.insert_text((960, 740), "E3.2")
-    words, w, h = _words(doc, page, tmp_path)
-    assert title_block.sheet_number(title_block.locate(words, w, h)) == "E3.1"
+    assert title_block.sheet_number(title_block.locate(words, w, h)) == ""
 
 
 def test_strip_with_no_family_token_yields_empty(tmp_path):
@@ -325,20 +321,43 @@ def test_a_fan_schedule_along_the_top_does_not_become_the_title_block(tmp_path):
     assert title_block.sheet_number(tb) == ""
 
 
-def test_a_drawing_index_in_the_strip_is_not_a_number_cell(tmp_path):
-    """TSC Nutrition's cover (page 0): the drawing index runs down the
-    right strip, one sheet number per row, and the cover's own number
-    G0.00 appears only as one of those rows. With only family tokens as
-    candidates, E700 -- the electrical row nearest the corner -- became
-    the sheet number. Any discipline's row can be the number cell, and
-    the nearest row to the corner is a telecom sheet, so no number."""
+_INDEX_ROWS = (
+    "G0.00 COVER SHEET", "C101 DEMOLITION PLAN", "A1.01 FLOOR PLAN", "M1.01 MECHANICAL PLAN",
+    "ES100 ELECTRICAL SITE PLAN", "E700 LIGHTING DETAILS", "T001 DEMOLITION PLAN", "T402 SECURITY DETAILS",
+)
+
+
+@pytest.mark.parametrize("rows", [
+    _INDEX_ROWS,                                   # electrical rows mid-list
+    _INDEX_ROWS[:4] + _INDEX_ROWS[6:] + _INDEX_ROWS[4:6],   # electrical rows last, nearest the corner
+    _INDEX_ROWS[4:6] + _INDEX_ROWS[:4] + _INDEX_ROWS[6:],   # electrical rows first
+], ids=["mid", "last", "first"])
+def test_a_drawing_index_in_the_strip_is_not_a_number_cell(tmp_path, rows):
+    """TSC Nutrition's and Unalaska's covers: the drawing index runs down
+    an edge strip, one sheet number per row, all in one face. A number
+    cell is one token set larger than anything else shaped like it; two
+    or more distinct tokens sharing the largest size is an index, and
+    a page whose strip holds an index has no number cell -- whichever
+    rows happen to sit nearest the corner. The first version of this
+    rule passed only because a telecom row was last; reordering the
+    rows made the cover ES100."""
     doc, page = _page(tmp_path)
-    rows = ("G0.00 COVER SHEET", "C101 DEMOLITION PLAN", "A1.01 FLOOR PLAN", "M1.01 MECHANICAL PLAN",
-            "ES100 ELECTRICAL SITE PLAN", "E700 LIGHTING DETAILS", "T001 DEMOLITION PLAN", "T402 SECURITY DETAILS")
     _notes_block(page, 860, 300, rows, fontsize=8)
     words, w, h = _words(doc, page, tmp_path)
     tb = title_block.locate(words, w, h)
     assert title_block.sheet_number(tb) == ""
+
+
+def test_the_number_cell_may_repeat_but_not_be_two_numbers(tmp_path):
+    """The same number twice at the largest size (a callout bubble set
+    as large as the cell) is still one number cell; two different ones
+    are an index."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((880, 700), "E2.1", fontsize=24)
+    page.insert_text((880, 785), "E2.1", fontsize=24)
+    words, w, h = _words(doc, page, tmp_path)
+    assert title_block.sheet_number(title_block.locate(words, w, h)) == "E2.1"
 
 
 @pytest.mark.parametrize("token,ok", [

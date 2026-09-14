@@ -94,6 +94,24 @@ def test_a_sparse_riser_diagram_is_still_a_sheet(tmp_path):
     assert s.kind == "diagram"
 
 
+def test_a_text_only_page_is_not_a_sheet(tmp_path):
+    """A sheet is a drawing. A project-manual page with SHEET / E7.1 /
+    DATE in its left column has a strip that reads like a title block
+    and no drawing paths and no images; it is not a plan, a schedule or
+    a legend drawing. This is not the old 500-path gate -- Pulte's
+    323-path riser still detects -- it is zero paths and zero images."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    page.insert_text((40, 100), "SHEET")
+    page.insert_text((40, 130), "E7.1")
+    page.insert_text((40, 160), "DATE")
+    for i in range(30):
+        page.insert_text((300, 100 + i * 20), "SECTION 26 05 19 LOW-VOLTAGE CONDUCTORS AND CABLES")
+    path = tmp_path / "manual.pdf"
+    doc.save(path)
+    assert documents.detect_sheets(str(path)) == []
+
+
 def _scan(tmp_path, bands, width=612, height=792, text=""):
     """A scanned page: one or more image bands and nothing else. FedEx
     and Gerber split each scan into two bands, neither covering more

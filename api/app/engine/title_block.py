@@ -149,9 +149,21 @@ def _corner(tb: TitleBlock) -> tuple[float, float]:
 def _number_cell(tb: TitleBlock) -> Word | None:
     """The sheet-number-shaped token (any discipline) set largest in the
     strip; among those, nearest the strip's end corner; ties by frequency
-    in the strip, then first appearance. None when the strip holds none."""
+    in the strip, then first appearance. None when the strip holds none.
+
+    None, too, when two or more *distinct* tokens share the largest
+    size: that is an index, not a number cell. A cover sheet's drawing
+    index runs down an edge strip with every row in one face, and
+    picking by corner from it is picking by row order -- Unalaska's and
+    TSC Nutrition's covers both came out as whichever row sat last. A
+    number cell is one number set larger than anything shaped like it;
+    the same number repeated (a callout bubble set as large as the
+    cell) is still one."""
     tokens = [w for w in tb.words if ANY_SHEET_ID.fullmatch(w.text)]
     if not tokens:
+        return None
+    largest = max(_size(w) for w in tokens)
+    if len({w.text for w in tokens if _size(w) == largest}) > 1:
         return None
     cx, cy = _corner(tb)
     freq = Counter(w.text for w in tokens)

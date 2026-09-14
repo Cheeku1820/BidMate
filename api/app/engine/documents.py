@@ -112,6 +112,14 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
                 )
             continue
 
+        # A sheet is a drawing. A page with no drawing paths and no
+        # images -- a project-manual page whose left column happens to
+        # say SHEET / E7.1 / DATE -- cannot be a plan, a schedule or a
+        # legend drawing. Zero, not a count: Pulte Sagebriar's 323-path
+        # riser diagram is a sheet.
+        if not page.get_image_info() and not page.get_drawings():
+            continue
+
         region = _region(w, h, tb.strip)
         if _is_raster(page):
             sheets.append(
@@ -123,11 +131,6 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
                 )
             )
             continue
-        # No path-count gate here. A page whose title-block number cell
-        # holds a family token is an electrical sheet however sparse it
-        # is -- Pulte Sagebriar's E-700 riser diagram is 323 paths, and a
-        # general-notes sheet is none.
-
         scale = _scale(text)
         raw_title = title_block.title(tb, number)
         kind = sheet_kind.classify(raw_title, text, bool(scale))

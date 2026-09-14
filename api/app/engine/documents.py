@@ -59,8 +59,10 @@ RASTER_COVER = 0.6
 
 
 def _is_raster(page: pymupdf.Page) -> bool:
-    if len(page.get_drawings()) >= RASTER_MAX_DRAWINGS:
-        return False
+    # Images and text first: both are cheap. get_drawings() is walked
+    # last, only for a page that already looks like a scan -- it runs on
+    # every page without a number, and a 165k-path architectural page
+    # takes seconds to walk.
     box = pymupdf.Rect(page.mediabox)  # image bboxes are in the unrotated frame
     area = box.width * box.height or 1
     cover = 0.0
@@ -71,7 +73,9 @@ def _is_raster(page: pymupdf.Page) -> bool:
             cover += (r.width * r.height) / area
     if cover <= 0:
         return False
-    return cover > RASTER_COVER or not page.get_text("text").strip()
+    if cover <= RASTER_COVER and page.get_text("text").strip():
+        return False
+    return len(page.get_drawings()) < RASTER_MAX_DRAWINGS
 
 
 def _scale(text: str) -> str:

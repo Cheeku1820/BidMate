@@ -130,7 +130,7 @@ def title(tb: TitleBlock, number: str) -> str:
         if w.text != number
         and abs(w.cx - cell.cx) <= _TITLE_REACH
         and abs(w.cy - cell.cy) <= _TITLE_REACH
-        and w.text.isupper()
+        and (w.text.isupper() or w.text.isdigit())
     ]
     # Group by text line, keep reading order.
     lines: dict[tuple[int, int], list[str]] = {}

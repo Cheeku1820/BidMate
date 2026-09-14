@@ -128,3 +128,27 @@ def test_title_rejects_address_and_seal_lines(tmp_path):
     words, w, h = _words(doc, page, tmp_path)
     tb = title_block.locate(words, w, h)
     assert title_block.title(tb, "E2.1") == ""
+
+
+def test_title_rejects_a_cell_with_a_bare_number(tmp_path):
+    """A digits-only token in the title cell (a sheet count, a suite
+    number) fails the sanity check rather than being silently dropped."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((880, 700), "POWER PLAN")
+    page.insert_text((880, 725), "103")
+    page.insert_text((900, 770), "E2.1")
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.title(tb, "E2.1") == ""
+
+
+def test_title_reads_in_order_on_a_rotated_page(tmp_path):
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((880, 700), "FIRST FLOOR")
+    page.insert_text((880, 725), "POWER PLAN")
+    page.insert_text((900, 770), "E2.1")
+    words, w, h = _words(doc, page, tmp_path, rotation=90)
+    tb = title_block.locate(words, w, h)
+    assert title_block.title(tb, "E2.1") == "First floor power plan"

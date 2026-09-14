@@ -21,6 +21,12 @@ def test_content_markers_when_the_title_is_silent():
     assert sheet_kind.classify("", "READING AREA  STACKS/ADULT", True) == "plan"
 
 
+def test_plan_wins_over_schedule_in_a_mixed_title():
+    """'Lighting plan and schedules' is counted; the embedded schedule
+    block is the residue the spec defers. Omission is silent."""
+    assert sheet_kind.classify("Lighting plan and schedules", "", False) == "plan"
+
+
 def test_one_schedule_header_is_not_enough():
     """A plan sheet with one embedded lighting schedule block is still a plan."""
     assert sheet_kind.classify("", "LUMINAIRE SCHEDULE  A  B  C", True) == "plan"

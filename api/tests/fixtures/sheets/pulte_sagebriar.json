@@ -1,0 +1,17 @@
+{
+  "pdf": "Pulte Sagebriar Clubhouse/PLANS/20250124 - Sagebriar - Permit_Bid - Electrical.pdf",
+  "read_from": "title block strip along the right edge of every page, number cell at the bottom-right corner under a black title bar",
+  "sheets": [
+    {"page_index": 0, "number": "E-001", "kind": "legend",   "title": "ELECTRICAL SYMBOLS, ABBREVIATIONS, AND GENERAL NOTES", "rotation": 0},
+    {"page_index": 1, "number": "E-010", "kind": "plan",     "title": "ELECTRICAL SITE PLAN", "rotation": 0},
+    {"page_index": 2, "number": "E-210", "kind": "plan",     "title": "LIGHTING PLANS", "rotation": 0},
+    {"page_index": 3, "number": "E-310", "kind": "plan",     "title": "POWER & SYSTEMS PLANS", "rotation": 0},
+    {"page_index": 4, "number": "E-320", "kind": "plan",     "title": "ROOF ELECTRICAL PLAN", "rotation": 0},
+    {"page_index": 5, "number": "E-600", "kind": "schedule", "title": "ELECTRICAL SCHEDULES", "rotation": 0},
+    {"page_index": 6, "number": "E-601", "kind": "schedule", "title": "ELECTRICAL PANEL SCHEDULES", "rotation": 0},
+    {"page_index": 7, "number": "E-700", "kind": "diagram",  "title": "ELECTRICAL RISER DIAGRAM", "rotation": 0,
+     "note": "a sparse riser diagram: 323 vector paths on the page, well under the old 500-path gate"},
+    {"page_index": 8, "number": "E-800", "kind": "diagram",  "title": "ELECTRICAL DETAILS", "rotation": 0},
+    {"page_index": 9, "number": "E-801", "kind": "diagram",  "title": "ELECTRICAL DETAILS", "rotation": 0}
+  ]
+}

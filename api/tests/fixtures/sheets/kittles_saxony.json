@@ -1,0 +1,18 @@
+{
+  "pdf": "Kittles Saxony/PLANS/Electrical Plans.pdf",
+  "read_from": "title block strip along the right edge of every page, number cell at the bottom-right corner under the title cell; a rotated RELEASED FOR CONSTRUCTION stamp runs beside it and a CDG NO. 24108 value cell sits above the title",
+  "sheets": [
+    {"page_index": 0,  "number": "E-000", "kind": "legend",   "title": "ELECTRICAL SYMBOLS AND ABBREVIATIONS", "rotation": 0},
+    {"page_index": 1,  "number": "ES100", "kind": "plan",     "title": "ELECTRICAL SITE PLAN", "rotation": 0},
+    {"page_index": 2,  "number": "EL101", "kind": "plan",     "title": "FIRST FLOOR LIGHTING PLAN", "rotation": 0},
+    {"page_index": 3,  "number": "EL201", "kind": "plan",     "title": "ELECTRICAL LIGHTING ELEVATIONS", "rotation": 0,
+     "note": "no title rule matches ELEVATIONS; the page carries a roof-line lighting plan with fixtures and a scale beside the elevation, so plan"},
+    {"page_index": 4,  "number": "EP101", "kind": "plan",     "title": "FIRST FLOOR POWER PLAN", "rotation": 0},
+    {"page_index": 5,  "number": "EP102", "kind": "plan",     "title": "ROOF POWER PLAN", "rotation": 0},
+    {"page_index": 6,  "number": "E-401", "kind": "diagram",  "title": "ELECTRICAL ONE-LINE DIAGRAM", "rotation": 0},
+    {"page_index": 7,  "number": "E-501", "kind": "schedule", "title": "ELECTRICAL SCHEDULES", "rotation": 0},
+    {"page_index": 8,  "number": "E-502", "kind": "schedule", "title": "ELECTRICAL PANEL SCHEDULES", "rotation": 0},
+    {"page_index": 9,  "number": "E-601", "kind": "diagram",  "title": "ELECTRICAL DETAILS", "rotation": 0},
+    {"page_index": 10, "number": "E-602", "kind": "diagram",  "title": "ELECTRICAL DETAILS", "rotation": 0}
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "pdf": "Unalaska Bid/21_1001_unalaska_library_cd_biddrawings.pdf",
+  "read_from": "title block strip along the visual right of each page, number cell at the bottom-right corner; titles cross-checked against the E0.1 drawing index",
+  "sheets": [
+    {"page_index": 80, "number": "E0.1", "kind": "legend",   "title": "ABBREVIATIONS AND LEGEND", "rotation": 90},
+    {"page_index": 81, "number": "E0.2", "kind": "schedule", "title": "SCHEDULES", "rotation": 90},
+    {"page_index": 82, "number": "E0.3", "kind": "schedule", "title": "PANEL SCHEDULES", "rotation": 90},
+    {"page_index": 83, "number": "E1.0", "kind": "plan",     "title": "SITE PLAN", "rotation": 90},
+    {"page_index": 84, "number": "E1.1", "kind": "plan",     "title": "DEMOLITION PLAN - LIGHTING", "rotation": 90},
+    {"page_index": 85, "number": "E1.2", "kind": "plan",     "title": "DEMOLITION PLAN - POWER", "rotation": 90},
+    {"page_index": 86, "number": "E1.3", "kind": "plan",     "title": "DEMOLITION PLAN - SPECIAL SYSTEMS", "rotation": 90},
+    {"page_index": 87, "number": "E2.1", "kind": "plan",     "title": "FLOOR PLAN - LIGHTING", "rotation": 90},
+    {"page_index": 88, "number": "E3.1", "kind": "plan",     "title": "FLOOR PLAN - POWER", "rotation": 90},
+    {"page_index": 89, "number": "E4.1", "kind": "plan",     "title": "FLOOR PLAN - SPECIAL SYSTEMS", "rotation": 90},
+    {"page_index": 90, "number": "E5.1", "kind": "plan",     "title": "ENLARGED FLOOR PLANS", "rotation": 90},
+    {"page_index": 91, "number": "E6.1", "kind": "diagram",  "title": "DETAILS AND DIAGRAMS", "rotation": 90},
+    {"page_index": 92, "number": "E6.2", "kind": "diagram",  "title": "DETAILS AND DIAGRAMS", "rotation": 90},
+    {"page_index": 93, "number": "E7.1", "kind": "diagram",  "title": "ONE-LINE DIAGRAMS", "rotation": 90}
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "pdf": "United Utility Supply/PLANS/0_DRAWING SET_UUS_BID DOCUMENTS_20260608_2.pdf",
+  "read_from": "66-page multi-discipline set; the cover's sheet index lists nine electrical sheets, found on pages 57-65 with a right-edge title block and the number cell at the bottom-right corner under a Project Number 25-0107LE value cell. G/C/S/D/A/M/P/F pages and the PEMB reference drawings sampled and confirmed non-electrical",
+  "sheets": [
+    {"page_index": 57, "number": "E-001",  "kind": "legend",   "title": "ELECTRICAL - NOTES, LEGENDS, AND ABBREVIATIONS", "rotation": 0},
+    {"page_index": 58, "number": "ED-101", "kind": "plan",     "title": "ELECTRICAL DEMOLITION - PLAN", "rotation": 0},
+    {"page_index": 59, "number": "E-101",  "kind": "plan",     "title": "ELECTRICAL - LIGHTING PLAN", "rotation": 0},
+    {"page_index": 60, "number": "E-102",  "kind": "plan",     "title": "ELECTRICAL - LIGHTING PLAN - PHOTOMETRICS", "rotation": 0,
+     "note": "a photometric plan; titled PLAN, so plan"},
+    {"page_index": 61, "number": "E-201",  "kind": "plan",     "title": "ELECTRICAL - POWER & SYSTEMS PLAN", "rotation": 0},
+    {"page_index": 62, "number": "E-401",  "kind": "plan",     "title": "ELECTRICAL - ENLARGED PLANS", "rotation": 0},
+    {"page_index": 63, "number": "E-501",  "kind": "diagram",  "title": "ELECTRICAL - DETAILS", "rotation": 0},
+    {"page_index": 64, "number": "E-502",  "kind": "diagram",  "title": "ELECTRICAL - DETAILS", "rotation": 0},
+    {"page_index": 65, "number": "E-701",  "kind": "schedule", "title": "ELECTRICAL - ONE-LINE DIAGRAM & SCHEDULES", "rotation": 0,
+     "note": "three panelboard schedules and a luminaire schedule fill the page; the one-line is a quarter of it"}
+  ]
+}

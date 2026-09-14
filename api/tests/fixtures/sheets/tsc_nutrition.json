@@ -1,0 +1,20 @@
+{
+  "pdf": "TSC Nutrition & Technology Renovations/PLANS/2025-0604_Nutrition___Technology_100__CD_Set.pdf",
+  "read_from": "78-page multi-discipline set; the cover's drawing index lists fourteen electrical sheets (ES100 .. E800), which are pages 55-68. Every one of those pages is rotation 270 with ZERO text -- no fonts, no words: the text was outlined to paths when the PDF was made. The title blocks are legible in a render (ES100 ELECTRICAL SITE PLAN on page 55) but nothing on them can be read as text, so per the fixture rules each is recorded with an empty number and is asserted NOT detected. The pages the engine used to pick instead (0 cover G0.00, 31 A5.03, 37 A6.01, 42 M1.01, 46 M6.01) are non-electrical pages whose body tags (EQ020, EF-7) or drawing index landed in an edge strip",
+  "sheets": [
+    {"page_index": 55, "number": "", "kind": "plan",     "title": "ELECTRICAL SITE PLAN", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: ES100)"},
+    {"page_index": 56, "number": "", "kind": "plan",     "title": "LIGHTING DEMOLITION PLAN", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: ELD101)"},
+    {"page_index": 57, "number": "", "kind": "plan",     "title": "POWER DEMOLITION PLAN", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: EPD101)"},
+    {"page_index": 58, "number": "", "kind": "plan",     "title": "COMM & SIGNAL DEMOLITION PLAN", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: ETD101)"},
+    {"page_index": 59, "number": "", "kind": "plan",     "title": "LIGHTING PLAN", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: EL101)"},
+    {"page_index": 60, "number": "", "kind": "plan",     "title": "POWER PLAN", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: EP101)"},
+    {"page_index": 61, "number": "", "kind": "plan",     "title": "COMM & SIGNAL PLAN", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: ET101)"},
+    {"page_index": 62, "number": "", "kind": "diagram",  "title": "SINGLE LINE DIAGRAMS", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: E500)"},
+    {"page_index": 63, "number": "", "kind": "diagram",  "title": "ELECTRICAL DETAILS", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: E501)"},
+    {"page_index": 64, "number": "", "kind": "diagram",  "title": "ELECTRICAL DETAILS", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: E502)"},
+    {"page_index": 65, "number": "", "kind": "diagram",  "title": "LIGHTING DETAILS", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: E700)"},
+    {"page_index": 66, "number": "", "kind": "diagram",  "title": "LIGHTING DETAILS", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: E701)"},
+    {"page_index": 67, "number": "", "kind": "diagram",  "title": "LIGHTING DETAILS", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: E702)"},
+    {"page_index": 68, "number": "", "kind": "schedule", "title": "PANELBOARD SCHEDULES", "rotation": 270, "note": "title block unreadable: no text layer, text outlined to paths (index: E800)"}
+  ]
+}

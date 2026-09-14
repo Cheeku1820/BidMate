@@ -20,6 +20,7 @@ from collections import Counter, defaultdict
 import pymupdf
 
 from .contracts import DetectedSheet, DeviceCluster, Placement
+from .page_frame import visual_spans, visual_words
 
 # A device tag: a short uppercase code (fixture type, receptacle, switch,
 # junction, panel/circuit designator). Compound tokens ("D,O") and mixed
@@ -126,18 +127,15 @@ def _stamp_points(page) -> set[tuple[int, int]]:
     `_MAX_STAMP_EXTENT`.
 
     Positions are rounded to whole points so they can be matched against
-    the word list, which reports the same coordinates.
+    the word list, which reports the same coordinates, both in the visual
+    frame (page_frame.py).
     """
     condensed: list[tuple[float, float]] = []
     spans: list[tuple[float, float]] = []
-    for block in page.get_text("dict")["blocks"]:
-        for line in block.get("lines", []):
-            for span in line["spans"]:
-                x0, y0, x1, y1 = span["bbox"]
-                centre = ((x0 + x1) / 2, (y0 + y1) / 2)
-                spans.append(centre)
-                if _CONDENSED_FONT in span["font"].lower():
-                    condensed.append(centre)
+    for cx, cy, font in visual_spans(page):
+        spans.append((cx, cy))
+        if _CONDENSED_FONT in font.lower():
+            condensed.append((cx, cy))
 
     total_spans = len(spans)
 
@@ -168,27 +166,26 @@ def count_sheet(path: str, sheet: DetectedSheet) -> list[DeviceCluster]:
         return []
     doc = pymupdf.open(path)
     page = doc[sheet.page_index]
-    words = page.get_text("words")  # (x0,y0,x1,y1, word, block_no, line_no, word_no)
+    # Visual frame throughout (page_frame.py): a placement is where a
+    # viewer sees the tag, so ingest's normalisation against the visual
+    # width_pt/height_pt lands the marker on the drawing.
+    words = visual_words(page)
     stamp = _stamp_points(page)
 
-    # How many words share each text line, so a candidate sitting in a
-    # sentence (a note, a title) can be told from one standing alone by a
-    # symbol.
-    line_len: Counter = Counter((w[5], w[6]) for w in words)
+    line_len: Counter = Counter((w.block, w.line) for w in words)
 
     by_tag: dict[str, list[Placement]] = defaultdict(list)
-    for x0, y0, x1, y1, word, block_no, line_no, *_ in words:
-        t = word.strip()
+    for w in words:
+        t = w.text.strip()
         if not TAG.match(t) or t in NOISE:
             continue
-        if line_len[(block_no, line_no)] > MAX_LINE_WORDS:
+        if line_len[(w.block, w.line)] > MAX_LINE_WORDS:
             continue  # prose, not a device tag
-        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-        if (round(cx), round(cy)) in stamp:
+        if (round(w.cx), round(w.cy)) in stamp:
             continue  # title-block seal/stamp text is never a device tag
-        if not _in_region(cx, cy, sheet.region):
+        if not _in_region(w.cx, w.cy, sheet.region):
             continue
-        by_tag[t].append(Placement(int(cx), int(cy)))
+        by_tag[t].append(Placement(int(w.cx), int(w.cy)))
     clusters = [
         DeviceCluster(tag=tag, sheet_page_index=sheet.page_index, placements=places)
         for tag, places in by_tag.items()

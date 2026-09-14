@@ -15,9 +15,10 @@ from app.engine.contracts import DetectedSheet
 
 @pytest.fixture
 def known_sheet(tmp_path):
-    """A 1000x800 sheet: 5 'A' fixtures and 3 'R' receptacles isolated in
-    the drawing area, one 'A' in the title-block strip (must be excluded),
-    and a running-text notes line (must be ignored)."""
+    """A 1000x800 sheet, unrotated so the visual and unrotated frames
+    coincide: 5 'A' fixtures and 3 'R' receptacles isolated in the
+    drawing area, one 'A' in the title-block strip (x > 820, must be
+    excluded), and a running-text notes line (must be ignored)."""
     doc = pymupdf.open()
     page = doc.new_page(width=1000, height=800)
 
@@ -70,6 +71,31 @@ def test_unreadable_sheet_counts_nothing(known_sheet):
     path, sheet = known_sheet
     sheet.unreadable_reason = "scanned"
     assert counting.count_sheet(path, sheet) == []
+
+
+def test_placements_are_in_the_visual_frame(tmp_path):
+    """A rotated page: the tag's placement must land where a viewer
+    sees it, inside page.rect, not at its raw unrotated coordinate."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    for i in range(3):
+        page.insert_text((900, 100 + i * 60), "R")   # unrotated x=900
+    page.set_rotation(90)                            # visual page is 800x1000
+    path = tmp_path / "rot.pdf"
+    doc.save(path)
+    sheet = DetectedSheet(
+        page_index=0, number="E1.1", title="test", discipline="Electrical",
+        scale="", width_pt=800, height_pt=1000, region=(0, 0, 800, 1000),
+    )
+    clusters = counting.count_sheet(str(path), sheet)
+    assert [c.tag for c in clusters] == ["R"]
+    for p in clusters[0].placements:
+        assert 0 <= p.x <= 800 and 0 <= p.y <= 1000, (p.x, p.y)
+        # Measured: on a 90-degree page unrotated (x, y) -> visual (H - y, x),
+        # so unrotated x=900 becomes visual y~900 and unrotated y 100-220
+        # becomes visual x ~580-700. The raw value 900 fits neither axis's
+        # old reading -- that is the bug.
+        assert p.y > 850, "unrotated x=900 must become a large visual y on a 90-degree page"
 
 
 def _rename_font(doc, page, basefont: str, new_name: str) -> None:
@@ -181,8 +207,12 @@ def test_engineers_seal_is_not_counted_as_devices():
     sheet = next(s for s in sheets if s.page_index == 84)
     clusters = counting.count_sheet(BID, sheet)
 
+    # Visual frame. The seal's unrotated window was x 850-1010, y 40-160;
+    # on this 90-degree page visual (x, y) = (2448 - y_unrot, x_unrot).
+    # Verified 2026-09-14: measured ArialNarrow span centres on page 84
+    # and 87 are x 2297-2401, y 956-999, well inside this window.
     seal = [p for c in clusters for p in c.placements
-            if 850 < p.x < 1010 and 40 < p.y < 160]
+            if 2288 < p.x < 2408 and 850 < p.y < 1010]
     assert seal == [], f"{len(seal)} seal glyphs still counted as devices"
 
 
@@ -217,6 +247,10 @@ def test_real_devices_survive_the_stamp_filter():
     clusters = counting.count_sheet(BID, sheet)
     assert clusters, "the filter removed every cluster on a sheet that has real devices"
 
+    # Visual frame. The seal's unrotated window was x 850-1010, y 40-160;
+    # on this 90-degree page visual (x, y) = (2448 - y_unrot, x_unrot).
+    # Verified 2026-09-14: measured ArialNarrow span centres on page 84
+    # and 87 are x 2297-2401, y 956-999, well inside this window.
     seal = [p for c in clusters for p in c.placements
-            if 850 < p.x < 1010 and 40 < p.y < 160]
+            if 2288 < p.x < 2408 and 850 < p.y < 1010]
     assert seal == [], f"{len(seal)} seal glyphs still counted as devices on E6.1"

@@ -4,8 +4,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    BigInteger, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index, Integer,
-    Numeric, String, Text, func, text,
+    BigInteger, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index,
+    Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -100,6 +100,18 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    # Which mechanism actually priced this takeoff -- "llm" or
+    # "deterministic" -- read from the engine payload's own `source`
+    # field at ingest/reprocess time. Labor and Material Pricing's
+    # precedence resolution treats a project's engine-computed
+    # material_cost/labor_hours as a trustworthy baseline ONLY when this
+    # is "llm": the deterministic fallback's numbers (catalog.py's fixed
+    # placeholder hours, regions.py's ~15-entry hardcoded rate table) are
+    # rough guesses this product cannot present as real pricing to a firm
+    # bidding real work. NULL (a project ingested before this column
+    # existed) is treated identically to "deterministic" everywhere.
+    pricing_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pricing_note: Mapped[str] = mapped_column(Text, default="", server_default="")
 
 
 class Sheet(Base):
@@ -117,6 +129,20 @@ class Sheet(Base):
     plan: Mapped[str] = mapped_column(String(50))
     superseded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Engine ingest metadata. The canvas addresses a page image by
+    # (takeoff_id, page_index), and normalizes marker coordinates against
+    # the page's own point dimensions -- a sheet's markers land wrongly if
+    # normalized against another sheet's size.
+    takeoff_id: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    page_index: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    width_pt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    height_pt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Set when a sheet could not be read. BUILD-STAGES: a sheet the engine
+    # reads poorly is marked unreadable with a reason, never returned as a
+    # short list of items -- silence reads as completeness.
+    unreadable_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    ai_reading: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class Item(Base):
@@ -145,6 +171,24 @@ class Item(Base):
     path: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Cost, carried for the spreadsheet and export. The engine stops at
+    # total direct cost -- markup, overhead, and profit are an
+    # estimator-owned layer and deliberately have no column here.
+    material_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    labor_hours: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    labor_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    total_cost: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=0, server_default="0")
+    # Every coordinate this cluster was counted at, in sheet space. `x`/`y`
+    # is the marker; this is what the canvas draws when showing all
+    # placements of one item.
+    placements: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    ai_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # The engine cluster tag this item came from ("A", "F2", "R"). The
+    # merge key for an approval-preserving re-run: Counting is
+    # deterministic geometry, so the same drawing yields the same tag on
+    # the same sheet, which is what lets a re-run recognise the item it
+    # produced last time instead of replacing it blindly.
+    source_tag: Mapped[str] = mapped_column(String(50), default="", server_default="")
     # Optimistic-concurrency counter for the five single-item mutations
     # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
     # is driven by `onupdate=func.now()` and therefore transaction-
@@ -157,6 +201,139 @@ class Item(Base):
     # what the *client* last saw). Checked and incremented by hand in
     # `app.takeoff.concurrency` and every module that mutates an `Item`.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ItemEvidenceImage(Base):
+    """A crop of the source drawing around one item's counted
+    location(s) -- what "View evidence" actually shows. Deliberately its
+    own table, not a column on Item: `snapshots._column_snapshot()`
+    walks every mapped column of Item automatically for the delete-undo
+    snapshot, and this codebase has already hit "a new Item column
+    breaks decode_snapshot()" twice. Nothing about this row is ever
+    reviewed or undone -- it is a cache of what the drawing showed, not
+    estimator state -- so it stays outside the action-log/undo system
+    entirely rather than being taught to it.
+
+    One row per item at most: `item_id` is both the primary key and the
+    foreign key, so a re-run's upsert (see evidence_images.py) never has
+    to reason about more than one existing row per item. `ON DELETE
+    CASCADE` means deleting an item drops this row, and undoing back
+    through that delete does not bring it back -- this table sits
+    outside the snapshot system entirely, so nothing restores it.
+
+    `Item.evidence` (the JSONB dict, including `has_image`) is a normal
+    mapped column and IS restored on undo like any other snapshotted
+    field (see snapshots.py's `ITEM_SNAPSHOT_TYPES`). That means a
+    delete-then-undo round trip can leave `item.evidence.has_image`
+    reading `true` while this table has no row for that item -- the
+    dict says an image exists and it does not. The frontend already
+    handles this gracefully: `EvidenceModal` (MiscModals.jsx) requests
+    the image, the fetch 404s, and the `onError` fallback shows the
+    evidence detail/sheet text with copy that says no drawing crop was
+    captured, rather than crashing or claiming no evidence exists.
+    """
+
+    __tablename__ = "item_evidence_images"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("items.id", ondelete="CASCADE"), primary_key=True
+    )
+    png: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CompanyLaborRate(Base):
+    """Singleton per org -- the three role rates and the productivity
+    factor CompanySettings.jsx's 'Labor rates'/'Labor adjustments' tabs
+    render, moved off localStorage (Task 13)."""
+
+    __tablename__ = "company_labor_rates"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True)
+    journeyman_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0, server_default="0")
+    foreman_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0, server_default="0")
+    apprentice_rate: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0, server_default="0")
+    # A multiplier, not a percent -- matches settingsStore.js's existing
+    # productivityFactor field exactly (1.0 = neutral, 0.97 = 3% more
+    # efficient) so the migrated value means the same thing it always did.
+    productivity_factor: Mapped[Decimal] = mapped_column(Numeric(5, 3), default=1, server_default="1")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyLaborHoursOverride(Base):
+    """Sparse: only items the company has explicitly set custom hours
+    for get a row. Everything else falls through to the item's own
+    engine-computed labor_hours (when that's trustworthy -- see
+    Project.pricing_source)."""
+
+    __tablename__ = "company_labor_hours_overrides"
+    __table_args__ = (UniqueConstraint("org_id", "item_name", name="uq_company_labor_hours_item"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    item_name: Mapped[str] = mapped_column(String(300))
+    hours_per_unit: Mapped[Decimal] = mapped_column(Numeric(8, 3))
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyMaterialPrice(Base):
+    """Sparse, same shape as the hours override -- one row per item name
+    the company has priced. Replaces CompanySettings.jsx's 'Material
+    pricing' tab's single free-text field with a real list (Task 13)."""
+
+    __tablename__ = "company_material_prices"
+    __table_args__ = (UniqueConstraint("org_id", "item_name", name="uq_company_material_price_item"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    item_name: Mapped[str] = mapped_column(String(300))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    effective_date: Mapped[date] = mapped_column(Date)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProjectLaborLine(Base):
+    """Per-item labor overrides, one row per item at most. Every field is
+    nullable and independent: an estimator can override just the crew
+    mix and leave hours alone, or type a flat rate and leave everything
+    else at its default. Edited only through Task 4's mutation endpoint
+    and reversed only through Task 5's undo dispatch -- deliberately
+    outside Item's own column-walking delete-undo snapshot, the same
+    reasoning as ItemEvidenceImage."""
+
+    __tablename__ = "project_labor_lines"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
+    hours_override: Mapped[Decimal | None] = mapped_column(Numeric(8, 3), nullable=True)
+    crew_journeyman: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crew_foreman: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    crew_apprentice: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rate_override: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    adjustment_percent: Mapped[Decimal | None] = mapped_column(Numeric(6, 2), nullable=True)
+    adjustment_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ProjectMaterialPrice(Base):
+    """Per-item material price override, one row per item at most.
+    `source` distinguishes a typed project price from a deliberate
+    allowance -- both are the same mechanical override, the label is
+    what the estimator meant by it. Same undo/snapshot exclusion as
+    ProjectLaborLine above."""
+
+    __tablename__ = "project_material_prices"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
+    price_override: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    source: Mapped[str] = mapped_column(String(20))  # "project_price" | "allowance"
+    reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
@@ -214,3 +391,39 @@ class Action(Base):
     after: Mapped[dict] = mapped_column(JSONB, default=dict)
     undoes_action_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("actions.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class Note(Base):
+    """Something the drawings do not say, recorded by a person.
+
+    `usage` is the whole point: `reference` is documentation, `context`
+    is handed to the engine as authoritative input on the next run. The
+    estimator chooses; nothing infers it, because a note that silently
+    moved the estimate would be a number nobody decided.
+
+    `status` here is deliberately NOT the four review labels. Those
+    describe an item's evidence; `confirmed`/`open` describes whether the
+    estimator has settled the note. Sharing a vocabulary between the two
+    is how a fifth review status gets invented by accident.
+    """
+
+    __tablename__ = "notes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    scope: Mapped[str] = mapped_column(String(20), default="project", server_default="project")
+    scope_ref: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20), default="open", server_default="open")
+    rfi_needed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    usage: Mapped[str] = mapped_column(String(20), default="reference", server_default="reference")
+    source_ref: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    obsolete_after_revision: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    author_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

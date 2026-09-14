@@ -664,3 +664,40 @@ def test_the_skip_copy_table_is_total_against_bulks_known_codes():
 # test_bulk_approve_reports_each_skip_with_a_code_and_estimator_facing_copy
 # above, which now asserts NEEDS_ATTENTION and MISSING_INFORMATION
 # separately with their own copy. ---
+
+
+# --- Evidence image endpoint ---
+
+
+def test_evidence_image_endpoint_returns_the_stored_png(client, db, item, signed_in_user):
+    from app.takeoff.models import ItemEvidenceImage
+    db.add(ItemEvidenceImage(item_id=item.id, png=b"stored-png-bytes"))
+    db.commit()
+
+    response = client.get(f"/api/items/{item.id}/evidence-image")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content == b"stored-png-bytes"
+
+
+def test_evidence_image_endpoint_404s_without_an_image(client, item, signed_in_user):
+    response = client.get(f"/api/items/{item.id}/evidence-image")
+    assert response.status_code == 404
+
+
+def test_evidence_image_endpoint_404s_for_another_orgs_item(client, db, signed_in_user, other_org_project):
+    from app.takeoff.models import ItemEvidenceImage, Item, ReviewStatus, Sheet
+    other_sheet = Sheet(project_id=other_org_project.id, number="E1.1", title="t",
+                         discipline="Electrical", revision="", scale="", scale_options=[], plan="")
+    db.add(other_sheet)
+    db.flush()
+    other_item = Item(project_id=other_org_project.id, sheet_id=other_sheet.id, symbol="receptacle",
+                       name="Receptacle", system="Power", category="Devices", quantity=1,
+                       unit="EA", status=ReviewStatus.READY)
+    db.add(other_item)
+    db.flush()
+    db.add(ItemEvidenceImage(item_id=other_item.id, png=b"not-yours"))
+    db.commit()
+
+    response = client.get(f"/api/items/{other_item.id}/evidence-image")
+    assert response.status_code == 404

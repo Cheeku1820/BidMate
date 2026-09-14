@@ -1,5 +1,5 @@
 import { Search, Check, ChevronLeft, ChevronRight } from "lucide-react";
-import { STATUS } from "../lib/data.js";
+import { STATUS } from "../lib/vocabulary.js";
 import { displayStatus } from "./Pill.jsx";
 
 const FILTERS = [

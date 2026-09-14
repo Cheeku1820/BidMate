@@ -23,7 +23,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import ProjectNav from "../shell/ProjectNav.jsx";
 import { reviewProgress, stageLabel } from "../../lib/projectStage.js";
 import { formatCalendarDate, NOT_SET } from "../../lib/format.js";
 
@@ -109,9 +108,7 @@ export default function ProjectOverview({ store }) {
   // click right after creating a project, and following it would land on
   // a workspace belonging to a *different* project's data. So an empty
   // project's primary action is to upload documents instead, and only a
-  // project that actually has items links into the review workspace. (A
-  // sampled demo project has real items via attachSampleTakeoff, so it
-  // takes the has-takeoff path and carries its own sample banner there.)
+  // project that actually has items links into the review workspace.
   const hasTakeoff = progress.total > 0;
 
   return (
@@ -119,6 +116,7 @@ export default function ProjectOverview({ store }) {
       <AppTopBar
         title={project.name}
         subtitle={project.revisionSetLabel || "No drawing set yet"}
+        breadcrumb={[{ label: "Projects", to: "/projects" }]}
         primaryAction={
           hasTakeoff ? (
             <Link className="btn btn--primary" to={`/projects/${project.id}/takeoff`}>
@@ -131,7 +129,6 @@ export default function ProjectOverview({ store }) {
           )
         }
       />
-      <ProjectNav projectId={project.id} />
 
       <div className="page">
         <h1 className="page-heading">{project.name}</h1>

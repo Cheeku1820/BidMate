@@ -59,24 +59,32 @@ def list_projects(
     # narrows the `select(Item)` it returns to the one column each scalar
     # subquery below actually needs, without touching the join or the
     # where clause that predicate owns.
-    live = countable_items(Project.id).with_only_columns(Item.id)
+    def _count(*predicates):
+        """One correlated scalar count per dashboard column.
 
-    items_total = select(func.count()).select_from(live.subquery()).scalar_subquery()
-    items_approved = (
-        select(func.count())
-        .select_from(live.where(Item.status == ReviewStatus.APPROVED).subquery())
-        .scalar_subquery()
-    )
-    warnings_open = (
-        select(func.count())
-        .select_from(live.where(Item.status == ReviewStatus.ATTENTION).subquery())
-        .scalar_subquery()
-    )
-    missing_info = (
-        select(func.count())
-        .select_from(live.where(Item.status == ReviewStatus.MISSING).subquery())
-        .scalar_subquery()
-    )
+        `.with_only_columns(func.count())` keeps the correlation to the
+        outer `Project` row; wrapping the select in `.subquery()` and
+        selecting from it does NOT -- a correlated select becomes a
+        standalone derived table, and every project then reported the
+        org-wide total. A brand-new project claiming the busiest one's
+        item count is a wrong number on the dashboard, and it also
+        silently disabled processing, since the processing screen reads
+        `itemsTotal > 0` as "this project already has a takeoff".
+        `.correlate(Project)` states the intent rather than leaving it to
+        SQLAlchemy's inference.
+        """
+        return (
+            countable_items(Project.id)
+            .where(*predicates)
+            .with_only_columns(func.count())
+            .correlate(Project)
+            .scalar_subquery()
+        )
+
+    items_total = _count()
+    items_approved = _count(Item.status == ReviewStatus.APPROVED)
+    warnings_open = _count(Item.status == ReviewStatus.ATTENTION)
+    missing_info = _count(Item.status == ReviewStatus.MISSING)
 
     # Project.updated_at only advances when the `projects` row itself is
     # UPDATEd, and nothing in the review flow touches that row -- an

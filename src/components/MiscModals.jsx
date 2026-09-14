@@ -1,8 +1,7 @@
+import { useState } from "react";
 import { Ruler } from "lucide-react";
 import Modal from "./Modal.jsx";
-import { SymbolGlyph } from "./Symbols.jsx";
-import { STATUS } from "../lib/data.js";
-import { displayStatus } from "./Pill.jsx";
+import { evidenceImageUrl } from "../lib/store/api-mapping.js";
 
 /** The remaining, smaller dialogs (spec §5, screen F) — kept together
  *  rather than one file each, unlike FinishReviewModal.jsx: none of
@@ -27,23 +26,35 @@ export function ScaleModal({ sheet, onApplyScale, onCalibrate, onClose }) {
 }
 
 export function EvidenceModal({ item, onClose }) {
-  const status = displayStatus(item);
+  const [failed, setFailed] = useState(false);
+  const url = evidenceImageUrl(item);
+  const showImage = url && !failed;
   return (
     <Modal title="Source evidence" onClose={onClose}>
-      <div style={{ border: "1px solid var(--line-2)", borderRadius: 6, background: "var(--sheet)", padding: 14, marginBottom: 12 }}>
-        <svg viewBox="0 0 320 150" width="100%" height="150">
-          <rect x="8" y="8" width="304" height="134" fill="#fdfcf9" stroke="#b8b3a9" />
-          <line x1="8" y1="42" x2="312" y2="42" stroke="#cfcbc0" />
-          <text x="18" y="30" fontSize="11" fill="#5f5b54" fontWeight="700">{item.evidence.sheet} — {item.evidence.detail}</text>
-          <g transform="translate(160 95)">
-            <SymbolGlyph kind={item.symbol} color={STATUS[status].color} />
-          </g>
-          <rect x="120" y="60" width="80" height="70" fill="none" stroke={STATUS[status].color} strokeWidth="1.6" strokeDasharray="5 4" />
-        </svg>
-      </div>
-      <p style={{ margin: 0, fontSize: 13.5 }}>
-        This is the region of {item.evidence.sheet} the quantity was read from. Opening evidence never leaves your place in the review.
-      </p>
+      {showImage ? (
+        <div style={{ border: "1px solid var(--line-2)", borderRadius: 6, background: "var(--sheet)", padding: 8, marginBottom: 12 }}>
+          <img
+            src={url}
+            alt={`Source drawing crop for ${item.name}, ${item.evidence.sheet}`}
+            style={{ display: "block", width: "100%", borderRadius: 4 }}
+            onError={() => setFailed(true)}
+          />
+        </div>
+      ) : (
+        <div style={{ marginBottom: 12 }}>
+          <p className="value" style={{ marginBottom: 4 }}>
+            {item.evidence.detail}, {item.evidence.sheet}
+          </p>
+          <p className="value value--muted" style={{ margin: 0 }}>
+            No drawing crop was captured for this item.
+          </p>
+        </div>
+      )}
+      {showImage ? (
+        <p style={{ margin: 0, fontSize: 13.5 }}>
+          This is the region of {item.evidence.sheet} the quantity was read from. Opening evidence never leaves your place in the review.
+        </p>
+      ) : null}
     </Modal>
   );
 }

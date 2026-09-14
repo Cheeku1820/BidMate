@@ -208,6 +208,41 @@ def test_undoing_a_delete_restores_the_item_with_its_warnings(db, dana, project,
     assert restored_warnings[0].where_ == "E2.1 title block"
 
 
+def test_undoing_a_delete_does_not_restore_the_evidence_image(db, dana, project, item):
+    """ItemEvidenceImage sits outside the snapshot system entirely (see
+    its docstring in models.py): deleting an item drops the row via
+    ON DELETE CASCADE, and undo -- which recreates the Item row and
+    restores every snapshotted column, including `evidence` itself --
+    does not bring the image back. This is the scenario the design
+    spec's Testing section asked for: undoing a delete must not crash
+    or attempt to touch the image, and the item must come back with
+    no image row, even though `item.evidence["has_image"]` still reads
+    true because that's a normal restored column.
+    """
+    from app.takeoff.evidence_images import upsert_evidence_image
+    from app.takeoff.models import ItemEvidenceImage
+
+    item.evidence = {"detail": "Counted from the drawing at 3 locations", "sheet": "E2.1", "has_image": True}
+    db.flush()
+    upsert_evidence_image(db, item.id, b"\x89PNG fake bytes")
+    db.flush()
+    item_id = item.id
+    assert db.get(ItemEvidenceImage, item_id) is not None
+
+    review.delete_item(db, dana, item, item.version)
+    db.flush()
+    assert db.get(Item, item_id) is None
+    assert db.get(ItemEvidenceImage, item_id) is None
+
+    undo.undo(db, dana, project.id)
+    db.flush()
+
+    restored = db.get(Item, item_id)
+    assert restored is not None
+    assert restored.evidence["has_image"] is True
+    assert db.get(ItemEvidenceImage, item_id) is None
+
+
 def test_redoing_a_delete_removes_the_restored_item_again(db, dana, project, item):
     item_id = item.id
     review.delete_item(db, dana, item, item.version)
@@ -618,3 +653,94 @@ def test_undoing_a_scale_on_an_item_with_both_a_scale_and_legend_warning_restore
     assert reasons == {WarningReason.SCALE, WarningReason.LEGEND}
     ids = {w.id for w in restored}
     assert legend_warning_id in ids, "the legend warning must be the same row, untouched -- not recreated"
+
+
+# --- Task 5: labor_edit / material_price_edit ---
+
+
+def test_undo_reverses_a_labor_edit_that_created_the_row(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectLaborLine
+
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    assert db.get(ProjectLaborLine, item.id) is not None
+
+    response = client.post(f"/api/projects/{item.project_id}/undo")
+    assert response.status_code == 200, response.text
+    assert db.get(ProjectLaborLine, item.id) is None
+
+
+def test_undo_reverses_a_labor_edit_that_merged_onto_an_existing_row(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectLaborLine
+
+    client.patch(f"/api/items/{item.id}/labor", json={"crewJourneyman": 1})
+    client.patch(f"/api/items/{item.id}/labor", json={"crewForeman": 2})
+
+    client.post(f"/api/projects/{item.project_id}/undo")
+    row = db.get(ProjectLaborLine, item.id)
+    assert row.crew_journeyman == 1 and row.crew_foreman is None
+
+
+def test_redo_restores_a_labor_edit_after_undo(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectLaborLine
+
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    client.post(f"/api/projects/{item.project_id}/undo")
+    assert db.get(ProjectLaborLine, item.id) is None
+
+    client.post(f"/api/projects/{item.project_id}/redo")
+    row = db.get(ProjectLaborLine, item.id)
+    assert float(row.hours_override) == 0.75
+
+
+def test_undo_reverses_a_material_price_edit(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectMaterialPrice
+
+    client.patch(f"/api/items/{item.id}/material-price", json={"priceOverride": 15.5, "source": "project_price"})
+    client.post(f"/api/projects/{item.project_id}/undo")
+    assert db.get(ProjectMaterialPrice, item.id) is None
+
+
+# --- Critical fix (task-5 review): a labor_edit/material_price_edit
+# reversal must not attempt a ProjectLaborLine/ProjectMaterialPrice
+# insert against an item_id whose Item row is already gone -- that's a
+# ForeignKeyViolation reaching the client as a raw 500, not the graceful
+# 409 every other kind's reversal already produces for this scenario
+# (see the two test_..._scale_action_..._does_not_raise tests above).
+# _apply_sparse_pricing_row() now guards on the parent Item existing,
+# the same way _apply_item_state() does. ---
+
+
+def test_undoing_a_labor_edit_whose_item_was_since_deleted_raises_a_domain_error(client, db, item, signed_in_user):
+    response = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    assert response.status_code == 200, response.text
+    labor_action = db.query(Action).filter(Action.kind == "labor_edit").one()
+
+    delete_response = client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
+    assert delete_response.status_code == 200, delete_response.text
+    assert db.get(Item, item.id) is None
+
+    with pytest.raises(DomainError) as caught:
+        undo_apply.apply(db, labor_action, "before")
+
+    assert caught.value.code == "item_no_longer_exists"
+    assert caught.value.status == 409
+    assert db.get(Item, item.id) is None, "the failed reversal must not have resurrected the item"
+
+
+def test_redoing_a_labor_edit_after_the_item_was_since_deleted_raises_a_domain_error(client, db, item, signed_in_user):
+    from app.takeoff.models import ProjectLaborLine
+
+    response = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    assert response.status_code == 200, response.text
+
+    undo_response = client.post(f"/api/projects/{item.project_id}/undo")
+    assert undo_response.status_code == 200, undo_response.text
+    assert db.get(ProjectLaborLine, item.id) is None
+
+    delete_response = client.delete(f"/api/items/{item.id}", headers={"If-Match": str(item.version)})
+    assert delete_response.status_code == 200, delete_response.text
+
+    redo_response = client.post(f"/api/projects/{item.project_id}/redo")
+    assert redo_response.status_code == 409, redo_response.text
+    assert redo_response.json()["detail"]["code"] == "item_no_longer_exists"
+    assert db.get(ProjectLaborLine, item.id) is None, "the failed reversal must not have inserted a row"

@@ -39,6 +39,18 @@
   --red-tint: #fbe9e7;
   --red-line: #edbdb7;
 
+  /* note vocabulary — a note's own confirmed/open status, kept
+     deliberately distinct from the four review-status hues above so it
+     is never mistaken for one (CLAUDE.md: "never render a note's status
+     using the item-status components or colours"). */
+  --slate: #3d5566;
+  --slate-tint: #e8eef1;
+  --slate-line: #c3d1d8;
+
+  --plum: #5b4570;
+  --plum-tint: #efe9f3;
+  --plum-line: #d3c3dd;
+
   /* drafting ink used on the sheet itself */
   --draft-wall: #6e6a62;
   --draft-thin: #b8b3a9;
@@ -134,6 +146,7 @@ button {
 
 @media (max-width: 1023px) {
   .app > .topbar,
+  .app > .notes-apply-banner,
   .app > .workspace,
   .app > .drawer {
     display: none;
@@ -1134,8 +1147,8 @@ button {
 }
 
 /* ============================================================
-   Login — the api store's sign-in gate (task-16-brief.md). Never shown
-   in seed mode, since createSeedStore()'s me() always resolves.
+   Login — the sign-in gate (task-16-brief.md). Shown whenever the
+   store's me() rejects with not_signed_in.
    ============================================================ */
 
 .login {
@@ -1183,14 +1196,27 @@ button {
 /* Column 1 is "auto", not a fixed px, so it tracks whatever width
    .company-nav itself declares below — that's what lets the collapsed
    state shrink the column without this rule needing to know about it. */
+/* height, not min-height: the left rail and the workspace footer strip
+   stay fixed while the middle scrolls, and a flex child can only resolve
+   `flex: 1; min-height: 0` against a definite height. Long pages scroll
+   inside .app-shell-main (or inside .workspace-body where a screen has
+   one) rather than scrolling the window. */
 .app-shell {
   display: grid;
-  grid-template-columns: auto 1fr;
-  min-height: 100vh;
+  /* minmax(0, 1fr), not 1fr: a 1fr track's automatic minimum is its
+     min-content, so wide content in column 2 pushed back on the auto
+     column and squeezed the rail below its own declared width -- labels
+     truncated to a single letter at 1280px. minmax(0, …) lets column 2
+     shrink and scroll instead, which is what .app-shell-main's
+     min-width: 0 already assumes. */
+  grid-template-columns: auto minmax(0, 1fr);
+  height: 100vh;
 }
 
 .company-nav {
   width: 232px;
+  flex: none;
+  overflow-y: auto;
   background: var(--paper-1);
   border-right: 1px solid var(--line-1);
   padding: 16px 12px;
@@ -1271,7 +1297,7 @@ button {
 }
 .company-nav-link.is-unavailable:hover { background: transparent; }
 
-.app-shell-main { display: flex; flex-direction: column; min-width: 0; }
+.app-shell-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; }
 
 .app-top-bar {
   display: flex;
@@ -1399,23 +1425,209 @@ button {
 
 /* ---- Project navigation and overview (spec §4.2, §6.2) ---- */
 
-.project-nav { border-bottom: 1px solid var(--line-1); padding: 0 20px; }
-.project-nav-list { display: flex; gap: 2px; list-style: none; margin: 0; padding: 0; overflow-x: auto; }
-
-.project-nav-link {
-  display: inline-flex;
-  align-items: center;
-  min-height: 40px;
-  padding: 0 10px;
-  font-size: 13.5px;
-  color: var(--ink-1);
-  text-decoration: none;
-  white-space: nowrap;
-  border-bottom: 2px solid transparent;
+/* The project sidebar. It replaces .company-nav inside a project rather
+   than sitting beside it -- two rails would cost ~250px on the one
+   screen (the takeoff canvas) that can least afford it, and the top
+   bar's breadcrumb is the way back out. Same 232px/56px widths as
+   .company-nav so the two rails swap without the page shifting. */
+.project-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 272px;
+  flex: none;
+  min-height: 0;
+  background: var(--paper-1);
+  border-right: 1px solid var(--line-1);
+  padding: 16px 12px;
+  transition: width var(--dur);
+  overflow: hidden;
 }
 
-.project-nav-link.is-active { border-bottom-color: var(--blue); font-weight: 600; }
-.project-nav-link.is-unavailable { color: var(--ink-3); cursor: default; }
+/* Collapsed by default on the takeoff route, for the width reasoning
+   documented on .company-nav.is-collapsed above. */
+.project-sidebar.is-collapsed { width: 56px; }
+
+.project-sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 12px;
+}
+.project-sidebar.is-collapsed .project-sidebar-head { justify-content: center; padding: 0 0 12px; }
+
+.project-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--ink-1);
+  text-decoration: none;
+}
+.project-sidebar-brand-mark {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--r-md);
+  background: var(--blue);
+}
+.project-sidebar-brand-name { display: block; font-weight: 600; line-height: 1.2; }
+.project-sidebar-brand-org {
+  display: block;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- The project card at the top of the rail ---- */
+
+.project-card {
+  padding: 12px 10px 14px;
+  margin-bottom: 6px;
+  border-top: 1px solid var(--line-1);
+  border-bottom: 1px solid var(--line-1);
+}
+.project-card-name { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.3; }
+.project-card-sub { margin: 3px 0 0; font-size: 12px; color: var(--ink-2); }
+
+.project-card-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.project-card-rev {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The chip's words state the deadline; the hue only reinforces urgency,
+   so it survives a grayscale print (CLAUDE.md). */
+.due-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--line-2);
+  background: var(--paper-0);
+  color: var(--ink-2);
+}
+.due-chip--urgent { border-color: var(--amber-line); background: var(--amber-tint); color: var(--amber); }
+.due-chip--overdue { border-color: var(--red-line); background: var(--red-tint); color: var(--red); }
+
+.project-card-meter {
+  height: 4px;
+  margin-top: 11px;
+  border-radius: 2px;
+  background: var(--line-1);
+  overflow: hidden;
+}
+/* Blue, not green: progress through a review is not approval
+   (CLAUDE.md -- green is estimator-approved content alone). */
+.project-card-meter > span { display: block; height: 100%; background: var(--blue); }
+.project-card-progress { margin: 6px 0 0; font-size: 11.5px; color: var(--ink-2); }
+
+/* ---- The workspace list ---- */
+
+.project-sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 4px; }
+.project-sidebar-group + .project-sidebar-group { margin-top: 10px; }
+
+/* Sentence case, not the small caps this shape of nav usually takes:
+   spec §7 rules out all-caps headings and CLAUDE.md asks for sentence
+   case throughout. */
+.project-sidebar-group-title {
+  margin: 0 0 2px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+
+.project-sidebar-list { list-style: none; margin: 0; padding: 0; }
+
+.project-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  /* Spec §7 keeps touch targets at 40px minimum even on desktop. */
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 13.5px;
+  border-radius: var(--r-md);
+  color: var(--ink-1);
+  text-decoration: none;
+}
+.project-sidebar.is-collapsed .project-nav-link {
+  position: relative;
+  justify-content: center;
+  padding: 0;
+  min-height: 40px;
+}
+
+/* The collapsed rail's one-pip stand-in for the badges. Filled for
+   missing information, ringed for needs attention, so the two stay apart
+   without colour; the aria-label carries the words either way. */
+.ws-pip {
+  position: absolute;
+  top: 6px;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--paper-1);
+}
+.ws-pip--missing { background: var(--red); }
+.ws-pip--attention { background: var(--paper-1); border: 2px solid var(--amber); }
+
+/* Focus is handled by the global :focus-visible rule at the top of this
+   file; do not restate it per component. */
+.project-nav-link:hover { background: var(--paper-0); }
+.project-nav-link.is-active { background: var(--blue-tint); font-weight: 600; color: var(--blue-600); }
+.project-nav-link.is-unavailable { color: var(--ink-3); cursor: not-allowed; }
+.project-nav-link.is-unavailable:hover { background: transparent; }
+
+.ws-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Decorative only. It marks the rhythm of the list and, when active,
+   echoes the row's own highlight -- it never carries a status the text
+   does not already state, which is why it is aria-hidden. */
+.ws-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--line-2);
+}
+.project-nav-link.is-active .ws-dot { background: var(--blue); }
+.ws-dot--unavailable { background: transparent; border: 1px solid var(--line-2); }
+
+.ws-badges { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.ws-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+}
+/* Hue + icon + (through aria-label) the words. Filled for missing
+   information, outlined for needs attention, so the two stay apart in
+   grayscale as well as in colour. */
+.ws-badge--missing { background: var(--red-tint); border-color: var(--red-line); color: var(--red); }
+.ws-badge--attention { background: transparent; border-color: var(--amber-line); color: var(--amber); }
 
 .card-grid {
   display: grid;
@@ -1493,7 +1705,7 @@ button {
 .bulk-bar-reason--missing { color: var(--red); }
 .bulk-bar-result { margin: 0; }
 
-/* --- document intake (screens C, E) and the sample-data banner ---------- */
+/* --- document intake (screens C, E) -------------------------------------- */
 
 .dropzone {
   display: flex;
@@ -1525,7 +1737,10 @@ button {
   min-height: 32px;
 }
 
-.upload-table .upload-name {
+/* Scoped to .upload-name itself rather than to .upload-table: the
+   confirm screen's table carries .filetable without .upload-table, and
+   the name cell has to lay out the same way in both. */
+.upload-name {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1614,26 +1829,6 @@ button {
   to {
     transform: rotate(360deg);
   }
-}
-
-.sample-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--blue-line);
-  background: var(--blue-tint);
-  color: var(--ink-1);
-}
-
-.sample-banner p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--ink-2);
-}
-
-.sample-banner strong {
-  color: var(--ink-1);
 }
 
 /* --- tabs, settings screens (J, K), and plain lists ---------------------- */
@@ -1733,4 +1928,454 @@ button {
 
 .plain-list li {
   margin: 4px 0;
+}
+
+/* --- instant estimate demo ---------------------------------------------- */
+
+.estimate-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 560px;
+  margin: 16px 0;
+}
+
+.estimate-form .dropzone {
+  margin: 0;
+}
+
+.estimate-summary {
+  margin: 16px 0;
+}
+
+.estimate-headline {
+  background: var(--blue-tint);
+  border-color: var(--blue-line);
+}
+
+.estimate-total {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--blue);
+  margin: 4px 0;
+  letter-spacing: -0.02em;
+}
+
+/* waiting indicator on the engine processing stage list */
+.processing-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin: 4px;
+  border-radius: 50%;
+  border: 2px solid var(--line-2);
+}
+
+/* running estimate total on the takeoff spreadsheet */
+.estimate-strip {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 10px 14px;
+  margin: 12px 0;
+  border: 1px solid var(--blue-line);
+  background: var(--blue-tint);
+  border-radius: var(--r-md);
+}
+.estimate-strip__label {
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin-right: 10px;
+}
+.estimate-strip__total {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--blue);
+  letter-spacing: -0.01em;
+}
+
+/* "Read by AI" panel — the vision reading of the current sheet */
+.ai-reading {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-1);
+}
+.ai-reading-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.ai-reading-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.ai-reading-count {
+  min-width: 34px;
+  text-align: right;
+  font-weight: 600;
+  color: var(--blue);
+}
+.ai-reading-note {
+  font-size: 12px;
+  font-style: italic;
+}
+
+/* item confirmed by the AI's visual reading of the drawing */
+.ai-confirmed {
+  display: inline-block;
+  margin: 8px 0 0;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--blue);
+  background: var(--blue-tint);
+  border: 1px solid var(--blue-line);
+  border-radius: 999px;
+}
+
+/* document-type cell: the dropdown plus a "detected" hint */
+.doctype-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.doctype-detected {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-3);
+  padding: 1px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* a document unchecked on the confirm screen — kept visible but dimmed */
+.data-table tr.is-excluded {
+  opacity: 0.5;
+}
+
+
+/* ---- Top-bar breadcrumb (the way out of a project) ---- */
+
+.app-top-bar--stacked { align-items: flex-start; padding: 12px 20px; }
+.app-top-bar--stacked .app-top-bar-title { font-size: 21px; font-weight: 600; line-height: 1.25; }
+.app-top-bar--stacked .app-top-bar-tools { padding-top: 4px; }
+
+.app-top-bar-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  margin-bottom: 1px;
+}
+.app-top-bar-crumbs a { color: var(--ink-2); text-decoration: none; }
+.app-top-bar-crumbs a:hover { color: var(--ink-1); text-decoration: underline; }
+
+/* ---- Workspace body + persistent footer strip ----
+   The body scrolls; the footer does not. What is outstanding and what
+   the next action is stay on screen at any scroll position, which is the
+   point of putting them there rather than at the end of the page. */
+
+.workspace-body { flex: 1; min-height: 0; overflow-y: auto; }
+
+.workspace-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line-1);
+  background: var(--paper-1);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.workspace-footer-status { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.workspace-footer-actions { display: flex; align-items: center; gap: 10px; }
+
+.footer-count { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.footer-count--missing { color: var(--red); }
+.footer-count--attention { color: var(--amber); }
+
+/* ---- Document type filter ----
+   Filters what the table draws and nothing else. Every count on the
+   screen is computed from the whole set (UploadDocuments.jsx). */
+
+.filter-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.filter-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+}
+.filter-tab:hover { color: var(--ink-1); }
+.filter-tab[aria-pressed="true"] { color: var(--blue-600); font-weight: 600; border-bottom-color: var(--blue); }
+
+.filter-tab-count {
+  padding: 0 5px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: var(--paper-0);
+  color: var(--ink-2);
+}
+.filter-tab[aria-pressed="true"] .filter-tab-count { background: var(--blue-tint); color: var(--blue-600); }
+
+.filter-tabs-summary { margin: 0 0 0 auto; padding-right: 2px; font-size: 12.5px; color: var(--ink-2); }
+
+/* ---- The document table ---- */
+
+.filecard {
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.filecard .data-table th,
+.filecard .data-table td { padding: 10px 14px; }
+.filecard .data-table thead th { background: var(--paper-1); }
+.filecard .data-table tbody tr:last-child th,
+.filecard .data-table tbody tr:last-child td { border-bottom: 0; }
+
+.filetable .upload-name { align-items: flex-start; gap: 10px; font-weight: 400; }
+.filetable-icon { margin-top: 2px; flex: none; color: var(--ink-3); }
+.filetable-filename { display: block; font-weight: 600; }
+.filetable-meta { display: block; font-size: 11.5px; color: var(--ink-3); }
+
+.page-intro { max-width: 72ch; margin-top: 0; }
+.dropzone-hint { font-size: 12.5px; color: var(--ink-3); max-width: 56ch; }
+.warncard-list { margin: 6px 0 0; padding-left: 18px; }
+
+/* ---- Pre-processing checklist ---- */
+
+.checklist-card {
+  margin-top: 20px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 16px 18px 18px;
+}
+.checklist-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.checklist-head h2 { margin: 0; font-size: 14px; }
+.checklist-count { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+.checklist-count--attention { color: var(--amber); font-weight: 600; }
+
+.checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 4px 32px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.checklist-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line-1);
+}
+
+.checklist-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-top: 1px;
+  border-radius: 50%;
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+}
+/* A passing row is deliberately not green: green marks
+   estimator-approved content alone (CLAUDE.md), and a derived pre-flight
+   check is not that. */
+.checklist-row--ok .checklist-mark { border-color: var(--blue-line); background: var(--blue-tint); color: var(--blue); }
+.checklist-row--blocking .checklist-mark { border-color: var(--red-line); background: var(--red-tint); color: var(--red); }
+.checklist-row--attention .checklist-mark { border-color: var(--amber-line); background: var(--amber-tint); color: var(--amber); }
+
+.checklist-text { display: flex; flex-direction: column; min-width: 0; }
+.checklist-title { font-size: 13.5px; font-weight: 600; }
+.checklist-row--blocking .checklist-title { color: var(--red); }
+.checklist-row--attention .checklist-title { color: var(--amber); }
+.checklist-detail { font-size: 12.5px; color: var(--ink-2); }
+
+/* Once the set is populated the drop target steps back to a strip below
+   the table (UploadDocuments.jsx). Same target, less of the screen. */
+.dropzone--compact {
+  flex-direction: row;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 16px;
+  font-size: 13.5px;
+}
+
+/* ---- Processing: confirm before replacing an approved takeoff ---- */
+
+.processing-confirm {
+  max-width: 560px;
+  padding: 20px 22px;
+  border: 1px solid var(--red-line);
+  border-radius: var(--r-lg);
+  background: var(--red-tint);
+}
+.processing-confirm h2 {
+  margin: 0 0 10px;
+  color: var(--red);
+  font-size: 17px;
+}
+.processing-confirm p {
+  margin: 0 0 10px;
+  color: var(--ink-1);
+}
+.processing-confirm p:last-of-type {
+  margin-bottom: 0;
+}
+.processing-confirm-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* ---- Notes & assumptions (screen: NotesWorkspace) ---- */
+
+/* A note's own status -- confirmed/open -- rendered with its own hue
+   pair (--slate/--plum) and its own icons, never Pill.jsx and never the
+   STATUS colors: that vocabulary belongs to items, this one to notes
+   (CLAUDE.md). Hue + icon + text label together, same rule as every
+   other status in the product. */
+.note-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 7px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.note-status--confirmed { background: var(--slate-tint); color: var(--slate); border-color: var(--slate-line); }
+.note-status--open { background: var(--plum-tint); color: var(--plum); border-color: var(--plum-line); }
+
+/* The RFI flag is a separate boolean from status, so it gets its own
+   small marker rather than folding into the status pill above. */
+.note-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  background: var(--plum-tint);
+  color: var(--plum);
+  border: 1px solid var(--plum-line);
+}
+
+.notes-summary {
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+/* Modelled on .estimate-strip: an informational strip in the primary
+   blue, not a status pill -- it is telling the estimator what applying
+   would do, not reporting a review outcome. */
+.notes-apply-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  border: 1px solid var(--blue-line);
+  background: var(--blue-tint);
+  border-radius: var(--r-md);
+}
+.notes-apply-banner p { margin: 0; font-size: 13px; color: var(--ink-1); }
+.notes-apply-banner-note {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.notes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.note-card {
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 14px 16px;
+}
+
+.note-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.note-card__title { margin: 0; font-size: 14.5px; font-weight: 600; }
+
+.note-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.note-card__body { margin: 0 0 8px; font-size: 13.5px; color: var(--ink-1); white-space: pre-wrap; }
+
+.note-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.note-card__actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
 }

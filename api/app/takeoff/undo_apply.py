@@ -50,8 +50,14 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.errors import DomainError
 from app.takeoff.actions import decode_snapshot
-from app.takeoff.models import Action, Item, Sheet, Warning
-from app.takeoff.snapshots import ITEM_SNAPSHOT_TYPES, ITEMS_SNAPSHOT_KEY, WARNING_SNAPSHOT_TYPES
+from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPrice, Sheet, Warning
+from app.takeoff.snapshots import (
+    ITEM_SNAPSHOT_TYPES,
+    ITEMS_SNAPSHOT_KEY,
+    LABOR_LINE_SNAPSHOT_TYPES,
+    MATERIAL_PRICE_SNAPSHOT_TYPES,
+    WARNING_SNAPSHOT_TYPES,
+)
 
 # The one message this module and review.py._apply_approve() both use
 # for "the row this action targets was deleted by someone else since" --
@@ -74,6 +80,10 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
         _apply_bulk_approve(db, state)
     elif action.kind == "delete":
         _apply_delete(db, action, direction)
+    elif action.kind == "labor_edit":
+        _apply_sparse_pricing_row(db, ProjectLaborLine, action.item_id, LABOR_LINE_SNAPSHOT_TYPES, state)
+    elif action.kind == "material_price_edit":
+        _apply_sparse_pricing_row(db, ProjectMaterialPrice, action.item_id, MATERIAL_PRICE_SNAPSHOT_TYPES, state)
     else:  # approve, reject, unreject, edit
         _apply_item_state(db, action.item_id, state)
 
@@ -133,6 +143,67 @@ def _delete_row_if_present(db: DbSession, model: type, pk: uuid.UUID) -> None:
     if _row_exists(db, model, pk):
         db.execute(delete(model).where(model.id == pk))
         _expunge_stale(db, model, pk)
+
+
+def _sparse_row_exists(db: DbSession, model: type, item_id: uuid.UUID) -> bool:
+    """Like `_row_exists()`, but for `ProjectLaborLine`/`ProjectMaterialPrice`,
+    whose primary key column is `item_id`, not `id` -- `_row_exists()`
+    hardcodes `model.id`, which these two sparse pricing tables don't
+    define. Kept as a separate function rather than generalizing
+    `_row_exists()` itself, so this task doesn't touch the helper every
+    other kind's reversal (`delete`, `scale`, `bulk_approve`) depends on.
+    Same direct-query rationale as `_row_exists()`: never trust the
+    identity map alone.
+    """
+    return db.execute(select(model.item_id).where(model.item_id == item_id)).scalar_one_or_none() is not None
+
+
+def _delete_sparse_row_if_present(db: DbSession, model: type, item_id: uuid.UUID) -> None:
+    """Like `_delete_row_if_present()`, scoped to the `item_id`-keyed
+    sparse pricing tables -- see `_sparse_row_exists()` for why this
+    isn't just a call into the generic helper.
+    """
+    if _sparse_row_exists(db, model, item_id):
+        db.execute(delete(model).where(model.item_id == item_id))
+        _expunge_stale(db, model, item_id)
+
+
+def _apply_sparse_pricing_row(db: DbSession, model: type, item_id: uuid.UUID, snapshot_types: dict, state: dict) -> None:
+    """Reverses a labor_edit/material_price_edit action onto ProjectLaborLine
+    or ProjectMaterialPrice. Unlike Item (always exists once ingested),
+    these rows are sparse -- created on first edit -- so `state` may be
+    an empty dict (the row didn't exist before this action; undo means it
+    shouldn't exist now) or a decoded snapshot of every column (the row
+    existed; undo/redo means it should hold exactly these values).
+
+    Guards on the parent `Item` existing before touching either table,
+    the same way `_apply_item_state()` does for approve/reject/edit --
+    this is a single-item reversal, not a batch one, so it follows that
+    function's raise-a-409 pattern rather than `_apply_bulk_approve()`'s/
+    `_apply_scale()`'s skip-and-continue. Checked unconditionally, before
+    the `state`-empty branch too: even a delete-if-present reversal onto
+    a now-gone item should report the same 409 rather than silently
+    no-op'ing, since a caller relying on undo/redo actually having
+    happened has no other way to learn it didn't.
+    """
+    item = db.execute(
+        select(Item).where(Item.id == item_id).with_for_update().execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if item is None:
+        raise DomainError("item_no_longer_exists", _ITEM_GONE_MESSAGE, status=409)
+
+    if not state:
+        _delete_sparse_row_if_present(db, model, item_id)
+        return
+    decoded = decode_snapshot(state, snapshot_types)
+    decoded.pop("item_id", None)
+    if not _sparse_row_exists(db, model, item_id):
+        _expunge_stale(db, model, item_id)
+        db.add(model(item_id=item_id, **decoded))
+    else:
+        row = db.get(model, item_id)
+        for key, value in decoded.items():
+            setattr(row, key, value)
 
 
 def _decode_item_row(row: dict, *, exclude: frozenset[str] = frozenset()) -> tuple[uuid.UUID, dict]:

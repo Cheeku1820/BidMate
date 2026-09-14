@@ -73,7 +73,7 @@ from app.takeoff.undo_apply import apply as _apply
 
 # Kinds that represent an original business mutation. The only kinds
 # `_root_action()` ever stops walking at.
-REVERSIBLE = {"approve", "reject", "unreject", "edit", "delete", "bulk_approve", "scale"}
+REVERSIBLE = {"approve", "reject", "unreject", "edit", "delete", "bulk_approve", "scale", "labor_edit", "material_price_edit"}
 
 # What undo_head() targets: a root mutation, or a live "redo" -- see the
 # module docstring for why "redo" has to be included.

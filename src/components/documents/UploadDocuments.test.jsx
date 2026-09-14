@@ -9,7 +9,7 @@
    ============================================================ */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import UploadDocuments from "./UploadDocuments.jsx";
 
@@ -51,7 +51,10 @@ describe("UploadDocuments", () => {
     expect(start).toBeDisabled();
 
     drop([pdf("E-sheets.pdf")]);
-    expect(screen.getByText(/uploading/i)).toBeTruthy();
+    // Scoped to the file's own row: the footer strip also reports files
+    // in flight, so an unscoped /uploading/i now matches in two places
+    // and would pass or fail for reasons unrelated to the state cell.
+    expect(within(screen.getByText("E-sheets.pdf").closest("tr")).getByText(/uploading/i)).toBeTruthy();
     expect(start).toBeDisabled();
 
     advance(800);
@@ -81,6 +84,30 @@ describe("UploadDocuments", () => {
     advance(800);
     expect(screen.getByText(/password protected/i)).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeDisabled();
+  });
+
+  it("auto-detects the type from the filename and shows a Detected hint", () => {
+    renderUpload();
+    drop([pdf("specs_part_1.pdf")]);
+    advance(800);
+    expect(screen.getByLabelText(/document type for specs_part_1\.pdf/i)).toHaveValue("Specifications");
+    expect(screen.getByText("Detected")).toBeTruthy(); // the chip, not the intro copy
+  });
+
+  it("blocks continuing until at least one file is typed Drawings", () => {
+    renderUpload();
+    drop([pdf("specs_part_1.pdf")]); // detects as Specifications, not Drawings
+    advance(800);
+
+    // Uploaded, but nothing is a drawing set yet.
+    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeDisabled();
+    expect(screen.getByText(/no drawing set yet/i)).toBeTruthy();
+
+    // Correcting one to Drawings unblocks it.
+    fireEvent.change(screen.getByLabelText(/document type for specs_part_1\.pdf/i), {
+      target: { value: "Drawings" },
+    });
+    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeEnabled();
   });
 
   it("removes a file from the list", () => {

@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapItem, mapProject, mapSnapshot, mapUser } from "./api-mapping.js";
+import { mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProject, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -102,11 +102,9 @@ async function request(path, { method = "GET", body, headers = {} } = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-/** Not part of the store interface (METHODS in contract.test.js) — the
- *  seed store has no login concept at all, since it invents an identity
- *  on first use. Login.jsx imports this directly rather than going
- *  through createApiStore(), and only ever renders when the api store
- *  is in use in the first place. */
+/** Not part of the store interface returned by createApiStore(). Login.jsx
+ *  imports this directly, since it renders before a store instance has
+ *  an authenticated identity to hang the rest of the interface off of. */
 export async function login(email, password) {
   const raw = await request("/api/auth/login", { method: "POST", body: { email, password } });
   return mapUser(raw);
@@ -352,6 +350,132 @@ export function createApiStore() {
     return mapProject(raw);
   }
 
+  /** Writes a processed takeoff into the project. The server replaces
+   *  rather than appends, and refuses with `approved_items_present` when
+   *  that would discard estimator approvals — pass confirmReplace only
+   *  after a person has actually been asked. */
+  async function attachEngineTakeoff(id, payload, { confirmReplace = false } = {}) {
+    const result = await request(`/api/projects/${id}/takeoff`, {
+      method: "POST",
+      body: { payload, confirm_replace: confirmReplace },
+    });
+    invalidateCache();
+    return result;
+  }
+
+  // Notes and assumptions (Task 4): the client half of the endpoints
+  // built in Task 2. No local cache here — unlike getSnapshot(), the
+  // screen (Task 5) fetches on mount and after each write rather than
+  // polling, and a note write never changes the takeoff itself, so
+  // invalidateCache() is deliberately not called from these.
+  async function listNotes(id) {
+    const rows = await request(`/api/projects/${id}/notes`);
+    return (rows ?? []).map(mapNote);
+  }
+
+  async function createNote(id, fields) {
+    return mapNote(await request(`/api/projects/${id}/notes`, { method: "POST", body: noteToWire(fields) }));
+  }
+
+  async function updateNote(noteId, changes) {
+    return mapNote(await request(`/api/notes/${noteId}`, { method: "PATCH", body: noteToWire(changes) }));
+  }
+
+  async function deleteNote(noteId) {
+    await request(`/api/notes/${noteId}`, { method: "DELETE" });
+  }
+
+  /** Applies context notes by re-running the engine's output through the
+   *  approval-preserving merge. Distinct from attachEngineTakeoff, which
+   *  replaces wholesale — this one never overwrites approved work.
+   *  A re-run changes the takeoff, so the cached snapshot is invalidated
+   *  exactly like every other mutation in this file (see invalidateCache's
+   *  own comment) rather than left to serve stale totals until the next
+   *  poll happens to notice. */
+  async function reprocess(id, payload) {
+    const result = await request(`/api/projects/${id}/reprocess`, { method: "POST", body: { payload } });
+    invalidateCache();
+    return result;
+  }
+
+  // Labor and Material Pricing (task-9-brief.md): the client half of
+  // pricing_router.py's endpoints (Tasks 4, 6, 7). request() already
+  // JSON.stringify()s whatever object is passed as `body` and already
+  // returns the parsed response body (see request()'s own definition
+  // above), so every call here passes `body` as a plain object rather
+  // than a pre-stringified string, and never re-parses the result the
+  // way a raw fetch() caller would need to.
+  //
+  // The two list endpoints return snake_case LaborRowOut/MaterialRowOut
+  // rows (schemas.py: no camelCase alias generator on those two output
+  // schemas, unlike the *In schemas below), so their rows are mapped
+  // through mapLaborRow/mapMaterialRow the same way every other wire
+  // shape in this file crosses into camelCase. The company-scoped GET
+  // endpoints are returned unmapped, exactly as task-9-brief.md
+  // specifies -- Tasks 10-11 own that mapping where they consume it.
+  async function getLaborRows(projectId) {
+    const body = await request(`/api/projects/${projectId}/labor`);
+    return { pricingSource: body.pricing_source, pricingNote: body.pricing_note, rows: body.rows.map(mapLaborRow) };
+  }
+
+  async function setLaborLine(itemId, changes) {
+    // A labor edit changes the item's laborCost/totalCost, both of
+    // which mapItem carries and getSnapshot()'s cache can serve stale
+    // via a 304 -- invalidate exactly like mutateItem/attachEngineTakeoff/
+    // reprocess do, per invalidateCache()'s own comment above.
+    const result = await request(`/api/items/${itemId}/labor`, { method: "PATCH", body: changes });
+    invalidateCache();
+    return result;
+  }
+
+  async function getMaterialRows(projectId) {
+    const body = await request(`/api/projects/${projectId}/material-pricing`);
+    return { pricingSource: body.pricing_source, pricingNote: body.pricing_note, rows: body.rows.map(mapMaterialRow) };
+  }
+
+  async function setMaterialPrice(itemId, changes) {
+    // Same reasoning as setLaborLine: a material-price edit changes the
+    // item's materialCost/totalCost, so the cache must not answer the
+    // next poll with the pre-edit figures.
+    const result = await request(`/api/items/${itemId}/material-price`, { method: "PATCH", body: changes });
+    invalidateCache();
+    return result;
+  }
+
+  async function getCompanyLaborRates() {
+    return request("/api/company/labor-rates");
+  }
+
+  async function setCompanyLaborRates(values) {
+    return request("/api/company/labor-rates", { method: "PUT", body: values });
+  }
+
+  async function getCompanyMaterialPrices() {
+    return request("/api/company/material-prices");
+  }
+
+  async function setCompanyMaterialPrice(itemName, values) {
+    return request(`/api/company/material-prices/${encodeURIComponent(itemName)}`, { method: "PUT", body: values });
+  }
+
+  async function deleteCompanyMaterialPrice(itemName) {
+    return request(`/api/company/material-prices/${encodeURIComponent(itemName)}`, { method: "DELETE" });
+  }
+
+  async function getCompanyLaborHoursOverrides() {
+    return request("/api/company/labor-hours-overrides");
+  }
+
+  async function setCompanyLaborHoursOverride(itemName, hoursPerUnit) {
+    return request(`/api/company/labor-hours-overrides/${encodeURIComponent(itemName)}`, {
+      method: "PUT", body: { hoursPerUnit },
+    });
+  }
+
+  async function deleteCompanyLaborHoursOverride(itemName) {
+    return request(`/api/company/labor-hours-overrides/${encodeURIComponent(itemName)}`, { method: "DELETE" });
+  }
+
   return {
     me,
     useProject,
@@ -369,5 +493,23 @@ export function createApiStore() {
     redo,
     listProjects,
     createProject,
+    attachEngineTakeoff,
+    listNotes,
+    createNote,
+    updateNote,
+    deleteNote,
+    reprocess,
+    getLaborRows,
+    setLaborLine,
+    getMaterialRows,
+    setMaterialPrice,
+    getCompanyLaborRates,
+    setCompanyLaborRates,
+    getCompanyMaterialPrices,
+    setCompanyMaterialPrice,
+    deleteCompanyMaterialPrice,
+    getCompanyLaborHoursOverrides,
+    setCompanyLaborHoursOverride,
+    deleteCompanyLaborHoursOverride,
   };
 }

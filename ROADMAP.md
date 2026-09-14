@@ -18,9 +18,9 @@ One further document sits alongside these: [`docs/electrical-estimating-product-
 
 ## Where we are
 
-Screen F runs end to end against seed data. It has the status vocabulary, the warning schema, undo/redo with compound actions, presence, and bidirectional selection state. Everything it does is in the browser: `localStorage` is the database, `BroadcastChannel` is the realtime layer, the blueprint is drawn SVG, and the twelve takeoff items in [`src/lib/data.js`](src/lib/data.js) are hand-written.
+Screen F runs end to end against the real API — Postgres, the FastAPI service, and the takeoff engine. It has the status vocabulary, the warning schema, undo/redo with compound actions, presence, and bidirectional selection state. There is no fixture data left in the client: the `localStorage`/`BroadcastChannel` seed store and its hand-written seed items are gone, and every row a reviewer sees came from a document someone uploaded and the engine processed. The blueprint is still drawn SVG rather than a rendered PDF.
 
-The prototype's real output is not code — it is a settled data model and a settled interaction contract. Both carry forward. Most of the client code does too. None of the infrastructure does.
+The prototype's real output was not code — it was a settled data model and a settled interaction contract. Both carried forward into the real API. Most of the client code did too.
 
 ---
 
@@ -87,14 +87,14 @@ The single largest omission from the previous version of this document. The READ
 - Org → project → user hierarchy, enforced at the data layer rather than in query filters
 - Email/password for small shops; SAML and SCIM for enterprise contractors
 - Invitations, deprovisioning, session management, MFA
-- **A role model with approval authority as its center.** The entire status vocabulary rests on "a person confirmed it." Today that person is an anonymous colored avatar invented on first use by [`identity()`](src/lib/store/local-transport.js:87). In production, whether an estimator can approve, whether a chief estimator must counter-approve, and whether a GC guest can see anything are the questions that make the audit trail meaningful.
+- **A role model with approval authority as its center.** The entire status vocabulary rests on "a person confirmed it." Today that person is a real account — [`User`](api/app/identity/models.py:19) carries a persistent name and color, not one invented per browser session — but there is still only one role. Whether an estimator can approve, whether a chief estimator must counter-approve, and whether a GC guest can see anything are the questions that make the audit trail meaningful.
 - External/guest access with read-only scope
 
 ### 2.4 Data and domain services
 
 - Real database, migrations, backups, and a **restore that has actually been tested**
 - The takeoff store: projects, revision sets, sheets, items, warnings, evidence links, notes
-- **The action log.** [`commitAction`](src/lib/store/seed.js:146) already commits every mutation as `{ kind, before, after, by, at, label }`. Persist that shape append-only and it becomes the audit trail, the undo stack, and the compliance record at once. Do not let it become a mutable table.
+- **The action log.** [`commit()`](api/app/takeoff/actions.py:174) already routes every mutation through one function, recording `kind`, `label`, `before`, `after`, the actor, and the timestamp, append-only, in Postgres. It is the audit trail, the undo stack, and the compliance record at once. Do not let it become a mutable table.
 - Server-side rule enforcement (see invariants)
 - Totals computation in exactly one place
 
@@ -136,7 +136,7 @@ This is what makes broad building coverage viable at MVP. An engine that meets a
 
 ### 2.7 Collaboration
 
-Replaces the seed store's local transport, [`local-transport.js`](src/lib/store/local-transport.js), entirely.
+The seed store's local transport — `BroadcastChannel` + `localStorage` — is already gone; the api store's poll against the real API replaced it. What this section still has to build is replacing that poll with push.
 
 - WebSocket fan-out for item changes, presence, and remote selection
 - Reconnect, replay, and offline behavior
@@ -153,7 +153,7 @@ Replaces the seed store's local transport, [`local-transport.js`](src/lib/store/
 ### 2.9 Operations
 
 - Environments, infrastructure as code, secrets management
-- CI that runs tests — there are currently **no tests of any kind**, and the only workflow is [`deploy.yml`](.github/workflows/deploy.yml) publishing to Pages
+- CI that runs the test suites. There is a real frontend and backend test suite now, but no workflow runs them on a push or a pull request
 - Error tracking, structured logs, metrics, alerting, on-call, incident process
 - Public status page. Bid-week downtime is a different severity of event here than in most B2B software.
 - **Back-office tooling.** Support cannot help with a stuck sheet without seeing the project. Impersonation needs to be explicit, scoped, and written to the same audit log.
@@ -258,7 +258,7 @@ The client talks only to `api`. Everything else is reachable only through it, wh
 `web` posts an approval. `api` checks the actor's role in `identity`, then `takeoff` validates the transition — and this is the part that matters: **the rule that a *Missing information* item cannot be approved is enforced here, not in the browser.** The client also enforces it, for immediate feedback with the evidence on screen, but the client is a convenience. `takeoff` appends the action to the log, updates the item, and publishes through `collab` to every other reviewer in the project. Drawer totals are recomputed from the same query the export uses.
 
 **Confirm a scale.**
-One request, one transaction, one audit entry. `takeoff` updates the sheet's scale and re-derives every measured item that was blocked by it, exactly as [`setScale`](src/lib/store/seed-scale.js:30) does today. The undo of that action reverses both halves together. An estimator who confirms a scale and immediately regrets it gets one undo, not fourteen.
+One request, one transaction, one audit entry. `takeoff` updates the sheet's scale and re-derives every measured item that was blocked by it, exactly as [`set_scale`](api/app/takeoff/scale.py:97) does today. The undo of that action reverses both halves together. An estimator who confirms a scale and immediately regrets it gets one undo, not fourteen.
 
 **Supply context through the conversation panel.**
 The estimator drags a region on the canvas and says the fixtures inside it are type F. `web` sends the message with its anchor to `assistant`, which resolves the region against `takeoff` to a concrete set of item ids and returns a **proposal** — nine items, current classification, proposed classification. Nothing has changed yet. The estimator applies it; `api` routes that to `takeoff` as an ordinary edit action carrying the thread as provenance, and it lands in the action log, the drawer totals, the undo stack, and every other reviewer's screen through `collab` by exactly the path a manual edit takes. If the resolution was a symbol classification, it also writes to the firm's symbol library, and the remaining unclassified instances on the set stop being questions.
@@ -291,11 +291,8 @@ These are the rules that break silently when a new service is added by someone w
 
 | Prototype | Production |
 |---|---|
-| `localStorage` via `seed.js` and `local-transport.js` | database behind `takeoff`, read through `api` |
-| `BroadcastChannel` | WebSocket fan-out in `collab` |
 | `identity()` random name and color | `identity` service with roles and approval authority |
 | `hist.undo` array capped at 60 | append-only action log, undo as compensating actions |
-| `ITEMS` seed array | `pipeline` output written to `takeoff` |
 | Drawn SVG in `PlanDrawing.jsx` | rendered tiles from `documents`, markers layered over `pdf.js` |
 | Client-side status filtering | same client code, server-authoritative rules underneath |
 

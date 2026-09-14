@@ -33,7 +33,7 @@ function makeContext(over = {}) {
     loadError: null,
     refresh: vi.fn(),
     projectId: "p1",
-    project: { id: "p1", name: "Cedar Ridge Warehouse", revisionSetLabel: "E1.1 Rev 3", sample: true },
+    project: { id: "p1", name: "Cedar Ridge Warehouse", revisionSetLabel: "E1.1 Rev 3" },
     ...over,
   };
 }
@@ -63,11 +63,10 @@ describe("ExportPreview", () => {
     expect(within(allRow).getByText("15")).toBeTruthy();
   });
 
-  it("names the sampled project and its file, and shows the sample banner", () => {
+  it("names the project and its export file", () => {
     context = makeContext();
     renderExport();
     expect(screen.getByText("cedar-ridge-warehouse-takeoff.csv")).toBeTruthy();
-    expect(screen.getByText(/sample takeoff/i)).toBeTruthy();
   });
 
   it("enables Export when there are approved items and nothing blocking", () => {
@@ -92,5 +91,34 @@ describe("ExportPreview", () => {
     for (const button of screen.getAllByRole("button", { name: /export excel/i })) {
       expect(button).toBeDisabled();
     }
+  });
+  it("leaves an item on a superseded sheet out of the estimated cost", () => {
+    // The same countsTowardTotals predicate the takeoff table's running
+    // strip uses. Two predicates over one number is how a superseded
+    // sheet ends up inside one total and outside another.
+    context = makeContext({
+      snapshot: {
+        ...makeContext().snapshot,
+        sheets: [
+          { id: "s1", number: "E1.1", title: "Level 1 power", superseded: false },
+          { id: "s0", number: "E1.1", title: "Level 1 power", superseded: true },
+        ],
+        items: [
+          { id: "c1", sheetId: "s1", name: "Panel LP-1", description: "", system: "Distribution", quantity: 1, unit: "ea", status: "approved", rejected: false, warnings: [], materialCost: 600, laborHours: 10, laborCost: 400, totalCost: 1000 },
+          { id: "c0", sheetId: "s0", name: "Superseded panel", description: "", system: "Distribution", quantity: 1, unit: "ea", status: "approved", rejected: false, warnings: [], materialCost: 3000, laborHours: 50, laborCost: 2000, totalCost: 5000 },
+        ],
+      },
+    });
+    renderExport();
+
+    const card = screen.getByRole("heading", { name: /estimated total direct cost/i }).closest("section");
+    expect(within(card).getByText("$1,000")).toBeTruthy();
+    expect(within(card).queryByText("$6,000")).toBeNull();
+  });
+
+  it("hides the cost card on an unpriced takeoff rather than claiming $0", () => {
+    context = makeContext();
+    renderExport();
+    expect(screen.queryByRole("heading", { name: /estimated total direct cost/i })).toBeNull();
   });
 });

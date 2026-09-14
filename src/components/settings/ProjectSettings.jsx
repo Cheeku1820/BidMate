@@ -16,7 +16,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import ProjectNav from "../shell/ProjectNav.jsx";
 import { resolveProject, setProjectOverride, restoreCompanyDefault } from "../../lib/settingsStore.js";
 import { formatCalendarDate, NOT_SET } from "../../lib/format.js";
 
@@ -100,8 +99,14 @@ export default function ProjectSettings({ store }) {
 
   return (
     <>
-      <AppTopBar title="Project settings" subtitle={project.name} />
-      <ProjectNav projectId={projectId} />
+      <AppTopBar
+        title="Project settings"
+        subtitle={project.name}
+        breadcrumb={[
+          { label: "Projects", to: "/projects" },
+          { label: project.name, to: `/projects/${projectId}` },
+        ]}
+      />
 
       <div className="page">
         <h1 className="page-heading">Project settings</h1>

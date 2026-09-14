@@ -1,8 +1,8 @@
-import { createSeedStore } from "./seed.js";
 import { createApiStore } from "./api.js";
 
-/** Swap implementations with VITE_DATA_SOURCE. Removing seed mode later
- *  is deleting seed.js and the branch below (design doc, "Client port"). */
+/** One data source. The seed/localStorage store this used to choose
+ *  between was deleted in the API-only slice — see
+ *  docs/superpowers/specs/2026-08-27-api-only-foundation-design.md. */
 export function createStore() {
-  return import.meta.env.VITE_DATA_SOURCE === "api" ? createApiStore() : createSeedStore();
+  return createApiStore();
 }

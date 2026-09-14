@@ -346,3 +346,44 @@ def test_create_project_cannot_be_called_unattributed(db, org):
 
     with pytest.raises(TypeError):
         create_project(db, org.id, name="Oakview High School", location="Modesto, CA")
+
+
+def test_dashboard_counts_are_per_project_not_org_wide(db, org, signed_in_user, client):
+    """Each project's counts describe THAT project.
+
+    The counts are correlated scalar subqueries against the outer Project
+    row. Wrapping a correlated select in `.subquery()` de-correlates it,
+    which turned every row's count into the org-wide total: a brand-new
+    project reported the same item count as the busiest one. That is a
+    wrong number on the dashboard, and it also silently disabled document
+    processing, because the processing screen reads `itemsTotal > 0` to
+    mean "this project already has a takeoff, do not re-run".
+    """
+    import uuid as _uuid
+
+    from app.takeoff.models import Item, Project, ReviewStatus, Sheet
+
+    busy = Project(id=_uuid.uuid4(), org_id=org.id, name="Has a takeoff", stage="review")
+    empty = Project(id=_uuid.uuid4(), org_id=org.id, name="Nothing uploaded yet", stage="setup")
+    db.add_all([busy, empty])
+    db.flush()
+
+    sheet = Sheet(id=_uuid.uuid4(), project_id=busy.id, number="E2.1", title="Power",
+                  discipline="Electrical", revision="", scale="", scale_options=[], plan="")
+    db.add(sheet)
+    db.flush()
+    for status in (ReviewStatus.READY, ReviewStatus.APPROVED, ReviewStatus.ATTENTION):
+        db.add(Item(id=_uuid.uuid4(), project_id=busy.id, sheet_id=sheet.id, symbol="receptacle",
+                    name="20A duplex receptacle", system="Power", category="Devices",
+                    quantity=1, unit="ea", status=status))
+    db.commit()
+
+    rows = {p["name"]: p for p in client.get("/api/projects").json()}
+
+    assert rows["Has a takeoff"]["itemsTotal"] == 3
+    assert rows["Has a takeoff"]["itemsApproved"] == 1
+    assert rows["Has a takeoff"]["warningsOpen"] == 1
+    # The whole point: an untouched project reports its own emptiness.
+    assert rows["Nothing uploaded yet"]["itemsTotal"] == 0
+    assert rows["Nothing uploaded yet"]["itemsApproved"] == 0
+    assert rows["Nothing uploaded yet"]["warningsOpen"] == 0

@@ -2,10 +2,8 @@ import { useState } from "react";
 import { login } from "../lib/store/api.js";
 
 /* ============================================================
-   Login.jsx — the sign-in gate for the api store (task-16-brief.md,
-   Step 5). The seed store never shows this: createSeedStore()'s me()
-   always resolves, so App.jsx only ever renders Login when the api
-   store's me() rejects with not_signed_in.
+   Login.jsx — the sign-in gate (task-16-brief.md, Step 5). App.jsx
+   renders Login whenever the store's me() rejects with not_signed_in.
 
    Plain email/password, persistent visible labels, error copy adjacent
    to the fields (DESIGN.md) rather than a toast or a dialog, sentence

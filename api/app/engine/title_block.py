@@ -22,17 +22,21 @@ A mechanical sheet numbered M1.01 with an EF-7 tag in its strip reads
 as M1.01 and is not electrical; before the size rule it read as EF-7
 and was (TSC Nutrition, 2026-09-14).
 
-Deterministic by construction: ties break by frequency in the strip,
-then by first appearance in reading order. Nothing here iterates a set.
-The previous implementation did (`max(set(ids), key=ids.count)`), and
-the same page resolved to three different numbers across three
-processes. Spec section 2.3.
+The number cell is chosen in this order: largest type size; if two
+distinct tokens share it, the strip holds an index and there is no
+cell; otherwise the instance of that one number nearest the corner
+(40pt bands); at an equal band, first in content order. Since every
+candidate past the index check carries the same text, the corner and
+the content order choose which *instance* anchors the title's reach,
+never which number. Deterministic by construction: nothing here
+iterates a set. The previous implementation did
+(`max(set(ids), key=ids.count)`), and the same page resolved to three
+different numbers across three processes. Spec section 2.3.
 """
 
 from __future__ import annotations
 
 import re
-from collections import Counter
 from dataclasses import dataclass
 
 from .page_frame import Word
@@ -148,8 +152,9 @@ def _corner(tb: TitleBlock) -> tuple[float, float]:
 
 def _number_cell(tb: TitleBlock) -> Word | None:
     """The sheet-number-shaped token (any discipline) set largest in the
-    strip; among those, nearest the strip's end corner; ties by frequency
-    in the strip, then first appearance. None when the strip holds none.
+    strip; among the instances of it, the one nearest the strip's end
+    corner, then the first in content order. None when the strip holds
+    none.
 
     None, too, when two or more *distinct* tokens share the largest
     size: that is an index, not a number cell. A cover sheet's drawing
@@ -166,21 +171,18 @@ def _number_cell(tb: TitleBlock) -> Word | None:
     if len({w.text for w in tokens if _size(w) == largest}) > 1:
         return None
     cx, cy = _corner(tb)
-    freq = Counter(w.text for w in tokens)
-    first = {}
-    for i, w in enumerate(tokens):
-        first.setdefault(w.text, i)
-    # Distance bands of 40pt: two tokens in the same cell are "equally
-    # near"; the tiebreakers then decide, never float noise.
+    # Past the index check every largest token is one text, so what is
+    # chosen here is an instance, not a number. Distance bands of 40pt:
+    # two instances in one cell are "equally near", and content order
+    # (the token's index) then decides, never float noise.
     return min(
-        tokens,
-        key=lambda w: (
-            -_size(w),
-            round(((w.cx - cx) ** 2 + (w.cy - cy) ** 2) ** 0.5 / 40),
-            -freq[w.text],
-            first[w.text],
+        enumerate(tokens),
+        key=lambda iw: (
+            -_size(iw[1]),
+            round(((iw[1].cx - cx) ** 2 + (iw[1].cy - cy) ** 2) ** 0.5 / 40),
+            iw[0],
         ),
-    )
+    )[1]
 
 
 def sheet_number(tb: TitleBlock) -> str:

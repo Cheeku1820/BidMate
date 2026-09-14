@@ -55,6 +55,8 @@ def test_detected_pages_match_the_key(name):
     assert not missed, f"{name}: electrical pages not detected: {[(p, expected[p]['number'] or 'unreadable') for p in missed]}"
     assert not extra, f"{name}: non-electrical pages detected: {[(p, found[p].number) for p in extra]}"
     for p, s in expected.items():
+        if p in tolerated:
+            continue  # listed for the record; may or may not be detected
         if not s["number"]:
             assert found[p].number == "" and found[p].unreadable_reason, (name, p, found[p].number, found[p].unreadable_reason)
         else:

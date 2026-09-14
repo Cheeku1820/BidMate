@@ -53,12 +53,13 @@ def test_no_strip_means_none(tmp_path):
     assert title_block.locate(words, w, h) is None
 
 
-def test_number_prefers_the_corner_over_frequency(tmp_path):
+def test_the_largest_number_shaped_token_is_the_cell(tmp_path):
     """A revision table in the strip repeats another sheet's number three
-    times, in body type; the number cell at the corner, in display type,
-    still wins. (Set all four at one size and the strip is an index --
-    see test_a_drawing_index_in_the_strip_is_not_a_number_cell -- which
-    is the layout no real title block has.)"""
+    times, in body type; the number cell, in display type, is the cell
+    -- size decides, not frequency. (Set all four at one size and the
+    strip is an index -- see
+    test_a_drawing_index_in_the_strip_is_not_a_number_cell -- which is
+    the layout no real title block has.)"""
     doc, page = _page(tmp_path)
     page.insert_text((900, 100), "SHEET")
     for y in (200, 230, 260):

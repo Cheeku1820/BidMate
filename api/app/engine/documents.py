@@ -94,7 +94,10 @@ def _unreadable(page: pymupdf.Page, words: list) -> tuple[str, str] | None:
     not counted and says so. _is_raster decides which."""
     if _is_raster(page):
         return "Scanned sheet", SCANNED_REASON
-    if not words and len(page.get_drawings()) >= OUTLINED_MIN_DRAWINGS:
+    if not words and (page.get_image_info() or len(page.get_drawings()) >= OUTLINED_MIN_DRAWINGS):
+        # Any image, or enough paths. A wordless page with an image and
+        # too many paths to be a scan is still a page nobody can read;
+        # it must not fall between the two conditions and vanish.
         return "Sheet with outlined text", OUTLINED_REASON
     return None
 

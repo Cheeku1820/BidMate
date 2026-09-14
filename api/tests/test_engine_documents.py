@@ -171,6 +171,27 @@ def test_a_page_of_outlined_text_is_detected_and_unreadable(tmp_path):
     assert "outlined" in s.unreadable_reason
 
 
+def test_a_wordless_page_with_an_image_and_a_few_paths_is_still_unreadable(tmp_path):
+    """The ruling is "no words and (enough paths or any image)". A page
+    with one image and a hundred paths is too many paths for _is_raster
+    and too few for the outlined threshold; it must not fall between
+    the two and vanish."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    img = pymupdf.open()
+    ip = img.new_page(width=200, height=100)
+    ip.draw_rect(pymupdf.Rect(10, 10, 190, 90), color=(0, 0, 0), fill=(0.5, 0.5, 0.5))
+    page.insert_image(pymupdf.Rect(100, 100, 500, 300), pixmap=ip.get_pixmap())
+    for i in range(100):
+        page.draw_line((50 + i * 9, 500), (55 + i * 9, 700))
+    path = tmp_path / "mixed.pdf"
+    doc.save(path)
+    (s,) = documents.detect_sheets(str(path))
+    assert s.number == ""
+    assert s.kind == "other"
+    assert s.unreadable_reason
+
+
 def test_a_few_stray_paths_and_no_text_is_not_a_sheet(tmp_path):
     """A border rule and a logo box with no words is nothing; the
     outlined-text rule wants substantial drawing content."""

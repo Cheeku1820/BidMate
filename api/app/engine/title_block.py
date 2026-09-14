@@ -33,7 +33,10 @@ from .page_frame import Word
 SHEET_ID = re.compile(r"\bE[A-Z]{0,2}-?\d{1,3}(?:\.\d{1,2})?\b")
 
 # Labels a title block carries. Uppercase, compared against the word.
-LABELS = {"SHEET", "DRAWN", "CHECKED", "DATE", "PROJECT", "REVISION", "REV", "SCALE", "TITLE"}
+# SCALE is deliberately absent: a details sheet prints "SCALE: NONE" under
+# every detail along one edge, and counting it let a row of detail
+# callouts outscore the real title block (Unalaska E6.1, E6.2).
+LABELS = {"SHEET", "DRAWN", "CHECKED", "DATE", "PROJECT", "REVISION", "REV", "TITLE"}
 
 # The outer fraction of the page an edge strip covers.
 STRIP = 0.18
@@ -61,7 +64,13 @@ def _inside(w: Word, r: tuple[float, float, float, float]) -> bool:
 
 
 def _score(words: list[Word]) -> int:
-    return sum(1 for w in words if SHEET_ID.fullmatch(w.text) or w.text.upper().strip(":") in LABELS)
+    """Distinct family tokens plus label occurrences. A token repeated
+    across a strip is a callout pattern -- detail bubbles carrying the
+    sheet's own number, a revision table -- and reads as one cell, not
+    four; the labels are what make a strip a title block."""
+    tokens = {w.text for w in words if SHEET_ID.fullmatch(w.text)}
+    labels = sum(1 for w in words if w.text.upper().strip(":") in LABELS)
+    return len(tokens) + labels
 
 
 def locate(words: list[Word], width: float, height: float) -> TitleBlock | None:
@@ -90,12 +99,12 @@ def _corner(tb: TitleBlock) -> tuple[float, float]:
     }[tb.edge]
 
 
-def sheet_number(tb: TitleBlock) -> str:
+def _number_cell(tb: TitleBlock) -> Word | None:
     """The family token nearest the strip's end corner; ties by frequency
-    in the strip, then first appearance. "" when the strip holds none."""
+    in the strip, then first appearance. None when the strip holds none."""
     tokens = [w for w in tb.words if SHEET_ID.fullmatch(w.text)]
     if not tokens:
-        return ""
+        return None
     cx, cy = _corner(tb)
     freq = Counter(w.text for w in tokens)
     first = {}
@@ -106,7 +115,13 @@ def sheet_number(tb: TitleBlock) -> str:
     return min(
         tokens,
         key=lambda w: (round(((w.cx - cx) ** 2 + (w.cy - cy) ** 2) ** 0.5 / 40), -freq[w.text], first[w.text]),
-    ).text
+    )
+
+
+def sheet_number(tb: TitleBlock) -> str:
+    """The number cell's text; "" when the strip holds no family token."""
+    cell = _number_cell(tb)
+    return cell.text if cell else ""
 
 
 # Words that mark an address, a signature line or a seal -- never a title.
@@ -114,34 +129,75 @@ _NOT_TITLE = {
     "SUITE", "BOULEVARD", "STREET", "AVENUE", "PHONE", "FAX", "CHECKED", "DRAWN",
     "DATE", "REGISTERED", "PROFESSIONAL", "ENGINEER", "SHEET", "PROJECT", "NO.",
 }
-# How far from the number cell the title cell may sit, in points.
+# How far from the number cell a title line may start, in points --
+# the gap between the line's nearest word and the cell, so a title that
+# runs away from the cell along the strip (a rotated column) is admitted
+# by its first word and read to its last.
 _TITLE_REACH = 120.0
 
 
+def _gap(w: Word, cell: Word) -> float:
+    """Distance between two word boxes; 0 when they touch or overlap."""
+    return max(0.0, w.x0 - cell.x1, cell.x0 - w.x1, w.y0 - cell.y1, cell.y0 - w.y1)
+
+
+def _thickness(w: Word) -> float:
+    """A word's extent across its reading direction -- its type size,
+    whichever way it runs -- for a word of more than one character."""
+    return min(w.x1 - w.x0, w.y1 - w.y0)
+
+
+def _passes(words: list[str]) -> bool:
+    """The sanity check, over the whole cell: 2-10 uppercase words (bare
+    punctuation allowed), no digits-only or mixed-case token, none of
+    _NOT_TITLE, and no label -- a cell label ends in a colon ("AUTHOR:",
+    "ISSUE DATE:") and a title never does. Any miss fails the whole cell
+    rather than dropping the offending word: a cell with "103" in it is
+    not a title with a number silently removed, it is not the title."""
+    if not 2 <= len(words) <= 10:
+        return False
+    for t in words:
+        if t.endswith(":"):
+            return False
+        if not t.isupper() and any(c.isalnum() for c in t):
+            return False
+        if t.strip(",.:") in _NOT_TITLE:
+            return False
+    return True
+
+
 def title(tb: TitleBlock, number: str) -> str:
-    """The title cell: uppercase lines within _TITLE_REACH of the number
-    cell, joined, sentence-cased. "" when nothing passes the sanity check
-    (2-10 words, no digits-only tokens, none of _NOT_TITLE)."""
-    cell = next((w for w in tb.words if w.text == number), None)
+    """The title cell: the largest-set text lines beside the number
+    cell, joined, sentence-cased. "" when the cell fails _passes.
+
+    Measured on the real set: the title is one rotated line in a bigger
+    face beside a horizontal number cell, with the author / date / project
+    cells (smaller, colon-terminated) stacked between the two. So a line
+    is admitted by its nearest word (_TITLE_REACH), and the line(s) set
+    in the largest type are the cell -- a multi-line title shares one
+    size, an author's initials do not. The whole cell then passes the
+    sanity check or the title is "".
+    """
+    cell = _number_cell(tb)
+    if cell is None or cell.text != number:
+        cell = next((w for w in tb.words if w.text == number), None)
     if cell is None:
         return ""
+    lines: dict[tuple[int, int], list[Word]] = {}
+    for w in tb.words:
+        if w is not cell:
+            lines.setdefault((w.block, w.line), []).append(w)
+    # Reading order by (block, line); words within a line as extracted.
     near = [
-        w for w in tb.words
-        if w.text != number
-        and abs(w.cx - cell.cx) <= _TITLE_REACH
-        and abs(w.cy - cell.cy) <= _TITLE_REACH
-        and (w.text.isupper() or w.text.isdigit())
+        (key, ws) for key, ws in sorted(lines.items())
+        if any(_gap(w, cell) <= _TITLE_REACH for w in ws)
     ]
-    # Group by text line, keep reading order.
-    lines: dict[tuple[int, int], list[str]] = {}
-    for w in near:
-        lines.setdefault((w.block, w.line), []).append(w.text)
-    words: list[str] = [t for _, ts in sorted(lines.items()) for t in ts]
-    if not 2 <= len(words) <= 10:
+    if not near:
         return ""
-    if any(t.isdigit() for t in words):
-        return ""
-    if any(t.strip(",.:") in _NOT_TITLE for t in words):
+    size = {key: round(max(_thickness(w) for w in ws)) for key, ws in near}
+    largest = max(size.values())
+    words = [w.text for key, ws in near if size[key] == largest for w in ws]
+    if not _passes(words):
         return ""
     text = " ".join(words).strip(" ,.")
     return text[:1].upper() + text[1:].lower()

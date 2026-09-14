@@ -152,3 +152,57 @@ def test_title_reads_in_order_on_a_rotated_page(tmp_path):
     words, w, h = _words(doc, page, tmp_path, rotation=90)
     tb = title_block.locate(words, w, h)
     assert title_block.title(tb, "E2.1") == "First floor power plan"
+
+
+def test_a_details_row_does_not_outscore_the_title_block(tmp_path):
+    """A details sheet repeats its own number in every detail callout
+    along the bottom, each with a SCALE: label under it. Those are drawing
+    labels, not title-block labels, and a repeated token is one cell, not
+    four: the right-edge title block still wins. Measured on Unalaska
+    E6.1 / E6.2 (pages 91, 92), where the bottom strip scored 8-10 to the
+    real title block's 7 and the counting region came out wrong."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((900, 130), "DRAWN")
+    page.insert_text((900, 160), "CHECKED")
+    page.insert_text((900, 770), "E6.2")               # the number cell
+    for x in (150, 450, 750):                           # three detail callouts
+        page.insert_text((x, 740), "E6.2")
+        page.insert_text((x + 40, 740), "SCALE: NONE")
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert tb is not None and tb.edge == "right"
+    assert title_block.sheet_number(tb) == "E6.2"
+
+
+def _unalaska_style_block(page):
+    """The layout measured on the real set: a horizontal number cell at
+    the strip's end corner, the title set in a larger rotated face in a
+    column beside it, and the author / date label cells (smaller, rotated,
+    ending in a colon) stacked between the two. The title's far words run
+    well past a square reach around the number cell; the label cells sit
+    inside it."""
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((930, 780), "E2.1", fontsize=20)                          # number cell
+    page.insert_text((905, 760), "FLOOR PLAN - LIGHTING", fontsize=12, rotate=90)
+    page.insert_text((925, 760), "AUTHOR:", fontsize=8, rotate=90)
+    page.insert_text((925, 700), "TRC", fontsize=8, rotate=90)                # author initials
+    page.insert_text((945, 760), "ISSUE DATE:", fontsize=8, rotate=90)
+    page.insert_text((945, 690), "10/01/2021", fontsize=8, rotate=90)
+
+
+def test_title_reads_a_rotated_column_beside_the_number_cell(tmp_path):
+    doc, page = _page(tmp_path)
+    _unalaska_style_block(page)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.sheet_number(tb) == "E2.1"
+    assert title_block.title(tb, "E2.1") == "Floor plan - lighting"
+
+
+def test_title_reads_the_same_column_on_a_rotated_page(tmp_path):
+    doc, page = _page(tmp_path)
+    _unalaska_style_block(page)
+    words, w, h = _words(doc, page, tmp_path, rotation=90)
+    tb = title_block.locate(words, w, h)
+    assert title_block.title(tb, "E2.1") == "Floor plan - lighting"

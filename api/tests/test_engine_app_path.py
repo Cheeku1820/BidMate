@@ -140,6 +140,29 @@ def test_a_catalog_id_resolves_its_assembly():
     assert estimate.resolve_assembly_parent(SPEC) == "receptacle_20a"
 
 
+def test_resolve_assembly_parent_reaches_the_named_luminaires():
+    """Anchors the reachability claim in the comment above
+    luminaire_troffer and luminaire_highbay in assemblies.py. The other
+    round-trip tests in this file use "PANEL" and " Receptacle_20A " as
+    their examples, which pins the *mechanism* -- any CATALOG id resolves
+    -- but not the specific claim that comment rests on: that these two
+    ids in particular are reachable this way, not dead. llm.py's prompt
+    enumerates every CATALOG id (see
+    test_the_classifier_is_asked_for_the_catalog_id_it_prices_against
+    above) and is explicitly offered these two names as choices, so a
+    model reading a legible schedule can return either directly. A reader
+    who finds this test should find that comment, and the reverse."""
+    from app.engine.assemblies import expand
+
+    for catalog_id, name in (
+        ("luminaire_troffer", "2x4 LED troffer"),
+        ("luminaire_highbay", "LED high bay"),
+    ):
+        spec = {**SPEC, "catalog_id": catalog_id, "name": name}
+        assert estimate.resolve_assembly_parent(spec) == catalog_id
+        assert expand(catalog_id, 1).lines, f"{catalog_id} expanded to no material"
+
+
 def test_an_exact_catalog_name_resolves_when_the_id_is_absent():
     spec = {**SPEC}
     del spec["catalog_id"]

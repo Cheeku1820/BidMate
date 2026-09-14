@@ -94,7 +94,7 @@ The single largest omission from the previous version of this document. The READ
 
 - Real database, migrations, backups, and a **restore that has actually been tested**
 - The takeoff store: projects, revision sets, sheets, items, warnings, evidence links, notes
-- **The action log.** [`commit()`](api/app/takeoff/actions.py:174) already routes every mutation through one function, recording `kind`, `label`, `before`, `after`, the actor, and the timestamp, append-only, in Postgres. It is the audit trail, the undo stack, and the compliance record at once. Do not let it become a mutable table.
+- **The action log.** [`commit()`](api/app/takeoff/actions.py:174) already routes every project-scoped mutation through one function, recording `kind`, `label`, `before`, `after`, the actor, and the timestamp, append-only, in Postgres, into the `actions` table. It is the audit trail, the undo stack, and the compliance record for a project at once. A second, narrower function, [`record_company_action()`](api/app/takeoff/pricing_router.py:64), routes org-level pricing edits into a separate `company_actions` table the same way — deliberately separate, because `actions` is project-scoped by a non-nullable foreign key and doubles as the undo stack, and a company-wide rate change belongs to no project and is never undone. The compliance record now spans both tables. Do not let either become a mutable table.
 - Server-side rule enforcement (see invariants)
 - Totals computation in exactly one place
 

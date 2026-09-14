@@ -230,8 +230,10 @@ class ItemEvidenceImage(Base):
     dict says an image exists and it does not. The frontend already
     handles this gracefully: `EvidenceModal` (MiscModals.jsx) requests
     the image, the fetch 404s, and the `onError` fallback shows the
-    evidence detail/sheet text with copy that says no drawing crop was
-    captured, rather than crashing or claiming no evidence exists.
+    evidence detail/sheet text with copy that says no drawing crop is
+    *available* -- not that one was never captured, which this
+    round trip can make false -- rather than crashing or claiming no
+    evidence exists.
     """
 
     __tablename__ = "item_evidence_images"
@@ -300,10 +302,14 @@ class ProjectLaborLine(Base):
     """Per-item labor overrides, one row per item at most. Every field is
     nullable and independent: an estimator can override just the crew
     mix and leave hours alone, or type a flat rate and leave everything
-    else at its default. Edited only through Task 4's mutation endpoint
-    and reversed only through Task 5's undo dispatch -- deliberately
-    outside Item's own column-walking delete-undo snapshot, the same
-    reasoning as ItemEvidenceImage."""
+    else at its default. Edited through Task 4's mutation endpoint and
+    reversed through Task 5's undo dispatch for a `labor_edit` action.
+
+    Also cascades away with its parent `Item` (`ON DELETE CASCADE`
+    above), so `review._apply_delete()` captures this row explicitly in
+    the delete snapshot, and `undo_apply._apply_delete()` restores it on
+    undo -- unlike `ItemEvidenceImage`, which is deliberately left out of
+    that snapshot (see its own docstring)."""
 
     __tablename__ = "project_labor_lines"
 
@@ -324,8 +330,8 @@ class ProjectMaterialPrice(Base):
     """Per-item material price override, one row per item at most.
     `source` distinguishes a typed project price from a deliberate
     allowance -- both are the same mechanical override, the label is
-    what the estimator meant by it. Same undo/snapshot exclusion as
-    ProjectLaborLine above."""
+    what the estimator meant by it. Same delete-snapshot/undo coverage
+    as ProjectLaborLine above."""
 
     __tablename__ = "project_material_prices"
 
@@ -358,7 +364,12 @@ class Warning(Base):
 
 
 class Action(Base):
-    """Append-only. Undo appends a compensating row; nothing is ever rewritten."""
+    """Append-only. Undo appends a compensating row; nothing is ever rewritten.
+
+    Project-scoped mutations only. Org-level pricing edits go through
+    `CompanyAction`/`company_actions` instead -- see that class's
+    docstring for why, and for the cost of splitting the compliance
+    record across two tables."""
 
     __tablename__ = "actions"
     __table_args__ = (
@@ -391,6 +402,81 @@ class Action(Base):
     after: Mapped[dict] = mapped_column(JSONB, default=dict)
     undoes_action_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("actions.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class CompanyAction(Base):
+    """Append-only audit of org-level pricing changes.
+
+    Deliberately separate from `actions`: that table is project-scoped by a
+    non-nullable FK and is also the undo stack, and a company edit is
+    neither undoable nor part of any project's history. Keeping them apart
+    means undo cannot see these rows at all.
+
+    The cost, recorded here so it is not rediscovered: the compliance
+    record now spans two tables, and an audit of "everything that changed"
+    has to read both.
+    """
+
+    __tablename__ = "company_actions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    seq: Mapped[int] = mapped_column(BigInteger, Identity(always=True), nullable=False, unique=True, index=True)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id"), index=True)
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String(40))
+    label: Mapped[str] = mapped_column(Text)
+    before: Mapped[dict] = mapped_column(JSONB, default=dict)
+    after: Mapped[dict] = mapped_column(JSONB, default=dict)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# Single source of truth for company_actions' append-only guard, mirroring
+# app.takeoff.actions.ACTION_LOG_GUARD_DDL for `actions` exactly -- same
+# trigger shape, same ENABLE ALWAYS (so a session_replication_role =
+# replica apply worker can't bypass it), same privilege REVOKE as a second
+# line of defense beyond the trigger. Two callers read this constant
+# rather than duplicating the SQL: migrations/versions/0017_company_
+# action_log_guard.py runs it against the real database, and
+# tests/conftest.py's `db` fixture re-runs it after Base.metadata.create_
+# all, which does not execute migrations. `CompanyAction`'s docstring
+# above claims "append-only" -- this is what makes that claim true rather
+# than a convention nothing enforces.
+COMPANY_ACTION_LOG_GUARD_DDL = """
+create or replace function company_actions_are_append_only() returns trigger as $$
+begin
+    raise exception 'company_actions is append-only: % is not permitted', tg_op;
+end;
+$$ language plpgsql;
+
+drop trigger if exists company_actions_no_update on company_actions;
+drop trigger if exists company_actions_no_delete on company_actions;
+drop trigger if exists company_actions_no_truncate on company_actions;
+
+create trigger company_actions_no_update before update on company_actions
+    for each statement execute function company_actions_are_append_only();
+create trigger company_actions_no_delete before delete on company_actions
+    for each statement execute function company_actions_are_append_only();
+create trigger company_actions_no_truncate before truncate on company_actions
+    for each statement execute function company_actions_are_append_only();
+
+alter table company_actions enable always trigger company_actions_no_update;
+alter table company_actions enable always trigger company_actions_no_delete;
+alter table company_actions enable always trigger company_actions_no_truncate;
+
+-- Same two limits as ACTION_LOG_GUARD_DDL's revoke: a no-op while the
+-- connecting role is a Postgres superuser (this project's docker-compose
+-- setup), and not proof against the table owner granting the privilege
+-- back to itself -- a guard against accidents and casual application-
+-- level tampering, not a determined holder of the database credentials.
+revoke update, delete, truncate on company_actions from current_user;
+"""
+
+COMPANY_ACTION_LOG_GUARD_TEARDOWN_DDL = """
+drop trigger if exists company_actions_no_update on company_actions;
+drop trigger if exists company_actions_no_delete on company_actions;
+drop trigger if exists company_actions_no_truncate on company_actions;
+drop function if exists company_actions_are_append_only();
+"""
 
 
 class Note(Base):

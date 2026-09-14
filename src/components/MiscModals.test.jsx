@@ -21,12 +21,17 @@ describe("EvidenceModal", () => {
     expect(img.src).toContain("/api/items/item-1/evidence-image");
   });
 
-  test("falls back to the recorded detail and sheet, not a false 'no evidence' claim, when the image fails to load", () => {
+  test("falls back to the recorded detail and sheet, not a false 'never captured' claim, when the image fails to load", () => {
+    // has_image is true here -- the item's own record says an image was
+    // captured. A 404 on that request (e.g. a delete-then-undo round trip:
+    // ItemEvidenceImage is not restored, see its docstring) does not mean
+    // one was never captured, so the fallback must not claim that.
     render(<EvidenceModal item={baseItem} onClose={() => {}} />);
     fireEvent.error(screen.getByRole("img"));
     expect(screen.getByText(/counted from the drawing at 3 locations/i)).toBeInTheDocument();
     expect(screen.getByText(/e2\.1/i)).toBeInTheDocument();
-    expect(screen.getByText(/no drawing crop was captured/i)).toBeInTheDocument();
+    expect(screen.getByText(/no drawing crop is available/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no drawing crop was captured/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/no evidence recorded/i)).not.toBeInTheDocument();
   });
 
@@ -36,7 +41,7 @@ describe("EvidenceModal", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(screen.getByText(/counted from the drawing at 3 locations/i)).toBeInTheDocument();
     expect(screen.getByText(/e2\.1/i)).toBeInTheDocument();
-    expect(screen.getByText(/no drawing crop was captured/i)).toBeInTheDocument();
+    expect(screen.getByText(/no drawing crop is available/i)).toBeInTheDocument();
     expect(screen.queryByText(/no evidence recorded/i)).not.toBeInTheDocument();
   });
 });

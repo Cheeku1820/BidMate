@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: takeoff
+          POSTGRES_PASSWORD: takeoff
+          POSTGRES_DB: takeoff
+        options: >-
+          --health-cmd "pg_isready -U takeoff"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+        ports: ["5432:5432"]
+    env:
+      DATABASE_URL: postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff
+      TEST_DATABASE_URL: postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        working-directory: api
+        run: pip install -r requirements.txt
+      - name: Run migrations
+        working-directory: api
+        run: alembic upgrade head
+      # 0016 was renamed by hand after being applied, and 0017 is DDL-only
+      # with a hand-written teardown -- this guards against either kind of
+      # migration silently failing to reverse.
+      - name: Check the migration chain reverses
+        working-directory: api
+        run: alembic downgrade -1 && alembic upgrade head
+      # This job never sets BIDMATE_BID_SET, so the engine regression tests
+      # (test_engine_pipeline.py plus the counting and legend regressions --
+      # the guards on a defect that once silently zeroed 43 of 45 items on a
+      # real drawing set) skip here. That bid set lives outside the repo and
+      # committing it is ruled out by bid confidentiality (ROADMAP.md §3.3).
+      # BIDMATE_BID_SET is how a runner with a local copy opts in -- see
+      # tests/bid_set.py. -rs prints every skip's reason so a green build
+      # here does not read as "the engine was checked."
+      - name: Run tests
+        working-directory: api
+        run: pytest -q -rs
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # 22 is the floor, not a preference: package.json's test script
+          # passes --no-experimental-webstorage in NODE_OPTIONS, which Node
+          # 20 rejects outright ("not allowed in NODE_OPTIONS"). Verified
+          # across majors: 20 fails, 22 and 24 accept it. Declared in
+          # package.json's engines field so this constraint is visible to a
+          # reader who never opens this file.
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm test -- --run
+      - run: npm run build

@@ -77,6 +77,33 @@ ASSEMBLIES: dict[str, list[tuple[str, float]]] = {
     # on which fixture the schedule later says it is.
     "luminaire_generic": [("whip_6ft", 1), ("wirenut", 3.0),
                           ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
+    # luminaire_troffer and luminaire_highbay look unreachable if you only
+    # trace classification.py's deterministic TAG_TO_CATALOG map -- no
+    # fixture-type letter names either one there, they all fall through to
+    # luminaire_generic. They are not dead, though: the real Classification
+    # agent for this engine is the LLM path (llm.py's prompt + estimate.py's
+    # resolve_assembly_parent), which accepts any id in CATALOG directly and
+    # is explicitly offered "2x4 LED troffer" / "LED high bay" as choices to
+    # match against the sheet's schedule text. A set with a legible schedule
+    # resolves fixture letters to these specific ids, not to the generic
+    # one. Deleting them would silently re-price a correctly-identified
+    # troffer or high bay bare -- no whip, no wire, no ground -- which is
+    # the same failure this file's tests exist to catch for
+    # luminaire_generic. test_no_assembly_is_unreachable below asserts the
+    # invariant that actually holds: every assembly key names a real
+    # catalog item, checked against CATALOG rather than against the
+    # deterministic classifier's narrower reach.
+    #
+    # They are also not interchangeable with luminaire_generic, which is
+    # the other half of what made deleting them look safe. luminaire_troffer
+    # happens to be identical to the generic row today, but luminaire_highbay
+    # is not: it runs thhn_10, not thhn_12, because a high bay is a
+    # higher-wattage fixture that draws more current than the branch-wire
+    # default. Collapsing it onto the generic row would silently downsize
+    # its conductor. test_resolve_assembly_parent_reaches_the_named_
+    # luminaires in test_engine_app_path.py pins both ids' round-trip
+    # through the LLM path and their non-empty expansion; a reader who
+    # finds this comment should find that test too, and the reverse.
     "luminaire_troffer": [("whip_6ft", 1), ("wirenut", 3.0),
                           ("thhn_12", FEET_PER_DEVICE * 2), ("ground_12", FEET_PER_DEVICE)],
     "luminaire_highbay": [("whip_6ft", 1), ("wirenut", 3.0),

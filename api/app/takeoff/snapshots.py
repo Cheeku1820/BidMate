@@ -62,6 +62,19 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "source_tag": str,
     "updated_at": datetime,
     "warnings": list,
+    # Both optional, `None` when the item never had that override.
+    # `decode_snapshot()` raises for any key with no type entry, so
+    # these two need one even though nothing here decodes their
+    # contents field-by-field -- that happens separately, in
+    # undo_apply._apply_delete(), against LABOR_LINE_SNAPSHOT_TYPES /
+    # MATERIAL_PRICE_SNAPSHOT_TYPES below, the same two-step split
+    # "warnings" already uses (decoded as a list here, each element
+    # decoded against WARNING_SNAPSHOT_TYPES elsewhere). `dict` is
+    # inert to decode_snapshot_value() -- it isn't Decimal/Enum/
+    # datetime/date/UUID, so the encoded dict passes through
+    # unchanged, exactly like "evidence" above.
+    "labor_line": dict,
+    "material_price": dict,
 }
 
 # Counterpart for decoding one element of the nested "warnings" list.
@@ -112,6 +125,21 @@ MATERIAL_PRICE_SNAPSHOT_TYPES: dict[str, type] = {
 # import means that can't happen again, and Task 10's undo (which reads
 # this key from actions it did not write) has exactly one place to look.
 ITEMS_SNAPSHOT_KEY = "items"
+
+# The three keys a delete's `before` snapshot nests *around* the item's
+# flat column snapshot -- the warning list plus the two optional pricing
+# rows, all three destroyed by the same cascade a delete triggers.
+# `review._apply_delete()` writes these keys; `undo_apply._apply_delete()`
+# reads them, in a different module, to know which keys are *not* part of
+# the flat `Item` column dict before decoding it against
+# `ITEM_SNAPSHOT_TYPES`. Naming them once here, the same way
+# `ITEMS_SNAPSHOT_KEY` above already does for bulk/scale, is what keeps
+# the writer and the reader from drifting apart the way that key's own
+# comment records almost happened.
+WARNINGS_KEY = "warnings"
+LABOR_LINE_KEY = "labor_line"
+MATERIAL_PRICE_KEY = "material_price"
+NESTED_SNAPSHOT_KEYS = (WARNINGS_KEY, LABOR_LINE_KEY, MATERIAL_PRICE_KEY)
 
 
 def _column_snapshot(obj) -> dict:

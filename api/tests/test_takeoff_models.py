@@ -151,12 +151,32 @@ def test_company_material_price_unique_per_org_and_item_name(db, org):
     db.rollback()
 
 
-def test_pricing_tables_are_not_in_the_undo_snapshot_types():
-    """These are sparse override rows a separate task's own mutation
-    endpoints and undo dispatch manage directly (Tasks 4-5) -- they must
-    stay outside Item's own delete-undo snapshot the same way
-    ItemEvidenceImage does."""
+def test_pricing_columns_are_not_flattened_into_the_item_snapshot_types():
+    """ProjectLaborLine and ProjectMaterialPrice are sparse override rows,
+    managed by a separate task's own mutation endpoints and undo dispatch
+    (Tasks 4-5). Unlike ItemEvidenceImage, they are *not* left out of the
+    delete-undo snapshot entirely -- a delete's cascade destroys both
+    tables' rows alongside the item, so `review._apply_delete()` captures
+    them under their own `"labor_line"`/`"material_price"` keys, and
+    `undo_apply._apply_delete()` restores them from those keys via
+    `LABOR_LINE_SNAPSHOT_TYPES`/`MATERIAL_PRICE_SNAPSHOT_TYPES` -- see
+    `snapshots.py`.
+
+    What this test actually guards: their *own* column names
+    (`hours_override`, `crew_journeyman`, `price_override`,
+    `journeyman_rate`, ...) must never appear as flat, top-level keys in
+    `ITEM_SNAPSHOT_TYPES` the way `Item`'s own columns do. They travel
+    instead as nested, already-encoded dicts under `"labor_line"` and
+    `"material_price"` -- entries this test confirms decode inertly
+    (`dict`, not a per-field type) rather than being decoded field-by-field
+    at this layer. A flat leak here would mean `decode_snapshot()` is
+    being asked to coerce a `ProjectLaborLine`/`ProjectMaterialPrice`
+    column using `Item`'s type map, which is silently wrong rather than a
+    loud failure."""
     from app.takeoff.snapshots import ITEM_SNAPSHOT_TYPES
 
     for leaked in ("hours_override", "crew_journeyman", "price_override", "journeyman_rate"):
         assert leaked not in ITEM_SNAPSHOT_TYPES
+
+    assert ITEM_SNAPSHOT_TYPES["labor_line"] is dict
+    assert ITEM_SNAPSHOT_TYPES["material_price"] is dict

@@ -17,6 +17,7 @@ from app.identity.models import User
 from app.takeoff import actions
 from app.takeoff.actions import encode_snapshot
 from app.takeoff.models import (
+    CompanyAction,
     CompanyLaborHoursOverride,
     CompanyLaborRate,
     CompanyMaterialPrice,
@@ -60,6 +61,27 @@ def _snapshot(model_cls, pk_value, db: DbSession) -> dict | None:
     return encode_snapshot(raw)
 
 
+def record_company_action(db: DbSession, *, actor: User, kind: str, label: str, before: dict, after: dict) -> CompanyAction:
+    """Append one row to the org-level audit log for a company pricing
+    edit. Deliberately not `actions.commit()` -- that table is
+    project-scoped and doubles as the undo stack; a company edit belongs
+    to neither. See `CompanyAction`'s docstring for the full reasoning.
+
+    `before`/`after` are expected already JSON-safe -- callers here build
+    them with `_snapshot()`, which applies `encode_snapshot()` itself, so
+    this does not encode a second time."""
+    action = CompanyAction(
+        org_id=actor.org_id,
+        actor_user_id=actor.id,
+        kind=kind,
+        label=label,
+        before=before,
+        after=after,
+    )
+    db.add(action)
+    return action
+
+
 @router.patch("/items/{item_id}/labor")
 def patch_labor(
     item_id: uuid.UUID,
@@ -93,6 +115,7 @@ def patch_labor(
         setattr(row, key, value)
     row.updated_by_user_id = user.id
     db.flush()
+    db.refresh(row)  # normalize Numeric precision before snapshotting -- see put_company_labor_rates
     after = _snapshot(ProjectLaborLine, item_id, db)
 
     actions.commit(
@@ -124,6 +147,7 @@ def patch_material_price(
     row.reason = body.reason
     row.updated_by_user_id = user.id
     db.flush()
+    db.refresh(row)  # normalize Numeric precision before snapshotting -- see put_company_labor_rates
     after = _snapshot(ProjectMaterialPrice, item_id, db)
 
     actions.commit(
@@ -213,6 +237,7 @@ def get_company_labor_rates(user: User = Depends(current_user), db: DbSession = 
 
 @router.put("/company/labor-rates", response_model=CompanyLaborRatesOut)
 def put_company_labor_rates(body: CompanyLaborRatesIn, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    before = _snapshot(CompanyLaborRate, user.org_id, db)
     row = db.get(CompanyLaborRate, user.org_id)
     if row is None:
         row = CompanyLaborRate(org_id=user.org_id)
@@ -222,6 +247,20 @@ def put_company_labor_rates(body: CompanyLaborRatesIn, user: User = Depends(curr
     row.apprentice_rate = body.apprentice_rate
     row.productivity_factor = body.productivity_factor
     row.updated_by_user_id = user.id
+    db.flush()
+    # Postgres normalizes the Numeric columns to their column scale (72 ->
+    # 72.00); the in-memory attribute still holds whatever precision the
+    # request body carried until the row is refreshed. Without this, the
+    # "after" snapshot would record "72" for a rate the row actually
+    # stores as "72.00" -- a cosmetic mismatch in a table whose whole job
+    # is being an exact record.
+    db.refresh(row)
+    after = _snapshot(CompanyLaborRate, user.org_id, db)
+
+    record_company_action(
+        db, actor=user, kind="company_labor_rates_edit",
+        label="Changed labor rates", before=before or {}, after=after,
+    )
     db.commit()
     db.refresh(row)
     return row
@@ -237,6 +276,7 @@ def put_company_material_price(item_name: str, body: CompanyMaterialPriceIn, use
     row = db.scalars(select(CompanyMaterialPrice).where(
         CompanyMaterialPrice.org_id == user.org_id, CompanyMaterialPrice.item_name == item_name,
     )).one_or_none()
+    before = _snapshot(CompanyMaterialPrice, row.id, db) if row is not None else None
     if row is None:
         row = CompanyMaterialPrice(org_id=user.org_id, item_name=item_name, unit_price=body.unit_price, effective_date=body.effective_date)
         db.add(row)
@@ -244,6 +284,14 @@ def put_company_material_price(item_name: str, body: CompanyMaterialPriceIn, use
         row.unit_price = body.unit_price
         row.effective_date = body.effective_date
     row.updated_by_user_id = user.id
+    db.flush()
+    db.refresh(row)  # normalize Numeric precision before snapshotting -- see put_company_labor_rates
+    after = _snapshot(CompanyMaterialPrice, row.id, db)
+
+    record_company_action(
+        db, actor=user, kind="company_material_price_edit",
+        label=f"Changed the material price for {item_name}", before=before or {}, after=after,
+    )
     db.commit()
     db.refresh(row)
     return row
@@ -255,7 +303,13 @@ def delete_company_material_price(item_name: str, user: User = Depends(current_u
         CompanyMaterialPrice.org_id == user.org_id, CompanyMaterialPrice.item_name == item_name,
     )).one_or_none()
     if row is not None:
+        before = _snapshot(CompanyMaterialPrice, row.id, db)
         db.delete(row)
+        db.flush()
+        record_company_action(
+            db, actor=user, kind="company_material_price_delete",
+            label=f"Removed the material price for {item_name}", before=before or {}, after={},
+        )
         db.commit()
 
 
@@ -269,12 +323,21 @@ def put_company_labor_hours_override(item_name: str, body: CompanyLaborHoursOver
     row = db.scalars(select(CompanyLaborHoursOverride).where(
         CompanyLaborHoursOverride.org_id == user.org_id, CompanyLaborHoursOverride.item_name == item_name,
     )).one_or_none()
+    before = _snapshot(CompanyLaborHoursOverride, row.id, db) if row is not None else None
     if row is None:
         row = CompanyLaborHoursOverride(org_id=user.org_id, item_name=item_name, hours_per_unit=body.hours_per_unit)
         db.add(row)
     else:
         row.hours_per_unit = body.hours_per_unit
     row.updated_by_user_id = user.id
+    db.flush()
+    db.refresh(row)  # normalize Numeric precision before snapshotting -- see put_company_labor_rates
+    after = _snapshot(CompanyLaborHoursOverride, row.id, db)
+
+    record_company_action(
+        db, actor=user, kind="company_labor_hours_override_edit",
+        label=f"Changed the labor hours override for {item_name}", before=before or {}, after=after,
+    )
     db.commit()
     db.refresh(row)
     return row
@@ -286,5 +349,11 @@ def delete_company_labor_hours_override(item_name: str, user: User = Depends(cur
         CompanyLaborHoursOverride.org_id == user.org_id, CompanyLaborHoursOverride.item_name == item_name,
     )).one_or_none()
     if row is not None:
+        before = _snapshot(CompanyLaborHoursOverride, row.id, db)
         db.delete(row)
+        db.flush()
+        record_company_action(
+            db, actor=user, kind="company_labor_hours_override_delete",
+            label=f"Removed the labor hours override for {item_name}", before=before or {}, after={},
+        )
         db.commit()

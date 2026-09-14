@@ -11,7 +11,7 @@ from app.config import settings
 from app.db import Base, get_db
 from app.main import app
 from app.takeoff.actions import ACTION_LOG_GUARD_DDL
-from app.takeoff.models import Item, Project, ReviewStatus, Sheet
+from app.takeoff.models import COMPANY_ACTION_LOG_GUARD_DDL, Item, Project, ReviewStatus, Sheet
 
 # The test suite drops and recreates a whole database on every run, so the
 # database name it targets must come from TEST_DATABASE_URL — never from a
@@ -83,6 +83,7 @@ def db():
     # doesn't actually have the guard.
     with test_engine.begin() as conn:
         conn.execute(text(ACTION_LOG_GUARD_DDL))
+        conn.execute(text(COMPANY_ACTION_LOG_GUARD_DDL))
     session = TestSession()
     try:
         yield session

@@ -15,8 +15,11 @@ each kind's `before`/`after` shape differs (see `review.py`, `bulk.py`,
   `Item` columns, restored with one `decode_snapshot()` call against
   `snapshots.ITEM_SNAPSHOT_TYPES`.
 - `delete` -- `before` is a full `Item` column snapshot plus a nested
-  `"warnings"` list (both destroyed by the cascade); `after` is `{}`.
-  Undo reconstructs the row and its warnings; redo deletes it again.
+  `"warnings"` list and optional `"labor_line"`/`"material_price"`
+  entries (all destroyed by the cascade); `after` is `{}`. Undo
+  reconstructs the row, its warnings, and its priced overrides; redo
+  deletes the row again and lets `ON DELETE CASCADE` take the rest with
+  it, same as the original delete.
 - `bulk_approve` / `scale` -- both nest a list of per-item dicts, each
   carrying its own `"id"`, under `snapshots.ITEMS_SNAPSHOT_KEY`. `scale`
   also carries the sheet's prior `"scale"` and, per released item, the
@@ -54,9 +57,13 @@ from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPr
 from app.takeoff.snapshots import (
     ITEM_SNAPSHOT_TYPES,
     ITEMS_SNAPSHOT_KEY,
+    LABOR_LINE_KEY,
     LABOR_LINE_SNAPSHOT_TYPES,
+    MATERIAL_PRICE_KEY,
     MATERIAL_PRICE_SNAPSHOT_TYPES,
+    NESTED_SNAPSHOT_KEYS,
     WARNING_SNAPSHOT_TYPES,
+    WARNINGS_KEY,
 )
 
 # The one message this module and review.py._apply_approve() both use
@@ -166,6 +173,18 @@ def _delete_sparse_row_if_present(db: DbSession, model: type, item_id: uuid.UUID
     if _sparse_row_exists(db, model, item_id):
         db.execute(delete(model).where(model.item_id == item_id))
         _expunge_stale(db, model, item_id)
+
+
+def _restore_sparse_row_if_missing(db: DbSession, model: type, item_id: uuid.UUID, decoded: dict) -> None:
+    """Like `_restore_row_if_missing()`, but for the `item_id`-keyed
+    sparse pricing tables -- see `_sparse_row_exists()` for why this
+    isn't just a call into the generic helper. Used by `_apply_delete()`
+    to bring a `ProjectLaborLine`/`ProjectMaterialPrice` row back on
+    undo; a no-op if some other path already restored it first.
+    """
+    if not _sparse_row_exists(db, model, item_id):
+        _expunge_stale(db, model, item_id)
+        db.add(model(item_id=item_id, **decoded))
 
 
 def _apply_sparse_pricing_row(db: DbSession, model: type, item_id: uuid.UUID, snapshot_types: dict, state: dict) -> None:
@@ -349,20 +368,27 @@ def _apply_scale(db: DbSession, action: Action, direction: str) -> None:
 
 
 def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
-    """Restore a deleted item and its warnings (undo), or remove it again
-    (redo). `before` is `delete_item()`'s full column snapshot plus a
-    nested `"warnings"` list -- the cascade destroys both the row and its
-    evidence, so both have to be reconstructed, not just the row.
+    """Restore a deleted item, its warnings, and its pricing overrides
+    (undo), or remove it again (redo). `before` is `delete_item()`'s full
+    column snapshot plus a nested `"warnings"` list and two optional
+    `"labor_line"`/`"material_price"` entries -- the cascade destroys the
+    row and all three of those alongside it, so all of them have to be
+    reconstructed, not just the row.
 
-    Restoring the item and restoring each warning are independent checks,
-    not one early return gated on the item alone -- an item that already
-    came back (through a prior undo) but lost a warning some other way
-    must still get that warning back, not report success while leaving
-    the evidence missing.
+    Restoring the item, each warning, and each pricing row are
+    independent checks, not one early return gated on the item alone --
+    an item that already came back (through a prior undo) but lost a
+    warning or a priced override some other way must still get that
+    piece back, not report success while leaving it missing.
+
+    `"labor_line"`/`"material_price"` are read with `.get()`, and a
+    missing key -- an action recorded before this restore existed --
+    is treated exactly like an explicit `None`: there was nothing to
+    bring back, not an error.
     """
     if direction == "before":
         state = action.before
-        item_fields = {key: value for key, value in state.items() if key != "warnings"}
+        item_fields = {key: value for key, value in state.items() if key not in NESTED_SNAPSHOT_KEYS}
         # No "version" key reaches here: review._apply_delete() pops it
         # from the snapshot before it is ever recorded, deliberately, so
         # the reconstructed row below gets the ordinary column default
@@ -372,13 +398,37 @@ def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
         # lineage at 1 is both simplest and safe.
         decoded = decode_snapshot(item_fields, ITEM_SNAPSHOT_TYPES)
         _restore_row_if_missing(db, Item, decoded)
-        for encoded_warning in state.get("warnings", []):
+        for encoded_warning in state.get(WARNINGS_KEY, []):
             warning_fields = decode_snapshot(encoded_warning, WARNING_SNAPSHOT_TYPES)
             _restore_row_if_missing(db, Warning, warning_fields)
+
+        # Both pricing rows take their identity from `decoded["id"]`, the
+        # same item id the row above was just restored under, rather than
+        # from `action.item_id` -- a second source for what should always
+        # be the same value. The two can't diverge today (both come from
+        # the same delete), but keying all three restores off one value
+        # removes the question instead of leaving it for a later reader
+        # to work out is safe.
+        encoded_labor_line = state.get(LABOR_LINE_KEY)
+        if encoded_labor_line is not None:
+            decoded_labor_line = decode_snapshot(encoded_labor_line, LABOR_LINE_SNAPSHOT_TYPES)
+            decoded_labor_line.pop("item_id", None)
+            _restore_sparse_row_if_missing(db, ProjectLaborLine, decoded["id"], decoded_labor_line)
+
+        encoded_material_price = state.get(MATERIAL_PRICE_KEY)
+        if encoded_material_price is not None:
+            decoded_material_price = decode_snapshot(encoded_material_price, MATERIAL_PRICE_SNAPSHOT_TYPES)
+            decoded_material_price.pop("item_id", None)
+            _restore_sparse_row_if_missing(db, ProjectMaterialPrice, decoded["id"], decoded_material_price)
     else:
         item = db.execute(
             select(Item).where(Item.id == action.item_id)
             .with_for_update().execution_options(populate_existing=True)
         ).scalar_one_or_none()
         if item is not None:
+            # No explicit deletion of the pricing rows here -- redo just
+            # deletes the item again, and ON DELETE CASCADE (models.py)
+            # takes ProjectLaborLine/ProjectMaterialPrice with it exactly
+            # as it did the first time, the same way it already handles
+            # the item's warnings on this same line.
             db.delete(item)

@@ -334,6 +334,97 @@ def test_a_longer_word_containing_a_catalog_word_does_not_corroborate():
     assert _legend_corroborates("Single-pole switch", "SWITCHES")
 
 
+def test_a_legend_warning_names_the_sheet_the_definition_came_from():
+    """`where` is contractually which sheet holds the evidence. LegendEntry
+    already carries page_index; without using it the warning says "the
+    legend sheet" and an estimator on a 14-sheet set has to go hunting.
+
+    Follows the inline DetectedSheet/DeviceCluster construction the
+    neighbouring tests in this file use -- there is no `_sheet` helper in
+    this module to reuse."""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    legend_sheet = DetectedSheet(
+        page_index=0, number="E0.1", title="Legend", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="CKT", description="CIRCUIT", kind="abbreviation", page_index=0)],
+    )
+    plan_sheet = DetectedSheet(
+        page_index=1, number="E2.1", title="Power plan", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[],
+    )
+    cluster = DeviceCluster(tag="CKT", sheet_page_index=1, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [legend_sheet, plan_sheet])
+
+    assert "E0.1" in items[0].warning["where"]
+    assert "E2.1" in items[0].warning["where"]
+
+
+def test_an_ambiguous_tag_warning_also_names_the_defining_sheet():
+    """Same fix, other warning -- _ambiguous_tag_warning fires when a
+    TAG_TO_CATALOG tag's legend definition doesn't corroborate the catalog
+    reading (WP -> WEATHERPROOF vs. the GFCI receptacle catalog entry),
+    and it must name the legend sheet exactly like _modifier_warning does."""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    legend_sheet = DetectedSheet(
+        page_index=0, number="E0.1", title="Legend", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="WP", description="WEATHERPROOF", kind="abbreviation", page_index=0)],
+    )
+    plan_sheet = DetectedSheet(
+        page_index=1, number="E7.1", title="Power", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[],
+    )
+    cluster = DeviceCluster(tag="WP", sheet_page_index=1, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [legend_sheet, plan_sheet])
+
+    assert items[0].status == "attention"
+    assert "E0.1" in items[0].warning["where"]
+    assert "E7.1" in items[0].warning["where"]
+
+
+def test_a_legend_warning_falls_back_to_generic_wording_when_the_sheet_is_unknown():
+    """A LegendEntry built without page_index defaults to -1 -- the
+    documented "unknown" sentinel. Naming no sheet is safe; naming the
+    wrong one is not, so this must keep the old generic phrasing rather
+    than mislabel a sheet."""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    sheet = DetectedSheet(
+        page_index=0, number="E7.1", title="Power", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="CKT", description="CIRCUIT", kind="abbreviation")],
+    )
+    cluster = DeviceCluster(tag="CKT", sheet_page_index=0, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [sheet])
+
+    assert items[0].warning["where"] == "E7.1 and the legend sheet."
+
+
+def test_a_legend_warning_names_the_sheet_once_when_the_definition_is_on_the_same_sheet():
+    """Cross-sheet naming shouldn't turn same-sheet warnings into
+    "E7.1 and E7.1." -- pins the existing single-sheet modifier test's
+    output shape, which the widened lookup must not change."""
+    from app.engine import classification
+    from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement
+
+    sheet = DetectedSheet(
+        page_index=0, number="E7.1", title="Power", discipline="Electrical",
+        scale="", width_pt=100, height_pt=100, region=(0, 0, 100, 100),
+        legend=[LegendEntry(symbol="CKT", description="CIRCUIT", kind="abbreviation", page_index=0)],
+    )
+    cluster = DeviceCluster(tag="CKT", sheet_page_index=0, placements=[Placement(1, 1)] * 3)
+    items = classification.classify([cluster], [sheet])
+
+    assert items[0].warning["where"] == "E7.1."
+
+
 def test_a_known_device_tag_is_unaffected_by_the_legend():
     from app.engine import classification
     from app.engine.contracts import DetectedSheet, DeviceCluster, LegendEntry, Placement

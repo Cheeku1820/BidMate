@@ -98,6 +98,30 @@ def test_a_box_does_not_carry_another_box():
         assert not (ids & boxes), f"{catalog_id} is a box and also carries {ids & boxes}"
 
 
+def test_no_assembly_is_unreachable():
+    """An assembly nothing can resolve to is a table a future change edits
+    with no effect -- the failure mode that hid luminaire_generic being
+    priced bare for an entire plan.
+
+    Reachability is not the deterministic classifier's TAG_TO_CATALOG map
+    alone. The real Classification agent for this engine is the LLM path
+    (estimate.py's resolve_assembly_parent), which accepts any id in
+    CATALOG directly -- its prompt is built from `sorted(CATALOG)` and
+    explicitly offers ids like luminaire_troffer and luminaire_highbay as
+    choices, even though no fixture-type letter ever names them
+    deterministically. Scoping this check to TAG_TO_CATALOG would flag
+    those two as unreachable and invite deleting them, which would
+    silently re-price a correctly-identified troffer or high bay bare the
+    next time a set with a legible schedule reaches the LLM path -- the
+    exact bug this test exists to prevent. The invariant that actually
+    holds is narrower: an assembly key must name a real catalog item.
+    """
+    from app.engine.catalog import CATALOG
+
+    assert set(ASSEMBLIES) <= set(CATALOG), \
+        f"unreachable: {sorted(set(ASSEMBLIES) - set(CATALOG))}"
+
+
 def test_an_assembly_with_circuit_conductors_carries_a_ground():
     """The rule is not "everything has a ground" -- it is that you never run
     current-carrying conductors without an equipment grounding conductor

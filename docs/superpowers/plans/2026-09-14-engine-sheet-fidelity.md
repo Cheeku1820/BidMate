@@ -272,7 +272,11 @@ def test_placements_are_in_the_visual_frame(tmp_path):
     assert [c.tag for c in clusters] == ["R"]
     for p in clusters[0].placements:
         assert 0 <= p.x <= 800 and 0 <= p.y <= 1000, (p.x, p.y)
-        assert p.x < 200, "unrotated x=900 must become a small visual x on a 90-degree page"
+        # Measured: on a 90-degree page unrotated (x, y) -> visual (H - y, x),
+        # so unrotated x=900 becomes visual y~900 and unrotated y 100-220
+        # becomes visual x ~580-700. The raw value 900 fits neither axis's
+        # old reading -- that is the bug.
+        assert p.y > 850, "unrotated x=900 must become a large visual y on a 90-degree page"
 ```
 
 Then move the two seal windows. In `test_the_seal_is_not_counted_as_devices` and `test_real_devices_survive_the_stamp_filter`, replace
@@ -458,11 +462,22 @@ def test_ties_break_by_frequency_then_first_seen(tmp_path):
     still tied, the first in reading order wins. Never hash order."""
     doc, page = _page(tmp_path)
     page.insert_text((900, 100), "SHEET")
-    page.insert_text((880, 770), "E3.1")
-    page.insert_text((940, 770), "E3.2")       # same distance band from the corner
+    # Corner of the right strip is (1000, 800). Both tokens sit ~72pt from
+    # it -- (40, 60) and (60, 40) away -- so distance cannot separate them.
+    page.insert_text((960, 740), "E3.1")
+    page.insert_text((940, 760), "E3.2")
     page.insert_text((900, 300), "E3.2")       # E3.2 appears twice overall
     words, w, h = _words(doc, page, tmp_path)
     assert title_block.sheet_number(title_block.locate(words, w, h)) == "E3.2"
+
+
+def test_ties_at_equal_frequency_take_the_first_in_reading_order(tmp_path):
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((940, 760), "E3.1")       # inserted first
+    page.insert_text((960, 740), "E3.2")
+    words, w, h = _words(doc, page, tmp_path)
+    assert title_block.sheet_number(title_block.locate(words, w, h)) == "E3.1"
 
 
 def test_strip_with_no_family_token_yields_empty(tmp_path):
@@ -615,7 +630,7 @@ def title(tb: TitleBlock, number: str) -> str:
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `cd api && …pytest tests/test_title_block.py -v`
-Expected: all pass. If `test_ties_break_by_frequency_then_first_seen` fails on the band, the two corner tokens are in different 40pt bands — move `E3.1` to x=890 so both sit within one band of the corner, and keep the test's intent.
+Expected: all pass. If either tie test fails on the band, print both tokens' distances to the corner and adjust positions so they round to the same 40pt band — never change the tie-break rule to fit the fixture.
 
 - [ ] **Step 5: Commit**
 

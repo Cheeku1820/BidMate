@@ -92,7 +92,7 @@ From the title cell: the largest-type text line(s) within reach of the number ce
 
 - Schedule *blocks* embedded on plan sheets (the remaining residue of the old finding #5).
 - Two pages genuinely carrying the same sheet number — that is revision handling.
-- Raster sets (FedEx, Gerber, TSC Harrison) — they remain `unreadable_reason`, correctly. This design must not change that.
+- Raster sets (FedEx, Gerber, TSC Harrison) — they remain `unreadable_reason`, correctly. This design must not change that. **Pages of outlined text are ruled the same way** (2026-09-14): TSC Nutrition's fourteen electrical pages carry no text layer — the text was outlined to drawing paths — so a page with no words and substantial drawing content (`OUTLINED_MIN_DRAWINGS` paths) is detected with `number ""`, title `Sheet with outlined text`, kind `other` and its own reason, through the same emission the scan path uses. Reading outlined text is out of scope; hiding the page is not.
 - Discipline detection beyond "the number is in the E family."
 
 ## 3. Testing

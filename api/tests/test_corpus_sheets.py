@@ -5,9 +5,13 @@ title block, not by running the engine -- a wrong engine cannot write
 its own key. Counting is tested, not trained (CLAUDE.md).
 
 Fixture conventions (see each file's "read_from"):
-- a page with an empty "number" has a title block a person could not
-  read as text (TSC Nutrition's electrical pages carry no text layer);
-  the key asserts it is NOT detected, and its "note" is the backlog;
+- a page with an empty "number" is a sheet whose title block cannot be
+  read as text (TSC Nutrition's electrical pages carry no text layer --
+  the text is outlined to paths); the key asserts it IS detected, with
+  no number and a non-empty unreadable_reason, and its "kind" is the
+  person's reading for the record, not asserted. A page that is not a
+  sheet at all (a cover, a text-only page, another discipline) is simply
+  not listed, and the key asserts it is not detected;
 - "known_duplicate" on the second of two pages that genuinely carry the
   same number keeps a revision reissue a recorded fact, not a failure;
 - an optional top-level "known_non_electrical" list names pages whose
@@ -44,14 +48,17 @@ def test_detected_pages_match_the_key(name):
     fx = _fixture(name)
     _skip_unless(fx["pdf"])
     found = {s.page_index: s for s in documents.detect_sheets(corpus_path(fx["pdf"]))}
-    expected = {s["page_index"]: s for s in fx["sheets"] if s["number"]}
+    expected = {s["page_index"]: s for s in fx["sheets"]}
     tolerated = set(fx.get("known_non_electrical", []))
     missed = sorted(set(expected) - set(found) - tolerated)
     extra = sorted(set(found) - set(expected) - tolerated)
-    assert not missed, f"{name}: electrical pages not detected: {[(p, expected[p]['number']) for p in missed]}"
+    assert not missed, f"{name}: electrical pages not detected: {[(p, expected[p]['number'] or 'unreadable') for p in missed]}"
     assert not extra, f"{name}: non-electrical pages detected: {[(p, found[p].number) for p in extra]}"
-    unreadable = [s["page_index"] for s in fx["sheets"] if not s["number"]]
-    assert not (set(unreadable) & set(found)), f"{name}: pages the key marks unreadable were detected"
+    for p, s in expected.items():
+        if not s["number"]:
+            assert found[p].number == "" and found[p].unreadable_reason, (name, p, found[p].number, found[p].unreadable_reason)
+        else:
+            assert not found[p].unreadable_reason, (name, p, found[p].unreadable_reason)
 
 
 @pytest.mark.parametrize("name", sorted(VECTOR_SETS))
@@ -76,7 +83,8 @@ def test_numbers_are_distinct_unless_the_key_says_otherwise(name):
     fx = _fixture(name)
     _skip_unless(fx["pdf"])
     dups = {s["page_index"] for s in fx["sheets"] if s.get("known_duplicate")}
-    numbers = [s.number for s in documents.detect_sheets(corpus_path(fx["pdf"])) if s.page_index not in dups]
+    # Unreadable sheets carry no number and are not numbers to compare.
+    numbers = [s.number for s in documents.detect_sheets(corpus_path(fx["pdf"])) if s.number and s.page_index not in dups]
     assert len(numbers) == len(set(numbers)), sorted(n for n in numbers if numbers.count(n) > 1)
 
 

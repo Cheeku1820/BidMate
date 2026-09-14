@@ -152,6 +152,37 @@ def test_a_scan_split_into_two_bands_is_still_a_scan(tmp_path):
     assert s.unreadable_reason
 
 
+def test_a_page_of_outlined_text_is_detected_and_unreadable(tmp_path):
+    """TSC Nutrition's fourteen electrical pages carry no text layer --
+    the text was outlined to drawing paths when the PDF was made. Five
+    thousand paths and not one word. Like a scan, the page is emitted
+    as a sheet nobody can read, with its own reason, rather than
+    dropped: fourteen pages of silence would read as completeness."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    for i in range(500):
+        page.draw_line((50 + (i % 40) * 20, 100 + (i // 40) * 30), (60 + (i % 40) * 20, 110 + (i // 40) * 30))
+    path = tmp_path / "outlined.pdf"
+    doc.save(path)
+    (s,) = documents.detect_sheets(str(path))
+    assert s.number == ""
+    assert s.title == "Sheet with outlined text"
+    assert s.kind == "other"
+    assert "outlined" in s.unreadable_reason
+
+
+def test_a_few_stray_paths_and_no_text_is_not_a_sheet(tmp_path):
+    """A border rule and a logo box with no words is nothing; the
+    outlined-text rule wants substantial drawing content."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    for i in range(documents.OUTLINED_MIN_DRAWINGS - 1):
+        page.draw_line((50 + i, 100), (50 + i, 700))
+    path = tmp_path / "stray.pdf"
+    doc.save(path)
+    assert documents.detect_sheets(str(path)) == []
+
+
 def test_a_blank_page_is_not_a_scan(tmp_path):
     """No image, no text, no drawing: nothing to flag."""
     doc = pymupdf.open()

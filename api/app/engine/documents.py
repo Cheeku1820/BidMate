@@ -46,6 +46,14 @@ EVIDENCE_MAX_ZOOM = 4.0
 SCHEDULE_KEYWORDS = ("SCHEDULE", "LUMINAIRE", "FIXTURE", "LEGEND", "MANUFACTURER")
 
 SCANNED_REASON = "Scanned sheet — vector reading isn't available yet, so it was not counted."
+OUTLINED_REASON = "Text on this sheet is outlined as drawing paths, so tags couldn't be read — it was not counted."
+
+# A page with no words at all but this many drawing paths is a sheet
+# whose text was outlined to paths when the PDF was made (TSC
+# Nutrition's fourteen electrical pages: 3,000-14,000 paths, zero
+# words). Below it, a wordless page is a border rule and a logo box --
+# nothing. Pages with images and no words are scans (_is_raster).
+OUTLINED_MIN_DRAWINGS = 200
 
 
 # A page is a scan when it is pixels and next to nothing else: under
@@ -78,6 +86,19 @@ def _is_raster(page: pymupdf.Page) -> bool:
     return len(page.get_drawings()) < RASTER_MAX_DRAWINGS
 
 
+def _unreadable(page: pymupdf.Page, words: list) -> tuple[str, str] | None:
+    """Why a page with no readable title block is still a sheet nobody
+    can read: (title, reason), or None when the page is simply not a
+    sheet. One path, two reasons -- a scan and a page of outlined text
+    are the same outcome for the estimator, a page of the set that was
+    not counted and says so. _is_raster decides which."""
+    if _is_raster(page):
+        return "Scanned sheet", SCANNED_REASON
+    if not words and len(page.get_drawings()) >= OUTLINED_MIN_DRAWINGS:
+        return "Sheet with outlined text", OUTLINED_REASON
+    return None
+
+
 def _scale(text: str) -> str:
     m = SCALE.search(text)
     return m.group(0) if m else ""
@@ -98,16 +119,18 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
         tb = title_block.locate(words, w, h)
         number = title_block.sheet_number(tb) if tb else ""
         if not number:
-            # A scanned page has no text to find a title block in. It is
-            # still a page of the set, so it is emitted as a sheet nobody
-            # can read rather than dropped: silence reads as completeness.
-            if _is_raster(page):
+            # A scanned page, or one whose text is outlined to paths, has
+            # no text to find a title block in. It is still a page of the
+            # set, so it is emitted as a sheet nobody can read rather
+            # than dropped: silence reads as completeness.
+            unreadable = _unreadable(page, words)
+            if unreadable:
+                title, reason = unreadable
                 sheets.append(
                     DetectedSheet(
-                        page_index=pno, number="", title="Scanned sheet",
+                        page_index=pno, number="", title=title,
                         discipline="Electrical", scale="", width_pt=w, height_pt=h,
-                        region=_border(w, h), kind="other",
-                        unreadable_reason=SCANNED_REASON,
+                        region=_border(w, h), kind="other", unreadable_reason=reason,
                     )
                 )
             continue

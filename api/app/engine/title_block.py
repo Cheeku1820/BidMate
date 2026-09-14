@@ -1,8 +1,12 @@
 """Locate a sheet's title block and read its number and title.
 
 A title block is a strip along one edge of the visual page; which edge
-varies by firm (Unalaska's is along the visual bottom once the page's
-90-degree rotation is applied). It is found by scoring each of the four
+varies by firm (Unalaska's is along the visual RIGHT once the page's
+90-degree rotation is applied, with the number cell at the bottom-right
+corner -- the plan that built this predicted the visual bottom, and the
+rendered page proved it wrong: `get_pixmap` at 0.3 on page 87 shows the
+strip on the right, and the number cell maps from unrotated (1495, 64)
+to visual (2348, 1513)). It is found by scoring each of the four
 edge strips on how many sheet-number-family tokens and title-block
 labels it holds. The sheet's own number is the family token nearest the
 corner the strip ends at -- drafting convention puts the number cell

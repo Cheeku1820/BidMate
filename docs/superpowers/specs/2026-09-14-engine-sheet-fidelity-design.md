@@ -53,7 +53,7 @@ Rejected: derotating only the clips (leaves the marker bug); keeping everything 
 
 A title block is a strip along one edge of the visual page. Which edge varies by firm. Detection, per page:
 
-1. For each of the four edge strips (outer 18 % of width or height), count sheet-number-family tokens (§2.5) plus the labels `SHEET`, `DRAWN`, `CHECKED`, `DATE`, `PROJECT`, `REVISION`.
+1. For each of the four edge strips (outer 18 % of width or height), count *distinct* sheet-number-family tokens (§2.5) (a revision table repeating one other sheet's number three times must not outscore the strip holding the actual number cell) plus the labels `SHEET`, `DRAWN`, `CHECKED`, `DATE`, `PROJECT`, `REVISION`.
 2. The strip with the highest count is the title block. If no strip scores, the page has no readable title block and **is not detected as an electrical sheet**. This is deliberately conservative: an electrical page with an unreadable title block is a page the per-set fixture test (§3.1) will name, and a fix can be aimed at it; an architectural page pulled in because it says "SEE E-101" is a phantom sheet nobody looks for.
 
 The counting region is the visual page minus a 3 % border minus the detected strip. `RIGHT_STRIP` stops being a constant.
@@ -80,7 +80,7 @@ A strip that holds no family token means the page is not an electrical sheet (§
 
 ### 2.6 Title
 
-From the title cell: uppercase text lines in the title-block strip adjacent to the number cell, joined with spaces, sanity-checked — 2 to 10 words, no digits-only tokens, none of `SUITE`, `BOULEVARD`, `STREET`, `PHONE`, `CHECKED`, `DRAWN`, `DATE`, `REGISTERED`, `PROFESSIONAL`, `ENGINEER`. When the check fails, the title is the kind label: `Electrical plan`, `Schedule`, `Legend`, `Diagram`, `Sheet`. Titles are sentence case on the wire (`Panel schedule`, not `PANEL SCHEDULE`) per the copy rule.
+From the title cell: the largest-type text line(s) within reach of the number cell, joined with spaces and sanity-checked as a whole cell — 2 to 10 words, no digits-only tokens, none of `SUITE`, `BOULEVARD`, `STREET`, `PHONE`, `CHECKED`, `DRAWN`, `DATE`, `REGISTERED`, `PROFESSIONAL`, `ENGINEER`. When the check fails, the title is the kind label: `Electrical plan`, `Schedule`, `Legend`, `Diagram`, `Sheet`. Titles are sentence case on the wire (`Panel schedule`, not `PANEL SCHEDULE`) per the copy rule.
 
 ### 2.7 Store and interface
 
@@ -117,11 +117,11 @@ A parametrised test loads each set (via `BIDMATE_BID_SET`'s directory, `bid_exam
 
 - Every placement on every vector set lies inside `[0, width_pt] × [0, height_pt]`.
 - On one rotated Unalaska plan page and one 270° TSC Nutrition page, a hand-chosen device tag's visual coordinate, when a small square around it is rendered from the page's rotated pixmap, contains that tag's glyph (assert via `page.get_textbox` on the derotated clip returning the tag). This is the test that proves markers will sit on the drawing.
-- Unalaska plan placements after the fix: **≥ 197 and ≤ 320** on the seven plan pages — the lower bound is what the mis-framed region left, the upper bound guards against the seal and schedules coming back.
+- Unalaska plan placements after the fix: **≥ 197 and ≤ 330** on the eight plan pages — the lower bound is what the mis-framed region left, the upper bound guards against the seal and schedules coming back.
 
 ### 3.4 Kind gating
 
-- Unalaska: pages 80, 81, 82, 83, 90, 91 produce zero placements; page 80 still yields a non-empty `legend`.
+- Unalaska: pages 80, 81, 82, 91, 92, 93 produce zero placements; page 80 still yields a non-empty `legend`. (Pages 83 and 90 are E1.0 Site plan and E5.1 Enlarged floor plans per the E0.1 drawing index — plans, not the one-line and equipment schedule the earlier findings called them.)
 - Raster sets: every page detected carries `unreadable_reason`; none carries placements.
 
 ### 3.5 Existing regression tests

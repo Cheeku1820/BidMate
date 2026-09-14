@@ -1,7 +1,6 @@
 """The Documents agent on synthetic pages. The corpus is test_corpus_sheets.py."""
 
 import pymupdf
-import pytest
 
 from app.engine import documents
 

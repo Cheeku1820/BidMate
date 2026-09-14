@@ -33,7 +33,7 @@ SHEET_SPACE_H = 750
 WARNING_FIELDS = ("title", "found", "why", "fix", "where")
 VALID_REASONS = {r.value for r in WarningReason}
 
-# Mirrors app/engine/documents.py's SHEET_ID pattern -- ingest.py stays
+# A narrower cousin of app/engine/title_block.py's SHEET_ID -- ingest.py stays
 # engine-agnostic, working off the payload contract only, so this is a
 # deliberate small duplication rather than a cross-module import.
 SHEET_ID = re.compile(r"\bE\d{1,2}\.\d{1,2}\b")

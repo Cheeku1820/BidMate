@@ -1,10 +1,10 @@
 """Documents agent (v1).
 
 Reads the source PDF and emits DetectedSheet records for the electrical
-sheets: which pages are electrical, each sheet's number/scale from the
-title block, the drawing region device tags are counted within (excluding
-the title-block strip), and the schedule/legend text the Classification
-agent reads. It is language over a deterministic shell -- geometry and
+sheets: which pages are electrical, each sheet's number, title and kind
+from the title block, the drawing region device tags are counted within
+(the visual page less the located title-block strip), and the
+schedule/legend text the Classification agent reads. It is language over a deterministic shell -- geometry and
 text extraction, no localization guessing.
 
 Scanned sheets are marked unreadable with a reason rather than returned as
@@ -19,18 +19,17 @@ from dataclasses import replace
 
 import pymupdf
 
+from . import sheet_kind, title_block
 from .contracts import DetectedSheet
 from .legend import parse_legend
+from .page_frame import visual_words
 
-# A sheet number like E2.1 / E0.2 / E10.1.
-SHEET_ID = re.compile(r"\bE\d{1,2}\.\d{1,2}\b")
 # A drafting scale like 1/8" = 1'-0"  (very forgiving).
 SCALE = re.compile(r'\d{1,2}/\d{1,2}"?\s*=\s*\d')
 
-# The title block is a vertical strip on the right of a landscape E-size
-# sheet. Counting the drawing area excludes it (and a thin border) so a
-# tag in the title block or a schedule cell is never counted as a device.
-RIGHT_STRIP = 0.82
+# The thin border taken off every edge of the counting region. The
+# title-block strip itself is located per page (title_block.locate), not
+# assumed to sit on the right -- see _region.
 BORDER = 0.03
 
 # A crop around one item's counted location(s), for the item panel's
@@ -58,31 +57,6 @@ def _is_raster(page: pymupdf.Page) -> bool:
     return cover > 0.6 and len(page.get_drawings()) < 50
 
 
-def _sheet_number(page: pymupdf.Page, text: str) -> str:
-    """The sheet's own number, read from its title block first.
-
-    The title block is the one place on the page an E-number is
-    guaranteed to name *this* sheet rather than a sheet it references —
-    a detail callout bubble ("see 2/E5.1") can otherwise repeat a
-    different sheet's number more often than the title block states this
-    one's, and the most-frequent heuristic below would pick the wrong
-    sheet. RIGHT_STRIP is the same boundary `detect_sheets` already uses
-    to exclude the title block from device counting, reused here rather
-    than duplicated so the two never drift apart.
-    """
-    w, h = page.rect.width, page.rect.height
-    tb_text = page.get_text("text", clip=pymupdf.Rect(w * RIGHT_STRIP, 0, w, h))
-    ids = SHEET_ID.findall(tb_text)
-    if not ids:
-        # Some sets have no machine-readable text in a consistent
-        # title-block box -- fall back to the whole page rather than
-        # returning nothing.
-        ids = SHEET_ID.findall(text)
-    if not ids:
-        return ""
-    return max(set(ids), key=ids.count)
-
-
 def _scale(text: str) -> str:
     m = SCALE.search(text)
     return m.group(0) if m else ""
@@ -93,36 +67,64 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
     sheets: list[DetectedSheet] = []
     for pno in range(doc.page_count):
         page = doc[pno]
+        w, h = page.rect.width, page.rect.height  # visual frame
         text = page.get_text("text")
-        # Electrical sheet: carries an E-series number and is a drawing.
-        if not SHEET_ID.search(text):
+        words = visual_words(page)
+
+        # An electrical sheet is a page whose own title-block number cell
+        # holds a family token. No whole-page fallback: architectural
+        # pages say "SEE E-101" and would otherwise be pulled in.
+        tb = title_block.locate(words, w, h)
+        number = title_block.sheet_number(tb) if tb else ""
+        if not number:
             continue
-        w, h = page.rect.width, page.rect.height
-        region = (w * BORDER, h * BORDER, w * RIGHT_STRIP, h * (1 - BORDER))
+
+        region = _region(w, h, tb.strip)
         if _is_raster(page):
             sheets.append(
                 DetectedSheet(
-                    page_index=pno, number=_sheet_number(page, text), title="Electrical",
+                    page_index=pno, number=number, title="Electrical",
                     discipline="Electrical", scale="", width_pt=w, height_pt=h, region=region,
+                    kind="plan",  # nothing on a scanned page has been read; unsure is plan
                     unreadable_reason="Scanned sheet — vector reading isn't available yet, so it was not counted.",
                 )
             )
             continue
-        # Only count drawing sheets (plans), not text-only pages.
         if len(page.get_drawings()) < 500:
-            continue
+            continue  # a text-only page, not a drawing
+
+        scale = _scale(text)
+        raw_title = title_block.title(tb, number)
+        kind = sheet_kind.classify(raw_title, text, bool(scale))
         sched = text if any(k in text.upper() for k in SCHEDULE_KEYWORDS) else ""
         sheets.append(
             DetectedSheet(
-                page_index=pno, number=_sheet_number(page, text), title="Electrical plan",
-                discipline="Electrical", scale=_scale(text), width_pt=w, height_pt=h,
-                region=region, schedule_text=sched,
+                page_index=pno, number=number, title=raw_title or sheet_kind.label(kind),
+                discipline="Electrical", scale=scale, width_pt=w, height_pt=h,
+                region=region, kind=kind, schedule_text=sched,
                 # parse_legend reads text and cannot know which page it came
                 # from; the caller does, so it stamps each row here.
                 legend=[replace(e, page_index=pno) for e in parse_legend(sched)],
             )
         )
     return sheets
+
+
+def _region(w: float, h: float, strip: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    """The visual page minus a border minus the located title-block
+    strip. Replaces the old fixed right strip, which was built in the
+    rotated frame and applied to unrotated text (spec 1.1)."""
+    x0, y0, x1, y1 = w * BORDER, h * BORDER, w * (1 - BORDER), h * (1 - BORDER)
+    sx0, sy0, sx1, sy1 = strip
+    if sx0 > 0 and sx1 >= w:      # right strip
+        x1 = min(x1, sx0)
+    elif sx1 < w:                 # left strip
+        x0 = max(x0, sx1)
+    elif sy0 > 0:                 # bottom strip
+        y1 = min(y1, sy0)
+    else:                         # top strip
+        y0 = max(y0, sy1)
+    return (x0, y0, x1, y1)
 
 
 _CONTEXT_KEYWORDS = (
@@ -202,6 +204,10 @@ def render_evidence_crop(
 ) -> bytes | None:
     """A tight PNG crop of the source page around one item's counted
     location(s), for the item panel's evidence view.
+
+    `placements` and the page dimensions are in the visual frame, which
+    is the frame `get_pixmap(clip=...)` takes -- no transform here
+    (page_frame.py).
 
     Zoom is chosen so the crop's longest edge lands near
     EVIDENCE_MAX_PX regardless of how large the bounding box is -- a

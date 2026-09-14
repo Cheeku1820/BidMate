@@ -1,54 +1,87 @@
-"""Documents agent -- sheet-number detection must read the title block,
-not whichever E-number happens to repeat most in the page's body text. A
-callout bubble referencing another sheet can otherwise outvote the title
-block's own number (found against a real drawing set: a page whose title
-block read E1.2 was labelled E5.1 because a referenced-sheet callout on
-the page said E5.1 four times).
-"""
+"""The Documents agent on synthetic pages. The corpus is test_corpus_sheets.py."""
+
 import pymupdf
+import pytest
 
 from app.engine import documents
 
 
-def _page_with_callouts(tmp_path, own_number: str, referenced_number: str, referenced_repeats: int):
-    """A 1000x800 landscape sheet whose title block (right-hand strip,
-    matching documents.RIGHT_STRIP) carries `own_number`, and whose body
-    carries `referenced_number` repeated `referenced_repeats` times --
-    enough to outvote a title block that only appears once if the bug is
-    present."""
+def _sheet(tmp_path, own_number, refs=(), title_lines=(), rotation=0, drawings=600, scale=True):
+    """A 1000x800 page with a right-edge title block (SHEET/DRAWN labels,
+    optional title lines, the number cell at the bottom corner), a body
+    that references other sheets, and enough vector paths to be a plan."""
     doc = pymupdf.open()
     page = doc.new_page(width=1000, height=800)
-    tb_x = 1000 * documents.RIGHT_STRIP + 20
-    page.insert_text((tb_x, 700), own_number)
-    for i in range(referenced_repeats):
-        page.insert_text((100 + i * 40, 100 + i * 20), referenced_number)
-    path = tmp_path / "sheet.pdf"
+    page.insert_text((900, 60), "SHEET")
+    page.insert_text((900, 85), "DRAWN")
+    for i, line in enumerate(title_lines):
+        page.insert_text((870, 700 + i * 22), line)
+    page.insert_text((900, 770), own_number)
+    for i, ref in enumerate(refs):
+        page.insert_text((200, 200 + i * 40), f"SEE {ref}")
+    if scale:
+        page.insert_text((200, 600), 'SCALE: 1/8" = 1\'-0"')
+    for i in range(drawings):
+        page.draw_line((50 + (i % 40) * 15, 100 + (i // 40) * 12), (55 + (i % 40) * 15, 105 + (i // 40) * 12))
+    if rotation:
+        page.set_rotation(rotation)
+    path = tmp_path / "s.pdf"
     doc.save(path)
-    doc.close()
     return str(path)
 
 
-def test_sheet_number_prefers_the_title_block(tmp_path):
-    path = _page_with_callouts(tmp_path, own_number="E1.2", referenced_number="E5.1", referenced_repeats=4)
-    doc = pymupdf.open(path)
-    page = doc[0]
-    text = page.get_text("text")
-    assert documents._sheet_number(page, text) == "E1.2"
+def test_sheet_number_comes_from_the_title_block(tmp_path):
+    path = _sheet(tmp_path, "E2.1", refs=("E5.1", "E5.1", "E5.1"))
+    (s,) = documents.detect_sheets(path)
+    assert s.number == "E2.1"
 
 
-def test_sheet_number_falls_back_to_whole_page_when_title_block_is_silent(tmp_path):
-    """A page whose title-block strip has no machine-readable E-number
-    (some scanned or oddly-drafted sets) still gets *a* number rather
-    than an empty one, from whatever the page carries."""
+def test_a_page_with_no_title_block_is_not_a_sheet(tmp_path):
+    """No whole-page fallback: an architectural page that says SEE E-101
+    three times is not an electrical sheet."""
     doc = pymupdf.open()
     page = doc.new_page(width=1000, height=800)
-    page.insert_text((100, 100), "E3.1")
-    path = tmp_path / "sheet.pdf"
+    for i in range(3):
+        page.insert_text((200, 200 + i * 40), "SEE E-101")
+    for i in range(600):
+        page.draw_line((50 + (i % 40) * 15, 100 + (i // 40) * 12), (55 + (i % 40) * 15, 105 + (i // 40) * 12))
+    path = tmp_path / "arch.pdf"
     doc.save(path)
-    doc.close()
-    doc = pymupdf.open(path)
-    page = doc[0]
-    assert documents._sheet_number(page, page.get_text("text")) == "E3.1"
+    assert documents.detect_sheets(str(path)) == []
+
+
+def test_rotated_page_reads_the_same(tmp_path):
+    path = _sheet(tmp_path, "E-101", title_lines=("FIRST FLOOR", "POWER PLAN"), rotation=90)
+    (s,) = documents.detect_sheets(path)
+    assert s.number == "E-101"
+    assert s.title == "First floor power plan"
+    assert s.kind == "plan"
+    assert (s.width_pt, s.height_pt) == (800, 1000)
+    x0, y0, x1, y1 = s.region
+    assert 0 <= x0 < x1 <= 800 and 0 <= y0 < y1 <= 1000
+    # The title block is along the visual bottom on a 90-degree page.
+    assert y1 < 1000 * 0.85
+
+
+def test_region_excludes_the_located_strip_not_a_fixed_right_strip(tmp_path):
+    path = _sheet(tmp_path, "E1.1")
+    (s,) = documents.detect_sheets(path)
+    x0, y0, x1, y1 = s.region
+    assert x1 <= 1000 * (1 - 0.18) + 0.5  # right strip located and excluded
+    assert y1 > 800 * 0.9                 # nothing taken off the bottom
+
+
+def test_kind_from_the_title(tmp_path):
+    path = _sheet(tmp_path, "E0.3", title_lines=("PANEL", "SCHEDULES"), scale=False)
+    (s,) = documents.detect_sheets(path)
+    assert s.kind == "schedule"
+    assert s.title == "Panel schedules"
+
+
+def test_title_falls_back_to_the_kind_label(tmp_path):
+    path = _sheet(tmp_path, "E0.1", title_lines=("3909 ARCTIC BOULEVARD, SUITE 103",), scale=False)
+    (s,) = documents.detect_sheets(path)
+    assert s.title == "Electrical plan"
 
 
 def _one_page_pdf(tmp_path, width=1000, height=800):

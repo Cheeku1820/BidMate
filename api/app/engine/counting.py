@@ -162,8 +162,8 @@ def _stamp_points(page) -> set[tuple[int, int]]:
 
 
 def count_sheet(path: str, sheet: DetectedSheet) -> list[DeviceCluster]:
-    if sheet.unreadable_reason:
-        return []
+    if sheet.unreadable_reason or sheet.kind != "plan":
+        return []  # only a plan carries devices; a schedule is read, not counted
     doc = pymupdf.open(path)
     page = doc[sheet.page_index]
     # Visual frame throughout (page_frame.py): a placement is where a

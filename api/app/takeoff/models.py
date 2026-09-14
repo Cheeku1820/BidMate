@@ -143,6 +143,10 @@ class Sheet(Base):
     # short list of items -- silence reads as completeness.
     unreadable_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
     ai_reading: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # What the sheet is (sheet_kind.KINDS): plan, schedule, legend,
+    # diagram, other. A schedule is read and shown; only a plan carries
+    # counted items. Its own axis -- never one of the four review labels.
+    kind: Mapped[str] = mapped_column(String(20), default="plan", server_default="plan")
 
 
 class Item(Base):

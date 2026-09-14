@@ -94,6 +94,40 @@ def test_map_payload_carries_cost_and_sheet_metadata():
     assert sheet["number"] == "E2.1"
 
 
+def test_sheet_kind_is_mapped_and_validated(caplog):
+    mapped = map_payload({"sheets": [
+        {"id": "80", "number": "E0.1", "kind": "legend", "title": "Electrical legend", "scale": "", "page": 81, "width_pt": 2448, "height_pt": 1584},
+        {"id": "87", "number": "E2.1", "kind": "plan", "title": "First floor plan", "scale": '1/8" = 1', "page": 88, "width_pt": 2448, "height_pt": 1584},
+        {"id": "99", "number": "E9.9", "kind": "banana", "page": 100, "width_pt": 1, "height_pt": 1},
+    ], "items": []})
+    kinds = [s["kind"] for s in mapped.sheets]
+    assert kinds == ["legend", "plan", "plan"]
+    assert mapped.sheets[0]["title"] == "Electrical legend"
+    assert mapped.sheets[1]["scale"] == '1/8" = 1'
+    assert "banana" in caplog.text
+
+
+def test_sheet_kind_defaults_to_plan_when_absent():
+    mapped = map_payload({"sheets": [{"id": "1", "number": "E1.1", "page": 2, "width_pt": 1, "height_pt": 1}], "items": []})
+    assert mapped.sheets[0]["kind"] == "plan"
+
+
+def test_an_unreadable_sheet_with_no_number_gets_an_honest_page_label():
+    """Since Task 6, a scanned or outlined-text page is detected with
+    number "" and unreadable_reason set. str(raw.get("number") or
+    f"E{index + 1}") used to turn that into a fabricated sheet number --
+    Gerber's twelve scanned pages ingesting as E1..E12. A fabricated
+    number on a sheet the engine could not read is a lie in the rail:
+    the honest label is the engine's own 1-based page number."""
+    mapped = map_payload({"sheets": [
+        {"id": "3", "number": "", "title": "Scanned sheet", "page": 3,
+         "width_pt": 2448, "height_pt": 1584, "unreadable": "Scanned sheet"},
+    ], "items": []})
+    sheet = mapped.sheets[0]
+    assert sheet["number"] == "Page 3"
+    assert sheet["title"] == "Scanned sheet"
+
+
 def test_map_payload_prefers_the_engines_symbol():
     """The classifier already chose a symbol; guessing from the name is
     only a fallback for rows that carry none."""

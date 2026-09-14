@@ -22,6 +22,8 @@ import logging
 import re
 from dataclasses import dataclass
 
+from app.engine.sheet_kind import KINDS
+from app.engine.sheet_kind import label as sheet_kind_label
 from app.errors import DomainError
 from app.takeoff.models import WarningReason
 
@@ -81,9 +83,15 @@ def is_warning_grounded(warning: dict, valid_sheet_numbers: set[str]) -> bool:
 def fallback_warning(tag: str, count, sheet_number: str, reason: str = "legend") -> dict:
     """The same generic-but-honest shape estimate.py's deterministic path
     already uses (`_unconfirmed_type_warning`), reconstructed here rather
-    than imported -- ingest.py works off the payload contract only and
-    does not import from app.engine. This is what a groundedness failure
-    falls back to. Carries the original warning's own `reason` through --
+    than imported -- ingest.py works off the payload contract for
+    warnings and items, not estimate.py's internals (test_ingest_mapping.py
+    asserts the two templates stay word for word identical). The one
+    exception is `sheet_kind`: `KINDS` is the closed set a payload's
+    `kind` is validated against, and it is a shared data contract with no
+    behavior of its own, so importing it does not reintroduce the
+    coupling this docstring is otherwise guarding against. This is what a
+    groundedness failure falls back to. Carries the original warning's
+    own `reason` through --
     WarningReason is load-bearing (scale.set_scale() clears only warnings
     whose reason is "scale"), so a groundedness swap must never silently
     reclassify what kind of evidence gap this is."""
@@ -255,6 +263,17 @@ def normalize_ai_reading(raw) -> dict | None:
     }
 
 
+def _sheet_kind(raw, key: str) -> str:
+    """The engine's kind, validated against the closed set. An unknown
+    value becomes 'plan' -- the visible failure -- and is logged by sheet
+    key, never by content."""
+    kind = str(raw or "plan")
+    if kind not in KINDS:
+        logger.warning("ingest: sheet %s carried unknown kind %r; treating as plan", key, kind)
+        return "plan"
+    return kind
+
+
 def _grounded_or_fallback(raw_warning, sheet_number: str, valid_sheet_numbers: set[str], tag: str, quantity) -> tuple[dict | None, bool]:
     """The single point map_payload calls once an item's own sheet number
     and the document's full valid-sheet set are both known: validate the
@@ -285,10 +304,21 @@ def map_payload(payload: dict) -> MappedTakeoff:
         width = int(raw.get("width_pt") or 0)
         height = int(raw.get("height_pt") or 0)
         dims[key] = (width, height)
+        kind = _sheet_kind(raw.get("kind"), key)
+        number = str(raw.get("number") or "")
+        if not number:
+            # A scanned or outlined-text page is detected with number ""
+            # (Task 6) -- fabricating "E{n}" for it would put a sheet
+            # number in the rail that the drawing set never printed. The
+            # honest label is the engine's own 1-based page number, which
+            # is also stable across a re-run of the same page (reprocess.py
+            # merges sheets by `number`).
+            page = raw.get("page")
+            number = f"Page {int(page)}" if isinstance(page, (int, float)) and not isinstance(page, bool) else f"Page {index + 1}"
         sheets.append({
             "key": key,
-            "number": str(raw.get("number") or f"E{index + 1}"),
-            "title": str(raw.get("title") or "Electrical plan"),
+            "number": number,
+            "title": str(raw.get("title") or sheet_kind_label(kind)),
             "discipline": "Electrical",
             "revision": str(raw.get("revision") or ""),
             "scale": str(raw.get("scale") or ""),
@@ -300,6 +330,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
             "height_pt": height,
             "unreadable_reason": str(raw.get("unreadable") or ""),
             "ai_reading": normalize_ai_reading(raw.get("ai_reading")),
+            "kind": kind,
         })
 
     valid_sheet_numbers = {s["number"] for s in sheets}

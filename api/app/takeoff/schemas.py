@@ -132,6 +132,9 @@ class SheetOut(BaseModel):
     # it as simply empty would let silence read as completeness.
     unreadable_reason: str = ""
     ai_reading: dict | None = None
+    # plan | schedule | legend | diagram | other. A sheet property on its
+    # own axis; the rail labels non-plans with it.
+    kind: str = "plan"
 
     model_config = MODEL_CONFIG
 

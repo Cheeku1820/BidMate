@@ -299,3 +299,14 @@ def test_a_placement_sits_on_its_glyph_in_the_rotated_render():
     pix = page.get_pixmap(matrix=pymupdf.Matrix(4, 4), clip=square)
     ink = sum(1 for i in range(0, len(pix.samples), pix.n) if pix.samples[i] < 128)
     assert ink > 0, "the visual clip rendered blank"
+
+
+def test_full_takeoff_emits_kind_title_and_scale_per_sheet():
+    from app.engine import estimate
+
+    out = estimate.full_takeoff(BID, "Unalaska, AK")
+    by_number = {s["number"]: s for s in out["sheets"]}
+    assert by_number["E0.3"]["kind"] == "schedule"
+    assert by_number["E0.3"]["title"]            # not empty, whatever the cell says
+    assert {s["kind"] for s in out["sheets"]} <= {"plan", "schedule", "legend", "diagram", "other"}
+    assert any(s["scale"] for s in out["sheets"] if s["kind"] == "plan")

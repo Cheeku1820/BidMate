@@ -80,6 +80,7 @@ def ingest_takeoff(
             takeoff_id=row["takeoff_id"], page_index=row["page_index"],
             width_pt=row["width_pt"], height_pt=row["height_pt"],
             unreadable_reason=row["unreadable_reason"], ai_reading=row["ai_reading"],
+            kind=row["kind"],
         )
         db.add(sheet)
         sheet_ids_by_key[row["key"]] = sheet.id

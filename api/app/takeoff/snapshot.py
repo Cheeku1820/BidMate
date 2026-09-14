@@ -93,6 +93,7 @@ def sheet_out(sheet: Sheet) -> SheetOut:
         height_pt=sheet.height_pt,
         unreadable_reason=sheet.unreadable_reason,
         ai_reading=sheet.ai_reading,
+        kind=sheet.kind,
     )
 
 

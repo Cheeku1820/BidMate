@@ -399,6 +399,9 @@ def full_takeoff(path: str, location: str, context: str = "", estimator_notes: l
                 "width_pt": s.width_pt,
                 "height_pt": s.height_pt,
                 "unreadable": s.unreadable_reason or None,
+                "title": s.title,
+                "scale": s.scale,
+                "kind": s.kind,
             }
             for s in sheets
         ],

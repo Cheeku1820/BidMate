@@ -131,16 +131,67 @@ def test_title_rejects_address_and_seal_lines(tmp_path):
 
 
 def test_title_rejects_a_cell_with_a_bare_number(tmp_path):
-    """A digits-only token in the title cell (a sheet count, a suite
-    number) fails the sanity check rather than being silently dropped."""
+    """A digits-only token inside the title line fails the whole cell
+    rather than being silently dropped from it."""
     doc, page = _page(tmp_path)
     page.insert_text((900, 100), "SHEET")
-    page.insert_text((880, 700), "POWER PLAN")
-    page.insert_text((880, 725), "103")
+    page.insert_text((880, 725), "POWER PLAN 103")
     page.insert_text((900, 770), "E2.1")
     words, w, h = _words(doc, page, tmp_path)
     tb = title_block.locate(words, w, h)
     assert title_block.title(tb, "E2.1") == ""
+
+
+def test_a_number_on_its_own_line_is_a_value_cell_not_a_title_word(tmp_path):
+    """A line made only of numbers beside the title is another cell of
+    the block -- Kittles Saxony's CDG NO. 24108 sits above every title,
+    set larger than it; United Utility's Project Number 25-0107LE sits
+    on the row above, set the same. Neither is part of the title, so
+    the line is left out and the title still reads. Contrast the test
+    above: a number *inside* the title line still fails the cell."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((880, 660), "CDG NO.", fontsize=8)
+    page.insert_text((880, 690), "24108", fontsize=18)
+    page.insert_text((880, 715), "FIRST FLOOR", fontsize=13)
+    page.insert_text((880, 735), "LIGHTING PLAN", fontsize=13)
+    page.insert_text((880, 785), "EL101", fontsize=36)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.title(tb, "EL101") == "First floor lighting plan"
+
+
+def test_a_project_number_on_the_row_above_is_not_part_of_the_title(tmp_path):
+    """United Utility: a label cell and its value share the row above
+    the title, and the value is set in the title's own type. It came out
+    as "Electrical - lighting plan 25-0107le" on every one of the nine
+    sheets."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((860, 690), "Project Number", fontsize=7)
+    page.insert_text((930, 690), "25-0107LE", fontsize=12)
+    page.insert_text((870, 712), "ELECTRICAL -", fontsize=12)
+    page.insert_text((870, 730), "LIGHTING PLAN", fontsize=12)
+    page.insert_text((870, 785), "E-101", fontsize=36)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.title(tb, "E-101") == "Electrical - lighting plan"
+
+
+def test_a_release_stamp_beside_the_number_cell_is_not_the_title(tmp_path):
+    """Kittles Saxony: a rotated RELEASED FOR CONSTRUCTION stamp runs up
+    the outer edge of the strip in a face larger than the title's. It is
+    an issue stamp, not a cell of the block; the actual title line wins."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((880, 715), "FIRST FLOOR", fontsize=13)
+    page.insert_text((880, 735), "LIGHTING PLAN", fontsize=13)
+    page.insert_text((880, 785), "EL101", fontsize=36)
+    page.insert_text((985, 790), "RELEASED FOR CONSTRUCTION", fontsize=20, rotate=90)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.sheet_number(tb) == "EL101"
+    assert title_block.title(tb, "EL101") == "First floor lighting plan"
 
 
 def test_title_reads_in_order_on_a_rotated_page(tmp_path):
@@ -206,3 +257,114 @@ def test_title_reads_the_same_column_on_a_rotated_page(tmp_path):
     words, w, h = _words(doc, page, tmp_path, rotation=90)
     tb = title_block.locate(words, w, h)
     assert title_block.title(tb, "E2.1") == "Floor plan - lighting"
+
+
+def _notes_block(page, x, y, lines, fontsize=8):
+    for i, line in enumerate(lines):
+        page.insert_text((x, y + i * 11), line, fontsize=fontsize)
+
+
+def test_a_general_notes_block_in_another_strip_does_not_outscore_the_number_cell(tmp_path):
+    """Kittles Saxony EP102 (page 5): general notes along the top edge
+    say SEE SHEET E-000 / E-501 / E-502 / E-601 AND E-602 -- five
+    distinct family tokens and four SHEET labels, against the right
+    strip's one number cell. The number cell is set at 48pt and the
+    notes at 9pt: the strip holding the largest sheet-number-shaped
+    token is the title block, and the page came out as E-602 instead."""
+    doc, page = _page(tmp_path)
+    _notes_block(page, 300, 30, (
+        "A. SEE SHEET E-000 FOR SYMBOLS AND ABBREVIATIONS.",
+        "B. SEE SHEET E-501 FOR MECHANICAL EQUIPMENT POWER SCHEDULE.",
+        "C. SEE SHEET E-502 FOR PANEL SCHEDULES.",
+        "D. SEE SHEETS E-601 AND E-602 FOR ELECTRICAL DETAILS.",
+    ))
+    page.insert_text((900, 400), "REVISION", fontsize=8)     # the revision table's heading
+    page.insert_text((900, 680), "CDG NO.", fontsize=8)
+    page.insert_text((880, 720), "ROOF POWER PLAN", fontsize=13)
+    page.insert_text((880, 785), "EP102", fontsize=36)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert tb.edge == "right"
+    assert title_block.sheet_number(tb) == "EP102"
+    assert title_block.title(tb, "EP102") == "Roof power plan"
+
+
+def test_a_body_tag_spilling_into_the_strip_loses_to_the_real_number_cell(tmp_path):
+    """TSC Nutrition M1.01 (page 42): an exhaust-fan tag EF-7 sits in the
+    drawing where it overlaps the right strip. The page's own number
+    cell reads M1.01 -- a sheet number, just not an electrical one. The
+    number cell is the largest sheet-number-shaped token whatever its
+    discipline; only then is the family test applied. The page came out
+    as electrical sheet EF-7."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((900, 130), "DATE")
+    page.insert_text((840, 400), "EF-7", fontsize=8)
+    page.insert_text((880, 785), "M1.01", fontsize=30)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert tb.edge == "right"
+    assert title_block.sheet_number(tb) == ""
+
+
+def test_a_fan_schedule_along_the_top_does_not_become_the_title_block(tmp_path):
+    """TSC Nutrition M6.01 (page 46): a fan schedule with six EF- rows
+    runs along the top edge; the title block is on the right with M6.01.
+    The page came out as electrical sheet EF-6 with the schedule's
+    heading as its title."""
+    doc, page = _page(tmp_path)
+    for i in range(6):
+        page.insert_text((300 + i * 90, 60), f"EF-{i + 1}", fontsize=9)
+        page.insert_text((300 + i * 90, 75), "TOILET RM", fontsize=9)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((900, 130), "DATE")
+    page.insert_text((880, 785), "M6.01", fontsize=30)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert tb.edge == "right"
+    assert title_block.sheet_number(tb) == ""
+
+
+def test_a_drawing_index_in_the_strip_is_not_a_number_cell(tmp_path):
+    """TSC Nutrition's cover (page 0): the drawing index runs down the
+    right strip, one sheet number per row, and the cover's own number
+    G0.00 appears only as one of those rows. With only family tokens as
+    candidates, E700 -- the electrical row nearest the corner -- became
+    the sheet number. Any discipline's row can be the number cell, and
+    the nearest row to the corner is a telecom sheet, so no number."""
+    doc, page = _page(tmp_path)
+    rows = ("G0.00 COVER SHEET", "C101 DEMOLITION PLAN", "A1.01 FLOOR PLAN", "M1.01 MECHANICAL PLAN",
+            "ES100 ELECTRICAL SITE PLAN", "E700 LIGHTING DETAILS", "T001 DEMOLITION PLAN", "T402 SECURITY DETAILS")
+    _notes_block(page, 860, 300, rows, fontsize=8)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.sheet_number(tb) == ""
+
+
+@pytest.mark.parametrize("token,ok", [
+    ("A6.01", True), ("G0.00", True), ("M1.01", True), ("T402", True), ("C101", True), ("P-401", True),
+    ("E-101", True), ("EQ020", True),
+    ("NO.", False), ("RM", False), ("12x7", False), ("146", False), ("EE-12624", False),
+])
+def test_any_sheet_id_shape(token, ok):
+    assert bool(title_block.ANY_SHEET_ID.fullmatch(token)) is ok
+
+
+def test_circuit_tags_along_the_bottom_do_not_move_the_title_block(tmp_path):
+    """United Utility E-101: the number cell sits in the corner the
+    bottom and right strips share, so the strips tie on size and the
+    tiebreak decides the edge. The plan's bottom strip carries dozens of
+    circuit and equipment tags (BPW-3, UH-4, W1) that match the
+    any-discipline sheet-number shape; counting those moved the title
+    block to the bottom and cut the counting region on the wrong side.
+    The tiebreak counts family tokens and labels only."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((900, 130), "DATE")
+    for i, tag in enumerate(("BPW-3", "BPW-14", "UH-4", "UH-5", "W1", "X1", "C100", "HB1")):
+        page.insert_text((60 + i * 90, 740), tag, fontsize=8)
+    page.insert_text((880, 785), "E-101", fontsize=36)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert tb.edge == "right"
+    assert title_block.sheet_number(tb) == "E-101"

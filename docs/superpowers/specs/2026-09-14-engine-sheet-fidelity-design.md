@@ -45,7 +45,7 @@ Architectural and civil PDFs in the same folders *reference* E-sheets ("SEE E-10
 
 All geometry in the Documents and Counting agents is in the **visual frame** — `page.rect`, what the estimator sees and what a rendered page image shows. The transform happens once, at the extraction boundary: word and drawing coordinates from PyMuPDF are mapped through `page.rotation_matrix` before anything reads them. Clips are expressed visually and mapped back through `page.derotation_matrix` where PyMuPDF needs mediabox-frame input. `DetectedSheet.width_pt` / `height_pt` remain visual (they already are). Placements become visual. `ingest.py`'s normalisation is then correct with no change.
 
-`render_evidence_crop` receives visual coordinates and must derotate its clip; the rendered pixmap already follows page rotation.
+`render_evidence_crop` receives visual coordinates and passes them straight to `get_pixmap(clip=…)`, which takes a **visual** clip (measured 2026-09-14: a visual clip renders the glyph, an unrotated one renders blank). No transform there. `get_textbox`, by contrast, wants an unrotated clip — the API is mixed, which is why `page_frame.py` is the only place the two frames meet.
 
 Rejected: derotating only the clips (leaves the marker bug); keeping everything in the mediabox frame and rotating in the client (pushes page-rotation knowledge into the canvas, which will render page images that are already rotated).
 

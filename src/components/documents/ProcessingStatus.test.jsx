@@ -145,15 +145,16 @@ describe("ProcessingStatus", () => {
     vi.restoreAllMocks();
   });
 
-  it("says so when the project has no documents", async () => {
+  it("distinguishes a failed document list from an empty one -- a list failure is not 'no documents'", async () => {
     const store = {
       listProjects: vi.fn().mockResolvedValue([{ id: "p1", itemsTotal: 0 }]),
-      listDocuments: vi.fn().mockResolvedValue([]),
+      listDocuments: vi.fn().mockRejectedValue(new Error("network")),
     };
     renderProcessing(store);
     await flushMicrotasks();
 
-    expect(screen.getByText(/No documents have been uploaded/)).toBeInTheDocument();
+    expect(screen.getByText(/couldn't load this project's documents/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no documents have been uploaded/i)).not.toBeInTheDocument();
   });
 });
 

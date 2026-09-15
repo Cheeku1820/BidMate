@@ -3,13 +3,13 @@
    information".
 
    Sits between upload and processing. It reflects the actual uploaded
-   set, read from the API (store.listDocuments) rather than from browser
-   memory: the drawing files that will run through the takeoff, and the
-   specifications/addenda that are read as context. Two things the
-   estimator confirms before processing, surfaced in a Needs attention
-   section ABOVE the table rather than buried in a row (spec §5):
-   documents whose type wasn't recognized, and whether a drawing set is
-   present at all. Types stay editable here, and any file can be excluded.
+   set, read from the API (store.listDocuments): the drawing files that
+   will run through the takeoff, and the specifications/addenda that are
+   read as context. What the estimator confirms before processing,
+   surfaced in a Needs attention section ABOVE the table rather than
+   buried in a row (spec §5): documents whose type wasn't recognized, and
+   whether a drawing set is present at all. Types stay editable here,
+   through store.setDocumentType.
 
    Sheet-level detail (revisions, per-sheet scale) is detected when the
    engine reads the drawings, so it belongs to processing, not this
@@ -18,34 +18,30 @@
    something this screen actually knows, and the two that are genuinely
    deferred are marked as deferred instead of as passing.
 
-   Adding files here. An estimator who realises a spec section is missing
-   should not have to walk back to upload and lose the types they have
-   already corrected, so this screen takes files too. It reuses upload's
-   detection exactly -- the filename first, then, when the name wasn't
-   informative, a look at the content through classifyDoc -- so a file
-   added at either end of the flow gets typed the same way. Files that
-   upload would have refused (a non-PDF, a copy already in the list) are
-   refused here for the same reasons, named, and not silently added. A
-   file added on this screen is not itself uploaded to the API -- there is
-   no "start takeoff" stash to carry it forward either, which is a known
-   gap in this interim slice: B2 replaces the whole browser-drives-the-
-   engine path with a real job, and that is where this screen gains its
-   own upload call.
+   Adding a document you missed here goes back to screen C ("Add
+   documents"), not a local picker on this screen -- an earlier version
+   took files directly, but a file added that way was never uploaded to
+   the API, so it silently vanished the moment "Start takeoff" stopped
+   stashing anything for processing to read. Screen C is the one place a
+   document actually reaches the API, and a type corrected on this screen
+   is already persisted (store.setDocumentType), so nothing is lost by
+   sending the estimator back to it.
 
-   The same content sniff also runs once, at mount, for a persisted
-   document whose filename never gave a real hint and whose type still
-   sits at the uninformative fallback -- covering the document that
-   reached this screen before Upload's own sniff round trip landed.
-   That fetch goes through store.fetchDocumentFile, since a persisted row
-   carries no File object in the browser any more.
+   There is deliberately no "leave this one out" control in this slice --
+   every listed document runs through the takeoff. The prior Include
+   checkbox changed only local state; "Start takeoff" has never stashed
+   an exclusion anywhere the API or the engine could see it, so the
+   control described a decision that never actually reached processing.
+   B4 (confirm-drawings write-back) is where exclusion comes back, as a
+   real per-document decision persisted through the API rather than
+   something a reload silently discards.
    ============================================================ */
 
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, Check, Clock, FileText, Plus } from "lucide-react";
+import { AlertCircle, AlertTriangle, Check, Clock, FileText } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import { DOC_TYPES, detectDocTypeInfo } from "../../lib/detectDocType.js";
-import { classifyDoc } from "../../lib/engineClient.js";
+import { DOC_TYPES } from "../../lib/detectDocType.js";
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -88,22 +84,18 @@ function ChecklistRow({ state, title, detail }) {
 export default function ConfirmDrawings({ store }) {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const inputRef = useRef(null);
 
   const [rows, setRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  // Why a file the estimator just chose is not in the list. Cleared on
-  // the next add, so it never lingers past the action it explains.
-  const [rejected, setRejected] = useState([]);
 
-  // Sticks at false once the component unmounts, so a result that lands
-  // late (listDocuments, or the mount-time classifyDoc sniff below) is a
-  // no-op rather than a set-state-after-unmount warning or a stale
-  // overwrite. Re-armed inside the effect body itself, not only in its
-  // cleanup -- StrictMode's simulated mount/unmount/remount runs the
-  // cleanup once in development, and a cleanup-only guard would stay
-  // false for the rest of the component's life.
+  // Sticks at false once the component unmounts, so a listDocuments
+  // result that lands late is a no-op rather than a
+  // set-state-after-unmount warning or a stale overwrite. Re-armed
+  // inside the effect body itself, not only in its cleanup --
+  // StrictMode's simulated mount/unmount/remount runs the cleanup once
+  // in development, and a cleanup-only guard would stay false for the
+  // rest of the component's life.
   const aliveRef = useRef(true);
   useEffect(() => {
     aliveRef.current = true;
@@ -118,35 +110,8 @@ export default function ConfirmDrawings({ store }) {
       .listDocuments(projectId)
       .then((docs) => {
         if (!aliveRef.current) return;
-        setRows(
-          docs.map((d) => ({
-            id: d.id,
-            name: d.filename,
-            size: d.sizeBytes,
-            docType: d.docType,
-            included: true,
-            persisted: true,
-          })),
-        );
+        setRows(docs.map((d) => ({ id: d.id, name: d.filename, size: d.sizeBytes, docType: d.docType })));
         setLoaded(true);
-
-        for (const d of docs) {
-          const detected = detectDocTypeInfo(d.filename);
-          // Only a document whose name gave no hint AND whose stored type
-          // still equals that uninformative fallback -- never re-sniff a
-          // type someone (upload's own sniff, or the estimator) already
-          // decided, even when that decision happens to read as "Drawings".
-          if (detected.source !== "default" || d.docType !== detected.type) continue;
-          store
-            .fetchDocumentFile(d)
-            .then((file) => classifyDoc(file))
-            .then((type) => {
-              if (!type || !aliveRef.current) return;
-              setRows((cur) => cur.map((r) => (r.id === d.id && r.docType === detected.type ? { ...r, docType: type } : r)));
-              store.setDocumentType(d.id, type).catch(() => {});
-            })
-            .catch(() => {});
-        }
       })
       .catch(() => {
         if (!aliveRef.current) return;
@@ -162,77 +127,12 @@ export default function ConfirmDrawings({ store }) {
 
   const setType = (id, docType) => {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, docType } : r)));
-    const row = rows.find((r) => r.id === id);
-    // A row still local to this screen (added here, never uploaded) has
-    // nothing to PATCH -- see the header note on adding files.
-    if (row?.persisted) store.setDocumentType(id, docType).catch(() => {});
-  };
-  const toggle = (id) => setRows((prev) => prev.map((r) => (r.id === id ? { ...r, included: !r.included } : r)));
-
-  // Sorting the batch happens here, outside any state updater, and the
-  // updater below only appends what came out. Recording refusals inside
-  // the updater, as this first did, is what produced a notice whose
-  // count and list disagreed in the running app: an updater is not
-  // guaranteed to run before the setRejected() that follows it, and
-  // StrictMode's development double-invocation runs its body twice, so
-  // the array being filled was read at the wrong time and filled twice.
-  const addFiles = (fileList) => {
-    const incoming = Array.from(fileList);
-    const refusals = [];
-    const accepted = [];
-    // `rows` plus what this batch has already taken, so two copies of one
-    // file inside a single selection catch each other too.
-    const seen = [...rows];
-
-    for (const file of incoming) {
-      const lower = file.name.toLowerCase();
-      if (seen.some((r) => r.name === file.name && r.size === file.size)) {
-        refusals.push(`${file.name} is already in this list.`);
-        continue;
-      }
-      if (!lower.endsWith(".pdf")) {
-        refusals.push(`${file.name} isn't a PDF. Upload the document as a PDF.`);
-        continue;
-      }
-      if (lower.includes("protected") || lower.includes("locked")) {
-        refusals.push(`${file.name} is password protected. Upload an unlocked copy.`);
-        continue;
-      }
-      const detected = detectDocTypeInfo(file.name);
-      const row = {
-        id: `added-${file.name}-${file.size}-${crypto.randomUUID()}`,
-        name: file.name,
-        size: file.size,
-        docType: detected.type,
-        included: true,
-        persisted: false,
-      };
-      accepted.push({ row, detected, file });
-      seen.push(row);
-    }
-
-    if (accepted.length > 0) setRows((prev) => [...prev, ...accepted.map((a) => a.row)]);
-    setRejected(refusals);
-
-    // Same two-step detection upload uses: the filename decides when it
-    // is informative, and only when it isn't does the content get read.
-    // Guarded on the row still existing and still holding the guessed
-    // type, so a correction made while the look-up was in flight is
-    // never overwritten.
-    for (const { row, detected, file } of accepted) {
-      if (detected.source !== "default") continue;
-      classifyDoc(file).then((type) => {
-        if (!type || !aliveRef.current) return;
-        setRows((cur) => cur.map((r) => (r.id === row.id && r.docType === detected.type ? { ...r, docType: type } : r)));
-      });
-    }
+    store.setDocumentType(id, docType).catch(() => {});
   };
 
-  const kept = rows.filter((r) => r.included);
-  const counts = kept.reduce((acc, r) => ({ ...acc, [r.docType]: (acc[r.docType] || 0) + 1 }), {});
-  const drawings = kept.filter((r) => r.docType === "Drawings");
-  const unrecognized = kept.filter((r) => r.docType === "Other");
-  const excluded = rows.filter((r) => !r.included);
+  const counts = rows.reduce((acc, r) => ({ ...acc, [r.docType]: (acc[r.docType] || 0) + 1 }), {});
+  const drawings = rows.filter((r) => r.docType === "Drawings");
+  const unrecognized = rows.filter((r) => r.docType === "Other");
   const hasDrawings = drawings.length > 0;
 
   const start = () => {
@@ -242,20 +142,10 @@ export default function ConfirmDrawings({ store }) {
     navigate(`/projects/${projectId}/processing`);
   };
 
-  const openPicker = () => inputRef.current?.click();
-
-  const fileInput = (
-    <input
-      ref={inputRef}
-      type="file"
-      accept="application/pdf"
-      multiple
-      className="sr-only"
-      onChange={(event) => {
-        addFiles(event.target.files);
-        event.target.value = "";
-      }}
-    />
+  const addDocumentsLink = (
+    <Link className="btn" to={`/projects/${projectId}/documents`}>
+      Add documents
+    </Link>
   );
 
   if (!loaded) {
@@ -265,11 +155,8 @@ export default function ConfirmDrawings({ store }) {
           title="Confirm documents"
           breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}
         >
-          <button type="button" className="btn" onClick={openPicker}>
-            <Plus aria-hidden="true" size={15} /> Add files
-          </button>
+          {addDocumentsLink}
         </AppTopBar>
-        {fileInput}
       </>
     );
   }
@@ -281,11 +168,8 @@ export default function ConfirmDrawings({ store }) {
           title="Confirm documents"
           breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}
         >
-          <button type="button" className="btn" onClick={openPicker}>
-            <Plus aria-hidden="true" size={15} /> Add files
-          </button>
+          {addDocumentsLink}
         </AppTopBar>
-        {fileInput}
         {loadError ? (
           <div className="workspace-body">
             <div className="page">
@@ -320,7 +204,7 @@ export default function ConfirmDrawings({ store }) {
       ? { state: "ok", title: "Drawing set", detail: `${drawings.length} ${drawings.length === 1 ? "document" : "documents"} run through the takeoff` }
       : { state: "blocking", title: "Drawing set", detail: "No document is typed Drawings — the takeoff has nothing to read" },
     unrecognized.length === 0
-      ? { state: "ok", title: "Document types", detail: "Every included document has a type" }
+      ? { state: "ok", title: "Document types", detail: "Every document has a type" }
       : {
           state: "attention",
           title: "Document types",
@@ -333,13 +217,6 @@ export default function ConfirmDrawings({ store }) {
       state: "ok",
       title: "Addenda",
       detail: counts.Addendum ? `${counts.Addendum} read for changes to the base set` : "None included",
-    },
-    {
-      state: "ok",
-      title: "Excluded documents",
-      detail: excluded.length
-        ? `${excluded.length} left out of processing`
-        : "Nothing left out — every document is included",
     },
     {
       state: "deferred",
@@ -362,17 +239,14 @@ export default function ConfirmDrawings({ store }) {
           </button>
         }
       >
-        <button type="button" className="btn" onClick={openPicker}>
-          <Plus aria-hidden="true" size={15} /> Add files
-        </button>
+        {addDocumentsLink}
       </AppTopBar>
-      {fileInput}
 
       <div className="workspace-body">
         <div className="page">
           <p className="muted page-intro">
-            Drawings run through the takeoff; specifications and addenda are read as context. Correct any type, add a
-            document you missed, or leave one out, before processing.
+            Drawings run through the takeoff; specifications and addenda are read as context. Correct any type before
+            processing, or add a document you missed.
           </p>
 
           {!hasDrawings ? (
@@ -402,43 +276,17 @@ export default function ConfirmDrawings({ store }) {
             </div>
           ) : null}
 
-          {rejected.length > 0 ? (
-            <div className="warncard warncard--attention" role="status">
-              <h4>
-                <AlertTriangle aria-hidden="true" size={16} />{" "}
-                {rejected.length === 1 ? "1 file wasn't added" : `${rejected.length} files weren't added`}
-              </h4>
-              {/* Keyed by position, not by the sentence: two files can
-                  fail the same way and produce identical text, which as a
-                  key is a duplicate. The list is replaced whole on every
-                  add and never reordered, so position is a stable
-                  identity here. */}
-              <ul className="warncard-list">
-                {rejected.map((reason, index) => (
-                  <li key={index}>{reason}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
           <div className="filecard">
             <table className="data-table filetable">
               <thead>
                 <tr>
-                  <th scope="col">
-                    <span className="sr-only">Include</span>
-                  </th>
                   <th scope="col">Document</th>
                   <th scope="col">Type</th>
-                  <th scope="col">State</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className={r.included ? undefined : "is-excluded"}>
-                    <td>
-                      <input type="checkbox" aria-label={`Include ${r.name}`} checked={r.included} onChange={() => toggle(r.id)} />
-                    </td>
+                  <tr key={r.id}>
                     <th scope="row" className="upload-name">
                       <FileText aria-hidden="true" size={16} className="filetable-icon" />
                       <span>
@@ -454,7 +302,6 @@ export default function ConfirmDrawings({ store }) {
                         id={`confirm-type-${r.id}`}
                         className="field field--compact"
                         value={r.docType}
-                        disabled={!r.included}
                         onChange={(e) => setType(r.id, e.target.value)}
                       >
                         {DOC_TYPES.map((type) => (
@@ -463,11 +310,6 @@ export default function ConfirmDrawings({ store }) {
                           </option>
                         ))}
                       </select>
-                    </td>
-                    <td>
-                      <span className={r.included ? "upload-status upload-status--ready" : "upload-status"}>
-                        {r.included ? "Included" : "Left out"}
-                      </span>
                     </td>
                   </tr>
                 ))}
@@ -511,9 +353,7 @@ export default function ConfirmDrawings({ store }) {
               <span className="tabular">{attentionCount} need attention</span>
             </span>
           ) : null}
-          <span className="tabular">
-            {kept.length} of {rows.length} documents included
-          </span>
+          <span className="tabular">{rows.length} {rows.length === 1 ? "document" : "documents"}</span>
         </div>
         <div className="workspace-footer-actions">
           <Link className="btn" to={`/projects/${projectId}/documents`}>

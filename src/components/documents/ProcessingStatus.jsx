@@ -109,9 +109,11 @@ export default function ProcessingStatus({ store }) {
       }
 
       let docs;
+      let listFailed = false;
       try {
         docs = await store.listDocuments(projectId);
       } catch {
+        listFailed = true;
         docs = [];
       }
       if (!alive) return;
@@ -133,6 +135,9 @@ export default function ProcessingStatus({ store }) {
           let run = engineRuns.get(projectId);
           if (!run) {
             run = (async () => {
+              // Holds all N documents' bytes in memory at once -- fine at
+              // interim scale, but B2 removes this whole round trip rather
+              // than needing to stream it.
               const uploaded = await Promise.all(
                 docs.map(async (d) => ({ file: await store.fetchDocumentFile(d), docType: d.docType })),
               );
@@ -162,8 +167,14 @@ export default function ProcessingStatus({ store }) {
         return;
       }
 
-      // No documents — there is nothing to process.
-      setError("No documents have been uploaded for this project yet. Upload a drawing set to start a takeoff.");
+      // A failed list is not the same fact as an empty one -- telling an
+      // estimator with forty documents to "upload a drawing set" because
+      // the request to list them failed is actively misleading.
+      setError(
+        listFailed
+          ? "Couldn't load this project's documents. Check the connection and try again."
+          : "No documents have been uploaded for this project yet. Upload a drawing set to start a takeoff.",
+      );
       setMode("error");
     })();
 

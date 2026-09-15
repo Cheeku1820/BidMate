@@ -35,9 +35,9 @@
    earlier mount -- an estimator can add or remove a document between
    opening this screen and pressing the button, and the re-run has to
    reflect the project's actual current documents, not a stale snapshot.
-   A project with no documents (never uploaded, or the interim engine
-   path aside -- B2 removes this whole round trip) is handled plainly
-   rather than surfacing as an obscure fetch failure.
+   A project with no documents is handled plainly rather than surfacing
+   as an obscure fetch failure. This whole round trip is interim -- B2
+   removes it once the engine sits behind the API.
    ============================================================ */
 
 import { useCallback, useEffect, useState } from "react";
@@ -269,6 +269,9 @@ export default function NotesWorkspace() {
         );
         return;
       }
+      // Holds all N documents' bytes in memory at once -- fine at interim
+      // scale, but B2 removes this whole round trip rather than needing
+      // to stream it.
       const uploaded = await Promise.all(
         docs.map(async (d) => ({ file: await store.fetchDocumentFile(d), docType: d.docType })),
       );

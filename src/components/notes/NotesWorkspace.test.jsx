@@ -249,6 +249,10 @@ describe("NotesWorkspace", () => {
       await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
       expect(await screen.findByText(/3 approved items were left unchanged/i)).toBeInTheDocument();
       expect(screen.getByText(/7 items reclassified/i)).toBeInTheDocument();
+      // The bytes fetched back are the project's actual listed document,
+      // not some other id -- store.listDocuments and store.fetchDocumentFile
+      // are wired to the same document.
+      expect(store.fetchDocumentFile).toHaveBeenCalledWith(expect.objectContaining({ id: "d1" }));
     });
 
     it("reports a failed re-run with a recovery action", async () => {

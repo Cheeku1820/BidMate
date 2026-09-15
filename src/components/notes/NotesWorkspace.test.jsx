@@ -25,7 +25,6 @@ const storedDoc = (over = {}) => ({
   filename: "e1.1.pdf",
   docType: "Drawings",
   sizeBytes: 1,
-  sha256: "a",
   status: "uploaded",
   error: "",
   createdAt: "2026-08-28T10:00:00Z",

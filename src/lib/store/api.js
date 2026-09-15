@@ -401,7 +401,10 @@ export function createApiStore() {
         reject({ code: "request_failed", message: `The upload failed (status ${xhr.status}). Try again.`, status: xhr.status });
       };
       xhr.onerror = () => reject({ code: "network", message: "Couldn't reach the server. Check the connection and try again.", status: 0 });
-      xhr.ontimeout = () => reject({ code: "network", message: "Couldn't reach the server. Check the connection and try again.", status: 0 });
+      // No xhr.timeout, and so no ontimeout handler: a 96 MB drawing set
+      // on a slow office connection takes as long as it takes, and a
+      // deadline chosen here would be the one that kills the upload the
+      // estimator was watching succeed. The estimator can abort it.
       xhr.onabort = () => reject({ code: "aborted", message: "Upload cancelled.", status: 0 });
       xhr.send(form);
     });

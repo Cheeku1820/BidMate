@@ -2,11 +2,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createApiStore } from "./api.js";
 import { mapDocument } from "./api-mapping.js";
 
-const raw = { id: "d1", project_id: "p1", filename: "E-set.pdf", doc_type: "Drawings", size_bytes: 10, sha256: "ab", status: "uploaded", error: "", created_at: "2026-09-15T00:00:00Z" };
+const raw = { id: "d1", project_id: "p1", filename: "E-set.pdf", doc_type: "Drawings", size_bytes: 10, status: "uploaded", error: "", created_at: "2026-09-15T00:00:00Z" };
 
 describe("mapDocument", () => {
   test("renames to camelCase and keeps the closed-set values", () => {
-    expect(mapDocument(raw)).toEqual({ id: "d1", projectId: "p1", filename: "E-set.pdf", docType: "Drawings", sizeBytes: 10, sha256: "ab", status: "uploaded", error: "", createdAt: "2026-09-15T00:00:00Z" });
+    expect(mapDocument(raw)).toEqual({ id: "d1", projectId: "p1", filename: "E-set.pdf", docType: "Drawings", sizeBytes: 10, status: "uploaded", error: "", createdAt: "2026-09-15T00:00:00Z" });
   });
 });
 
@@ -56,10 +56,10 @@ describe("uploadDocument", () => {
     await expect(p).rejects.toMatchObject({ code: "network" });
   });
 
-  test("rejects readably on a timeout, the same as a network error", async () => {
-    const p = store.uploadDocument("p1", new File([1], "x.pdf", { type: "application/pdf" }), "Drawings");
-    FakeXHR.last.ontimeout();
-    await expect(p).rejects.toMatchObject({ code: "network" });
+  test("sets no deadline on the request -- a large set on a slow connection takes as long as it takes", async () => {
+    store.uploadDocument("p1", new File([1], "x.pdf", { type: "application/pdf" }), "Drawings");
+    expect(FakeXHR.last.timeout).toBeUndefined();
+    expect(FakeXHR.last.ontimeout).toBeUndefined();
   });
 
   test("abort() cancels the underlying request and rejects as aborted, not a failure", async () => {

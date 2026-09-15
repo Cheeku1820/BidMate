@@ -27,7 +27,6 @@ function docFrom(file, docType) {
     filename: file.name,
     docType,
     sizeBytes: file.size,
-    sha256: `sha-${nextId}`,
     status: "uploaded",
     error: "",
     createdAt: "2026-09-15T00:00:00Z",

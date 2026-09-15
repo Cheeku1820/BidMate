@@ -281,7 +281,6 @@ export function mapDocument(raw) {
     filename: raw.filename,
     docType: raw.doc_type,
     sizeBytes: Number(raw.size_bytes ?? 0),
-    sha256: raw.sha256,
     status: raw.status,
     error: raw.error ?? "",
     createdAt: raw.created_at,

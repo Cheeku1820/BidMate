@@ -135,15 +135,26 @@ src/
       NoteForm.jsx             add/edit, with the context/reference control
       ApplyNotesBanner.jsx     offers the re-run when context notes are pending
       noteVocabulary.js        a note's own words, distinct from the review labels
+    documents/                 the intake path — upload (C), confirm (D), processing (E)
+      UploadDocuments.jsx      screen C as a view onto the API: uploads persist, progress is real
+      ConfirmDrawings.jsx      screen D: the set as stored, types editable before processing
+      ProcessingStatus.jsx     screen E: feeds the engine from stored documents
 ```
 
-The two API modules behind that screen:
+The two API modules behind the notes screen, and the package behind the documents screens:
 
 ```
 api/app/takeoff/
   notes.py                     note CRUD, audited through commit(), not undoable
   reprocess.py                 the approval-preserving merge behind a re-run
+api/app/documents/
+  blobstore.py                 the storage boundary — S3BlobStore over MinIO, MemoryBlobStore for tests
+  service.py                   store / list / retype / delete / stream, each audited, none undoable
+  router.py                    the five document routes, org-scoped through the project they belong to
+  schemas.py                   the wire shape and the closed sets of document types and statuses
 ```
+
+Uploaded files are stored in MinIO (S3 in deployment) under a key built from the owning org and project, with one row per upload in the `documents` table carrying its hash and storage key. The API streams and hashes a file; it never opens one. Design in [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md).
 
 If you open this repo in Claude Code, [`CLAUDE.md`](CLAUDE.md) loads automatically and carries the design context — status vocabulary, the rules that are easy to break, and the decisions still open.
 
@@ -168,6 +179,8 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 - **Export produces a CSV, not yet a real Excel workbook.**
 - **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. Labor and Material pricing are now built and routed, each carrying a pricing basis note. See [`ROADMAP.md`](ROADMAP.md).
 - **Applying a note is audited but not undoable.** The re-run lands as one attributable entry in the action log; there is no single press that puts the takeoff back. Undo still covers approve, reject, edit, delete, bulk approve, and scale, across a re-run.
+- **An upload cancelled after its body was sent may still land.** Removing a row mid-upload aborts the request, but once the last byte has left the browser the server may finish storing the document before the abort reaches it. If that happens the document appears on the next load, "Uploaded", and can be removed like any other.
+- **Nothing reaps stored files.** Deleting a document removes its file, but there is no retention policy or sweep: a file whose row was lost, or every file under an archived project, stays in storage indefinitely. See [`ROADMAP.md`](ROADMAP.md) §2.2.
 
 ---
 

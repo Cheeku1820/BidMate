@@ -76,15 +76,26 @@ src/
       NoteForm.jsx           add/edit, with the context/reference control
       ApplyNotesBanner.jsx   offers the re-run when context notes are pending
       noteVocabulary.js      a note's own words — deliberately not the four review labels
+    documents/               the intake path: upload (C), confirm (D), processing (E)
+      UploadDocuments.jsx    screen C as a view onto the API — uploads persist, progress is real
+      ConfirmDrawings.jsx    screen D — the set as stored, types editable before processing
+      ProcessingStatus.jsx   screen E — feeds the engine from stored documents
 ```
 
-On the API side, two modules carry that feature:
+On the API side, two modules carry notes, and one package carries documents:
 
 ```
 api/app/takeoff/
   notes.py                   note CRUD, audited through commit(), not undoable
   reprocess.py               the approval-preserving merge behind a re-run
+api/app/documents/
+  blobstore.py               the storage boundary: S3BlobStore over MinIO, MemoryBlobStore for tests
+  service.py                 store / list / retype / delete / stream, each audited, none undoable
+  router.py                  the five document routes, org-scoped through load_document → load_project
+  schemas.py                 DocumentOut and the closed sets DOC_TYPES / DOC_STATUSES
 ```
+
+Uploaded files live in object storage (MinIO locally, S3 in deployment), under a key built from the owning org and project — never from anything the client sent. The `documents` table (migration 0019; `status` constrained to its four values by 0020) holds one row per upload with its hash and storage key. The API streams and hashes an upload; it never opens one — that is the worker's job (B2), because a PDF parser is a remote-code-execution surface and the API is not where untrusted bytes get parsed. Spec: [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md).
 
 Sheet space is a 1000 x 750 unit coordinate system. Item positions are in sheet units, so markers land on real plan geometry.
 

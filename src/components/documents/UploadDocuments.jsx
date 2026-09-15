@@ -80,26 +80,66 @@ export default function UploadDocuments({ store }) {
   const [confirming, setConfirming] = useState(null); // a row awaiting delete confirmation
   const [dragging, setDragging] = useState(false);
   const [tab, setTab] = useState("all");
+  const [loadError, setLoadError] = useState(false);
+
+  // `rowsRef` mirrors `rows` synchronously. A couple of call sites need
+  // to read the *current* row set to decide whether a side effect
+  // (writing a type back through the API) should fire, and a functional
+  // setRows updater isn't a safe place to do that read -- it has to stay
+  // pure (React can invoke it more than once, and defers it under
+  // concurrent updates), so the decision can't live inside one. Every
+  // update to `rows` goes through `setRowsSafe` below, which keeps this
+  // ref and the state in lockstep.
+  const rowsRef = useRef([]);
+  const setRowsSafe = (updater) => {
+    const next = typeof updater === "function" ? updater(rowsRef.current) : updater;
+    rowsRef.current = next;
+    setRows(next);
+  };
+
+  // In-flight upload promises, by row key, so a remove can cancel the
+  // actual request -- not just stop watching it. Without this, removing
+  // a row mid-upload only forgets it locally; the XHR keeps going, the
+  // server persists the document, and it reappears "Uploaded" on the
+  // next reload with no way the estimator asked for it to stay.
+  const inFlightRef = useRef(new Map());
+
+  // Sticks at false once the component unmounts, so a `listDocuments`
+  // resolving (or rejecting) after that point is a no-op rather than a
+  // set-state-after-unmount warning or a stale overwrite.
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
+
+  const loadDocuments = () => {
+    setLoadError(false);
+    store
+      .listDocuments(projectId)
+      .then((docs) => {
+        if (!aliveRef.current) return;
+        // Merge rather than replace: this fetch can resolve after the
+        // estimator has already dropped a file, and a local row that
+        // hasn't reached the server yet (uploading, or one that never
+        // will -- duplicate, unsupported, failed) must survive the mount
+        // list landing, not be clobbered by it.
+        const seeded = docs.map((d) => ({ ...d, state: "ready", progress: 100, key: d.id }));
+        setRowsSafe((prev) => [...seeded, ...prev.filter((r) => !seeded.some((s) => s.key === r.key))]);
+      })
+      .catch(() => {
+        if (!aliveRef.current) return;
+        // Silence here would read as "no documents yet" -- an empty
+        // project and a project this screen couldn't reach must never
+        // look the same.
+        setLoadError(true);
+      });
+  };
 
   useEffect(() => {
-    let live = true;
-    store.listDocuments(projectId).then((docs) => {
-      if (!live) return;
-      // Merge rather than replace: this fetch can resolve after the
-      // estimator has already dropped a file, and a local row that
-      // hasn't reached the server yet (uploading, or one that never
-      // will -- duplicate, unsupported, failed) must survive the mount
-      // list landing, not be clobbered by it.
-      const seeded = docs.map((d) => ({ ...d, state: "ready", progress: 100, key: d.id }));
-      setRows((prev) => [...seeded, ...prev.filter((r) => !seeded.some((s) => s.key === r.key))]);
-    });
-    return () => {
-      live = false;
-    };
+    loadDocuments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, projectId]);
 
   const update = (key, patch) =>
-    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+    setRowsSafe((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
 
   const addFiles = (fileList) => {
     for (const file of Array.from(fileList)) {
@@ -107,7 +147,7 @@ export default function UploadDocuments({ store }) {
       const isPdf = file.name.toLowerCase().endsWith(".pdf") && file.type === "application/pdf";
 
       if (!isPdf) {
-        setRows((prev) => [
+        setRowsSafe((prev) => [
           ...prev,
           {
             key,
@@ -123,7 +163,7 @@ export default function UploadDocuments({ store }) {
 
       const detected = detectDocTypeInfo(file.name);
       const docType = detected.type;
-      setRows((prev) => [
+      setRowsSafe((prev) => [
         ...prev,
         {
           key,
@@ -136,32 +176,41 @@ export default function UploadDocuments({ store }) {
         },
       ]);
 
-      store
-        .uploadDocument(projectId, file, docType, { onProgress: (p) => update(key, { progress: p }) })
+      const uploadPromise = store.uploadDocument(projectId, file, docType, {
+        onProgress: (p) => update(key, { progress: p }),
+      });
+      // Kept so a remove mid-upload can cancel the actual request. See
+      // requestRemove.
+      inFlightRef.current.set(key, uploadPromise);
+
+      uploadPromise
         .then((doc) => {
-          setRows((prev) => prev.map((r) => (r.key === key ? { ...doc, state: "ready", progress: 100, key: doc.id } : r)));
+          inFlightRef.current.delete(key);
+          setRowsSafe((prev) => prev.map((r) => (r.key === key ? { ...doc, state: "ready", progress: 100, key: doc.id } : r)));
           // A filename that wasn't informative gets a content-based
           // second look, applied to the persisted row -- but only if the
           // estimator hasn't since set the type by hand.
           if (detected.source === "default") {
             classifyDoc(file).then((type) => {
               if (!type) return;
-              // The state updater must stay pure -- StrictMode invokes it
-              // twice in development -- so the decision of whether to
-              // write through is captured here and the API call happens
-              // once, after the dispatch, rather than inside it.
-              let stillAuto = false;
-              setRows((prev) => {
-                const row = prev.find((r) => r.key === doc.id);
-                if (!row || !row.typeAuto) return prev;
-                stillAuto = true;
-                return prev.map((r) => (r.key === doc.id ? { ...r, docType: type } : r));
-              });
-              if (stillAuto) store.setDocumentType(doc.id, type);
+              // Read the live mirror synchronously rather than deciding
+              // inside a setRows updater -- an updater has to stay pure
+              // and isn't guaranteed to run eagerly, so it's not a safe
+              // place to gate a side effect. rowsRef is always current
+              // because every row update goes through setRowsSafe.
+              const row = rowsRef.current.find((r) => r.key === doc.id);
+              if (!row || !row.typeAuto) return;
+              store.setDocumentType(doc.id, type);
+              setRowsSafe((prev) => prev.map((r) => (r.key === doc.id ? { ...r, docType: type } : r)));
             });
           }
         })
         .catch((err) => {
+          inFlightRef.current.delete(key);
+          // A cancelled upload already has its row removed locally
+          // (requestRemove did that synchronously) -- there is nothing
+          // left to surface the failure on.
+          if (err.code === "aborted") return;
           const state = err.code === "duplicate_document" ? "duplicate" : err.code === "unsupported_document" ? "unsupported" : "failed";
           update(key, { state, message: err.message });
         });
@@ -174,26 +223,52 @@ export default function UploadDocuments({ store }) {
     if (event.dataTransfer?.files?.length) addFiles(event.dataTransfer.files);
   };
 
-  // A row that never reached the server has nothing to confirm with --
-  // it's removed locally, no dialog. A persisted row asks first.
+  // A row with no server id has nothing to confirm with -- it never
+  // reached the server (duplicate / unsupported / failed), or it's still
+  // in flight, in which case removing it aborts the upload outright
+  // rather than just forgetting about it locally while the request (and
+  // whatever the server does with it) keeps going. A persisted row --
+  // any row that does have an id, including one a retype or a delete
+  // attempt later failed on -- asks first.
   const requestRemove = (row) => {
-    if (row.state === "ready") setConfirming(row);
-    else setRows((prev) => prev.filter((r) => r.key !== row.key));
+    if (row.id) {
+      setConfirming(row);
+      return;
+    }
+    if (row.state === "uploading") {
+      inFlightRef.current.get(row.key)?.abort?.();
+      inFlightRef.current.delete(row.key);
+    }
+    setRowsSafe((prev) => prev.filter((r) => r.key !== row.key));
   };
 
   const confirmRemove = async () => {
     const row = confirming;
     setConfirming(null);
-    await store.deleteDocument(row.id);
-    setRows((prev) => prev.filter((r) => r.key !== row.key));
+    try {
+      await store.deleteDocument(row.id);
+      setRowsSafe((prev) => prev.filter((r) => r.key !== row.key));
+    } catch (err) {
+      // The row stays -- silently doing nothing would look like the
+      // remove worked. The message reuses the row's own state column,
+      // same as a failed upload or a failed retype.
+      update(row.key, { state: "failed", message: err.message });
+    }
   };
 
   // A manual change turns off the "detected" hint -- the estimator owns
   // the value now. A persisted row writes through the API; a row still
-  // uploading just changes the type it will finish uploading with.
+  // uploading just changes the type it will finish uploading with, since
+  // there's nothing to PATCH yet. A failed write-through reverts the
+  // select rather than leaving it showing a type the server never
+  // accepted, and surfaces the server's own message on the row.
   const setDocType = (row, docType) => {
+    const previous = row.docType;
     update(row.key, { docType, typeAuto: false });
-    if (row.state === "ready") store.setDocumentType(row.id, docType);
+    if (row.state !== "ready") return;
+    store.setDocumentType(row.id, docType).catch((err) => {
+      update(row.key, { docType: previous, state: "failed", message: err.message });
+    });
   };
 
   // Derived from `rows`, never from the filtered view. See the header.
@@ -274,12 +349,21 @@ export default function UploadDocuments({ store }) {
 
   return (
     <>
-      {/* The primary action lives once, in the footer -- unlike
-          ConfirmDrawings' matching top-bar-plus-footer pair, this screen
-          keeps a single "Review detected drawings" control so its
-          accessible name stays unambiguous for anyone navigating by
-          role and name, keyboard or screen reader alike. */}
-      <AppTopBar title="Documents" breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}>
+      {/* Same "Review detected drawings" control as the footer's, matching
+          ConfirmDrawings' sticky-top-bar-plus-footer pair -- the top bar
+          keeps the next step reachable without scrolling down to a long
+          document list. Two controls sharing one accessible name is
+          expected here, same as ConfirmDrawings.test.jsx: query with
+          getAllByRole and check every match. */}
+      <AppTopBar
+        title="Documents"
+        breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}
+        primaryAction={
+          <button type="button" className="btn btn--primary" disabled={!canContinue} onClick={reviewDetected}>
+            Review detected drawings
+          </button>
+        }
+      >
         <button type="button" className="btn" onClick={openPicker}>
           Upload files
         </button>
@@ -289,6 +373,18 @@ export default function UploadDocuments({ store }) {
 
       <div className="workspace-body">
         <div className="page">
+          {loadError ? (
+            <div className="warncard warncard--missing" role="alert">
+              <h4>
+                <AlertTriangle aria-hidden="true" size={16} /> Couldn't load documents
+              </h4>
+              <p>Couldn't load this project's documents. Check the connection and try again.</p>
+              <button type="button" className="btn" onClick={loadDocuments}>
+                Try again
+              </button>
+            </div>
+          ) : null}
+
           {/* role="group" + aria-pressed, matching ProjectsFilters.jsx's
               chips. Not role="tab": these filter one table in place, and
               the tab pattern would promise a tabpanel relationship that

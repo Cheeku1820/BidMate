@@ -68,7 +68,10 @@ describe("UploadDocuments", () => {
     drop([pdf("second.pdf")]);
     expect(await screen.findByText(/same file as first.pdf/)).toBeInTheDocument();
     expect(screen.queryByText("Uploaded")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /review detected drawings/i })).toBeDisabled();
+    // The top bar and the footer both carry a "Review detected drawings"
+    // control (matching ConfirmDrawings' pair) -- both have to reflect
+    // the block.
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeDisabled());
   });
 
   it("refuses a non-PDF before calling the API", async () => {
@@ -106,14 +109,89 @@ describe("UploadDocuments", () => {
     const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc({ docType: "Specifications" })]) });
     renderUpload(store);
     await screen.findByText("E-set.pdf");
-    expect(screen.getByRole("button", { name: /review detected drawings/i })).toBeDisabled();
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeDisabled());
   });
 
   it("continues to confirm when a Drawings document exists", async () => {
     const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]) });
     renderUpload(store);
     await screen.findByText("E-set.pdf");
-    fireEvent.click(screen.getByRole("button", { name: /review detected drawings/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /review detected drawings/i })[0]);
     expect(await screen.findByText("confirm screen")).toBeInTheDocument();
+  });
+
+  it("resolves a drop to Uploaded, swapping the row's key to the server id and enabling the primary action", async () => {
+    const store = makeStore({
+      uploadDocument: vi.fn().mockResolvedValue(doc()),
+    });
+    renderUpload(store);
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeDisabled());
+    drop([pdf("E-set.pdf")]);
+    await waitFor(() => expect(screen.getByText("Uploaded")).toBeInTheDocument());
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
+    // The row now carries the server's id -- removing it asks first,
+    // same as a row that arrived from the initial list.
+    fireEvent.click(screen.getByRole("button", { name: /remove E-set.pdf/i }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("aborts the in-flight upload when removed, and a later resolve does not resurrect the row", async () => {
+    let resolveUpload;
+    const abort = vi.fn();
+    const store = makeStore({
+      uploadDocument: vi.fn(() => {
+        const p = new Promise((resolve) => { resolveUpload = resolve; });
+        p.abort = abort;
+        return p;
+      }),
+    });
+    renderUpload(store);
+    drop([pdf("E-set.pdf")]);
+    expect(await screen.findByText(/Uploading/)).toBeInTheDocument();
+    // No dialog for a row that hasn't reached the server yet.
+    fireEvent.click(screen.getByRole("button", { name: /remove E-set.pdf/i }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("E-set.pdf")).not.toBeInTheDocument();
+    expect(abort).toHaveBeenCalled();
+    // The server finishes anyway (the abort raced it) -- the row must
+    // not come back.
+    await act(async () => { resolveUpload(doc()); });
+    expect(screen.queryByText("E-set.pdf")).not.toBeInTheDocument();
+  });
+
+  it("shows a recovery message when the initial list fails to load, with a working retry", async () => {
+    const listDocuments = vi.fn().mockRejectedValueOnce(new Error("network")).mockResolvedValueOnce([doc()]);
+    const store = makeStore({ listDocuments });
+    renderUpload(store);
+    expect(await screen.findByText(/couldn't load this project's documents/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    expect(await screen.findByText("E-set.pdf")).toBeInTheDocument();
+    expect(listDocuments).toHaveBeenCalledTimes(2);
+  });
+
+  it("reverts the type and surfaces the server's message when a retype fails", async () => {
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([doc()]),
+      setDocumentType: vi.fn().mockRejectedValue({ code: "request_failed", message: "Couldn't change the type. Try again." }),
+    });
+    renderUpload(store);
+    await screen.findByText("E-set.pdf");
+    fireEvent.change(screen.getByLabelText(/type for E-set.pdf/i), { target: { value: "Addendum" } });
+    expect(await screen.findByText("Couldn't change the type. Try again.")).toBeInTheDocument();
+    expect(screen.getByLabelText(/type for E-set.pdf/i)).toHaveValue("Drawings");
+  });
+
+  it("keeps the row and surfaces the server's message when a delete fails", async () => {
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([doc()]),
+      deleteDocument: vi.fn().mockRejectedValue({ code: "request_failed", message: "Couldn't remove this document. Try again." }),
+    });
+    renderUpload(store);
+    await screen.findByText("E-set.pdf");
+    fireEvent.click(screen.getByRole("button", { name: /remove E-set.pdf/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^remove$/i }));
+    expect(await screen.findByText("Couldn't remove this document. Try again.")).toBeInTheDocument();
+    expect(screen.getByText("E-set.pdf")).toBeInTheDocument();
   });
 });

@@ -371,10 +371,17 @@ export function createApiStore() {
   /** Multipart upload over XMLHttpRequest rather than fetch, because only
    *  XHR reports upload progress -- and a 96 MB drawing set with no
    *  progress bar reads as a hung page. Rejects with the same
-   *  {code, message} shape request() produces, plus the status. */
+   *  {code, message} shape request() produces, plus the status.
+   *
+   *  The returned promise also carries an `abort()` method -- removing an
+   *  uploading row has to cancel the in-flight request, not just stop
+   *  watching it, or the server persists a document the estimator never
+   *  sees land. `abort()` rejects with `{code: "aborted", ...}` so the
+   *  caller can tell "the estimator cancelled this" apart from every
+   *  other failure and skip re-surfacing it. */
   function uploadDocument(projectId, file, docType, { onProgress } = {}) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
+    const xhr = new XMLHttpRequest();
+    const promise = new Promise((resolve, reject) => {
       const form = new FormData();
       form.append("file", file);
       form.append("doc_type", docType || "Other");
@@ -394,8 +401,12 @@ export function createApiStore() {
         reject({ code: "request_failed", message: `The upload failed (status ${xhr.status}). Try again.`, status: xhr.status });
       };
       xhr.onerror = () => reject({ code: "network", message: "Couldn't reach the server. Check the connection and try again.", status: 0 });
+      xhr.ontimeout = () => reject({ code: "network", message: "Couldn't reach the server. Check the connection and try again.", status: 0 });
+      xhr.onabort = () => reject({ code: "aborted", message: "Upload cancelled.", status: 0 });
       xhr.send(form);
     });
+    promise.abort = () => xhr.abort();
+    return promise;
   }
 
   async function setDocumentType(documentId, docType) {

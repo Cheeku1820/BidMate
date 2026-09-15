@@ -14,10 +14,13 @@ describe("mapDocument", () => {
  *  fire progress and completion by hand. */
 class FakeXHR {
   static last = null;
-  constructor() { this.upload = {}; this.status = 0; this.responseText = ""; FakeXHR.last = this; }
+  constructor() { this.upload = {}; this.status = 0; this.responseText = ""; this.aborted = false; FakeXHR.last = this; }
   open(method, url) { this.method = method; this.url = url; }
   send(form) { this.form = form; }
   setRequestHeader() {}
+  // A real XHR firing onabort in response to abort() is what lets
+  // uploadDocument's promise actually reject when cancelled.
+  abort() { this.aborted = true; if (this.onabort) this.onabort(); }
 }
 
 describe("uploadDocument", () => {
@@ -51,6 +54,20 @@ describe("uploadDocument", () => {
     const p = store.uploadDocument("p1", new File([1], "x.pdf", { type: "application/pdf" }), "Drawings");
     FakeXHR.last.onerror();
     await expect(p).rejects.toMatchObject({ code: "network" });
+  });
+
+  test("rejects readably on a timeout, the same as a network error", async () => {
+    const p = store.uploadDocument("p1", new File([1], "x.pdf", { type: "application/pdf" }), "Drawings");
+    FakeXHR.last.ontimeout();
+    await expect(p).rejects.toMatchObject({ code: "network" });
+  });
+
+  test("abort() cancels the underlying request and rejects as aborted, not a failure", async () => {
+    const p = store.uploadDocument("p1", new File([1], "x.pdf", { type: "application/pdf" }), "Drawings");
+    expect(typeof p.abort).toBe("function");
+    p.abort();
+    expect(FakeXHR.last.aborted).toBe(true);
+    await expect(p).rejects.toMatchObject({ code: "aborted" });
   });
 });
 

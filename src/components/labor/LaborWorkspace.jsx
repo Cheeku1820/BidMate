@@ -1,6 +1,6 @@
 /* ============================================================
    LaborWorkspace.jsx — the Labor workspace
-   (docs/superpowers/specs/2026-08-31-labor-material-pricing-design.md).
+   (docs/specs/labor-material-pricing.md).
 
    Labor rows are not part of the review snapshot useReviewStore polls
    -- Task 9's getLaborRows/setLaborLine are a separate surface, exactly

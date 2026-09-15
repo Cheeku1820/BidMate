@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-13
 **Status:** Proposed; corpus facts and estimates updated 2026-09-13 after the eight bid folders were measured. This is a roadmap-level plan. Each phase below needs its own executable, task-level plan before anyone builds it.
-**Supersedes for sequencing:** `2026-08-26-full-mvp.md` (its keystone — injecting engine JSON into a localStorage seed store — is gone; the api store replaced it). `ROADMAP.md` and `BUILD-STAGES.md` remain the inventory; this document is what to do with it given what the code actually does today and what the seven real bids give us.
+**Supersedes for sequencing:** `docs/archive/full-mvp.md` (its keystone — injecting engine JSON into a localStorage seed store — is gone; the api store replaced it). `ROADMAP.md` and `BUILD-STAGES.md` remain the inventory; this document is what to do with it given what the code actually does today and what the seven real bids give us.
 
 ---
 
@@ -24,7 +24,7 @@ Counting is text-tag based (`^[A-Z]{1,3}\d{0,2}$` tokens standing alone in the t
 **3b. The corpus is smaller on the pricing side than on the drawings side.** Four folders carry the estimator's Excel workbook (FedEx, Gerber, Pulte Sagebriar, TSC Nutrition); four do not (Kittles Saxony, United Utility, TSC Harrison, Unalaska). Two folders — Pulte Sagebriar and TSC Nutrition — carry all three of drawings, workbook and the estimator's own lighting counts, which makes them the only complete (drawings → approved takeoff) pairs and the anchors for every accuracy claim.
 
 **4. Pricing is a language-model guess or *Missing information*, and nothing else.**
-`llm.py` returns material cost, labor hours, a location labor rate and a material factor from one Claude call. Without a key, every labor and material row shows *Missing information* by design (`2026-08-31-labor-material-pricing-design.md`, "no hardcode"). The static `catalog.py` price book is eleven items with placeholder figures. There is no assembly expansion in the shipped path, no supplier quotes, no price-book import. The four Excel workbooks are a real firm's unit labor hours and unit material costs across ~150 line items — the first real pricing source this project has had.
+`llm.py` returns material cost, labor hours, a location labor rate and a material factor from one Claude call. Without a key, every labor and material row shows *Missing information* by design (`docs/specs/labor-material-pricing.md`, "no hardcode"). The static `catalog.py` price book is eleven items with placeholder figures. There is no assembly expansion in the shipped path, no supplier quotes, no price-book import. The four Excel workbooks are a real firm's unit labor hours and unit material costs across ~150 line items — the first real pricing source this project has had.
 
 ### 0.2 Screen by screen
 
@@ -86,7 +86,7 @@ The workbook is the answer key — line items, quantities, unit labor hours, uni
 
 **Do the original bid drawing sets exist?** Yes for five of eight, and they are vector with a text layer. That settles two things this plan previously hedged on:
 
-- `mvp-approach.md` §9's question — which tier real sets arrive in — has a measured answer: **5 vector, 3 raster**, across eight sets from one firm. Vector is the majority. Tier-B geometry clustering (4.2) is therefore the engine priority and has five fixtures instead of one; tier-C raster counting is needed for three sets and can follow.
+- `docs/product/mvp-approach.md` §9's question — which tier real sets arrive in — has a measured answer: **5 vector, 3 raster**, across eight sets from one firm. Vector is the majority. Tier-B geometry clustering (4.2) is therefore the engine priority and has five fixtures instead of one; tier-C raster counting is needed for three sets and can follow.
 - The benchmark corpus `ROADMAP.md` 3.4 depends on exists in embryo: **two complete (drawings → approved takeoff) pairs** — Pulte Sagebriar and TSC Nutrition — plus three vector sets with no answer key and two answer keys with no vector drawings. Every accuracy number in Phase C is anchored on the two complete pairs until more arrive.
 
 What remains to ask the contractor: the source drawings for FedEx and Gerber (they were printed from a GC's PDF set, which the contractor received), and workbooks for Kittles Saxony, United Utility and Harrison. Each one obtained turns a half-pair into a full one.
@@ -113,8 +113,8 @@ What remains to ask the contractor: the source drawings for FedEx and Gerber (th
 - [ ] **Backups, and one tested restore.** `BUILD-STAGES.md` stage 1 lists it; it does not exist.
 - [ ] **Move every remaining `localStorage` store to the API:** `settingsStore.js`, `CompanySettings` profile/markup/export tabs, all of `ProjectSettings`. With `company_actions` auditing the org-level ones. Until this is done, two reviewers see different markup settings.
 - [ ] **Delete the Instant estimate nav item and route.** It is a demo surface against the no-auth service and will be gone once Phase B lands the engine behind the API.
-- [ ] **Correct the docs.** `CLAUDE.md` and `README.md` say the screens are built; write down what §0 says instead. Retire `2026-08-26-full-mvp.md`.
-- [ ] **Decide the name.** The repo is `BidMate`, the package is `takeoff-review`, the UI says "blueprint." `mvp-approach.md` §9 flagged this as cheap now and expensive later. It is later.
+- [ ] **Correct the docs.** `CLAUDE.md` and `README.md` say the screens are built; write down what §0 says instead. Retire `docs/archive/full-mvp.md`.
+- [ ] **Decide the name.** The repo is `BidMate`, the package is `takeoff-review`, the UI says "blueprint." `docs/product/mvp-approach.md` §9 flagged this as cheap now and expensive later. It is later.
 
 **Done when:** a stranger with a URL and an account can sign in, create a project, and reach the (still empty) upload screen on a server that is not a laptop, and `main` is green.
 
@@ -146,7 +146,7 @@ Replaces browser → `:8100` with browser → API → storage → worker → sto
 The five-agent structure and its contracts are sound and stay. What changes is each agent's reach.
 
 ### 4.1 Documents
-- [ ] **The five sheet-fidelity defects first** — measured on Unalaska and recorded with reproductions in `docs/superpowers/specs/2026-09-08-engine-sheet-fidelity-findings.md` (worktree `fix/engine-sheet-fidelity`): non-deterministic sheet numbers across processes (`documents.py:83`, a one-line fix); schedules, legends and one-lines counted as device plans (106 of 303 placements); 14 pages collapsing to 11 sheet numbers; every title the fallback "Electrical plan"; no drawing-region detection. These are cheaper than anything else in this section and they gate whether the vector five can be measured at all.
+- [ ] **The five sheet-fidelity defects first** — measured on Unalaska and recorded with reproductions in `docs/archive/engine-sheet-fidelity-findings.md` (worktree `fix/engine-sheet-fidelity`): non-deterministic sheet numbers across processes (`documents.py:83`, a one-line fix); schedules, legends and one-lines counted as device plans (106 of 303 placements); 14 pages collapsing to 11 sheet numbers; every title the fallback "Electrical plan"; no drawing-region detection. These are cheaper than anything else in this section and they gate whether the vector five can be measured at all.
 - [ ] **Sheet numbering that survives real conventions.** `SHEET_ID` is `E\d.\d`; the FedEx set is `E-1.0`, `DC-1.0`; others use `E101`, `E-101`, `EP1.1`. Read from the title block, with a per-set learned pattern.
 - [ ] **Tier detection per page** (A/B/C) written to `document_pages.tier` and shown on screen D. Honest before processing, per `BUILD-STAGES.md`.
 - [ ] **Typed schedule and legend rows** (the five-agents-basic Task 2 direction) — extend to the **responsibility schedule** and **keyed notes**, which is where scope lives. On the FedEx set the answer to "is this ours" was in a table on E-1.0 and three notes on E-3.0.
@@ -155,7 +155,7 @@ The five-agent structure and its contracts are sound and stay. What changes is e
 ### 4.2 Counting
 - [ ] **Tier B geometry clustering** — the research task §11.1 of the agent-architecture spec names. Spatial grouping of exploded strokes into candidate symbols, signature, cluster, emit `DeviceCluster` with exact coordinates. Fixture: the five vector sets — Unalaska, Kittles Saxony, Pulte Sagebriar, TSC Nutrition, United Utility. **Tested, not trained**: asserted counts in CI from §1.2 task 4.
 - [ ] **Tier C raster counting** — needed for three of eight sets (FedEx, Gerber, Harrison), so it is real scope, but it follows tier B, which covers the majority. Template matching from legend crops is the honest first version. Until it exists, raster pages are *unreadable with a reason*, never a short list.
-- [ ] **Per-sheet coverage outcome** as a first-class record: read fully / read partially (which regions) / unreadable (why). Rendered on the canvas as the "not examined" overlay `mvp-approach.md` §2 calls the highest-value thing on the page.
+- [ ] **Per-sheet coverage outcome** as a first-class record: read fully / read partially (which regions) / unreadable (why). Rendered on the canvas as the "not examined" overlay `docs/product/mvp-approach.md` §2 calls the highest-value thing on the page.
 - [ ] **Measured runs** where geometry supports them: polylines against a confirmed scale, populating `Item.path`, so the dashed-line treatment on F finally has data. Homeruns without a route get the feet-per-device rule the estimator confirms (`Assemblies.FEET_PER_DEVICE` exists; surface it).
 
 ### 4.3 Classification
@@ -165,7 +165,7 @@ The five-agent structure and its contracts are sound and stay. What changes is e
 - [ ] **Per-agent eval sets frozen from the corpus**, run in CI: Documents (sheet ids, scales, schedule rows), Classification (tag → catalog id), warnings rubric (already in `api/eval/`).
 
 ### 4.4 Pricing
-- [ ] **Assembly expansion in the app path**, not just the CLI: device → box, plate, ring, whip, conductors, conduit per `assemblies.py`; waste applied to material only, inputs stored and product derived (`mvp-approach.md` §4.1).
+- [ ] **Assembly expansion in the app path**, not just the CLI: device → box, plate, ring, whip, conductors, conduit per `assemblies.py`; waste applied to material only, inputs stored and product derived (`docs/product/mvp-approach.md` §4.1).
 - [ ] **Firm price book as the default tier.** Seed company material prices and labor-hours overrides from the corpus; the LLM prices only what the book does not cover, and the row says which. The precedence chain in the pricing spec already supports this.
 - [ ] **A real pricing source contract** (regional feed or supplier pricing) — a business task, tracked here so the "Missing information on every row" default does not become permanent.
 
@@ -186,7 +186,7 @@ The five-agent structure and its contracts are sound and stay. What changes is e
 - [ ] **Bulk handling for density**: group the queue by warning type, resolve all instances of a symbol at once, filter to one warning class. A hospital sheet is four hundred items; the current panel is built for twelve.
 - [ ] **Rejected layer** distinct from deleted, visible and toggleable. Layer toggles remain client-only and never touch totals.
 - [ ] **Scope filter and column** (from 4.3) on F and G.
-- [ ] **Spreadsheet manners on G**: grouping by system/sheet/floor, column visibility, resize, tab/enter navigation, fill-down, multi-select — and no formula engine (`mvp-approach.md` §6.2).
+- [ ] **Spreadsheet manners on G**: grouping by system/sheet/floor, column visibility, resize, tab/enter navigation, fill-down, multi-select — and no formula engine (`docs/product/mvp-approach.md` §6.2).
 - [ ] **Spreadsheet import at project start**, using the `ESTIMATE` layout from the corpus as the first supported format. Imported rows carry provenance "from the estimator's file." Never re-import after review.
 - [ ] **Finish review on the server**: blocking evaluated in the API, the *Needs attention* acknowledgment recorded as an action with a name and time on it.
 - [ ] **Undo covers evidence and pricing on delete** (evidence image restoration is listed as a known limitation; the pricing-row half landed in #5).
@@ -220,7 +220,7 @@ The five-agent structure and its contracts are sound and stay. What changes is e
 - [ ] **Push, not poll.** WebSocket fan-out for item changes, presence, selection; reconnect and replay. `collab/` is the seam.
 - [ ] **Undo model — decide it.** The stack is shared and linear; person B can undo person A's approval. This is a product call listed in `CLAUDE.md`; it must be made before push sync lands, because the current model does not survive a real network.
 - [ ] **Roles and approval authority** — estimator, chief estimator, admin, read-only guest; whether a project can require a second approver. Invitations, deprovisioning, MFA. The whole status vocabulary rests on "a person confirmed it."
-- [ ] **Revisions and addenda** — document sets with active/superseded sheets; `Sheet.superseded` actually set; superseded sheets excluded inside the totals query; **addendum comparison** (vector diff of two revisions, pulled into stage 1 by `mvp-approach.md` §5); the conflict flow (carry-forward of approvals, mid-review swap surfacing) after the open decisions are made.
+- [ ] **Revisions and addenda** — document sets with active/superseded sheets; `Sheet.superseded` actually set; superseded sheets excluded inside the totals query; **addendum comparison** (vector diff of two revisions, pulled into stage 1 by `docs/product/mvp-approach.md` §5); the conflict flow (carry-forward of approvals, mid-review swap surfacing) after the open decisions are made.
 - [ ] **The conversation panel** — threads scoped to project/sheet/item, anchored messages in sheet space, proposals that flow through `commit()` as one attributed undoable action, questions rendered from the review queue rather than a second inbox. Built last on purpose: it is additive, and the structured paths it must never replace have to exist first. `conversation.py` already routes to typed proposals.
 - [ ] **Notifications** — processing complete, addendum landed, teammate approved your sheet.
 - [ ] **Observability** — error tracking, metrics, alerting, a status page; support impersonation written to the action log.

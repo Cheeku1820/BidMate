@@ -13,7 +13,7 @@ This is not a plan. It is the set of decisions a plan would be built from, with 
 
 **Decision.** Symbol detection and counting on vector drawings is a geometry problem, solved by reading the PDF's own drawing instructions. Language models are used for interpretation, not for localization.
 
-**This split is now an agent boundary, not just a method note.** Counting and Classification are separate agents with separate inputs, outputs, and ways of being measured — Counting is *tested* against known counts, Classification is *evaluated* against expected labels. Counting emits an unlabelled cluster and does not know what anything is. See [`superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md`](superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md) §2.
+**This split is now an agent boundary, not just a method note.** Counting and Classification are separate agents with separate inputs, outputs, and ways of being measured — Counting is *tested* against known counts, Classification is *evaluated* against expected labels. Counting emits an unlabelled cluster and does not know what anything is. See [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md) §2.
 
 **Why.** A vector PDF is not a picture. It is a list of operations — draw this line, place this symbol definition at this coordinate. Where a drafter's ninety-six receptacles survive as one definition and ninety-six placements, the coordinates are in the file and can be extracted deterministically.
 

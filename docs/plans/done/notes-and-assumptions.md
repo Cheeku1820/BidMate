@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI, SQLAlchemy 2.0 (`Mapped`/`mapped_column`), Alembic, Postgres, pytest. React 18, Vite, Vitest, React Testing Library.
 
-**Spec:** [`2026-08-28-notes-and-assumptions-design.md`](../specs/2026-08-28-notes-and-assumptions-design.md)
+**Spec:** [`docs/specs/notes-and-assumptions.md`](../specs/docs/specs/notes-and-assumptions.md)
 
 ## Global Constraints
 

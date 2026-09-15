@@ -3,7 +3,7 @@
 **Date:** 2026-08-28
 **Status:** approved in outline, ready for implementation planning
 **Scope:** stage 1 — see [`BUILD-STAGES.md`](../../../BUILD-STAGES.md)
-**Sequence:** spec 2 of 2. Spec 1 is [`2026-08-27-api-only-foundation-design.md`](2026-08-27-api-only-foundation-design.md), now implemented — the API is the only data source and the backend can receive a processed takeoff.
+**Sequence:** spec 2 of 2. Spec 1 is [`docs/specs/api-only-foundation.md`](docs/specs/api-only-foundation.md), now implemented — the API is the only data source and the backend can receive a processed takeoff.
 
 ---
 

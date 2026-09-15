@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, PyMuPDF (`pymupdf`), pytest, SQLAlchemy 2.0 + Alembic, React 18 + Vitest.
 
-**Spec:** `docs/superpowers/specs/2026-09-14-engine-sheet-fidelity-design.md`. Read §1.1 before Task 1 — it is the bug this whole plan exists for.
+**Spec:** `docs/specs/engine-sheet-fidelity.md`. Read §1.1 before Task 1 — it is the bug this whole plan exists for.
 
 ## Global Constraints
 

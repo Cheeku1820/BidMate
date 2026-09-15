@@ -3,7 +3,7 @@ and `collab.service.presence_signal` -- the seam `snapshot.version()` folds
 in so a colleague's remote selection can bump the ETag even though a
 heartbeat writes no `Action` row (task-11-brief.md, decision 3).
 
-The plan's three tests (docs/superpowers/plans/2026-08-07-backend-spine.md,
+The plan's three tests (docs/plans/done/backend-spine.md,
 Task 12) are a floor -- see task-12-brief.md for the five corrections
 applied here: migration 0006 not 0005, `presence_signal` must fingerprint
 the active *set* rather than `max(seen_at)` (a signal keyed on `seen_at`

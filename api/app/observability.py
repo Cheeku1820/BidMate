@@ -16,7 +16,7 @@ imports from it except `request_id_var`, used once by
 instead of trusting whatever header a caller sent.
 
 Corrections applied here relative to the plan's sketch
-(docs/superpowers/plans/2026-08-07-backend-spine.md, "Task 14") --
+(docs/plans/done/backend-spine.md, "Task 14") --
 see task-14-brief.md for the full reasoning:
 
 1. The sketch's `JsonFormatter` emitted only level/message/logger/

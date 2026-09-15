@@ -5,8 +5,8 @@
 
    Rows come from store.getLaborRows (Task 9's mapLaborRow), one row
    per takeoff item, resolved fresh on every read through the
-   precedence chain in docs/superpowers/specs/2026-08-31-labor-material-
-   pricing-design.md ("Precedence resolution"). hoursPerUnit/rate/
+   precedence chain in docs/specs/labor-material-pricing.md
+   ("Precedence resolution"). hoursPerUnit/rate/
    adjustedHours/laborCost are all independently nullable -- an item can
    have hours resolved and no rate yet, or neither -- so every numeric
    cell falls back to NONE rather than a fabricated 0.

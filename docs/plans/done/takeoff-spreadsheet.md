@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-From `CLAUDE.md`, `DESIGN.md`, `BUILD-STAGES.md`, and `docs/superpowers/specs/2026-08-16-bidmate-frontend-product-design.md`. Every task's requirements implicitly include this section.
+From `CLAUDE.md`, `DESIGN.md`, `BUILD-STAGES.md`, and `docs/product/frontend-product-design.md`. Every task's requirements implicitly include this section.
 
 - **The four review labels are fixed:** `Ready to review`, `Needs attention`, `Missing information`, `Estimator approved`. No fifth. *Missing information* blocks approval with no override; *Needs attention* may proceed only behind an explicit acknowledgment.
 - **Bulk approval applies only to *Ready to review* items.** Never to *Needs attention* or *Missing information*, no matter how convenient it looks. `approvableInBulk()` in `src/lib/rules.js` is the single client-side definition; the server enforces it independently.
@@ -56,7 +56,7 @@ Spec §10.1 lists thirteen columns. **Four of them have no field anywhere in the
 | Notes | `item.notes` | **Build** |
 | Last edited by | in the action log, not in the snapshot | **Defer** |
 
-**Why not render an empty column.** A "Waste factor" column that is always blank does not read as "not implemented" — it reads as "no waste applied," which is a fabricated fact about the estimator's own numbers. Waste additionally has a settled meaning in [`docs/mvp-approach.md`](../../mvp-approach.md) §4.1 (store the measured quantity and the factor separately; derive the purchase quantity at the point of use) that a column would prejudge. The same logic applies to the other three.
+**Why not render an empty column.** A "Waste factor" column that is always blank does not read as "not implemented" — it reads as "no waste applied," which is a fabricated fact about the estimator's own numbers. Waste additionally has a settled meaning in [`docs/product/mvp-approach.md`](../../docs/product/mvp-approach.md) §4.1 (store the measured quantity and the factor separately; derive the purchase quantity at the point of use) that a column would prejudge. The same logic applies to the other three.
 
 **Why "Last edited by" is deferred rather than built.** The `Action` table carries `actor_user_id` and `created_at`, so the data exists — but the snapshot does not expose it, and adding it means a per-item lookup with the N+1 risk that `api/tests/test_projects.py` already guards against elsewhere. Spec §10.2 also lists "Change history," which needs the same query. Both belong in one later slice, not bolted on here.
 
@@ -812,7 +812,7 @@ Expected: FAIL with `Failed to resolve import "./spreadsheetColumns.js"`.
    here rather than rendered empty: a blank cell under "Waste factor"
    does not read as "not built yet", it reads as "no waste applied",
    which is a fabricated fact about the estimator's own numbers. Waste
-   in particular has a settled meaning in docs/mvp-approach.md §4.1 --
+   in particular has a settled meaning in docs/product/mvp-approach.md §4.1 --
    store the measured quantity and the factor separately, derive the
    purchase quantity at the point of use -- that a column here would
    prejudge.

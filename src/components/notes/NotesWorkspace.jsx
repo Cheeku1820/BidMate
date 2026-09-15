@@ -1,6 +1,6 @@
 /* ============================================================
    NotesWorkspace.jsx — the notes-and-assumptions workspace
-   (docs/superpowers/sdd/2026-08-28-notes-and-assumptions).
+   (the notes-and-assumptions plan, docs/plans/done/notes-and-assumptions.md).
 
    Notes are not part of the review snapshot useReviewStore polls --
    Task 4's store methods (listNotes/createNote/updateNote/deleteNote)

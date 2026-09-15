@@ -1,5 +1,5 @@
 """Frozen eval set for grounded classification warnings
-(docs/superpowers/specs/2026-09-01-grounded-classification-warnings-design.md,
+(docs/specs/grounded-classification-warnings.md,
 section D). Fixed inputs -- a score change on a prompt edit is
 attributable to the prompt, not to different test data. Extend this list
 once real design-partner drawing sets exist (BUILD-STAGES.md's "frozen

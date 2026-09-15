@@ -1,7 +1,7 @@
 """Read endpoints: /projects, /projects/{id}, /projects/{id}/snapshot,
 /projects/{id}/totals -- and snapshot.version(), the ETag driving polling.
 
-The plan's four tests (docs/superpowers/plans/2026-08-07-backend-spine.md,
+The plan's four tests (docs/plans/done/backend-spine.md,
 Task 11) are a floor, not the set -- see task-11-brief.md for the corrections
 applied here: undo_head/redo_head now take an actor, version() must use
 Action.seq not created_at, the two unscoped queries in the sketch are

@@ -1,6 +1,6 @@
 """Request-id middleware and structured logging -- task-14-brief.md.
 
-The plan's sketch (docs/superpowers/plans/2026-08-07-backend-spine.md,
+The plan's sketch (docs/plans/done/backend-spine.md,
 "Task 14") has five corrections applied here, per the brief:
 
 1. `JsonFormatter` must not discard `exc_info` -- the whole value of

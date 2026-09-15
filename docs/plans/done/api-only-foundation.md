@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI, SQLAlchemy 2.0 (`Mapped`/`mapped_column`), Alembic, Postgres, pytest. React 18, Vite, Vitest, React Testing Library.
 
-**Spec:** [`2026-08-27-api-only-foundation-design.md`](../specs/2026-08-27-api-only-foundation-design.md)
+**Spec:** [`docs/specs/api-only-foundation.md`](../specs/docs/specs/api-only-foundation.md)
 
 ## Global Constraints
 
@@ -1487,7 +1487,7 @@ import { createApiStore } from "./api.js";
 
 /** One data source. The seed/localStorage store this used to choose
  *  between was deleted in the API-only slice — see
- *  docs/superpowers/specs/2026-08-27-api-only-foundation-design.md. */
+ *  docs/specs/api-only-foundation.md. */
 export function createStore() {
   return createApiStore();
 }

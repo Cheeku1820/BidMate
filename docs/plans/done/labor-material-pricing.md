@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the Labor and Material Pricing workspaces — real, backend-persisted company rate/price libraries, per-item project overrides, and a precedence chain gated on whether a project was actually priced by the LLM — per `docs/superpowers/specs/2026-08-31-labor-material-pricing-design.md`.
+**Goal:** Build the Labor and Material Pricing workspaces — real, backend-persisted company rate/price libraries, per-item project overrides, and a precedence chain gated on whether a project was actually priced by the LLM — per `docs/specs/labor-material-pricing.md`.
 
 **Architecture:** Two new sparse per-item tables (`ProjectLaborLine`, `ProjectMaterialPrice`) hold estimator overrides; three new org-scoped tables (`CompanyLaborRate`, `CompanyLaborHoursOverride`, `CompanyMaterialPrice`) hold company defaults; two new columns on `Project` (`pricing_source`, `pricing_note`) record which mechanism actually priced a takeoff. A precedence resolver (pure functions, no I/O) walks project override → company default → engine baseline (only when `pricing_source == "llm"`) → Missing information, for both labor and materials independently. A new router serves resolved rows and accepts overrides; `CompanySettings.jsx` moves its Labor/Material tabs off `localStorage` onto the same backend.
 
@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- No AI framing, model names, or confidence numbers anywhere in product-facing copy or code comments — see `docs/superpowers/specs/2026-08-31-labor-material-pricing-design.md`'s "no hardcode" reasoning: `pricing_source`/`pricing_note` name a *mechanism* internally but the estimator-facing copy never says "LLM," "model," or "AI." Use "the pricing assistant" or similar plain phrasing only where a human-facing message must explain why a number is missing.
+- No AI framing, model names, or confidence numbers anywhere in product-facing copy or code comments — see `docs/specs/labor-material-pricing.md`'s "no hardcode" reasoning: `pricing_source`/`pricing_note` name a *mechanism* internally but the estimator-facing copy never says "LLM," "model," or "AI." Use "the pricing assistant" or similar plain phrasing only where a human-facing message must explain why a number is missing.
 - Every mutation routes through `actions.commit()` for attribution and audit, matching every other mutation in this codebase.
 - Company-level edits are logged/attributed but are **not** added to `undo.REVERSIBLE`. Project-level edits (`ProjectLaborLine`, `ProjectMaterialPrice`) **are** added to `REVERSIBLE`.
 - Migration revision ids match the `versions/` filename sequence number. The next one is `0014`.

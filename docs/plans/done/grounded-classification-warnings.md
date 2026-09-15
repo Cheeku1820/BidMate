@@ -670,7 +670,7 @@ Create `api/eval/warning_eval_cases.py`:
 
 ```python
 """Frozen eval set for grounded classification warnings
-(docs/superpowers/specs/2026-09-01-grounded-classification-warnings-design.md,
+(docs/specs/grounded-classification-warnings.md,
 section D). Fixed inputs -- a score change on a prompt edit is
 attributable to the prompt, not to different test data. Extend this list
 once real design-partner drawing sets exist (BUILD-STAGES.md's "frozen
@@ -929,7 +929,7 @@ given, actionable, and stating a real consequence — not just whether the
 four fields are present (that's `ingest.py`'s job, enforced on every real
 request).
 
-Design: `docs/superpowers/specs/2026-09-01-grounded-classification-warnings-design.md`, section D.
+Design: `docs/specs/grounded-classification-warnings.md`, section D.
 
 ## Running it
 

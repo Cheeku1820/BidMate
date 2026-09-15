@@ -66,7 +66,7 @@ Within a project, the estimator must always see where they are, what is finished
 
 > 1. Project details 2. Documents 3. Confirm drawings 4. Process takeoff 5. Review 6. Export
 
-That was written before the workspace model in [`docs/superpowers/specs/2026-08-16-bidmate-frontend-product-design.md`](superpowers/specs/2026-08-16-bidmate-frontend-product-design.md) §4.2, which the product is now built against. Three incompatible enumerations of the same workflow briefly shipped together — a "step 1 of 6" subtitle, seven project stages in `src/lib/projectStage.js`, and thirteen workspaces in the project navigation — so an estimator was told they were on step 1 of 6, landed on a 13-tab nav, and read a stage name from a seven-value vocabulary.
+That was written before the workspace model in [`docs/product/frontend-product-design.md`](docs/product/frontend-product-design.md) §4.2, which the product is now built against. Three incompatible enumerations of the same workflow briefly shipped together — a "step 1 of 6" subtitle, seven project stages in `src/lib/projectStage.js`, and thirteen workspaces in the project navigation — so an estimator was told they were on step 1 of 6, landed on a 13-tab nav, and read a stage name from a seven-value vocabulary.
 
 The subtitle was removed rather than reconciled, because inventing a sixth thing to make the number true would have been the wrong repair. What governs now:
 

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove the whole-sheet raster backdrop from the review canvas, replace it with real per-item evidence crops generated during processing, and fix the title-block sheet-number bug — per `docs/superpowers/specs/2026-08-30-blueprint-evidence-design.md`.
+**Goal:** Remove the whole-sheet raster backdrop from the review canvas, replace it with real per-item evidence crops generated during processing, and fix the title-block sheet-number bug — per `docs/specs/blueprint-evidence.md`.
 
 **Architecture:** The engine crops a small PNG around each item's counted location(s) while the source PDF is still open (the only window it's ever available), base64-encodes it into the wire payload, and the API decodes it into a new `item_evidence_images` table — kept separate from `Item` so the undo/snapshot machinery (which walks every `Item` column automatically) never has to know binary data exists. A new endpoint serves it; the canvas drops the raster background entirely and falls back to the honest blank surface that already exists in `PlanDrawing.jsx`.
 

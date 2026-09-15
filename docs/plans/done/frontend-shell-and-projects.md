@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-These come from `CLAUDE.md`, `docs/superpowers/specs/2026-08-16-bidmate-frontend-product-design.md`, and `README.md`. Every task's requirements implicitly include this section.
+These come from `CLAUDE.md`, `docs/product/frontend-product-design.md`, and `README.md`. Every task's requirements implicitly include this section.
 
 - **Status is never colour alone.** Always hue + icon + text label.
 - **Green appears only on estimator-approved content.** Not on "done processing," not on a successful upload, not on a completed project row.
@@ -2805,4 +2805,4 @@ git commit -m "Add project creation, project overview, and workspace navigation"
 
 ---
 
-Plan complete and saved to `docs/superpowers/plans/2026-08-18-frontend-shell-and-projects.md`.
+Plan complete and saved to `docs/plans/done/frontend-shell-and-projects.md`.

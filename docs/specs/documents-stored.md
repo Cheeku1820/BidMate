@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-15
 **Status:** Approved for planning.
-**Implements:** `2026-09-13-full-webapp-plan.md` Phase B, first of four sub-projects. Order: **B1 documents stored → B2 engine behind the API with per-sheet jobs → B3 drawing behind the markers → B4 confirm-drawings write-back and metering.** Each stacks on the one before.
+**Implements:** `docs/roadmap/full-webapp-plan.md` Phase B, first of four sub-projects. Order: **B1 documents stored → B2 engine behind the API with per-sheet jobs → B3 drawing behind the markers → B4 confirm-drawings write-back and metering.** Each stacks on the one before.
 **Builds on:** the `fix/engine-sheet-fidelity` branch (this branch is stacked on it).
 
 ## 1. What this is for

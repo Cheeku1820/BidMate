@@ -1,7 +1,7 @@
 """The nine mutation endpoints: PATCH /items/{id}, approve/reject/unreject,
 DELETE /items/{id}, bulk-approve, scale, undo, redo.
 
-The plan's sketch (docs/superpowers/plans/2026-08-07-backend-spine.md, Task
+The plan's sketch (docs/plans/done/backend-spine.md, Task
 13) tests two things: the server-side missing-information refusal, and that
 its copy names a recovery action. Everything else here comes from
 task-13-brief.md's corrections:

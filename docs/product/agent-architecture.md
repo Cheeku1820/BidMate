@@ -3,7 +3,7 @@
 **Date:** 2026-08-18
 **Status:** accepted. Amended 2026-09-03 against a real bid set — see §11.
 **Scope:** stage 1 engine boundaries — see [`BUILD-STAGES.md`](../../../BUILD-STAGES.md)
-**Supersedes:** nothing. Extends [`docs/mvp-approach.md`](../../mvp-approach.md) §1 and [`ROADMAP.md`](../../../ROADMAP.md) §2.1 and §2.6.
+**Supersedes:** nothing. Extends [`docs/product/mvp-approach.md`](../../docs/product/mvp-approach.md) §1 and [`ROADMAP.md`](../../../ROADMAP.md) §2.1 and §2.6.
 
 > **Read §11 first if you are implementing.** The five boundaries below still
 > hold, but running the engine against a real 208-page set on 2026-09-03
@@ -166,7 +166,7 @@ Four consequences:
 
 **Pricing is derived, never stored.** The total is recomputed from inputs on every read. This is what keeps invariant 1 honest: one totals query feeding the drawer, the table, the export, and the estimate summary. The moment a current-price column is written onto a row there are two implementations, and they will drift.
 
-**Pricing never enters the undo stack.** Approving an item is one action; the total moving is a consequence. Undo the approval and the total moves back on its own. No compensating price action, nothing new in the log. Same shape as the waste decision in [`docs/mvp-approach.md`](../../mvp-approach.md) §4.1 — *store the inputs, never the product*.
+**Pricing never enters the undo stack.** Approving an item is one action; the total moving is a consequence. Undo the approval and the total moves back on its own. No compensating price action, nothing new in the log. Same shape as the waste decision in [`docs/product/mvp-approach.md`](../../docs/product/mvp-approach.md) §4.1 — *store the inputs, never the product*.
 
 **The price basis is pinned.** A number that is live across a week of review can move for reasons that are not the estimator's edits: a supplier feed updates overnight and Tuesday's total no longer matches Monday's. A bid must be reproducible. The project pins a price-book version and rate set at start, displays it plainly, and refreshing is an explicit act with a visible diff.
 
@@ -287,7 +287,7 @@ A flywheel that propagates a *wrong* resolution is worse than no flywheel. One m
 | [`ROADMAP.md`](../../../ROADMAP.md) §2.6 | Conversation is an agent that routes, not a panel that answers |
 | [`ROADMAP.md`](../../../ROADMAP.md) invariants | Add: agents hand off typed records, never prose |
 | [`BUILD-STAGES.md`](../../../BUILD-STAGES.md) | Stage 1 engine line names the five agents; add per-agent eval sets |
-| [`docs/mvp-approach.md`](../../mvp-approach.md) §1 | Geometry/language split is now an agent boundary, not just a method note |
+| [`docs/product/mvp-approach.md`](../../docs/product/mvp-approach.md) §1 | Geometry/language split is now an agent boundary, not just a method note |
 | Workflow diagram | Three wording fixes, below |
 
 ### 9.1 Workflow diagram corrections
@@ -328,7 +328,7 @@ Two representative sheets:
 | E6.1 | 68,601 | 2 | 1 |
 
 One XObject per sheet, and it is not a symbol block. So every symbol is
-exploded into loose line work: **tier B** in [`docs/mvp-approach.md`](../../mvp-approach.md) §1.
+exploded into loose line work: **tier B** in [`docs/product/mvp-approach.md`](../../docs/product/mvp-approach.md) §1.
 
 This matters because §2.2 says placements "are *in the file*; they are read,
 not estimated." On tier B nothing is placed — there is no instance to read.
@@ -383,7 +383,7 @@ records which mechanism priced it, and one not priced by the model shows
 figure.
 
 The deviation stands until there is a real pricing source to look up against —
-see [`docs/superpowers/specs/2026-09-01-...`] and the pricing-source survey.
+see [`docs/specs/grounded-classification-warnings.md`] and the pricing-source survey.
 **What is genuinely missing is assembly expansion:** a fixture is priced as a
 fixture, with no box, whip, connector, wire or conduit behind it. For an
 electrical subcontractor that is the largest hole in the estimate, since wire
@@ -422,3 +422,50 @@ of text and correctly declining to guess.
 | Conversation | Intent routing to a typed proposal record. No panel, no writes |
 
 Division 26 remains the boundary. Every material this produces is electrical.
+
+
+---
+
+## Appendix — v1 as built (2026-08-26)
+
+The tag-based vertical slice the five agents were first implemented as. Kept here because it explains why v1 counts what a drafter labelled and where the planned upgrades slot in.
+
+### Takeoff engine v1 — tag-based vertical slice
+
+**Goal.** Produce a real, reviewable Division 26 estimate from a real vector bid-drawing PDF, end to end, on one known sample set (the Unalaska Library CD bid drawings). Built as the five agents so planned upgrades are drop-in.
+
+**Why tag-based.** The sample's electrical sheets are clean vector but *exploded* (Tier B — no reusable symbol placements; ~68k primitive paths per sheet). Geometry clustering is "several times the work" and risky. But the sheets carry a **rich positioned text layer**: device tags at each device, plus schedules and legend. v1 counts what the drafter labeled — deterministic coordinates from the tag positions, no model localization, no OCR.
+
+**Honest scope of v1.** Counts *tagged* devices on the electrical plans and prices them into a total direct cost the estimator reviews. Conduit/homerun length uses a feet-per-device rule the estimator confirms. Untagged/ambiguous devices surface as *Needs attention*. Geometry counting (untagged symbols), raster/OCR (scanned addenda), and the conversation panel are later upgrades behind the same agent boundaries.
+
+## The five agents (v1 implementation)
+
+| Agent | v1 | Contract (typed record it emits) |
+|---|---|---|
+| Documents | PyMuPDF: find E-series sheets, title block, scale; extract schedules + legend as text/tables; render each sheet to a page image | `Sheet{number,title,scale,page_image,legend,schedules}` |
+| Counting | Count positioned device tags per type per sheet | `Cluster{tag,count,sheet,placements:[{x,y}]}` — unlabelled |
+| Classification | LLM maps a tag → catalog item using the schedule/legend | `Item{catalog_id,name,system,status,warning?}` per cluster |
+| Pricing | Static NECA-style price + labor-hours table × company labor rates | `Priced{material_cost,labor_hours,total_direct_cost}` |
+| Conversation | (not built in v1) | — |
+
+Agents hand off typed records, never prose (invariant 12). Extracted document text is data, never instruction (invariant 11).
+
+## Build order (de-risk first)
+
+**Phase 0 — Extraction prototype (standalone, no app).** Prove on the real PDF that tag-counting yields a sensible takeoff before building any plumbing. Output structured JSON: per electrical sheet, tag types with counts + coordinates, plus the extracted schedule. **This is the go/no-go for the whole approach.**
+
+**Phase 1 — Classification + pricing (standalone).** Map tags → catalog items via the schedule (LLM), apply a static price/labor table, compute total direct cost. Output a full priced takeoff JSON. Reconcile the number by hand.
+
+**Phase 2 — Wire into the backend.** Real PDF upload + storage; a pipeline job that runs Documents→Counting→Classification→Pricing and writes `Item`/`Sheet`/`Warning` rows into the existing takeoff store (reusing the tested review state machine, action log, totals). Screen E (processing) reflects real per-sheet progress.
+
+**Phase 3 — Frontend for real drawings.** Render the sheet page image behind the markers on the canvas (replacing drawn SVG for real projects), map tag coordinates into sheet space, and surface cost (material, labor hours, total direct cost) in the drawer and export.
+
+## Invariants preserved
+
+- Counting is deterministic and tested, never tuned. Classification is the only model step and proposes; a person approves.
+- Totals computed in one place; agents stop at total direct cost (no markup — that's the estimator's layer, already in settings).
+- Confidence never renders. Sheets read badly are marked unreadable-with-reason, never returned as a short silent list.
+
+## Not in v1
+
+Geometry (Tier B) counting, raster/OCR, conduit routing, the conversation panel, multi-set revision handling. All additive behind the agent contracts above.

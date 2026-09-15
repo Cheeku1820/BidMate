@@ -32,7 +32,7 @@ The requested feature — notes and assumptions that can be marked as engine con
 
 ## A reversed decision, recorded
 
-[`2026-08-07-backend-spine-design.md`](2026-08-07-backend-spine-design.md) settled the opposite of this. Its decision table reads *"Demo mode — keep, behind a store adapter,"* and one of its success criteria is *"The seed-data demo still runs with no backend."* The reasoning was that a zero-install link is the most persuasive artifact a prototype has.
+[`docs/specs/backend-spine.md`](docs/specs/backend-spine.md) settled the opposite of this. Its decision table reads *"Demo mode — keep, behind a store adapter,"* and one of its success criteria is *"The seed-data demo still runs with no backend."* The reasoning was that a zero-install link is the most persuasive artifact a prototype has.
 
 That reasoning was sound for a prototype being shown. It stops applying once the work is building product functionality against a real engine: the fixture is now a second implementation to maintain, and a second source of truth to be misled by.
 
@@ -137,7 +137,7 @@ So the fixture arrays are removed and the vocabulary stays. Since the file then 
 
 `attachSampleTakeoff`, `SampleBanner.jsx`, the `project.sample` flag, and their call sites in [`Workspace.jsx:207`](../../../src/components/Workspace.jsx:207), [`TakeoffSpreadsheet.jsx:218`](../../../src/components/takeoff/TakeoffSpreadsheet.jsx:218), [`ProcessingStatus.jsx:139`](../../../src/components/documents/ProcessingStatus.jsx:139), and `ProjectOverview.jsx` are deleted. A sample takeoff is seed data wearing a different name.
 
-Processing with no reachable engine service therefore has no fallback: it reports the failure and names the recovery action (start the service), which is what [`product-spec.md`](../product-spec.md) §10 asks of error copy anyway.
+Processing with no reachable engine service therefore has no fallback: it reports the failure and names the recovery action (start the service), which is what [`docs/product/product-spec.md`](../docs/product/product-spec.md) §10 asks of error copy anyway.
 
 ### Login is unconditional
 

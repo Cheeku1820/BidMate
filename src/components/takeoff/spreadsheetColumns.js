@@ -11,7 +11,7 @@
    here rather than rendered empty: a blank cell under "Waste factor"
    does not read as "not built yet", it reads as "no waste applied",
    which is a fabricated fact about the estimator's own numbers. Waste
-   in particular has a settled meaning in docs/mvp-approach.md §4.1 --
+   in particular has a settled meaning in docs/product/mvp-approach.md §4.1 --
    store the measured quantity and the factor separately, derive the
    purchase quantity at the point of use -- that a column here would
    prejudge.

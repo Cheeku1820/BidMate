@@ -6,7 +6,7 @@ given, actionable, and stating a real consequence — not just whether the
 four fields are present (that's `ingest.py`'s job, enforced on every real
 request).
 
-Design: `docs/superpowers/specs/2026-09-01-grounded-classification-warnings-design.md`, section D.
+Design: `docs/specs/grounded-classification-warnings.md`, section D.
 
 ## Running it
 

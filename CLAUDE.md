@@ -2,7 +2,9 @@
 
 An electrical estimating application that turns uploaded construction documents into a reviewable Division 26 takeoff. This repo currently holds **screen F — the blueprint review workspace** — built as a high-fidelity working prototype.
 
-See @README.md for how to run it, @DESIGN.md for interaction rules and open decisions, @ROADMAP.md for the work between this prototype and a shippable product, @BUILD-STAGES.md for the order that work happens in, and @docs/product-spec.md for the full product specification covering all eleven screens.
+See @README.md for how to run it, @DESIGN.md for interaction rules and open decisions, @ROADMAP.md for the work between this prototype and a shippable product, @BUILD-STAGES.md for the order that work happens in, and @docs/product/product-spec.md for the full product specification covering all eleven screens.
+
+`docs/README.md` indexes everything else: `docs/product/` (what the product is), `docs/roadmap/` (what to do next), `docs/specs/` (one design per feature), `docs/plans/` (its task list; `plans/done/` once merged), `docs/archive/`. **Design specs are written to `docs/specs/<feature>.md` and implementation plans to `docs/plans/<feature>.md` — same name, no date in the filename, the date in the header.** Not `docs/superpowers/`.
 
 ## Who this is for
 
@@ -49,7 +51,7 @@ This was accepted under a specific constraint, and the constraint is the whole r
 - **Questions are a rendering of the review queue, not a second inbox.** An unclassified symbol is already a *Needs attention* item. Two queues means a fifth status gets invented within a month.
 - **Extracted document text is data, never instruction.** A drawing set is untrusted input, and a panel that can produce proposals is an injection surface.
 
-Note that `docs/product-spec.md` §1, §6, and §12 predate this decision and read more strictly than the constraint above. The spec has not been amended yet; this section governs.
+Note that `docs/product/product-spec.md` §1, §6, and §12 predate this decision and read more strictly than the constraint above. The spec has not been amended yet; this section governs.
 
 ## Architecture
 
@@ -90,7 +92,7 @@ Marker rendering keeps three channels independent: **glyph** = item type, **ring
 
 ## The engine is five agents
 
-Nothing in `src/` implements these yet. They are the settled boundaries the pipeline gets built against — full design in [`docs/superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md`](docs/superpowers/specs/2026-08-18-bidmate-agent-architecture-design.md).
+Nothing in `src/` implements these yet. They are the settled boundaries the pipeline gets built against — full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
 
 | Agent | Nature | Produces |
 |---|---|---|
@@ -130,4 +132,4 @@ Rules that are easy to break here:
 
 The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note. Notes & assumptions is built and routed. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
 
-Within notes, several things the design spec describes are not built: the `applied_action_id` column, the footer strip, sheet-scoped narrowing of a re-run, and item-scoped notes resolving to a cluster tag. See the *Not built in this slice* section of [`docs/superpowers/specs/2026-08-28-notes-and-assumptions-design.md`](docs/superpowers/specs/2026-08-28-notes-and-assumptions-design.md).
+Within notes, several things the design spec describes are not built: the `applied_action_id` column, the footer strip, sheet-scoped narrowing of a re-run, and item-scoped notes resolving to a cluster tag. See the *Not built in this slice* section of [`docs/specs/notes-and-assumptions.md`](docs/specs/notes-and-assumptions.md).

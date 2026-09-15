@@ -1,6 +1,6 @@
 /* ============================================================
    MaterialPricingWorkspace.jsx — the Material Pricing workspace
-   (docs/superpowers/specs/2026-08-31-labor-material-pricing-design.md).
+   (docs/specs/labor-material-pricing.md).
 
    Material rows are not part of the review snapshot useReviewStore polls
    -- Task 9's getMaterialRows/setMaterialPrice are a separate surface, exactly

@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-14
 **Status:** Approved for planning.
-**Supersedes:** the diagnosis in `2026-09-08-engine-sheet-fidelity-findings.md`, which measured five defects on one set. This design reaches the root cause under three of them, adds one the findings missed, and widens the target from one set to every vector set in `bid_examples/`.
+**Supersedes:** the diagnosis in `docs/archive/engine-sheet-fidelity-findings.md`, which measured five defects on one set. This design reaches the root cause under three of them, adds one the findings missed, and widens the target from one set to every vector set in `bid_examples/`.
 
 ## 1. What is wrong, measured
 

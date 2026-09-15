@@ -4,7 +4,7 @@
 
 Two new project workspaces — **Labor** and **Material pricing** — currently
 listed in `ProjectNav.jsx` as `built: false`. Both are fully specified
-already in `docs/superpowers/specs/2026-08-16-bidmate-frontend-product-design.md`
+already in `docs/product/frontend-product-design.md`
 §12–13; this document is the implementation-level design for that spec,
 narrowed by decisions made in brainstorming.
 

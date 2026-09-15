@@ -468,7 +468,7 @@ git commit -m "Name the sheet a legend definition came from"
 ### Task 6: Correct the stale documents
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-09-01-grounded-classification-warnings-design.md`
+- Modify: `docs/specs/grounded-classification-warnings.md`
 - Modify: `CLAUDE.md`
 
 **Interfaces:** documentation only, no code.
@@ -502,7 +502,7 @@ Report anything you find that is now false. Fix it if it is a one-line claim; re
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-09-01-grounded-classification-warnings-design.md CLAUDE.md
+git add docs/specs/grounded-classification-warnings.md CLAUDE.md
 git commit -m "Correct two documents that describe behaviour that changed"
 ```
 

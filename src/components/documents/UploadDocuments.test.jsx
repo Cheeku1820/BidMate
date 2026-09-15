@@ -1,122 +1,119 @@
 /* ============================================================
-   UploadDocuments.test.jsx — screen C intake behaviour.
-
-   The spec §10 states are what matter here: a clean PDF settles to
-   "Uploaded" and enables starting a takeoff; a non-PDF, a duplicate, and
-   a password-protected file each surface their own plain-language state
-   and never count toward starting. Start is gated on at least one
-   uploaded file.
+   UploadDocuments.test.jsx — screen C as a view onto the API.
+   A reload shows what was uploaded; a drop uploads with progress; the
+   server's duplicate and unsupported copy lands on the row; remove asks
+   first; the primary action needs a Drawings document.
    ============================================================ */
-
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import UploadDocuments from "./UploadDocuments.jsx";
 
 const pdf = (name, size = 1024) => new File([new Uint8Array(size)], name, { type: "application/pdf" });
+const doc = (over = {}) => ({ id: "d1", projectId: "p1", filename: "E-set.pdf", docType: "Drawings", sizeBytes: 1024, sha256: "a", status: "uploaded", error: "", createdAt: "2026-09-15T00:00:00Z", ...over });
 
-const renderUpload = () =>
+function makeStore(over = {}) {
+  return {
+    listDocuments: vi.fn().mockResolvedValue([]),
+    uploadDocument: vi.fn(),
+    setDocumentType: vi.fn(),
+    deleteDocument: vi.fn().mockResolvedValue(null),
+    ...over,
+  };
+}
+
+const renderUpload = (store) =>
   render(
     <MemoryRouter initialEntries={["/projects/p1/documents"]}>
       <Routes>
-        <Route path="/projects/:projectId/documents" element={<UploadDocuments />} />
-        <Route path="/projects/:projectId/processing" element={<p>processing screen</p>} />
+        <Route path="/projects/:projectId/documents" element={<UploadDocuments store={store} />} />
+        <Route path="/projects/:projectId/documents/confirm" element={<p>confirm screen</p>} />
       </Routes>
     </MemoryRouter>,
   );
 
-const fileInput = () => document.querySelector('input[type="file"]');
-
-// Fires a change on the hidden file input with the given files. Using the
-// input directly rather than userEvent.upload so fake timers don't have
-// to interleave with user-event's async plumbing. Wrapped in act() so the
-// React state update flushes before the next assertion.
 function drop(files) {
-  const input = fileInput();
+  const input = document.querySelector('input[type="file"]');
   Object.defineProperty(input, "files", { value: files, configurable: true });
-  act(() => {
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+  act(() => { input.dispatchEvent(new Event("change", { bubbles: true })); });
 }
 
-const advance = (ms) => act(() => vi.advanceTimersByTime(ms));
-
-beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
-
 describe("UploadDocuments", () => {
-  it("settles a clean PDF to Uploaded and only then enables Start takeoff", () => {
-    renderUpload();
-    const start = screen.getAllByRole("button", { name: /review detected drawings/i })[0];
-    expect(start).toBeDisabled();
-
-    drop([pdf("E-sheets.pdf")]);
-    // Scoped to the file's own row: the footer strip also reports files
-    // in flight, so an unscoped /uploading/i now matches in two places
-    // and would pass or fail for reasons unrelated to the state cell.
-    expect(within(screen.getByText("E-sheets.pdf").closest("tr")).getByText(/uploading/i)).toBeTruthy();
-    expect(start).toBeDisabled();
-
-    advance(800);
-    expect(screen.getByText(/^uploaded$/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeEnabled();
+  it("shows what was already uploaded, from the API, on mount", async () => {
+    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]) });
+    renderUpload(store);
+    expect(await screen.findByText("E-set.pdf")).toBeInTheDocument();
+    expect(screen.getByText("Uploaded")).toBeInTheDocument();
+    expect(store.listDocuments).toHaveBeenCalledWith("p1");
   });
 
-  it("flags a non-PDF as unsupported and never counts it toward starting", () => {
-    renderUpload();
-    drop([new File(["x"], "notes.txt", { type: "text/plain" })]);
-    advance(800);
-    expect(screen.getByText(/not a pdf/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeDisabled();
-  });
-
-  it("flags a second identical file as a duplicate", () => {
-    renderUpload();
-    drop([pdf("set.pdf", 2048)]);
-    advance(800);
-    drop([pdf("set.pdf", 2048)]);
-    expect(screen.getByText(/already added/i)).toBeTruthy();
-  });
-
-  it("flags a password-protected file and asks for an unlocked copy", () => {
-    renderUpload();
-    drop([pdf("E1-protected.pdf")]);
-    advance(800);
-    expect(screen.getByText(/password protected/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeDisabled();
-  });
-
-  it("auto-detects the type from the filename and shows a Detected hint", () => {
-    renderUpload();
-    drop([pdf("specs_part_1.pdf")]);
-    advance(800);
-    expect(screen.getByLabelText(/document type for specs_part_1\.pdf/i)).toHaveValue("Specifications");
-    expect(screen.getByText("Detected")).toBeTruthy(); // the chip, not the intro copy
-  });
-
-  it("blocks continuing until at least one file is typed Drawings", () => {
-    renderUpload();
-    drop([pdf("specs_part_1.pdf")]); // detects as Specifications, not Drawings
-    advance(800);
-
-    // Uploaded, but nothing is a drawing set yet.
-    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeDisabled();
-    expect(screen.getByText(/no drawing set yet/i)).toBeTruthy();
-
-    // Correcting one to Drawings unblocks it.
-    fireEvent.change(screen.getByLabelText(/document type for specs_part_1\.pdf/i), {
-      target: { value: "Drawings" },
+  it("uploads a dropped PDF with progress and settles to Uploaded", async () => {
+    let progress;
+    const store = makeStore({
+      uploadDocument: vi.fn((projectId, file, docType, opts) => { progress = opts.onProgress; return new Promise(() => {}); }),
     });
-    expect(screen.getAllByRole("button", { name: /review detected drawings/i })[0]).toBeEnabled();
+    renderUpload(store);
+    drop([pdf("E-set.pdf")]);
+    expect(await screen.findByText(/Uploading/)).toBeInTheDocument();
+    act(() => progress(42));
+    expect(screen.getByText("Uploading… 42%")).toBeInTheDocument();
+    expect(store.uploadDocument).toHaveBeenCalledWith("p1", expect.any(File), "Drawings", expect.any(Object));
   });
 
-  it("removes a file from the list", () => {
-    renderUpload();
-    drop([pdf("remove-me.pdf")]);
-    advance(800);
-    const row = screen.getByText("remove-me.pdf").closest("tr");
-    const removeBtn = within(row).getByRole("button", { name: /remove remove-me\.pdf/i });
-    act(() => removeBtn.click());
-    expect(screen.queryByText("remove-me.pdf")).toBeNull();
+  it("shows the server's duplicate copy on the row and does not list it as uploaded", async () => {
+    const store = makeStore({
+      uploadDocument: vi.fn().mockRejectedValue({ code: "duplicate_document", message: "This appears to be the same file as first.pdf, uploaded earlier. Remove one copy or upload a different file.", status: 409 }),
+    });
+    renderUpload(store);
+    drop([pdf("second.pdf")]);
+    expect(await screen.findByText(/same file as first.pdf/)).toBeInTheDocument();
+    expect(screen.queryByText("Uploaded")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /review detected drawings/i })).toBeDisabled();
+  });
+
+  it("refuses a non-PDF before calling the API", async () => {
+    const store = makeStore();
+    renderUpload(store);
+    drop([new File([1], "notes.docx", { type: "text/plain" })]);
+    expect(await screen.findByText(/isn't a PDF/)).toBeInTheDocument();
+    expect(store.uploadDocument).not.toHaveBeenCalled();
+  });
+
+  it("changes the type through the API", async () => {
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([doc()]),
+      setDocumentType: vi.fn().mockResolvedValue(doc({ docType: "Addendum" })),
+    });
+    renderUpload(store);
+    await screen.findByText("E-set.pdf");
+    fireEvent.change(screen.getByLabelText(/type for E-set.pdf/i), { target: { value: "Addendum" } });
+    await waitFor(() => expect(store.setDocumentType).toHaveBeenCalledWith("d1", "Addendum"));
+  });
+
+  it("asks before removing, then deletes through the API", async () => {
+    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]) });
+    renderUpload(store);
+    await screen.findByText("E-set.pdf");
+    fireEvent.click(screen.getByRole("button", { name: /remove E-set.pdf/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/remove E-set.pdf/i)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: /^remove$/i }));
+    await waitFor(() => expect(store.deleteDocument).toHaveBeenCalledWith("d1"));
+    await waitFor(() => expect(screen.queryByText("E-set.pdf")).not.toBeInTheDocument());
+  });
+
+  it("blocks continuing until at least one document is typed Drawings", async () => {
+    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc({ docType: "Specifications" })]) });
+    renderUpload(store);
+    await screen.findByText("E-set.pdf");
+    expect(screen.getByRole("button", { name: /review detected drawings/i })).toBeDisabled();
+  });
+
+  it("continues to confirm when a Drawings document exists", async () => {
+    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]) });
+    renderUpload(store);
+    await screen.findByText("E-set.pdf");
+    fireEvent.click(screen.getByRole("button", { name: /review detected drawings/i }));
+    expect(await screen.findByText("confirm screen")).toBeInTheDocument();
   });
 });

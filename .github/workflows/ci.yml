@@ -46,15 +46,29 @@ jobs:
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=bidmate -e MINIO_ROOT_PASSWORD=bidmate-dev-secret \
             quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          # The loop alone could not fail: a MinIO that never came up fell
+          # out of it after a minute and the step went green, so the
+          # failure surfaced later as a wall of S3 connection errors from
+          # the test step rather than here, at the step that caused it.
           for i in $(seq 1 20); do
-            curl -sf http://localhost:9000/minio/health/live && break
+            if curl -sf http://localhost:9000/minio/health/live; then
+              exit 0
+            fi
             sleep 3
           done
+          echo "MinIO did not answer its health check within 60s" >&2
+          docker logs minio >&2 || true
+          exit 1
+      # The same pinned mc image docker-compose.yml's minio-init uses, run
+      # against the runner's network rather than a `curl` of the latest
+      # release binary -- an unpinned client beside a pinned server is a
+      # build that changes under its own feet.
       - name: Create the documents bucket
         run: |
-          curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
-          mc alias set local http://localhost:9000 bidmate bidmate-dev-secret
-          mc mb --ignore-existing local/bidmate-documents
+          docker run --rm --network host --entrypoint /bin/sh \
+            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z -c \
+            "mc alias set local http://localhost:9000 bidmate bidmate-dev-secret \
+             && mc mb --ignore-existing local/bidmate-documents"
       - name: Install dependencies
         working-directory: api
         run: pip install -r requirements.txt

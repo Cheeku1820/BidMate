@@ -10,6 +10,12 @@ This file:
    table-driven case can't express as cleanly.
 2. Adds a single parametrized test walking a table of every project-scoped
    route -- method, path, body -- asserting a rival-org caller gets 404.
+   Routes whose shape the main table's lambdas were not written for get
+   their own small table beside it, each with the same rival-404 /
+   unauthenticated-401 pair: the note routes (keyed by note_id), the
+   document routes (keyed by document_id), and the one multipart route
+   (which a JSON body would fail at validation rather than at the
+   tenancy gate -- see MULTIPART_TENANCY_TABLE).
 3. Adds the same table for unauthenticated callers, asserting 401.
 4. Adds a guard test that enumerates `app.routes` at runtime and fails if
    any `/api/*` route is neither in the tenancy table nor on the short,
@@ -19,13 +25,36 @@ This file:
    to register itself here fails loudly instead of shipping ungated.
 """
 
+import io
+
 import pytest
 from sqlalchemy import text
 
 from app.auth.passwords import hash_password
 from app.identity.models import Org, User
 from app.main import app
-from app.takeoff.models import Note
+from app.takeoff.models import Document, Note
+
+PDF = b"%PDF-1.4\n%tenancy\n"
+
+
+@pytest.fixture
+def document(db, project, dana):
+    """A document row under the existing `project` fixture. No blob is
+    stored for it deliberately: `load_document` refuses through
+    `load_project` before the store is ever touched, so a rival-org or
+    unauthenticated probe never reaches storage. A row alone is enough
+    to prove the gate, and stubbing a blob store here would add a
+    dependency these probes must never get as far as."""
+    d = Document(
+        project_id=project.id, filename="E-set.pdf", doc_type="Drawings",
+        content_type="application/pdf", size_bytes=len(PDF), sha256="e" * 64,
+        storage_key=f"orgs/{project.org_id}/projects/{project.id}/documents/tenancy.pdf",
+        uploaded_by=dana.id,
+    )
+    db.add(d)
+    db.flush()
+    return d
 
 
 @pytest.fixture
@@ -172,6 +201,8 @@ TENANCY_TABLE = [
      lambda p, s, i: f"/api/projects/{p.id}/labor", None, None),
     ("GET", "/api/projects/{project_id}/material-pricing",
      lambda p, s, i: f"/api/projects/{p.id}/material-pricing", None, None),
+    ("GET", "/api/projects/{project_id}/documents",
+     lambda p, s, i: f"/api/projects/{p.id}/documents", None, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]
@@ -192,6 +223,49 @@ NOTE_TENANCY_TABLE = [
 ]
 
 NOTE_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in NOTE_TENANCY_TABLE]
+
+# The three document routes keyed by document_id, same shape and same
+# reasoning as NOTE_TENANCY_TABLE above: they need the `document`
+# fixture, which the main table's (p, s, i) lambdas were never written
+# to accept.
+DOCUMENT_TENANCY_TABLE = [
+    ("PATCH", "/api/documents/{document_id}",
+     lambda d: f"/api/documents/{d.id}", lambda d: {"doc_type": "Addendum"}, None),
+    ("DELETE", "/api/documents/{document_id}",
+     lambda d: f"/api/documents/{d.id}", None, None),
+    ("GET", "/api/documents/{document_id}/content",
+     lambda d: f"/api/documents/{d.id}/content", None, None),
+]
+
+DOCUMENT_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE]
+
+# POST /api/projects/{project_id}/documents is project-scoped like every
+# row in TENANCY_TABLE, but it cannot be probed from that table: both
+# parametrized tests there send `json=body`, and this route declares
+# `File(...)`/`Form(...)`. A rival sending JSON to it fails FastAPI's own
+# body validation with a 422 *before* `load_project` is ever called, so
+# a row in the main table would go green while proving nothing about
+# tenancy.
+#
+# Two ways out were available -- widen every row in TENANCY_TABLE with a
+# sixth column carrying `files=`/`data=` kwargs, or give this one route
+# its own small table and its own pair of tests. The second is what the
+# file already does for the note routes, for the same reason (a shape
+# the main table's signature was not written for), and it touches one
+# route rather than twenty-three unrelated rows. Its two tests below
+# send a real multipart body, so the request reaches `load_project` and
+# is refused there -- asserted by the `project_not_found` code, not just
+# by the status.
+MULTIPART_TENANCY_TABLE = [
+    ("POST", "/api/projects/{project_id}/documents",
+     lambda p: f"/api/projects/{p.id}/documents",
+     lambda p: {
+         "files": {"file": ("E-set.pdf", io.BytesIO(PDF), "application/pdf")},
+         "data": {"doc_type": "Drawings"},
+     }),
+]
+
+MULTIPART_TENANCY_IDS = [f"{method} {template}" for method, template, _, _ in MULTIPART_TENANCY_TABLE]
 
 # Routes that are deliberately not project-scoped, so the guard test
 # below must not demand a tenancy-table row for them. Not limited to
@@ -306,6 +380,71 @@ def test_an_unauthenticated_caller_gets_401_on_every_note_route(
     assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
 
 
+# --- The document routes, keyed by document_id rather than project_id ---
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", DOCUMENT_TENANCY_TABLE, ids=DOCUMENT_TENANCY_IDS)
+def test_a_rival_org_gets_404_on_every_document_route(
+    client, dana, rival, document, method, path_template, path_fn, body_fn, headers_fn
+):
+    _sign_in_as(client, "rival@example.com", "hunter2")
+    path = path_fn(document)
+    body = body_fn(document) if body_fn else None
+    headers = headers_fn(document) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 404, (
+        f"{method} {path} leaked status {response.status_code} to a rival org, expected 404"
+    )
+    assert response.json()["detail"]["code"] == "project_not_found"
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", DOCUMENT_TENANCY_TABLE, ids=DOCUMENT_TENANCY_IDS)
+def test_an_unauthenticated_caller_gets_401_on_every_document_route(
+    client, document, method, path_template, path_fn, body_fn, headers_fn
+):
+    path = path_fn(document)
+    body = body_fn(document) if body_fn else None
+    headers = headers_fn(document) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
+
+
+# --- The upload route, probed with a real multipart body ---
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, kwargs_fn", MULTIPART_TENANCY_TABLE, ids=MULTIPART_TENANCY_IDS)
+def test_a_rival_org_gets_404_on_every_multipart_route(
+    client, dana, rival, project, method, path_template, path_fn, kwargs_fn
+):
+    _sign_in_as(client, "rival@example.com", "hunter2")
+    path = path_fn(project)
+
+    response = client.request(method, path, **kwargs_fn(project))
+
+    assert response.status_code == 404, (
+        f"{method} {path} leaked status {response.status_code} to a rival org, expected 404"
+    )
+    # Not just the status: a 404 from a mistyped path, or a 422 turned
+    # into a 404 by some future handler, would both satisfy the line
+    # above. This asserts the refusal came from the tenancy gate.
+    assert response.json()["detail"]["code"] == "project_not_found"
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, kwargs_fn", MULTIPART_TENANCY_TABLE, ids=MULTIPART_TENANCY_IDS)
+def test_an_unauthenticated_caller_gets_401_on_every_multipart_route(
+    client, project, method, path_template, path_fn, kwargs_fn
+):
+    path = path_fn(project)
+
+    response = client.request(method, path, **kwargs_fn(project))
+
+    assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
+
+
 # --- The guard: the table above cannot silently fall out of date ---
 
 
@@ -360,6 +499,8 @@ def test_every_project_scoped_route_is_covered_by_the_tenancy_table():
     covered = (
         {(method, template) for method, template, _, _, _ in TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _ in MULTIPART_TENANCY_TABLE}
         | NON_PROJECT_SCOPED_ROUTES
     )
     missing = _live_api_routes() - covered
@@ -378,6 +519,8 @@ def test_the_tenancy_table_does_not_list_a_route_that_no_longer_exists():
     stale = (
         {(method, template) for method, template, _, _, _ in TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _ in MULTIPART_TENANCY_TABLE}
     ) - live
 
     assert not stale, f"tenancy-table rows with no matching live route: {sorted(stale)}"

@@ -128,6 +128,27 @@ def test_an_unreadable_sheet_with_no_number_gets_an_honest_page_label():
     assert sheet["title"] == "Scanned sheet"
 
 
+def test_a_schedule_sheet_with_no_title_gets_the_schedule_label():
+    """The title fallback reads the sheet's own (validated) kind, not a
+    hardcoded 'Electrical plan' -- a schedule the engine didn't title
+    should never read as a plan."""
+    mapped = map_payload({"sheets": [
+        {"id": "1", "number": "E0.3", "kind": "schedule", "page": 4, "width_pt": 1, "height_pt": 1},
+    ], "items": []})
+    assert mapped.sheets[0]["title"] == "Schedule"
+
+
+def test_ingest_sheet_kinds_mirror_the_engine():
+    """ingest.py stays engine-agnostic (no app.engine import in the API
+    process), so it carries its own copy of the closed set. This test is
+    what keeps the two from drifting."""
+    from app.engine import sheet_kind
+    from app.takeoff import ingest
+
+    assert ingest.SHEET_KINDS == sheet_kind.KINDS
+    assert ingest.SHEET_KIND_LABELS == {k: sheet_kind.label(k) for k in sheet_kind.KINDS}
+
+
 def test_map_payload_prefers_the_engines_symbol():
     """The classifier already chose a symbol; guessing from the name is
     only a fallback for rows that carry none."""

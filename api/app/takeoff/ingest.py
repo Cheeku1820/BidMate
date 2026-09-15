@@ -22,8 +22,6 @@ import logging
 import re
 from dataclasses import dataclass
 
-from app.engine.sheet_kind import KINDS
-from app.engine.sheet_kind import label as sheet_kind_label
 from app.errors import DomainError
 from app.takeoff.models import WarningReason
 
@@ -34,6 +32,24 @@ SHEET_SPACE_H = 750
 
 WARNING_FIELDS = ("title", "found", "why", "fix", "where")
 VALID_REASONS = {r.value for r in WarningReason}
+
+# A mirror of app/engine/sheet_kind.py's KINDS and label(), not an import
+# of it. app/engine/__init__.py eagerly imports the whole pipeline --
+# documents, counting, classification, pricing, pymupdf included -- and
+# ingest.py runs inside the API process, not the engine's. Importing
+# `app.engine` from here would mean a bug anywhere in that pipeline (a
+# broken counting.py, a missing pymupdf wheel) stops the API container
+# from booting, not just the engine. test_ingest_sheet_kinds_mirror_the_engine
+# in test_ingest_mapping.py is what keeps this copy from drifting from
+# the source of truth.
+SHEET_KINDS = ("plan", "schedule", "legend", "diagram", "other")
+SHEET_KIND_LABELS = {
+    "plan": "Electrical plan",
+    "schedule": "Schedule",
+    "legend": "Legend",
+    "diagram": "Diagram",
+    "other": "Sheet",
+}
 
 # A narrower cousin of app/engine/title_block.py's SHEET_ID -- ingest.py stays
 # engine-agnostic, working off the payload contract only, so this is a
@@ -83,15 +99,9 @@ def is_warning_grounded(warning: dict, valid_sheet_numbers: set[str]) -> bool:
 def fallback_warning(tag: str, count, sheet_number: str, reason: str = "legend") -> dict:
     """The same generic-but-honest shape estimate.py's deterministic path
     already uses (`_unconfirmed_type_warning`), reconstructed here rather
-    than imported -- ingest.py works off the payload contract for
-    warnings and items, not estimate.py's internals (test_ingest_mapping.py
-    asserts the two templates stay word for word identical). The one
-    exception is `sheet_kind`: `KINDS` is the closed set a payload's
-    `kind` is validated against, and it is a shared data contract with no
-    behavior of its own, so importing it does not reintroduce the
-    coupling this docstring is otherwise guarding against. This is what a
-    groundedness failure falls back to. Carries the original warning's
-    own `reason` through --
+    than imported -- ingest.py works off the payload contract only and
+    does not import from app.engine. This is what a groundedness failure
+    falls back to. Carries the original warning's own `reason` through --
     WarningReason is load-bearing (scale.set_scale() clears only warnings
     whose reason is "scale"), so a groundedness swap must never silently
     reclassify what kind of evidence gap this is."""
@@ -264,11 +274,11 @@ def normalize_ai_reading(raw) -> dict | None:
 
 
 def _sheet_kind(raw, key: str) -> str:
-    """The engine's kind, validated against the closed set. An unknown
-    value becomes 'plan' -- the visible failure -- and is logged by sheet
-    key, never by content."""
+    """The engine's kind, validated against the mirrored closed set. An
+    unknown value becomes 'plan' -- the visible failure -- and is logged
+    by sheet key, never by content."""
     kind = str(raw or "plan")
-    if kind not in KINDS:
+    if kind not in SHEET_KINDS:
         logger.warning("ingest: sheet %s carried unknown kind %r; treating as plan", key, kind)
         return "plan"
     return kind
@@ -318,7 +328,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
         sheets.append({
             "key": key,
             "number": number,
-            "title": str(raw.get("title") or sheet_kind_label(kind)),
+            "title": str(raw.get("title") or SHEET_KIND_LABELS.get(kind, SHEET_KIND_LABELS["plan"])),
             "discipline": "Electrical",
             "revision": str(raw.get("revision") or ""),
             "scale": str(raw.get("scale") or ""),

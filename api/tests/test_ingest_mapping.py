@@ -349,6 +349,87 @@ def test_fallback_warning_is_always_grounded():
     assert is_warning_grounded(warning, {"E2.1"})
 
 
+@pytest.mark.parametrize("token", ["E2.1", "E-101", "E101", "EP-1", "EL101", "EF-1", "ED-101", "ES100", "EQ101"])
+def test_ingest_sheet_id_matches_the_corpus_family(token):
+    from app.takeoff import ingest
+
+    assert ingest.SHEET_ID.fullmatch(token), token
+
+
+@pytest.mark.parametrize("token", ["E1", "EM2", "E12", "E", "EE-12624"])
+def test_ingest_sheet_id_rejects_a_device_tag(token):
+    """The engine's SHEET_ID matches a device tag (E1, EM2) because it is
+    only ever applied to a title-block strip. This one is applied to a
+    warning's whole text, and fallback_warning prints the tag -- so a
+    tag must never read as a sheet reference here."""
+    from app.takeoff import ingest
+
+    assert not ingest.SHEET_ID.fullmatch(token), token
+
+
+def test_ingest_sheet_id_covers_every_corpus_number():
+    """Drift guard: every readable sheet number in the corpus fixtures
+    is one the groundedness check can see. A number the check cannot
+    see is a warning that can name a sheet that does not exist and
+    pass -- the gap E-999 walked through when this only knew E2.1."""
+    import json
+    from pathlib import Path
+
+    from app.takeoff import ingest
+
+    numbers = [
+        s["number"]
+        for f in sorted((Path(__file__).parent / "fixtures" / "sheets").glob("*.json"))
+        for s in json.loads(f.read_text())["sheets"]
+        if s["number"]
+    ]
+    assert numbers
+    assert [n for n in numbers if not ingest.SHEET_ID.fullmatch(n)] == []
+
+
+def test_ingest_sheet_id_is_a_subset_of_the_engines():
+    """Anything ingest calls a sheet number, the engine does too --
+    stricter, never wider."""
+    from app.engine import title_block
+    from app.takeoff import ingest
+
+    for token in ["E2.1", "E-101", "E101", "EP-1", "EL101", "EF-1", "ED-101", "E1", "EM2", "E12", "E-999"]:
+        if ingest.SHEET_ID.fullmatch(token):
+            assert title_block.SHEET_ID.fullmatch(token), token
+
+
+def test_a_fabricated_hyphenated_sheet_is_caught_on_a_hyphen_numbered_set():
+    """On a set numbered E-101 a model-written warning naming E-999
+    passed the groundedness check when it only knew the E2.1 shape.
+    The fallback it is replaced with prints the tag (here EM2, a
+    device tag in the engine's family) and the real sheet, and passes
+    its own check on the same set."""
+    from app.takeoff.ingest import fallback_warning, is_warning_grounded
+
+    valid = {"E-001", "ED-101", "E-101", "E-201"}
+    fabricated = {"reason": "legend", "title": "Fixture type needs confirmation",
+                  "found": "Type EM2 appears 3 times on E-101.",
+                  "why": "y", "fix": "Check the luminaire schedule on E-999 for this type.",
+                  "where": "E-101"}
+    assert not is_warning_grounded(fabricated, valid)
+    grounded = {**fabricated, "fix": "Check the luminaire schedule on E-201 for this type."}
+    assert is_warning_grounded(grounded, valid)
+    assert is_warning_grounded(fallback_warning("EM2", 3, "E-101"), valid)
+    assert is_warning_grounded(fallback_warning("E1", 3, "ED-101"), valid)
+
+
+def test_map_payload_replaces_a_warning_naming_a_fabricated_hyphenated_sheet():
+    sheet = {"id": "tk1:0", "number": "E-101", "takeoff_id": "tk1", "page": 0,
+             "width_pt": 2000, "height_pt": 1500, "unreadable": None, "ai_reading": None}
+    warning = {"reason": "legend", "title": "x", "found": "Type F2 appears 3 times on E-101.",
+               "why": "y", "fix": "Check the schedule on E-999 for this type.", "where": "E-101"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2", "quantity": 3}
+    mapped = map_payload(_payload(sheets=[sheet], items=[item]))
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+    assert "E-999" not in " ".join(mapped.items[0]["warning"].values())
+    assert "E-101" in mapped.items[0]["warning"]["found"]
+
+
 def test_grounded_or_fallback_preserves_the_warnings_own_reason():
     """scale.set_scale() clears only warnings whose reason is "scale" -- a
     groundedness swap that rewrote the reason would leave a Missing

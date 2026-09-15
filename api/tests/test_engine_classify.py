@@ -18,6 +18,14 @@ def test_recognizes_drawings_from_a_title_block():
     assert classify_content("LEVEL 1 LIGHTING PLAN\nSCALE: 1/8\" = 1'-0\"\nSHEET E2.1") == "Drawings"
 
 
+def test_recognizes_drawings_numbered_across_the_corpus_family():
+    """Four of five vector sets in the corpus number their sheets
+    E-101, EL101, EP-1 or ED-101, not E2.1; a cover carrying only those
+    read as inconclusive."""
+    assert classify_content("SHEET INDEX\nE-001 ELECTRICAL LEGEND\nED-101 DEMOLITION PLAN\nE-101 LIGHTING PLAN") == "Drawings"
+    assert classify_content("EL101 FIRST FLOOR LIGHTING PLAN\nEP101 FIRST FLOOR POWER PLAN") == "Drawings"
+
+
 def test_recognizes_other():
     assert classify_content("GEOTECHNICAL INVESTIGATION REPORT") == "Other"
 

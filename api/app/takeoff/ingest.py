@@ -51,10 +51,18 @@ SHEET_KIND_LABELS = {
     "other": "Sheet",
 }
 
-# A narrower cousin of app/engine/title_block.py's SHEET_ID -- ingest.py stays
-# engine-agnostic, working off the payload contract only, so this is a
-# deliberate small duplication rather than a cross-module import.
-SHEET_ID = re.compile(r"\bE\d{1,2}\.\d{1,2}\b")
+# A stricter cousin of app/engine/title_block.py's SHEET_ID -- ingest.py
+# stays engine-agnostic, working off the payload contract only, so this
+# is a deliberate small duplication rather than a cross-module import
+# (test_api_import_boundary.py is what keeps app.engine out of the API
+# process). It covers the whole corpus family -- E2.1, E-101, E101,
+# EP-1, EL101, EF-1, ED-101 -- but, unlike the engine's, requires a
+# hyphen, a decimal, or three digits. The engine's shape also matches a
+# device tag (E1, EM2), and fallback_warning prints the tag in its own
+# text, so the engine's regex applied here would fail the deterministic
+# fallback on its own words. test_ingest_sheet_id_covers_every_corpus_number
+# in test_ingest_mapping.py keeps this from drifting behind the fixtures.
+SHEET_ID = re.compile(r"\bE[A-Z]{0,2}(?:-\d{1,3}(?:\.\d{1,2})?|\d{1,2}\.\d{1,2}|\d{3})\b")
 
 # A model-written warning must never carry this product's own forbidden
 # framing (CLAUDE.md: no model names, no confidence numbers, no "I

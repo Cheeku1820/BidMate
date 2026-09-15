@@ -247,8 +247,12 @@ def classify_content(text: str) -> str | None:
     if "GEOTECHNICAL" in up or "BID TABULATION" in up:
         return "Other"
     # Drawing indicators: an electrical sheet number in a title block, or a
-    # scale label alongside a sheet reference.
-    if re.search(r"\bE\d{1,2}\.\d{1,2}\b", up) or ("SCALE:" in up and "SHEET" in up):
+    # scale label alongside a sheet reference. The whole family
+    # (title_block.SHEET_ID): a set numbered E-101 or EL101 is a drawing
+    # set as surely as one numbered E2.1. This is a document-type guess
+    # over the first pages, not the page-level "is this an electrical
+    # sheet" decision, which never applies the family to whole-page text.
+    if title_block.SHEET_ID.search(up) or ("SCALE:" in up and "SHEET" in up):
         return "Drawings"
     return None
 

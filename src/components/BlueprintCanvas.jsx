@@ -23,6 +23,17 @@ function pathLength(points) {
 
 /* --------------------------------------------------------------- */
 
+/** The engine's reason is a full sentence that already says the sheet was
+ *  not read and not counted, so the banner runs it straight into what to
+ *  do next rather than prefixing "could not be read:" and saying it
+ *  twice. Reasons end in a period (older stored ones too), and the
+ *  banner supplies exactly one -- "counted.. Any items" is what
+ *  appending ". " to a reason that carries its own produced. */
+export function unreadableSentence(reason) {
+  const trimmed = String(reason || "").trim().replace(/[.\s]+$/, "");
+  return trimmed ? trimmed + "." : "";
+}
+
 export default function BlueprintCanvas({
   sheet,
   items,
@@ -324,10 +335,10 @@ export default function BlueprintCanvas({
         <div className="overlay" style={{ top: 14, left: 14, right: 176 }}>
           <div className="banner banner--missing">
             <div style={{ flex: 1 }}>
-              <strong>Nothing was read from this sheet</strong>
+              <strong>Nothing was read from {sheet.number}</strong>
               <p>
-                {sheet.number} could not be read: {sheet.unreadableReason}. Any items it carries are
-                not in this takeoff, so count them by hand or replace the sheet with a clearer copy.
+                {unreadableSentence(sheet.unreadableReason)} Any items it carries are not in this
+                takeoff, so count them by hand or replace the sheet with a clearer copy.
               </p>
             </div>
           </div>

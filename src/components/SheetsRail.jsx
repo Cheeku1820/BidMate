@@ -10,8 +10,15 @@ const FILTERS = [
 ];
 
 // Sentence-case labels for a sheet that is not a device plan. Plans get
-// no badge: the rail is mostly plans and the label would be noise.
+// no badge: the rail is mostly plans and the label would be noise. So
+// does a sheet nothing was read from -- its kind is "other" only
+// because nothing decided it, its title already says "Scanned sheet",
+// and a "Sheet" badge beside that says nothing.
 const KIND_LABEL = { schedule: "Schedule", legend: "Legend", diagram: "Diagram", other: "Sheet" };
+
+function kindBadge(s) {
+  return s.unreadableReason ? null : KIND_LABEL[s.kind];
+}
 
 /** Left panel: documents and sheets (spec §5, screen F). Filters and
  *  search operate on sheets; each row's thumbnail dots and warning
@@ -60,7 +67,7 @@ export default function SheetsRail({ sheets, items, sheetId, onSelectSheet, filt
                     <strong>{s.number}</strong>
                     <p>{s.title}</p>
                     <span className="badges">
-                      {KIND_LABEL[s.kind] && <span className="badge">{KIND_LABEL[s.kind]}</span>}
+                      {kindBadge(s) && <span className="badge">{kindBadge(s)}</span>}
                       <span className="badge">{s.revision}</span>
                       {warn > 0 && <span className="badge badge--warn">{warn} warning{warn > 1 ? "s" : ""}</span>}
                       {done && <span className="badge badge--done"><Check size={10} /> Reviewed</span>}

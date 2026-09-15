@@ -459,6 +459,47 @@ def test_reprocess_clears_evidence_image_when_a_rerun_crop_fails(client, db, pro
     assert db.get(ItemEvidenceImage, item_id) is None
 
 
+def test_reprocess_updates_a_matched_sheets_kind_and_title_but_not_its_scale(client, db, project, signed_in_user):
+    """A sheet the engine once read as a plan titled "Electrical" and
+    now reads as a panel schedule: the re-run carries the new kind and
+    title onto the row it already has (matched by number), and leaves
+    the scale the estimator confirmed alone -- kind and title are the
+    engine's fields, scale is a person's."""
+    from app.takeoff.models import Sheet
+
+    first = {**SHEET, "title": "Electrical", "kind": "plan"}
+    client.post(f"/api/projects/{project.id}/takeoff",
+                json={"payload": {"sheets": [first], "items": [_item("R", "20A duplex receptacle")]},
+                      "confirm_replace": True})
+    sheet = db.scalars(select(Sheet).where(Sheet.project_id == project.id)).one()
+    assert (sheet.kind, sheet.title) == ("plan", "Electrical")
+    sheet.scale = '1/8" = 1\'-0"'   # as scale.set_scale would leave it
+    db.commit()
+
+    second = {**SHEET, "title": "Panel schedules", "kind": "schedule"}
+    r = client.post(f"/api/projects/{project.id}/reprocess", json={"payload": {"sheets": [second], "items": []}})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    rows = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id)))
+    assert len(rows) == 1, "matched by number: one row, not a second sheet beside the first"
+    assert (rows[0].kind, rows[0].title) == ("schedule", "Panel schedules")
+    assert rows[0].scale == '1/8" = 1\'-0"'
+
+
+def test_reprocess_clears_an_unreadable_reason_the_engine_no_longer_reports(client, db, project, signed_in_user):
+    from app.takeoff.models import Sheet
+
+    first = {**SHEET, "title": "Scanned sheet", "kind": "other",
+             "unreadable": "The sheet is a scanned image with no readable text, so it was not counted."}
+    client.post(f"/api/projects/{project.id}/takeoff",
+                json={"payload": {"sheets": [first], "items": []}, "confirm_replace": True})
+    second = {**SHEET, "title": "Floor plan - lighting", "kind": "plan"}
+    client.post(f"/api/projects/{project.id}/reprocess", json={"payload": {"sheets": [second], "items": []}})
+    db.expire_all()
+    row = db.scalars(select(Sheet).where(Sheet.project_id == project.id)).one()
+    assert (row.kind, row.title, row.unreadable_reason) == ("plan", "Floor plan - lighting", "")
+
+
 def test_reprocess_updates_pricing_source_and_note(client, db, project, signed_in_user):
     _seed(client, project, [_item("R", "20A duplex receptacle")])
     payload = {**_payload([_item("R", "20A duplex receptacle")]), "source": "deterministic",

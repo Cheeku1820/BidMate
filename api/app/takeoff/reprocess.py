@@ -259,18 +259,30 @@ def reprocess_takeoff(db: DbSession, *, actor: User, project: Project, payload: 
     sheets = {s.number: s for s in db.scalars(select(Sheet).where(Sheet.project_id == project.id))}
     for row in mapped.sheets:
         sheet = sheets.get(row["number"])
-        if sheet is None:
-            sheet = Sheet(
-                id=uuid.uuid4(), project_id=project.id, number=row["number"], title=row["title"],
-                discipline=row["discipline"], revision=row["revision"], scale=row["scale"],
-                scale_options=[], plan=row["plan"], sort_order=row["sort_order"],
-                takeoff_id=row["takeoff_id"], page_index=row["page_index"],
-                width_pt=row["width_pt"], height_pt=row["height_pt"],
-                unreadable_reason=row["unreadable_reason"], ai_reading=row["ai_reading"],
-                kind=row["kind"],
-            )
-            db.add(sheet)
-            sheets[row["number"]] = sheet
+        if sheet is not None:
+            # The engine's reading of the title block, carried onto the
+            # row it already has. kind and title are the engine's fields
+            # -- nothing in the interface edits either -- so a re-run
+            # after the engine learns to read a sheet it once called
+            # "Electrical" / plan lands the better reading. scale is
+            # deliberately left alone: an estimator confirms or
+            # calibrates it (scale.set_scale), and a re-run must not
+            # write over that judgment.
+            sheet.kind = row["kind"]
+            sheet.title = row["title"]
+            sheet.unreadable_reason = row["unreadable_reason"]
+            continue
+        sheet = Sheet(
+            id=uuid.uuid4(), project_id=project.id, number=row["number"], title=row["title"],
+            discipline=row["discipline"], revision=row["revision"], scale=row["scale"],
+            scale_options=[], plan=row["plan"], sort_order=row["sort_order"],
+            takeoff_id=row["takeoff_id"], page_index=row["page_index"],
+            width_pt=row["width_pt"], height_pt=row["height_pt"],
+            unreadable_reason=row["unreadable_reason"], ai_reading=row["ai_reading"],
+            kind=row["kind"],
+        )
+        db.add(sheet)
+        sheets[row["number"]] = sheet
     db.flush()
 
     sheet_number_by_key = {r["key"]: r["number"] for r in mapped.sheets}

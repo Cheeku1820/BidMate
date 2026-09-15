@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict
 
 DOC_TYPES = ("Drawings", "Specifications", "Addendum", "Scope", "Other")
 DOC_STATUSES = ("uploaded", "processing", "processed", "failed")
@@ -24,11 +24,12 @@ class DocumentOut(BaseModel):
 
 
 class DocumentTypeIn(BaseModel):
-    doc_type: str
+    """Deliberately unvalidated against `DOC_TYPES` here: the estimator-
+    facing rejection ("Document type must be one of ...") is
+    `service.set_doc_type`'s to raise, in the same sentence-case wording
+    `store_upload` already uses. A field validator's message is field-
+    name-first pydantic phrasing ("doc_type must be one of ..."), and
+    letting two call sites each own a version of this message is how
+    they drift -- the service is the single gate."""
 
-    @field_validator("doc_type")
-    @classmethod
-    def _closed_set(cls, v: str) -> str:
-        if v not in DOC_TYPES:
-            raise ValueError(f"doc_type must be one of {', '.join(DOC_TYPES)}")
-        return v
+    doc_type: str

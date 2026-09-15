@@ -1,4 +1,4 @@
-"""Documents: stored and listed; Task 4 adds retype, remove, stream. The
+"""Documents: stored, listed, retyped, removed, and streamed back. The
 API never opens one -- it streams bytes, hashes them, records them.
 Opening an untrusted PDF is the worker's job (B2); see
 docs/specs/documents-stored.md §1.
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from typing import BinaryIO
 
 from fastapi import UploadFile
 from sqlalchemy import select
@@ -139,3 +140,34 @@ def load_document(document_id: uuid.UUID, db: DbSession, user: User) -> Document
         raise not_found()
     load_project(document.project_id, db, user)
     return document
+
+
+def set_doc_type(db: DbSession, *, actor: User, document: Document, doc_type: str) -> Document:
+    if doc_type not in DOC_TYPES:
+        raise DomainError("invalid_doc_type", f"Document type must be one of {', '.join(DOC_TYPES)}.", status=422)
+    before = _row_fields(document)
+    document.doc_type = doc_type
+    db.flush()
+    actions.commit(
+        db, actor=actor, project_id=document.project_id, kind="document_type",
+        label=f"Changed {document.filename} to {doc_type}", before=before, after=_row_fields(document),
+    )
+    return document
+
+
+def delete_document(db: DbSession, *, actor: User, document: Document, store: BlobStore) -> None:
+    """Blob first, then row: a row without a blob is a visible lie in the
+    list; a blob without a row is unreachable and harmless."""
+    before = _row_fields(document)
+    project_id, filename, key = document.project_id, document.filename, document.storage_key
+    store.delete(key)
+    db.delete(document)
+    db.flush()
+    actions.commit(
+        db, actor=actor, project_id=project_id, kind="document_delete",
+        label=f"Removed {filename}", before=before, after={},
+    )
+
+
+def open_content(document: Document, store: BlobStore) -> BinaryIO:
+    return store.open(document.storage_key)

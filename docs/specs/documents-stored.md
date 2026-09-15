@@ -79,7 +79,7 @@ Migration `0019_documents`, reversible. No `document_pages` yet — page count, 
 
 Upload goes **through the API**, not by presigned URL: one authenticated path, no CORS to MinIO, no presigned-hostname mismatch between the browser and a compose service, and the hash is computed where the row is written. Presigned direct-to-storage is the follow-up when sets outgrow streaming; `BlobStore` is what makes it a second `put` path rather than a redesign.
 
-**Audit.** Upload and delete are recorded through `actions.commit()` — `kind="document_add"` / `"document_delete"`, `label` in the estimator's words ("Uploaded *E-set.pdf* as Drawings" / "Removed *E-set.pdf*"), `before`/`after` carrying the row's fields, never bytes. Like notes, these are audited and **not undoable**: undo covers takeoff items, and a deleted blob cannot be restored by replaying a row. The client's confirmation dialog (spec §6 requires confirmation before deleting a source document) is what stands in for undo.
+**Audit.** Upload, type change and delete are recorded (`document_add` / `document_type` / `document_delete`) — a type change decides which files the engine reads as drawings, so it is a mutation worth attributing (`ROADMAP.md` invariant 8). Recorded through `actions.commit()`, `label` in the estimator's words ("Uploaded *E-set.pdf* as Drawings" / "Changed *E-set.pdf* to Addendum" / "Removed *E-set.pdf*"), `before`/`after` carrying the row's fields, never bytes. Like notes, these are audited and **not undoable**: undo covers takeoff items, and a deleted blob cannot be restored by replaying a row. The client's confirmation dialog (spec §6 requires confirmation before deleting a source document) is what stands in for undo.
 
 ## 6. The client
 

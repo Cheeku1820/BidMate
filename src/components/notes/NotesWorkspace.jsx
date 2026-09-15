@@ -16,8 +16,10 @@
    form, field, or menu. This screen has no conversation panel at all
    (deliberately out of scope for this slice); it is the form.
 
-   The apply banner ("Apply notes and re-run") wires a real re-run:
-   gather this session's uploaded drawings (uploadedFiles.js), run them
+   The apply banner ("Apply notes and re-run") wires a real re-run: fetch
+   the project's current document list from the API and fetch each
+   document's bytes back (store.listDocuments, store.fetchDocumentFile --
+   documents live server-side now, not in a browser-held map), run them
    back through the engine with EVERY standing context note as the
    authoritative notes channel (engineClient.js's estimateProject) --
    not just the unapplied ones, which drive only whether the banner
@@ -29,12 +31,13 @@
    reported -- reclassified and preserved counts -- never a number this
    screen invented.
 
-   Uploaded files are held in memory only for the session that uploaded
-   them, and ProcessingStatus.jsx clears them the moment the project's
-   first processing succeeds -- so "no drawings in memory" is the
-   *common* state by the time an estimator is back here adding a note,
-   not a rare edge case. That is handled plainly rather than surfacing
-   as an obscure fetch failure.
+   The document list is fetched fresh at re-run time, not cached from an
+   earlier mount -- an estimator can add or remove a document between
+   opening this screen and pressing the button, and the re-run has to
+   reflect the project's actual current documents, not a stale snapshot.
+   A project with no documents (never uploaded, or the interim engine
+   path aside -- B2 removes this whole round trip) is handled plainly
+   rather than surfacing as an obscure fetch failure.
    ============================================================ */
 
 import { useCallback, useEffect, useState } from "react";
@@ -53,7 +56,6 @@ import {
 import { formatTimestamp } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 import { estimateProject } from "../../lib/engineClient.js";
-import { getUploadedFiles } from "../../lib/uploadedFiles.js";
 
 const SCOPE_FILTERS = ["company", "project", "sheet", "item"];
 
@@ -260,13 +262,16 @@ export default function NotesWorkspace() {
     setApplyError(null);
     setApplyBusy(true);
     try {
-      const uploaded = getUploadedFiles(projectId);
-      if (uploaded.length === 0) {
+      const docs = await store.listDocuments(projectId);
+      if (docs.length === 0) {
         setApplyError(
-          "The source drawings for this project aren't available in this browser. Upload the drawing set again to re-run the takeoff.",
+          "This project doesn't have any source drawings to re-run. Upload a drawing set to run the takeoff.",
         );
         return;
       }
+      const uploaded = await Promise.all(
+        docs.map(async (d) => ({ file: await store.fetchDocumentFile(d), docType: d.docType })),
+      );
       const contextNotes = standing.map((n) => ({
         scope: n.scope,
         title: n.title,

@@ -3,10 +3,11 @@
    information".
 
    Sits between upload and processing. It reflects the actual uploaded
-   set (from uploadedFiles): the drawing files that will run through the
-   takeoff, and the specifications/addenda that are read as context. Two
-   things the estimator confirms before processing, surfaced in a Needs
-   attention section ABOVE the table rather than buried in a row (spec §5):
+   set, read from the API (store.listDocuments) rather than from browser
+   memory: the drawing files that will run through the takeoff, and the
+   specifications/addenda that are read as context. Two things the
+   estimator confirms before processing, surfaced in a Needs attention
+   section ABOVE the table rather than buried in a row (spec §5):
    documents whose type wasn't recognized, and whether a drawing set is
    present at all. Types stay editable here, and any file can be excluded.
 
@@ -24,14 +25,25 @@
    informative, a look at the content through classifyDoc -- so a file
    added at either end of the flow gets typed the same way. Files that
    upload would have refused (a non-PDF, a copy already in the list) are
-   refused here for the same reasons, named, and not silently added.
+   refused here for the same reasons, named, and not silently added. A
+   file added on this screen is not itself uploaded to the API -- there is
+   no "start takeoff" stash to carry it forward either, which is a known
+   gap in this interim slice: B2 replaces the whole browser-drives-the-
+   engine path with a real job, and that is where this screen gains its
+   own upload call.
+
+   The same content sniff also runs once, at mount, for a persisted
+   document whose filename never gave a real hint and whose type still
+   sits at the uninformative fallback -- covering the document that
+   reached this screen before Upload's own sniff round trip landed.
+   That fetch goes through store.fetchDocumentFile, since a persisted row
+   carries no File object in the browser any more.
    ============================================================ */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AlertCircle, AlertTriangle, Check, Clock, FileText, Plus } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import { getUploadedFiles, setUploadedFiles } from "../../lib/uploadedFiles.js";
 import { DOC_TYPES, detectDocTypeInfo } from "../../lib/detectDocType.js";
 import { classifyDoc } from "../../lib/engineClient.js";
 
@@ -73,26 +85,88 @@ function ChecklistRow({ state, title, detail }) {
   );
 }
 
-export default function ConfirmDrawings() {
+export default function ConfirmDrawings({ store }) {
   const { projectId } = useParams();
   const navigate = useNavigate();
   const inputRef = useRef(null);
 
-  const [rows, setRows] = useState(() =>
-    getUploadedFiles(projectId).map((f, i) => ({
-      id: i,
-      name: f.file?.name ?? `document ${i + 1}`,
-      size: f.file?.size ?? 0,
-      docType: f.docType,
-      file: f.file,
-      included: true,
-    })),
-  );
+  const [rows, setRows] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   // Why a file the estimator just chose is not in the list. Cleared on
   // the next add, so it never lingers past the action it explains.
   const [rejected, setRejected] = useState([]);
 
-  const setType = (id, docType) => setRows((prev) => prev.map((r) => (r.id === id ? { ...r, docType } : r)));
+  // Sticks at false once the component unmounts, so a result that lands
+  // late (listDocuments, or the mount-time classifyDoc sniff below) is a
+  // no-op rather than a set-state-after-unmount warning or a stale
+  // overwrite. Re-armed inside the effect body itself, not only in its
+  // cleanup -- StrictMode's simulated mount/unmount/remount runs the
+  // cleanup once in development, and a cleanup-only guard would stay
+  // false for the rest of the component's life.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
+  const loadDocuments = () => {
+    setLoadError(false);
+    store
+      .listDocuments(projectId)
+      .then((docs) => {
+        if (!aliveRef.current) return;
+        setRows(
+          docs.map((d) => ({
+            id: d.id,
+            name: d.filename,
+            size: d.sizeBytes,
+            docType: d.docType,
+            included: true,
+            persisted: true,
+          })),
+        );
+        setLoaded(true);
+
+        for (const d of docs) {
+          const detected = detectDocTypeInfo(d.filename);
+          // Only a document whose name gave no hint AND whose stored type
+          // still equals that uninformative fallback -- never re-sniff a
+          // type someone (upload's own sniff, or the estimator) already
+          // decided, even when that decision happens to read as "Drawings".
+          if (detected.source !== "default" || d.docType !== detected.type) continue;
+          store
+            .fetchDocumentFile(d)
+            .then((file) => classifyDoc(file))
+            .then((type) => {
+              if (!type || !aliveRef.current) return;
+              setRows((cur) => cur.map((r) => (r.id === d.id && r.docType === detected.type ? { ...r, docType: type } : r)));
+              store.setDocumentType(d.id, type).catch(() => {});
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {
+        if (!aliveRef.current) return;
+        setLoadError(true);
+        setLoaded(true);
+      });
+  };
+
+  useEffect(() => {
+    loadDocuments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store, projectId]);
+
+  const setType = (id, docType) => {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, docType } : r)));
+    const row = rows.find((r) => r.id === id);
+    // A row still local to this screen (added here, never uploaded) has
+    // nothing to PATCH -- see the header note on adding files.
+    if (row?.persisted) store.setDocumentType(id, docType).catch(() => {});
+  };
   const toggle = (id) => setRows((prev) => prev.map((r) => (r.id === id ? { ...r, included: !r.included } : r)));
 
   // Sorting the batch happens here, outside any state updater, and the
@@ -130,10 +204,10 @@ export default function ConfirmDrawings() {
         name: file.name,
         size: file.size,
         docType: detected.type,
-        file,
         included: true,
+        persisted: false,
       };
-      accepted.push({ row, detected });
+      accepted.push({ row, detected, file });
       seen.push(row);
     }
 
@@ -145,10 +219,10 @@ export default function ConfirmDrawings() {
     // Guarded on the row still existing and still holding the guessed
     // type, so a correction made while the look-up was in flight is
     // never overwritten.
-    for (const { row, detected } of accepted) {
+    for (const { row, detected, file } of accepted) {
       if (detected.source !== "default") continue;
-      classifyDoc(row.file).then((type) => {
-        if (!type) return;
+      classifyDoc(file).then((type) => {
+        if (!type || !aliveRef.current) return;
         setRows((cur) => cur.map((r) => (r.id === row.id && r.docType === detected.type ? { ...r, docType: type } : r)));
       });
     }
@@ -163,10 +237,8 @@ export default function ConfirmDrawings() {
 
   const start = () => {
     if (!hasDrawings) return;
-    setUploadedFiles(
-      projectId,
-      kept.map((r) => ({ file: r.file, docType: r.docType })),
-    );
+    // Nothing to stash -- processing reads the same project's documents
+    // straight from the API.
     navigate(`/projects/${projectId}/processing`);
   };
 
@@ -186,6 +258,22 @@ export default function ConfirmDrawings() {
     />
   );
 
+  if (!loaded) {
+    return (
+      <>
+        <AppTopBar
+          title="Confirm documents"
+          breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}
+        >
+          <button type="button" className="btn" onClick={openPicker}>
+            <Plus aria-hidden="true" size={15} /> Add files
+          </button>
+        </AppTopBar>
+        {fileInput}
+      </>
+    );
+  }
+
   if (rows.length === 0) {
     return (
       <>
@@ -198,13 +286,29 @@ export default function ConfirmDrawings() {
           </button>
         </AppTopBar>
         {fileInput}
-        <div className="empty-state">
-          <h2>No documents to confirm</h2>
-          <p>Add the drawing set and its documents first.</p>
-          <Link className="btn btn--primary" to={`/projects/${projectId}/documents`}>
-            Upload documents
-          </Link>
-        </div>
+        {loadError ? (
+          <div className="workspace-body">
+            <div className="page">
+              <div className="warncard warncard--missing" role="alert">
+                <h4>
+                  <AlertTriangle aria-hidden="true" size={16} /> Couldn't load documents
+                </h4>
+                <p>Couldn't load this project's documents. Check the connection and try again.</p>
+                <button type="button" className="btn" onClick={loadDocuments}>
+                  Try again
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <h2>No documents to confirm</h2>
+            <p>Add the drawing set and its documents first.</p>
+            <Link className="btn btn--primary" to={`/projects/${projectId}/documents`}>
+              Upload documents
+            </Link>
+          </div>
+        )}
       </>
     );
   }

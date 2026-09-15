@@ -10,14 +10,16 @@ This is screen F of a larger specification. It was built first because every oth
 
 ## Run it
 
-Everything runs against a real backend — Postgres, the API, and the takeoff engine. There is no fixture data: every row comes from a document you upload. You need [Docker](https://www.docker.com/), Python 3.12, and Node 18+.
+Everything runs against a real backend — Postgres, object storage, the API, and the takeoff engine. There is no fixture data: every row comes from a document you upload. You need [Docker](https://www.docker.com/), Python 3.12, and Node 18+.
 
-Postgres and the API run in containers — dependencies install inside the image, nothing to set up on the host for this part:
+Postgres, object storage (MinIO), and the API run in containers — dependencies install inside the image, nothing to set up on the host for this part:
 
 ```bash
-docker compose up -d postgres api
+docker compose up -d postgres minio minio-init api
 docker compose run --rm api alembic upgrade head
 ```
+
+Uploaded documents are stored in MinIO, not on the API container's own disk, so an upload survives a reload or a container restart. `minio-init` creates the bucket the API writes to on first start; the dev credentials it uses are in [`docker-compose.yml`](docker-compose.yml), and the MinIO console is at http://localhost:9001 if you want to browse what got stored.
 
 Create the first account. There is no default password — choose your own:
 
@@ -28,7 +30,7 @@ docker compose run --rm \
   api python -m app.create_admin
 ```
 
-The takeoff engine runs directly on your machine, not in a container — the browser reaches it at `localhost:8100` directly, so it needs its own Python environment. Install its dependencies once into a virtual environment, then start it, from `api/`:
+The takeoff engine runs directly on your machine, not in a container — the browser fetches a project's uploaded documents back from the API and posts them straight to `localhost:8100` itself, so the engine needs its own Python environment. This is an interim arrangement: a later change puts the engine behind the API too and this round trip through the browser goes away. Install the engine's dependencies once into a virtual environment, then start it, from `api/`:
 
 ```bash
 cd api

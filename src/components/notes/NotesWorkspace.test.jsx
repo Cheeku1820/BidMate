@@ -17,8 +17,21 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import NotesWorkspace from "./NotesWorkspace.jsx";
-import { setUploadedFiles, clearUploadedFiles } from "../../lib/uploadedFiles.js";
 import * as engineClient from "../../lib/engineClient.js";
+
+const storedDoc = (over = {}) => ({
+  id: "d1",
+  projectId: "p1",
+  filename: "e1.1.pdf",
+  docType: "Drawings",
+  sizeBytes: 1,
+  sha256: "a",
+  status: "uploaded",
+  error: "",
+  createdAt: "2026-08-28T10:00:00Z",
+  ...over,
+});
+const fetchedFile = () => new File([new Uint8Array(1)], "e1.1.pdf", { type: "application/pdf" });
 
 const NOTE = {
   id: "n1",
@@ -39,13 +52,15 @@ const NOTE = {
   appliedAt: null,
 };
 
-function makeStore({ notes = [] } = {}) {
+function makeStore({ notes = [], documents = [storedDoc()] } = {}) {
   return {
     listNotes: vi.fn().mockResolvedValue(notes),
     createNote: vi.fn().mockResolvedValue({ ...NOTE, id: "new" }),
     updateNote: vi.fn().mockResolvedValue(NOTE),
     deleteNote: vi.fn().mockResolvedValue(undefined),
     reprocess: vi.fn().mockResolvedValue({ reclassified: 0, preserved: 0, added: 0, removed: 0 }),
+    listDocuments: vi.fn().mockResolvedValue(documents),
+    fetchDocumentFile: vi.fn().mockResolvedValue(fetchedFile()),
   };
 }
 
@@ -213,21 +228,17 @@ describe("NotesWorkspace", () => {
   });
 
   describe("applying notes and re-running", () => {
-    // A re-run needs the engine's payload for the same drawings the
-    // project was first processed from -- getUploadedFiles(projectId) is
-    // how the client still has them, in memory, for this session. These
-    // two tests exercise the happy and unhappy paths for what happens
-    // once that payload exists and store.reprocess is reached; the
-    // "no files in memory" state (the common one, since ProcessingStatus
-    // clears this map right after the first successful process) gets its
-    // own test below.
+    // A re-run needs the engine's payload for the same project's current
+    // documents -- fetched fresh from the API (store.listDocuments, then
+    // store.fetchDocumentFile per document) rather than held in browser
+    // memory. These two tests exercise the happy and unhappy paths for
+    // what happens once that payload exists and store.reprocess is
+    // reached; the "no documents" state gets its own test below.
     beforeEach(() => {
-      setUploadedFiles("p1", [{ file: new File([new Uint8Array(1)], "e1.1.pdf", { type: "application/pdf" }), docType: "Drawings" }]);
       vi.spyOn(engineClient, "estimateProject").mockResolvedValue({ sheets: [], items: [] });
     });
 
     afterEach(() => {
-      clearUploadedFiles("p1");
       vi.restoreAllMocks();
     });
 
@@ -290,12 +301,9 @@ describe("NotesWorkspace", () => {
   });
 
   it("says plainly when no source drawings remain to re-run, rather than failing obscurely", async () => {
-    // The common case: ProcessingStatus.jsx clears the uploaded-files map
-    // right after the project's first successful process, so by the time
-    // an estimator adds a note and comes back here, this browser simply
-    // doesn't hold the drawings in memory any more.
-    clearUploadedFiles("p1");
-    const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
+    // A project with no documents -- the re-run has nothing to send the
+    // engine.
+    const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }], documents: [] });
     renderNotes({ store });
     await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
     expect(await screen.findByText(/no source drawings|drawings aren't available|upload/i)).toBeInTheDocument();

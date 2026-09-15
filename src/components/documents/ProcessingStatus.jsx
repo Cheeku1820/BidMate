@@ -1,17 +1,21 @@
 /* ============================================================
    ProcessingStatus.jsx — spec §5 screen E, driving the real engine.
 
-   If the estimator uploaded drawings, this posts them to the takeoff
-   engine (engineClient) and shows a genuine multi-stage loading sequence
-   while the request is in flight, then ingests the result into the
-   project's store (attachEngineTakeoff) and sends them to review. The
-   stage labels are indicative -- the engine runs as one request -- but
-   completion is real.
+   If the project has documents, this fetches their bytes back from the
+   API (store.listDocuments, then store.fetchDocumentFile per document --
+   documents live server-side now, not in a browser-held map) and posts
+   them to the takeoff engine (engineClient), showing a genuine
+   multi-stage loading sequence while the request is in flight, then
+   ingests the result into the project's store (attachEngineTakeoff) and
+   sends them to review. The stage labels are indicative -- the engine
+   runs as one request -- but completion is real. This round trip through
+   the browser is interim: B2 moves the engine behind the API and this
+   screen stops fetching document bytes itself.
 
-   With no upload, there is nothing to process -- this is an error state,
-   not a fallback, since a project only reaches this screen after Upload
-   documents requires a drawing set. Re-entering a project that already
-   has a takeoff never re-runs.
+   With no documents, there is nothing to process -- this is an error
+   state, not a fallback, since a project only reaches this screen after
+   Upload documents requires a drawing set. Re-entering a project that
+   already has a takeoff never re-runs.
    ============================================================ */
 
 import { useCallback, useEffect, useState } from "react";
@@ -19,7 +23,6 @@ import { Link, useParams } from "react-router-dom";
 import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import { estimateProject } from "../../lib/engineClient.js";
-import { getUploadedFiles, clearUploadedFiles } from "../../lib/uploadedFiles.js";
 
 const ENGINE_STAGES = ["Uploading documents", "Reading drawings and specifications", "Counting devices", "Classifying and pricing"];
 
@@ -49,7 +52,6 @@ export default function ProcessingStatus({ store }) {
     async (payload, { confirmReplace = false } = {}) => {
       try {
         await store.attachEngineTakeoff(projectId, payload, { confirmReplace });
-        clearUploadedFiles(projectId);
         setReplaceConfirm(null);
         setReviewPath(`/projects/${projectId}/takeoff`);
         setMode("done");
@@ -106,9 +108,15 @@ export default function ProcessingStatus({ store }) {
         return;
       }
 
-      const uploaded = getUploadedFiles(projectId);
+      let docs;
+      try {
+        docs = await store.listDocuments(projectId);
+      } catch {
+        docs = [];
+      }
+      if (!alive) return;
 
-      if (uploaded.length > 0) {
+      if (docs.length > 0) {
         // --- real engine path ---
         setMode("engine");
         let stage = 0;
@@ -119,10 +127,17 @@ export default function ProcessingStatus({ store }) {
         }, 2500);
         timers.push(() => clearInterval(iv));
         try {
-          // Dedupe the network call across StrictMode's double invoke.
+          // Dedupe the network call across StrictMode's double invoke --
+          // the byte-fetch-back and the estimate call together, so a
+          // document's content isn't fetched from the API twice either.
           let run = engineRuns.get(projectId);
           if (!run) {
-            run = estimateProject(uploaded, project?.location || "");
+            run = (async () => {
+              const uploaded = await Promise.all(
+                docs.map(async (d) => ({ file: await store.fetchDocumentFile(d), docType: d.docType })),
+              );
+              return estimateProject(uploaded, project?.location || "", []);
+            })();
             engineRuns.set(projectId, run);
           }
           const payload = await run;
@@ -147,7 +162,7 @@ export default function ProcessingStatus({ store }) {
         return;
       }
 
-      // No documents uploaded — there is nothing to process.
+      // No documents — there is nothing to process.
       setError("No documents have been uploaded for this project yet. Upload a drawing set to start a takeoff.");
       setMode("error");
     })();

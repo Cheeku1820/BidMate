@@ -1,10 +1,13 @@
 /* ============================================================
    ProcessingStatus.test.jsx — screen E behaviour.
 
-   With the seed/sample takeoff path removed, a project with no uploaded
-   documents and no existing takeoff has nothing to process -- that is an
-   error state, not a fallback. Re-entering a project that already has a
-   takeoff goes straight to complete and never re-runs the engine.
+   Documents live server-side now: this screen fetches the project's
+   document list from the API (store.listDocuments) and fetches each
+   one's bytes back (store.fetchDocumentFile) rather than reading a
+   browser-held file map. A project with no documents and no
+   existing takeoff has nothing to process -- that is an error state,
+   not a fallback. Re-entering a project that already has a takeoff goes
+   straight to complete and never re-runs the engine.
    ============================================================ */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -12,7 +15,6 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ProcessingStatus from "./ProcessingStatus.jsx";
-import { setUploadedFiles, clearUploadedFiles } from "../../lib/uploadedFiles.js";
 import * as engineClient from "../../lib/engineClient.js";
 
 const renderProcessing = (store) =>
@@ -24,6 +26,21 @@ const renderProcessing = (store) =>
       </Routes>
     </MemoryRouter>,
   );
+
+const storedDoc = (over = {}) => ({
+  id: "d1",
+  projectId: "p1",
+  filename: "e1.1.pdf",
+  docType: "Drawings",
+  sizeBytes: 1024,
+  sha256: "a",
+  status: "uploaded",
+  error: "",
+  createdAt: "2026-09-15T00:00:00Z",
+  ...over,
+});
+
+const fetchedFile = () => new File([new Uint8Array(1024)], "e1.1.pdf", { type: "application/pdf" });
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -40,6 +57,7 @@ describe("ProcessingStatus", () => {
   it("shows an error, not a fallback, when no documents were uploaded and no takeoff exists yet", async () => {
     const store = {
       listProjects: vi.fn().mockResolvedValue([{ id: "p1", itemsTotal: 0 }]),
+      listDocuments: vi.fn().mockResolvedValue([]),
     };
     renderProcessing(store);
     await flushMicrotasks();
@@ -58,7 +76,8 @@ describe("ProcessingStatus", () => {
     await flushMicrotasks();
 
     // Straight to complete -- no engine call, no error, and crucially no
-    // re-run that would wipe the estimator's review progress.
+    // re-run that would wipe the estimator's review progress. The
+    // document list is never even fetched.
     expect(screen.getAllByRole("link", { name: /continue to review/i }).length).toBeGreaterThan(0);
   });
 
@@ -68,7 +87,6 @@ describe("ProcessingStatus", () => {
     // that as "already has a takeoff" when there is an upload waiting --
     // it must call the engine, not take the early "done" return.
     vi.useRealTimers();
-    setUploadedFiles("p2", [{ file: new File([new Uint8Array(1024)], "e1.1.pdf", { type: "application/pdf" }), docType: "Drawings" }]);
     vi.spyOn(engineClient, "estimateProject").mockResolvedValue({
       totals: { item_count: 4, total_direct_cost: 12000 },
       sheets: [{ id: "e11" }],
@@ -77,6 +95,8 @@ describe("ProcessingStatus", () => {
     });
     const store = {
       listProjects: vi.fn().mockResolvedValue([{ id: "p2", itemsTotal: 0 }]),
+      listDocuments: vi.fn().mockResolvedValue([storedDoc({ projectId: "p2" })]),
+      fetchDocumentFile: vi.fn().mockResolvedValue(fetchedFile()),
       attachEngineTakeoff: vi.fn().mockResolvedValue(undefined),
     };
 
@@ -93,20 +113,58 @@ describe("ProcessingStatus", () => {
     await waitFor(() => expect(store.attachEngineTakeoff).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(/no documents have been uploaded/i)).not.toBeInTheDocument();
 
-    clearUploadedFiles("p2");
     vi.restoreAllMocks();
+  });
+
+  it("feeds the engine the stored documents, fetched back from the API, not browser memory", async () => {
+    vi.useRealTimers();
+    vi.spyOn(engineClient, "estimateProject").mockResolvedValue({
+      totals: { item_count: 4, total_direct_cost: 12000 },
+      sheets: [{ id: "e11" }],
+      location: "",
+      source: "engine",
+    });
+    const store = {
+      listProjects: vi.fn().mockResolvedValue([{ id: "p1", itemsTotal: 0 }]),
+      listDocuments: vi.fn().mockResolvedValue([storedDoc()]),
+      fetchDocumentFile: vi.fn().mockResolvedValue(fetchedFile()),
+      attachEngineTakeoff: vi.fn().mockResolvedValue(undefined),
+    };
+
+    renderProcessing(store);
+
+    await waitFor(() => expect(store.fetchDocumentFile).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(engineClient.estimateProject).toHaveBeenCalledWith(
+        [expect.objectContaining({ docType: "Drawings", file: expect.any(File) })],
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    vi.restoreAllMocks();
+  });
+
+  it("says so when the project has no documents", async () => {
+    const store = {
+      listProjects: vi.fn().mockResolvedValue([{ id: "p1", itemsTotal: 0 }]),
+      listDocuments: vi.fn().mockResolvedValue([]),
+    };
+    renderProcessing(store);
+    await flushMicrotasks();
+
+    expect(screen.getByText(/No documents have been uploaded/)).toBeInTheDocument();
   });
 });
 
 describe("ProcessingStatus — replacing a takeoff that holds approvals", () => {
   // The engine path here is driven entirely by promise resolution (the
-  // upload, the estimate call, the attach), not by the simulated per-sheet
-  // timers the sample path uses. Real timers keep userEvent's own internal
-  // delays out of the way instead of fighting the fake clock for a ticker
-  // this flow never depends on.
+  // document fetch, the estimate call, the attach), not by the simulated
+  // per-sheet timers the sample path uses. Real timers keep userEvent's
+  // own internal delays out of the way instead of fighting the fake
+  // clock for a ticker this flow never depends on.
   beforeEach(() => {
     vi.useRealTimers();
-    setUploadedFiles("p1", [{ file: new File([new Uint8Array(1024)], "e1.1.pdf", { type: "application/pdf" }), docType: "Drawings" }]);
     vi.spyOn(engineClient, "estimateProject").mockResolvedValue({
       totals: { item_count: 4, total_direct_cost: 12000 },
       sheets: [{ id: "e11" }],
@@ -116,12 +174,17 @@ describe("ProcessingStatus — replacing a takeoff that holds approvals", () => 
   });
 
   afterEach(() => {
-    clearUploadedFiles("p1");
     vi.restoreAllMocks();
   });
 
+  const storeWithDocuments = (over = {}) => ({
+    listDocuments: vi.fn().mockResolvedValue([storedDoc()]),
+    fetchDocumentFile: vi.fn().mockResolvedValue(fetchedFile()),
+    ...over,
+  });
+
   it("asks before replacing a takeoff that holds approvals", async () => {
-    const store = {
+    const store = storeWithDocuments({
       listProjects: vi.fn().mockResolvedValue([{ id: "p1", name: "Riverside" }]),
       attachEngineTakeoff: vi
         .fn()
@@ -130,7 +193,7 @@ describe("ProcessingStatus — replacing a takeoff that holds approvals", () => 
           message: "3 item(s) on this project are estimator approved.",
         })
         .mockResolvedValueOnce({ sheets: 1, items: 4 }),
-    };
+    });
     renderProcessing(store);
 
     // The estimator sees what would be lost, in the server's own words.
@@ -144,13 +207,13 @@ describe("ProcessingStatus — replacing a takeoff that holds approvals", () => 
   });
 
   it("leaves the takeoff alone when the estimator declines", async () => {
-    const store = {
+    const store = storeWithDocuments({
       listProjects: vi.fn().mockResolvedValue([{ id: "p1", name: "Riverside" }]),
       attachEngineTakeoff: vi.fn().mockRejectedValue({
         code: "approved_items_present",
         message: "3 item(s) on this project are estimator approved.",
       }),
-    };
+    });
     renderProcessing(store);
 
     await userEvent.click(await screen.findByRole("button", { name: /keep the current takeoff/i }));
@@ -160,7 +223,7 @@ describe("ProcessingStatus — replacing a takeoff that holds approvals", () => 
   });
 
   it("surfaces a failure that happens after the estimator confirms", async () => {
-    const store = {
+    const store = storeWithDocuments({
       listProjects: vi.fn().mockResolvedValue([{ id: "p1", name: "Riverside" }]),
       attachEngineTakeoff: vi
         .fn()
@@ -172,7 +235,7 @@ describe("ProcessingStatus — replacing a takeoff that holds approvals", () => 
           code: "request_failed",
           message: "The request failed (status 500). Try again.",
         }),
-    };
+    });
     renderProcessing(store);
 
     await userEvent.click(await screen.findByRole("button", { name: /replace the takeoff/i }));

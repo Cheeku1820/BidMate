@@ -46,7 +46,7 @@ export function appRoutes({ store, me, onSignedOut }) {
       <Route path="/projects/:projectId" element={<ProjectOverview store={store} me={me} />} />
       <Route path="/projects/:projectId/settings" element={<ProjectSettings store={store} />} />
       <Route path="/projects/:projectId/documents" element={<UploadDocuments store={store} />} />
-      <Route path="/projects/:projectId/documents/confirm" element={<ConfirmDrawings />} />
+      <Route path="/projects/:projectId/documents/confirm" element={<ConfirmDrawings store={store} />} />
       <Route path="/projects/:projectId/processing" element={<ProcessingStatus store={store} />} />
       <Route
         path="/projects/:projectId"

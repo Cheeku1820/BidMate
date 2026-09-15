@@ -5,10 +5,11 @@ import pymupdf
 from app.engine import documents
 
 
-def _sheet(tmp_path, own_number, refs=(), title_lines=(), rotation=0, drawings=600, scale=True):
+def _sheet(tmp_path, own_number, refs=(), title_lines=(), rotation=0, drawings=600, scale=True, tags=()):
     """A 1000x800 page with a right-edge title block (SHEET/DRAWN labels,
     optional title lines, the number cell at the bottom corner), a body
-    that references other sheets, and enough vector paths to be a plan."""
+    that references other sheets, optional device tags at unrotated
+    (x, y) positions, and enough vector paths to be a plan."""
     doc = pymupdf.open()
     page = doc.new_page(width=1000, height=800)
     page.insert_text((900, 60), "SHEET")
@@ -18,6 +19,8 @@ def _sheet(tmp_path, own_number, refs=(), title_lines=(), rotation=0, drawings=6
     page.insert_text((900, 770), own_number)
     for i, ref in enumerate(refs):
         page.insert_text((200, 200 + i * 40), f"SEE {ref}")
+    for text, x, y in tags:
+        page.insert_text((x, y), text)
     if scale:
         page.insert_text((200, 600), 'SCALE: 1/8" = 1\'-0"')
     for i in range(drawings):
@@ -60,6 +63,68 @@ def test_rotated_page_reads_the_same(tmp_path):
     assert 0 <= x0 < x1 <= 800 and 0 <= y0 < y1 <= 1000
     # The title block is along the visual bottom on a 90-degree page.
     assert y1 < 1000 * 0.85
+
+
+def _glyph_under(path, page_index, x, y, half=12):
+    """The text a viewer would see in a small square around a visual
+    point -- rendered from the page's own frame, read back through the
+    derotated clip get_textbox needs (page_frame.to_unrotated)."""
+    from app.engine import page_frame
+
+    page = pymupdf.open(path)[page_index]
+    clip = page_frame.to_unrotated(pymupdf.Rect(x - half, y - half, x + half, y + half), page)
+    return page.get_textbox(clip).strip()
+
+
+_TAGS = [("R1", 300, 300), ("R1", 500, 300), ("R1", 300, 500), ("R1", 500, 500)]
+
+
+def test_a_180_degree_page_reads_the_same_and_its_markers_sit_on_the_glyphs(tmp_path):
+    """Spec 3.3. The unrotated right-edge block is along the visual LEFT
+    of a 180-degree page, with the number cell at the top-left corner.
+    Number, title and kind read the same; the counting region gives up
+    the left strip, not the right; and every placement Counting emits,
+    read back through the derotated clip, is the tag itself -- markers
+    land on the drawing, not off it."""
+    from app.engine import counting
+
+    path = _sheet(tmp_path, "E-101", title_lines=("FIRST FLOOR", "POWER PLAN"), rotation=180, tags=_TAGS)
+    (s,) = documents.detect_sheets(path)
+    assert (s.number, s.title, s.kind) == ("E-101", "First floor power plan", "plan")
+    assert (s.width_pt, s.height_pt) == (1000, 800)
+    x0, y0, x1, y1 = s.region
+    assert x0 >= 1000 * 0.18 - 0.5       # left strip located and excluded
+    assert x1 > 1000 * 0.9               # nothing taken off the right
+    assert y0 < 800 * 0.1 and y1 > 800 * 0.9
+    (cluster,) = counting.count_sheet(path, s)
+    assert cluster.tag == "R1" and cluster.count == 4
+    for pl in cluster.placements:
+        assert 0 <= pl.x <= s.width_pt and 0 <= pl.y <= s.height_pt
+        assert _glyph_under(path, 0, pl.x, pl.y) == "R1", pl
+
+
+def test_a_270_degree_page_reads_the_same_and_its_markers_sit_on_the_glyphs(tmp_path):
+    """Spec 3.3, the corpus's own 270-degree case: TSC Nutrition's
+    electrical pages are 270 but carry no words at all (text outlined to
+    paths), so the corpus cannot supply this readback and this synthetic
+    page stands in. The right-edge block is along the visual TOP; the
+    region gives up the top strip; every placement reads back as its
+    tag."""
+    from app.engine import counting
+
+    path = _sheet(tmp_path, "E-101", title_lines=("FIRST FLOOR", "POWER PLAN"), rotation=270, tags=_TAGS)
+    (s,) = documents.detect_sheets(path)
+    assert (s.number, s.title, s.kind) == ("E-101", "First floor power plan", "plan")
+    assert (s.width_pt, s.height_pt) == (800, 1000)
+    x0, y0, x1, y1 = s.region
+    assert y0 >= 1000 * 0.18 - 0.5       # top strip located and excluded
+    assert y1 > 1000 * 0.9               # nothing taken off the bottom
+    assert x0 < 800 * 0.1 and x1 > 800 * 0.9
+    (cluster,) = counting.count_sheet(path, s)
+    assert cluster.tag == "R1" and cluster.count == 4
+    for pl in cluster.placements:
+        assert 0 <= pl.x <= s.width_pt and 0 <= pl.y <= s.height_pt
+        assert _glyph_under(path, 0, pl.x, pl.y) == "R1", pl
 
 
 def test_region_excludes_the_located_strip_not_a_fixed_right_strip(tmp_path):
@@ -152,6 +217,44 @@ def test_a_scan_split_into_two_bands_is_still_a_scan(tmp_path):
     assert s.unreadable_reason
 
 
+def test_a_scan_with_a_typed_number_cell_is_still_a_scanned_sheet(tmp_path):
+    """A scan whose title block is text -- a number cell typed over the
+    image after scanning -- keeps its number, and nothing else: the
+    same "Scanned sheet" / other outcome as an unnumbered scan. It used
+    to come out titled "Electrical" and kind plan, which claimed a
+    reading of a page nobody read."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    img = pymupdf.open()
+    ip = img.new_page(width=200, height=100)
+    ip.draw_rect(pymupdf.Rect(10, 10, 190, 90), color=(0, 0, 0), fill=(0.5, 0.5, 0.5))
+    page.insert_image(pymupdf.Rect(0, 0, 1000, 800), pixmap=ip.get_pixmap())
+    page.insert_text((900, 60), "SHEET")
+    page.insert_text((900, 770), "E2.1")
+    path = tmp_path / "typed-scan.pdf"
+    doc.save(path)
+    (s,) = documents.detect_sheets(str(path))
+    assert s.number == "E2.1"
+    assert s.title == "Scanned sheet"
+    assert s.kind == "other"
+    assert s.unreadable_reason == documents.SCANNED_REASON
+
+
+def test_unreadable_reasons_read_as_estimator_copy():
+    """The reason is shown on the canvas banner, so it follows the copy
+    rules: a sentence in plain drafting words, no file internals
+    (CLAUDE.md), sentence case, one period at the end for the banner to
+    strip."""
+    for reason in (documents.SCANNED_REASON, documents.OUTLINED_REASON):
+        low = reason.lower()
+        for internal in ("vector", "path", "pdf", "raster", "layer", "font", "ocr"):
+            assert internal not in low.split() and f" {internal}s" not in low, (reason, internal)
+        for banned in ("!", "please", "successfully", "isn't available"):
+            assert banned not in low, (reason, banned)
+        assert reason[0].isupper() and reason.endswith(".") and not reason.endswith("..")
+        assert "not counted" in low
+
+
 def test_a_page_of_outlined_text_is_detected_and_unreadable(tmp_path):
     """TSC Nutrition's fourteen electrical pages carry no text layer --
     the text was outlined to drawing paths when the PDF was made. Five
@@ -168,7 +271,7 @@ def test_a_page_of_outlined_text_is_detected_and_unreadable(tmp_path):
     assert s.number == ""
     assert s.title == "Sheet with outlined text"
     assert s.kind == "other"
-    assert "outlined" in s.unreadable_reason
+    assert s.unreadable_reason == documents.OUTLINED_REASON
 
 
 def test_a_wordless_page_with_an_image_and_a_few_paths_is_still_unreadable(tmp_path):

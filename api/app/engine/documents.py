@@ -45,8 +45,12 @@ EVIDENCE_MAX_ZOOM = 4.0
 
 SCHEDULE_KEYWORDS = ("SCHEDULE", "LUMINAIRE", "FIXTURE", "LEGEND", "MANUFACTURER")
 
-SCANNED_REASON = "Scanned sheet — vector reading isn't available yet, so it was not counted."
-OUTLINED_REASON = "Text on this sheet is outlined as drawing paths, so tags couldn't be read — it was not counted."
+# Estimator-facing, in a drafter's words: what the page is and what that
+# means for the takeoff, no file internals (CLAUDE.md). Each is one
+# sentence ending in a period; the canvas banner strips the period and
+# continues with what to do about it.
+SCANNED_REASON = "The sheet is a scanned image with no readable text, so it was not counted."
+OUTLINED_REASON = "The sheet's text was saved as outlines rather than text, so its tags could not be read and it was not counted."
 
 # A page with no words at all but this many drawing paths is a sheet
 # whose text was outlined to paths when the PDF was made (TSC
@@ -64,6 +68,15 @@ OUTLINED_MIN_DRAWINGS = 200
 # alone said "not a scan" for every one of their pages.
 RASTER_MAX_DRAWINGS = 50
 RASTER_COVER = 0.6
+
+
+def _has_drawings(page: pymupdf.Page) -> bool:
+    """Whether the page draws anything at all. get_cdrawings() is the
+    thin C-level walk without the per-path Python dicts get_drawings()
+    builds; asked only for emptiness, it is the cheap question. A
+    165k-path architectural page was walked in full twice per pass --
+    once here, once in _is_raster -- to learn it was not empty."""
+    return bool(page.get_cdrawings())
 
 
 def _is_raster(page: pymupdf.Page) -> bool:
@@ -143,17 +156,23 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
         # say SHEET / E7.1 / DATE -- cannot be a plan, a schedule or a
         # legend drawing. Zero, not a count: Pulte Sagebriar's 323-path
         # riser diagram is a sheet.
-        if not page.get_image_info() and not page.get_drawings():
+        if not page.get_image_info() and not _has_drawings(page):
             continue
 
         region = _region(w, h, tb.strip)
         if _is_raster(page):
+            # A scan whose title block happened to be text -- a stamp
+            # over the image, a number cell typed in after scanning. The
+            # number is real; nothing else on the page has been read, so
+            # it is the same outcome as an unnumbered scan: "Scanned
+            # sheet", kind other, and no title taken from a block that
+            # was not read. It used to say "Electrical" / plan here,
+            # which claimed a reading nobody made.
             sheets.append(
                 DetectedSheet(
-                    page_index=pno, number=number, title="Electrical",
+                    page_index=pno, number=number, title="Scanned sheet",
                     discipline="Electrical", scale="", width_pt=w, height_pt=h, region=region,
-                    kind="plan",  # nothing on a scanned page has been read; unsure is plan
-                    unreadable_reason=SCANNED_REASON,
+                    kind="other", unreadable_reason=SCANNED_REASON,
                 )
             )
             continue

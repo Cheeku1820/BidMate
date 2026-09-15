@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
-from app.documents.blobstore import BlobStore
+from app.documents.blobstore import BlobNotFound, BlobStore
 from app.documents.schemas import DOC_TYPES
 from app.errors import DomainError
 from app.identity.models import User
@@ -156,18 +156,47 @@ def set_doc_type(db: DbSession, *, actor: User, document: Document, doc_type: st
 
 
 def delete_document(db: DbSession, *, actor: User, document: Document, store: BlobStore) -> None:
-    """Blob first, then row: a row without a blob is a visible lie in the
-    list; a blob without a row is unreachable and harmless."""
+    """Row first, then blob -- deliberately, and the order is the whole
+    point of this function.
+
+    Either order leaves a window. Deleting the blob first means a
+    storage success followed by a database failure leaves a row pointing
+    at nothing: the document is still listed, still counts toward the
+    drawing-set gate, and fails the moment anyone opens it. Deleting the
+    row first means a database success followed by a storage failure
+    leaves a blob no row references -- unreachable by any route, since
+    every key is reached through a row. The second is the harmless one,
+    so it is the one this takes.
+
+    The orphan it can leave is real and is not swept up by anything:
+    blob retention and reaping are not built (ROADMAP.md §2.2).
+
+    `store.delete` runs after `actions.commit` but before the route's
+    own `db.commit()`, so a storage failure rolls the row back too and
+    the estimator is told the remove failed rather than left with a list
+    that quietly disagrees with storage."""
     before = _row_fields(document)
     project_id, filename, key = document.project_id, document.filename, document.storage_key
-    store.delete(key)
     db.delete(document)
     db.flush()
     actions.commit(
         db, actor=actor, project_id=project_id, kind="document_delete",
         label=f"Removed {filename}", before=before, after={},
     )
+    store.delete(key)
 
 
 def open_content(document: Document, store: BlobStore) -> BinaryIO:
-    return store.open(document.storage_key)
+    """A row whose blob is gone is the orphan case `delete_document`'s
+    ordering is chosen to avoid, but it is reachable another way: a
+    storage lifecycle rule, a restore from a database backup taken after
+    the blob was removed, a key removed out of band. Telling the
+    estimator what to do about it beats a 500 that names storage."""
+    try:
+        return store.open(document.storage_key)
+    except BlobNotFound:
+        raise DomainError(
+            "document_unavailable",
+            f"{document.filename} isn't available any more. Upload it again to include it in this takeoff.",
+            status=404,
+        ) from None

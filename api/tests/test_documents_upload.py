@@ -39,8 +39,14 @@ def test_upload_stores_bytes_and_a_row(client, signed_in_user, project, db, stor
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["filename"] == "E-set.pdf" and body["doc_type"] == "Drawings" and body["status"] == "uploaded"
-    assert body["sha256"] == hashlib.sha256(PDF).hexdigest() and body["size_bytes"] == len(PDF)
+    assert body["size_bytes"] == len(PDF)
+    # The hash is stored and is what the duplicate rule keys on, but it
+    # is deliberately not on the wire -- spec §7 keeps "hash" out of
+    # anything estimator-facing, and a field the client receives is one
+    # copy change away from being rendered. Asserted on the row instead.
+    assert "sha256" not in body
     row = db.get(Document, body["id"])
+    assert row.sha256 == hashlib.sha256(PDF).hexdigest()
     assert row.storage_key == f"orgs/{project.org_id}/projects/{project.id}/documents/{row.id}.pdf"
     assert store.open(row.storage_key).read() == PDF
 
@@ -84,7 +90,10 @@ def test_a_filename_too_long_to_store_is_refused_before_hashing(client, signed_i
     long_name = "a" * 297 + ".pdf"  # 301 chars, over Document.filename's 300-char column
     r = _upload(client, project.id, name=long_name)
     assert r.status_code == 422
-    assert "too long" in r.json()["detail"]["message"].lower()
+    # The code, not a substring of the message: the message is copy and
+    # is expected to be reworded, and an assertion on its words turns a
+    # copy edit into a red test that says nothing about behaviour.
+    assert r.json()["detail"]["code"] == "filename_too_long"
     assert store.blobs == {}
 
 

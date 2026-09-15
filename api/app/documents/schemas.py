@@ -10,6 +10,12 @@ DOC_STATUSES = ("uploaded", "processing", "processed", "failed")
 
 
 class DocumentOut(BaseModel):
+    """No `sha256`. Nothing in the interface reads it, and spec §7 keeps
+    "hash" out of anything estimator-facing -- a field on the wire is one
+    copy change away from being rendered. The duplicate rule it backs
+    speaks in filenames instead ("the same file as first.pdf, uploaded
+    earlier")."""
+
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
@@ -17,7 +23,6 @@ class DocumentOut(BaseModel):
     filename: str
     doc_type: str
     size_bytes: int
-    sha256: str
     status: str
     error: str
     created_at: datetime

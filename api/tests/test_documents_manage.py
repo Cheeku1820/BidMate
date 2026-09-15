@@ -1,8 +1,9 @@
 """Retype, delete, and stream a stored document: PATCH changes doc_type
-and is audited; DELETE removes blob then row, audited, and leaves
-nothing on the undo stack; GET .../content streams the exact bytes
-under the global no-store policy; all three routes are org-scoped
-through load_document -> load_project, 404 never 403."""
+and is audited; DELETE removes the row then the blob, audited, and
+leaves nothing on the undo stack; GET .../content streams the exact
+bytes as an attachment, no-store and nosniff, and says what to do when
+the stored file is gone; all three routes are org-scoped through
+load_document -> load_project, 404 never 403."""
 
 import io
 import re
@@ -46,7 +47,7 @@ def test_patch_refuses_an_unknown_type(client, uploaded):
     assert r.json()["detail"]["message"] == "Document type must be one of Drawings, Specifications, Addendum, Scope, Other."
 
 
-def test_delete_removes_blob_and_row_and_is_audited_not_undoable(client, uploaded, db, project, store):
+def test_delete_removes_row_and_blob_and_is_audited_not_undoable(client, uploaded, db, project, store):
     key = db.get(Document, uploaded["id"]).storage_key
     assert store.exists(key)
     r = client.delete(f"/api/documents/{uploaded['id']}")
@@ -59,12 +60,65 @@ def test_delete_removes_blob_and_row_and_is_audited_not_undoable(client, uploade
     assert undo.status_code == 200 and undo.json()["performed"] is False
 
 
+def test_a_storage_failure_during_delete_leaves_the_row_rather_than_a_dangling_one(client, uploaded, db, store):
+    """The reason delete_document deletes the row before the blob. If
+    storage fails, the transaction the row's deletion is in never
+    commits, so the estimator keeps a document that is still listed,
+    still counted, and still openable -- rather than a row whose bytes
+    are gone, which is the failure they would only discover on opening
+    it. The orphan the reverse ordering leaves (a blob no row points at)
+    is unreachable by any route, since every key is reached through a
+    row."""
+    key = db.get(Document, uploaded["id"]).storage_key
+
+    def refuse(_key):
+        raise RuntimeError("storage is unreachable")
+
+    store.delete = refuse
+
+    # The request-id middleware turns an unhandled exception into a 500
+    # rather than letting it escape the app, so this is the status the
+    # estimator's client sees -- the remove plainly did not happen.
+    assert client.delete(f"/api/documents/{uploaded['id']}").status_code == 500
+
+    # What a real request's session teardown does with a transaction
+    # that never reached the route's own db.commit().
+    db.rollback()
+    assert db.get(Document, uploaded["id"]) is not None
+    assert store.exists(key)
+
+
 def test_content_streams_the_exact_bytes_privately(client, uploaded):
     r = client.get(f"/api/documents/{uploaded['id']}/content")
     assert r.status_code == 200
     assert r.content == PDF
     assert r.headers["content-type"].startswith("application/pdf")
     assert "no-store" in r.headers["cache-control"]
+    # An uploaded drawing set often arrives under a GC's NDA: served as
+    # an attachment so it does not render inside a page that framed it,
+    # and nosniff so an untrusted upload cannot pick its own type.
+    assert r.headers["content-disposition"].startswith("attachment;")
+    assert r.headers["x-content-type-options"] == "nosniff"
+
+
+def test_content_says_what_to_do_when_the_stored_file_is_gone(client, uploaded, store):
+    """A row whose blob is missing is reachable without a bug here -- a
+    storage lifecycle rule, a restore from a backup taken after the blob
+    was removed. The estimator gets a recovery action, not a 500, and
+    not a sentence about storage."""
+    store.blobs.clear()
+
+    r = client.get(f"/api/documents/{uploaded['id']}/content")
+
+    assert r.status_code == 404
+    detail = r.json()["detail"]
+    assert detail["code"] == "document_unavailable"
+    assert "E-set.pdf" in detail["message"]
+    assert "Upload it again" in detail["message"]
+    lowered = detail["message"].lower()
+    assert "please" not in lowered and "successfully" not in lowered and "!" not in detail["message"]
+    for internal in ("hash", "bucket", "s3", "object storage", "blob", "minio"):
+        assert internal not in lowered, f"{internal!r} is an internal, not estimator-facing copy"
 
 
 def test_document_routes_are_org_scoped(client, uploaded, db, other_org_project, store):
@@ -103,5 +157,5 @@ def test_content_disposition_is_well_formed_for_an_unusual_filename(client, proj
     assert r.content == PDF
     cd = r.headers["content-disposition"]
     assert "\r" not in cd and "\n" not in cd
-    assert re.fullmatch(r'inline; filename="[^"\r\n]*"; filename\*=UTF-8\'\'[!#$&+\-.0-9A-Z^_`a-z|~%]+', cd)
+    assert re.fullmatch(r'attachment; filename="[^"\r\n]*"; filename\*=UTF-8\'\'[!#$&+\-.0-9A-Z^_`a-z|~%]+', cd)
     assert "with-injection.pdf" in cd

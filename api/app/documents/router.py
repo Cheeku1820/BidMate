@@ -7,6 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as DbSession
+from starlette.background import BackgroundTask
 
 from app.auth.dependencies import current_user
 from app.db import get_db
@@ -30,10 +31,17 @@ def _content_disposition(filename: str) -> str:
     quote or a raw CR/LF. `filename*` (RFC 5987) percent-encodes the
     exact name so nothing in it can be interpreted as a header
     delimiter; `filename` is an ASCII-only fallback, quotes and control
-    characters stripped, for a user agent that ignores the star form."""
+    characters stripped, for a user agent that ignores the star form.
+
+    `attachment`, not `inline`: these bytes are a drawing set that
+    frequently arrives under a general contractor's NDA (ROADMAP.md
+    §3.3), and an inline PDF renders inside whatever page framed it.
+    Every in-product path to this route reads the body itself (the
+    client fetches it as a File) rather than pointing a viewer at the
+    URL, so nothing in the interface depends on inline rendering."""
     ascii_fallback = _HEADER_UNSAFE.sub("", filename.encode("ascii", "ignore").decode("ascii")) or "document.pdf"
     encoded = quote(filename, safe="")
-    return f'inline; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
 
 
 @router.post("/projects/{project_id}/documents", response_model=DocumentOut, status_code=201)
@@ -79,5 +87,19 @@ def get_content(document_id: uuid.UUID, user: User = Depends(current_user), db: 
     return StreamingResponse(
         iter(lambda: body.read(1024 * 1024), b""),
         media_type="application/pdf",
-        headers={"Content-Disposition": _content_disposition(document.filename), "Content-Length": str(document.size_bytes)},
+        headers={
+            "Content-Disposition": _content_disposition(document.filename),
+            "Content-Length": str(document.size_bytes),
+            # The bytes are a PDF and are served as one. `nosniff` stops
+            # a user agent from deciding otherwise from the content --
+            # an uploaded file is untrusted input, and content sniffing
+            # is how it gets to choose its own type.
+            "X-Content-Type-Options": "nosniff",
+        },
+        # botocore's StreamingBody holds an open connection from the
+        # pool. Without this it is released only when the object is
+        # collected, which under load leaks the pool dry; a client that
+        # disconnects mid-stream never reaches the end of the iterator
+        # at all.
+        background=BackgroundTask(body.close),
     )

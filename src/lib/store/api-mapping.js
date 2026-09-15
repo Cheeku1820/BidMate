@@ -272,3 +272,18 @@ export function mapProject(raw) {
     pricingNote: raw.pricingNote ?? "",
   };
 }
+
+/** Wire DocumentOut -> store shape. snake_case on the wire, like items. */
+export function mapDocument(raw) {
+  return {
+    id: raw.id,
+    projectId: raw.project_id,
+    filename: raw.filename,
+    docType: raw.doc_type,
+    sizeBytes: Number(raw.size_bytes ?? 0),
+    sha256: raw.sha256,
+    status: raw.status,
+    error: raw.error ?? "",
+    createdAt: raw.created_at,
+  };
+}

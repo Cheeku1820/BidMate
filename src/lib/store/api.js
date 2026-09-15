@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProject, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
+import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProject, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -363,6 +363,57 @@ export function createApiStore() {
     return result;
   }
 
+  async function listDocuments(projectId) {
+    const rows = await request(`/api/projects/${projectId}/documents`);
+    return (rows || []).map(mapDocument);
+  }
+
+  /** Multipart upload over XMLHttpRequest rather than fetch, because only
+   *  XHR reports upload progress -- and a 96 MB drawing set with no
+   *  progress bar reads as a hung page. Rejects with the same
+   *  {code, message} shape request() produces, plus the status. */
+  function uploadDocument(projectId, file, docType, { onProgress } = {}) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const form = new FormData();
+      form.append("file", file);
+      form.append("doc_type", docType || "Other");
+      xhr.open("POST", `/api/projects/${projectId}/documents`);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(Math.round((100 * e.loaded) / e.total));
+      };
+      xhr.onload = () => {
+        let body = null;
+        try { body = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch { body = null; }
+        if (xhr.status >= 200 && xhr.status < 300) return resolve(mapDocument(body));
+        const detail = body?.detail;
+        if (detail && typeof detail === "object" && typeof detail.code === "string") {
+          return reject({ code: detail.code, message: detail.message, status: xhr.status });
+        }
+        reject({ code: "request_failed", message: `The upload failed (status ${xhr.status}). Try again.`, status: xhr.status });
+      };
+      xhr.onerror = () => reject({ code: "network", message: "Couldn't reach the server. Check the connection and try again.", status: 0 });
+      xhr.send(form);
+    });
+  }
+
+  async function setDocumentType(documentId, docType) {
+    return mapDocument(await request(`/api/documents/${documentId}`, { method: "PATCH", body: { doc_type: docType } }));
+  }
+
+  async function deleteDocument(documentId) {
+    return request(`/api/documents/${documentId}`, { method: "DELETE" });
+  }
+
+  /** The stored bytes back as a File, for the interim engine call that
+   *  still runs in the browser until B2 moves the engine behind the API. */
+  async function fetchDocumentFile(doc) {
+    const res = await fetch(`/api/documents/${doc.id}/content`, { credentials: "include" });
+    if (!res.ok) throw await parseErrorBody(res);
+    return new File([await res.blob()], doc.filename, { type: "application/pdf" });
+  }
+
   // Notes and assumptions (Task 4): the client half of the endpoints
   // built in Task 2. No local cache here — unlike getSnapshot(), the
   // screen (Task 5) fetches on mount and after each write rather than
@@ -494,6 +545,11 @@ export function createApiStore() {
     listProjects,
     createProject,
     attachEngineTakeoff,
+    listDocuments,
+    uploadDocument,
+    setDocumentType,
+    deleteDocument,
+    fetchDocumentFile,
     listNotes,
     createNote,
     updateNote,

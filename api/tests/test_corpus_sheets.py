@@ -41,13 +41,30 @@ def _skip_unless(rel):
         pytest.skip(f"corpus set not present: {rel}")
 
 
-@pytest.mark.parametrize("name", sorted(VECTOR_SETS))
-def test_detected_pages_match_the_key(name):
+# detect_sheets walks every page of a set -- 78 pages for TSC Nutrition,
+# 94 for Unalaska, a 165k-path architectural page among them -- and five
+# tests want the same answer. Cached per set for the module, so the run
+# is five detections rather than twenty-five. The tests below read the
+# list and never mutate it.
+_DETECTED: dict[str, list] = {}
+
+
+def _detected(name):
+    """(fixture, path, detected sheets) for a set, detecting once."""
     from app.engine import documents
 
     fx = _fixture(name)
     _skip_unless(fx["pdf"])
-    found = {s.page_index: s for s in documents.detect_sheets(corpus_path(fx["pdf"]))}
+    path = corpus_path(fx["pdf"])
+    if name not in _DETECTED:
+        _DETECTED[name] = documents.detect_sheets(path)
+    return fx, path, _DETECTED[name]
+
+
+@pytest.mark.parametrize("name", sorted(VECTOR_SETS))
+def test_detected_pages_match_the_key(name):
+    fx, _path, sheets = _detected(name)
+    found = {s.page_index: s for s in sheets}
     expected = {s["page_index"]: s for s in fx["sheets"]}
     tolerated = set(fx.get("known_non_electrical", []))
     missed = sorted(set(expected) - set(found) - tolerated)
@@ -65,40 +82,41 @@ def test_detected_pages_match_the_key(name):
 
 @pytest.mark.parametrize("name", sorted(VECTOR_SETS))
 def test_numbers_and_kinds_match_the_key(name):
-    from app.engine import documents
-
-    fx = _fixture(name)
-    _skip_unless(fx["pdf"])
-    found = {s.page_index: s for s in documents.detect_sheets(corpus_path(fx["pdf"]))}
+    fx, _path, sheets = _detected(name)
+    found = {s.page_index: s for s in sheets}
     for s in fx["sheets"]:
         if not s["number"]:
             continue
         got = found[s["page_index"]]
         assert got.number == s["number"], (name, s["page_index"], got.number, s["number"])
         assert got.kind == s["kind"], (name, s["page_index"], got.title, got.kind, s["kind"])
+        # The fixture records the title as the PDF prints it, uppercase;
+        # the engine sentence-cases it on the wire. Compared case-blind
+        # so the assertion is about the words read, not the casing rule.
+        # A title that falls back to the kind label ("Schedule" for a
+        # cell reading SCHEDULES) fails here by design: kind is decided
+        # from the title, and a title the engine could not read is a
+        # kind it guessed.
+        if s.get("title"):
+            assert got.title.upper() == s["title"].upper(), (name, s["number"], got.title, s["title"])
 
 
 @pytest.mark.parametrize("name", sorted(VECTOR_SETS))
 def test_numbers_are_distinct_unless_the_key_says_otherwise(name):
-    from app.engine import documents
-
-    fx = _fixture(name)
-    _skip_unless(fx["pdf"])
+    fx, _path, sheets = _detected(name)
     dups = {s["page_index"] for s in fx["sheets"] if s.get("known_duplicate")}
     # Unreadable sheets carry no number and are not numbers to compare.
-    numbers = [s.number for s in documents.detect_sheets(corpus_path(fx["pdf"])) if s.number and s.page_index not in dups]
+    numbers = [s.number for s in sheets if s.number and s.page_index not in dups]
     assert len(numbers) == len(set(numbers)), sorted(n for n in numbers if numbers.count(n) > 1)
 
 
 @pytest.mark.parametrize("name", sorted(VECTOR_SETS))
 def test_every_placement_is_inside_its_visual_page(name):
-    from app.engine import counting, documents
+    from app.engine import counting
 
-    fx = _fixture(name)
-    _skip_unless(fx["pdf"])
-    path = corpus_path(fx["pdf"])
+    fx, path, sheets = _detected(name)
     doc = pymupdf.open(path)
-    for s in documents.detect_sheets(path):
+    for s in sheets:
         assert doc[s.page_index].rotation == next(f["rotation"] for f in fx["sheets"] if f["page_index"] == s.page_index)
         for c in counting.count_sheet(path, s):
             for p in c.placements:
@@ -106,15 +124,36 @@ def test_every_placement_is_inside_its_visual_page(name):
 
 
 @pytest.mark.parametrize("name", sorted(VECTOR_SETS))
-def test_non_plans_carry_no_devices(name):
-    from app.engine import counting, documents
+def test_the_kind_gate_keeps_real_schedule_text_out_of_the_takeoff(name):
+    """Spec 3.4. `count_sheet` returns [] for a non-plan by construction,
+    so asserting that alone cannot fail. What can: that the gate is
+    doing work on this set. For every readable sheet the KEY says is not
+    a plan, the same page counted as if it were a plan must yield
+    clusters on at least one of them -- a panel schedule's circuit
+    column, a luminaire schedule's type column, are tag-shaped text
+    that would otherwise land in the takeoff as devices. And the
+    pipeline entry point, `count()` over the whole set, must place every
+    cluster on a page the key calls a plan. Both halves fail if the gate
+    is removed, if `count()` stops going through it, or if a set's
+    schedules turn out to carry nothing the gate needed to stop."""
+    from dataclasses import replace
 
-    fx = _fixture(name)
-    _skip_unless(fx["pdf"])
-    path = corpus_path(fx["pdf"])
-    for s in documents.detect_sheets(path):
-        if s.kind != "plan":
-            assert counting.count_sheet(path, s) == [], (name, s.number, s.kind)
+    from app.engine import counting
+
+    fx, path, sheets = _detected(name)
+    kind_by_page = {s["page_index"]: s["kind"] for s in fx["sheets"]}
+    readable_non_plans = [
+        s for s in sheets
+        if not s.unreadable_reason and kind_by_page.get(s.page_index, "plan") != "plan"
+    ]
+    if not readable_non_plans:
+        pytest.skip(f"{name}: no readable non-plan sheet in the key (every page is unreadable)")
+    would_have_counted = [
+        s.number for s in readable_non_plans if counting.count_sheet(path, replace(s, kind="plan"))
+    ]
+    assert would_have_counted, f"{name}: no non-plan sheet holds tag-shaped text; the gate is doing nothing here"
+    for c in counting.count(path, sheets):
+        assert kind_by_page.get(c.sheet_page_index) == "plan", (name, c.sheet_page_index, c.tag, c.count)
 
 
 @pytest.mark.parametrize("name", sorted(RASTER_SETS))

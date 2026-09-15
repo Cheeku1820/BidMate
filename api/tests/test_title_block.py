@@ -116,6 +116,22 @@ def test_title_reads_the_cell_next_to_the_number(tmp_path):
     assert title_block.title(tb, "E2.1") == "First floor power plan"
 
 
+def test_a_one_word_title_cell_reads(tmp_path):
+    """Unalaska E0.2's title cell is the single word SCHEDULES. With a
+    two-word floor the cell fell to the kind label, and a one-word
+    DETAILS sheet with a per-detail scale label would have read as a
+    plan and been counted. One uppercase word in the largest face beside
+    the number cell is the title."""
+    doc, page = _page(tmp_path)
+    page.insert_text((900, 100), "SHEET")
+    page.insert_text((880, 725), "SCHEDULES", fontsize=14)
+    page.insert_text((880, 745), "JDM", fontsize=7)   # author's initials, smaller face
+    page.insert_text((900, 785), "E0.2", fontsize=30)
+    words, w, h = _words(doc, page, tmp_path)
+    tb = title_block.locate(words, w, h)
+    assert title_block.title(tb, "E0.2") == "Schedules"
+
+
 def test_title_rejects_address_and_seal_lines(tmp_path):
     doc, page = _page(tmp_path)
     page.insert_text((900, 100), "SHEET")

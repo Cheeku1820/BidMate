@@ -250,13 +250,22 @@ def _is_stamp(words: list[Word]) -> bool:
 
 
 def _passes(words: list[str]) -> bool:
-    """The sanity check, over the whole cell: 2-10 uppercase words (bare
+    """The sanity check, over the whole cell: 1-10 uppercase words (bare
     punctuation allowed), no digits-only or mixed-case token, none of
     _NOT_TITLE, and no label -- a cell label ends in a colon ("AUTHOR:",
     "ISSUE DATE:") and a title never does. Any miss fails the whole cell
     rather than dropping the offending word: a cell with "103" in it is
-    not a title with a number silently removed, it is not the title."""
-    if not 2 <= len(words) <= 10:
+    not a title with a number silently removed, it is not the title.
+
+    One word is a title. Unalaska E0.2's cell is the single word
+    SCHEDULES, and a details sheet is often just DETAILS; with a floor
+    of two the cell fell to the kind label, and a one-word DETAILS sheet
+    carrying a per-detail scale label (United Utility E-501 prints
+    1/2" = 1'-0" under a detail) would have read as a plan and been
+    counted. An author's initials are one word too, but they are the
+    smaller face beside the cell, never the largest, and the uppercase
+    / _NOT_TITLE / colon checks stand between them and the title."""
+    if not 1 <= len(words) <= 10:
         return False
     for t in words:
         if t.endswith(":"):

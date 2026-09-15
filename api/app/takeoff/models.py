@@ -149,6 +149,29 @@ class Sheet(Base):
     kind: Mapped[str] = mapped_column(String(20), default="plan", server_default="plan")
 
 
+class Document(Base):
+    """An uploaded file, as stored. The API streams and hashes it; it
+    never opens it -- page count, dimensions and whether it is even a
+    readable PDF are the worker's to find out (B2). `status` and `error`
+    are where the worker reports back. docs/specs/documents-stored.md."""
+
+    __tablename__ = "documents"
+    __table_args__ = (UniqueConstraint("project_id", "sha256", name="uq_document_project_sha256"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String(300))
+    doc_type: Mapped[str] = mapped_column(String(20))
+    content_type: Mapped[str] = mapped_column(String(100))
+    size_bytes: Mapped[int] = mapped_column(BigInteger)
+    sha256: Mapped[str] = mapped_column(String(64))
+    storage_key: Mapped[str] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20), default="uploaded", server_default="uploaded")
+    error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    uploaded_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Item(Base):
     __tablename__ = "items"
 

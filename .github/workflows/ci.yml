@@ -22,11 +22,39 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff
       TEST_DATABASE_URL: postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff_test
+      BLOB_ENDPOINT: http://localhost:9000
+      BLOB_ACCESS_KEY: bidmate
+      BLOB_SECRET_KEY: bidmate-dev-secret
+      BLOB_BUCKET: bidmate-documents
+      BLOB_REGION: us-east-1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # MinIO does not run here as a `services:` container: that model only
+      # forwards `env`/`ports`/`volumes`/`options` to `docker create`, never
+      # a command, and the minio/minio image's entrypoint requires one (a
+      # bare run prints usage and exits -- verified locally). The commonly
+      # suggested fallback, bitnami/minio, is no longer usable either: as of
+      # 2025 Bitnami's free images were pulled from Docker Hub behind a paid
+      # subscription. Docker Hub's minio/minio and minio/mc are gone too --
+      # MinIO now publishes only to quay.io. So MinIO is started by hand,
+      # with an explicit `server /data` command, from quay.io.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=bidmate -e MINIO_ROOT_PASSWORD=bidmate-dev-secret \
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z server /data
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 3
+          done
+      - name: Create the documents bucket
+        run: |
+          curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+          mc alias set local http://localhost:9000 bidmate bidmate-dev-secret
+          mc mb --ignore-existing local/bidmate-documents
       - name: Install dependencies
         working-directory: api
         run: pip install -r requirements.txt

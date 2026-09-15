@@ -13,15 +13,50 @@ services:
       timeout: 3s
       retries: 20
 
+  # Object storage for uploaded documents. The console on 9001 is for
+  # looking at what was stored; the API talks to 9000. Credentials here
+  # are dev-only and match api/.env.example.
+  minio:
+    # minio/minio was pulled from Docker Hub in 2025 (MinIO now publishes
+    # only to quay.io) -- pulling the Docker Hub name here 404s.
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: bidmate
+      MINIO_ROOT_PASSWORD: bidmate-dev-secret
+    ports: ["9000:9000", "9001:9001"]
+    volumes: ["miniodata:/data"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: create the bucket, then exit. `mc mb --ignore-existing` makes
+  # a second `compose up` a no-op.
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio: {condition: service_healthy}
+    entrypoint: >
+      /bin/sh -c "mc alias set local http://minio:9000 bidmate bidmate-dev-secret
+      && mc mb --ignore-existing local/bidmate-documents"
+
   api:
     build: ./api
     environment:
       DATABASE_URL: postgresql+psycopg://takeoff:takeoff@postgres:5432/takeoff
       TEST_DATABASE_URL: postgresql+psycopg://takeoff:takeoff@postgres:5432/takeoff_test
+      BLOB_ENDPOINT: http://minio:9000
+      BLOB_ACCESS_KEY: bidmate
+      BLOB_SECRET_KEY: bidmate-dev-secret
+      BLOB_BUCKET: bidmate-documents
+      BLOB_REGION: us-east-1
     volumes: ["./api:/srv"]
     ports: ["8000:8000"]
     depends_on:
       postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
 
   # Port 5174 on the host, not 5173 — 5173 is usually already occupied by
   # an unrelated app on this machine (see README's "Run the full stack").
@@ -41,3 +76,4 @@ services:
 
 volumes:
   pgdata:
+  miniodata:

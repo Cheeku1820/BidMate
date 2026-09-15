@@ -9,6 +9,10 @@ const FILTERS = [
   ["reviewed", "Reviewed"],
 ];
 
+// Sentence-case labels for a sheet that is not a device plan. Plans get
+// no badge: the rail is mostly plans and the label would be noise.
+const KIND_LABEL = { schedule: "Schedule", legend: "Legend", diagram: "Diagram", other: "Sheet" };
+
 /** Left panel: documents and sheets (spec §5, screen F). Filters and
  *  search operate on sheets; each row's thumbnail dots and warning
  *  count are drawn straight from that sheet's items. */
@@ -56,6 +60,7 @@ export default function SheetsRail({ sheets, items, sheetId, onSelectSheet, filt
                     <strong>{s.number}</strong>
                     <p>{s.title}</p>
                     <span className="badges">
+                      {KIND_LABEL[s.kind] && <span className="badge">{KIND_LABEL[s.kind]}</span>}
                       <span className="badge">{s.revision}</span>
                       {warn > 0 && <span className="badge badge--warn">{warn} warning{warn > 1 ? "s" : ""}</span>}
                       {done && <span className="badge badge--done"><Check size={10} /> Reviewed</span>}

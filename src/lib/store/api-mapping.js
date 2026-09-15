@@ -93,6 +93,10 @@ export function mapSheet(s) {
     // silence read as completeness.
     unreadableReason: s.unreadable_reason ?? "",
     aiReading: s.ai_reading ?? null,
+    // plan | schedule | legend | diagram | other. The rail labels a
+    // non-plan with it. A sheet property on its own axis -- never one of
+    // the four review labels, never rendered with a status component.
+    kind: s.kind ?? "plan",
   };
 }
 

@@ -6,7 +6,7 @@
    ============================================================ */
 
 import { describe, expect, test } from "vitest";
-import { evidenceImageUrl, mapLaborRow, mapMaterialRow } from "./api-mapping.js";
+import { evidenceImageUrl, mapLaborRow, mapMaterialRow, mapSheet } from "./api-mapping.js";
 
 describe("evidenceImageUrl", () => {
   test("returns a URL when the item has an image", () => {
@@ -70,5 +70,12 @@ describe("mapMaterialRow", () => {
                   source_label: null, status: "missing", basis_note: "" };
     const mapped = mapMaterialRow(row);
     expect(mapped).toMatchObject({ source: null, reason: "" });
+  });
+});
+
+describe("mapSheet", () => {
+  test("carries kind and defaults it to plan", () => {
+    expect(mapSheet({ id: "x", number: "E1", title: "t", kind: "diagram" }).kind).toBe("diagram");
+    expect(mapSheet({ id: "x", number: "E1", title: "t" }).kind).toBe("plan");
   });
 });

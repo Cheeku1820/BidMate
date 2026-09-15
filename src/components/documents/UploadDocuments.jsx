@@ -108,7 +108,18 @@ export default function UploadDocuments({ store }) {
   // resolving (or rejecting) after that point is a no-op rather than a
   // set-state-after-unmount warning or a stale overwrite.
   const aliveRef = useRef(true);
-  useEffect(() => () => { aliveRef.current = false; }, []);
+  useEffect(() => {
+    // The effect body has to re-arm the ref, not just declare a cleanup
+    // -- StrictMode's simulated mount/unmount/remount runs the cleanup
+    // once in development, and with only a cleanup here the ref would
+    // stay false for the component's whole remaining life, discarding
+    // every future listDocuments result behind the `!aliveRef.current`
+    // guards below.
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const loadDocuments = () => {
     setLoadError(false);
@@ -186,11 +197,30 @@ export default function UploadDocuments({ store }) {
       uploadPromise
         .then((doc) => {
           inFlightRef.current.delete(key);
+          // Read the live local row *before* it's overwritten below --
+          // the estimator may have retyped this row while it was still
+          // uploading. The form data already carried the type it was
+          // uploaded with, so that local change hasn't reached the
+          // server yet and the merge below would otherwise lose it
+          // silently.
+          const localRow = rowsRef.current.find((r) => r.key === key);
+          const localDocType = localRow?.docType;
+          const localTypeAuto = localRow?.typeAuto ?? true;
           setRowsSafe((prev) => prev.map((r) => (r.key === key ? { ...doc, state: "ready", progress: 100, key: doc.id } : r)));
-          // A filename that wasn't informative gets a content-based
-          // second look, applied to the persisted row -- but only if the
-          // estimator hasn't since set the type by hand.
-          if (detected.source === "default") {
+
+          if (!localTypeAuto && localDocType && localDocType !== doc.docType) {
+            // Forward the retype that happened mid-upload, now that
+            // there's a document id to PATCH.
+            store
+              .setDocumentType(doc.id, localDocType)
+              .then((updated) => {
+                setRowsSafe((prev) => prev.map((r) => (r.key === doc.id ? { ...r, docType: updated.docType, error: undefined } : r)));
+              })
+              .catch((err) => update(doc.id, { error: err.message }));
+          } else if (localTypeAuto && detected.source === "default") {
+            // A filename that wasn't informative gets a content-based
+            // second look, applied to the persisted row -- but only if
+            // the estimator hasn't since set the type by hand.
             classifyDoc(file).then((type) => {
               if (!type) return;
               // Read the live mirror synchronously rather than deciding
@@ -250,9 +280,12 @@ export default function UploadDocuments({ store }) {
       setRowsSafe((prev) => prev.filter((r) => r.key !== row.key));
     } catch (err) {
       // The row stays -- silently doing nothing would look like the
-      // remove worked. The message reuses the row's own state column,
-      // same as a failed upload or a failed retype.
-      update(row.key, { state: "failed", message: err.message });
+      // remove worked. Its state stays "ready": the document is still
+      // there, still counts toward the drawing-set gate, and can still
+      // be retyped or removed again -- only `error` carries the failed
+      // tone, in the same state column a failed upload or a failed
+      // retype uses.
+      update(row.key, { error: err.message });
     }
   };
 
@@ -265,10 +298,21 @@ export default function UploadDocuments({ store }) {
   const setDocType = (row, docType) => {
     const previous = row.docType;
     update(row.key, { docType, typeAuto: false });
-    if (row.state !== "ready") return;
-    store.setDocumentType(row.id, docType).catch((err) => {
-      update(row.key, { docType: previous, state: "failed", message: err.message });
-    });
+    // Gated on having a document id, not on `state === "ready"` -- a
+    // row still uploading has neither yet, and its local change is
+    // forwarded once the upload resolves and hands back an id (see the
+    // upload's `.then` above). A persisted row -- "ready", or "ready"
+    // carrying an `error` from an earlier failed write -- always has
+    // one and writes through immediately.
+    if (!row.id) return;
+    store
+      .setDocumentType(row.id, docType)
+      .then(() => update(row.key, { error: undefined }))
+      .catch((err) => {
+        // The row stays "ready": one failed retype must not un-count an
+        // already-uploaded document or disable retyping it again.
+        update(row.key, { docType: previous, error: err.message });
+      });
   };
 
   // Derived from `rows`, never from the filtered view. See the header.
@@ -459,12 +503,20 @@ export default function UploadDocuments({ store }) {
                         </div>
                       </td>
                       <td>
-                        <span className={`upload-status upload-status--${STATE_TONE[row.state]}`}>
+                        {/* row.error carries a failed retype or a failed
+                            remove on an otherwise-ready row -- the row's
+                            own state stays "ready" (it still counts, and
+                            can still be acted on), so the failed tone has
+                            to come from `error`'s presence rather than
+                            from `state`. */}
+                        <span className={`upload-status upload-status--${row.error ? STATE_TONE.failed : STATE_TONE[row.state]}`}>
                           {row.state === "uploading"
                             ? `Uploading… ${row.progress}%`
-                            : row.state === "ready"
-                              ? "Uploaded"
-                              : row.message}
+                            : row.error
+                              ? row.error
+                              : row.state === "ready"
+                                ? "Uploaded"
+                                : row.message}
                         </span>
                       </td>
                       <td>

@@ -4,10 +4,16 @@
    server's duplicate and unsupported copy lands on the row; remove asks
    first; the primary action needs a Drawings document.
    ============================================================ */
+import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import UploadDocuments from "./UploadDocuments.jsx";
+
+// The content-sniff fallback (detected.source === "default") calls this
+// for real otherwise -- an actual fetch to the standalone engine service
+// that most of these tests have no reason to reach.
+vi.mock("../../lib/engineClient.js", () => ({ classifyDoc: vi.fn().mockResolvedValue(null) }));
 
 const pdf = (name, size = 1024) => new File([new Uint8Array(size)], name, { type: "application/pdf" });
 const doc = (over = {}) => ({ id: "d1", projectId: "p1", filename: "E-set.pdf", docType: "Drawings", sizeBytes: 1024, sha256: "a", status: "uploaded", error: "", createdAt: "2026-09-15T00:00:00Z", ...over });
@@ -169,19 +175,28 @@ describe("UploadDocuments", () => {
     expect(listDocuments).toHaveBeenCalledTimes(2);
   });
 
-  it("reverts the type and surfaces the server's message when a retype fails", async () => {
-    const store = makeStore({
-      listDocuments: vi.fn().mockResolvedValue([doc()]),
-      setDocumentType: vi.fn().mockRejectedValue({ code: "request_failed", message: "Couldn't change the type. Try again." }),
-    });
+  it("reverts the type and surfaces the server's message when a retype fails, without un-counting the document, and clears it on the next successful write", async () => {
+    const setDocumentType = vi
+      .fn()
+      .mockRejectedValueOnce({ code: "request_failed", message: "Couldn't change the type. Try again." })
+      .mockResolvedValueOnce(doc({ docType: "Addendum" }));
+    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]), setDocumentType });
     renderUpload(store);
     await screen.findByText("E-set.pdf");
+
     fireEvent.change(screen.getByLabelText(/type for E-set.pdf/i), { target: { value: "Addendum" } });
     expect(await screen.findByText("Couldn't change the type. Try again.")).toBeInTheDocument();
     expect(screen.getByLabelText(/type for E-set.pdf/i)).toHaveValue("Drawings");
+    // The document still counts as ready -- one failed retype must not
+    // un-count an already-uploaded document or close the drawing-set gate.
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
+
+    fireEvent.change(screen.getByLabelText(/type for E-set.pdf/i), { target: { value: "Addendum" } });
+    await waitFor(() => expect(screen.queryByText("Couldn't change the type. Try again.")).not.toBeInTheDocument());
+    expect(screen.getByText("Uploaded")).toBeInTheDocument();
   });
 
-  it("keeps the row and surfaces the server's message when a delete fails", async () => {
+  it("keeps the row and surfaces the server's message when a delete fails, without disabling continuing", async () => {
     const store = makeStore({
       listDocuments: vi.fn().mockResolvedValue([doc()]),
       deleteDocument: vi.fn().mockRejectedValue({ code: "request_failed", message: "Couldn't remove this document. Try again." }),
@@ -193,5 +208,44 @@ describe("UploadDocuments", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /^remove$/i }));
     expect(await screen.findByText("Couldn't remove this document. Try again.")).toBeInTheDocument();
     expect(screen.getByText("E-set.pdf")).toBeInTheDocument();
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
+  });
+
+  it("forwards a type change made while still uploading, once the document has an id", async () => {
+    let resolveUpload;
+    const store = makeStore({
+      uploadDocument: vi.fn(() => new Promise((resolve) => { resolveUpload = resolve; })),
+      setDocumentType: vi.fn().mockResolvedValue(doc({ docType: "Addendum" })),
+    });
+    renderUpload(store);
+    drop([pdf("E-set.pdf")]);
+    await screen.findByText(/Uploading/);
+    // The upload's form data already carried "Drawings" -- this change
+    // happens before the server has anything to PATCH.
+    fireEvent.change(screen.getByLabelText(/type for E-set.pdf/i), { target: { value: "Addendum" } });
+    expect(store.setDocumentType).not.toHaveBeenCalled();
+
+    await act(async () => { resolveUpload(doc({ docType: "Drawings" })); });
+
+    await waitFor(() => expect(store.setDocumentType).toHaveBeenCalledWith("d1", "Addendum"));
+    expect(await screen.findByText("Uploaded")).toBeInTheDocument();
+    expect(screen.getByLabelText(/type for E-set.pdf/i)).toHaveValue("Addendum");
+  });
+
+  it("still loads the document list under StrictMode's simulated double-mount", async () => {
+    // src/main.jsx renders the whole app inside <React.StrictMode>,
+    // which in development double-invokes an effect's mount, cleanup,
+    // then mount again -- this is the case aliveRef has to survive.
+    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]) });
+    render(
+      <StrictMode>
+        <MemoryRouter initialEntries={["/projects/p1/documents"]}>
+          <Routes>
+            <Route path="/projects/:projectId/documents" element={<UploadDocuments store={store} />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>,
+    );
+    expect(await screen.findByText("E-set.pdf")).toBeInTheDocument();
   });
 });

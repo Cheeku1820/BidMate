@@ -14,9 +14,10 @@ import UploadDocuments from "./UploadDocuments.jsx";
 // for real otherwise -- an actual fetch to the standalone engine service
 // that most of these tests have no reason to reach.
 vi.mock("../../lib/engineClient.js", () => ({ classifyDoc: vi.fn().mockResolvedValue(null) }));
+import { classifyDoc } from "../../lib/engineClient.js";
 
 const pdf = (name, size = 1024) => new File([new Uint8Array(size)], name, { type: "application/pdf" });
-const doc = (over = {}) => ({ id: "d1", projectId: "p1", filename: "E-set.pdf", docType: "Drawings", sizeBytes: 1024, sha256: "a", status: "uploaded", error: "", createdAt: "2026-09-15T00:00:00Z", ...over });
+const doc = (over = {}) => ({ id: "d1", projectId: "p1", filename: "E-set.pdf", docType: "Drawings", sizeBytes: 1024, status: "uploaded", error: "", createdAt: "2026-09-15T00:00:00Z", ...over });
 
 function makeStore(over = {}) {
   return {
@@ -62,7 +63,9 @@ describe("UploadDocuments", () => {
     drop([pdf("E-set.pdf")]);
     expect(await screen.findByText(/Uploading/)).toBeInTheDocument();
     act(() => progress(42));
-    expect(screen.getByText("Uploading… 42%")).toBeInTheDocument();
+    // The percentage is a nested span (hidden from the live region --
+    // see the state cell), so match on the whole cell's text.
+    expect(screen.getByText(/Uploading…/).closest("td")).toHaveTextContent("Uploading… 42%");
     expect(store.uploadDocument).toHaveBeenCalledWith("p1", expect.any(File), "Drawings", expect.any(Object));
   });
 
@@ -247,5 +250,89 @@ describe("UploadDocuments", () => {
       </StrictMode>,
     );
     expect(await screen.findByText("E-set.pdf")).toBeInTheDocument();
+  });
+
+  it("renders a document the server marks failed as failed, with the server's reason, and does not count it", async () => {
+    // B2's worker reports back through `status`/`error`. Before this,
+    // the row state was hard-coded "ready" and a failed document
+    // rendered as "Uploaded" -- silence reading as completeness.
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([
+        doc({ id: "d-ok", filename: "E-set.pdf", status: "uploaded" }),
+        doc({ id: "d-bad", filename: "E-addendum.pdf", docType: "Drawings", status: "failed", error: "The file is password protected. Upload an unlocked copy." }),
+      ]),
+    });
+    renderUpload(store);
+    expect(await screen.findByText("E-addendum.pdf")).toBeInTheDocument();
+
+    const reason = screen.getByText("The file is password protected. Upload an unlocked copy.");
+    expect(reason).toHaveClass("upload-status--unsupported");
+    expect(screen.getAllByText("Uploaded")).toHaveLength(1);
+    // Counted where it belongs: with the files that need attention,
+    // not with the uploaded ones -- and it does not satisfy the
+    // drawing-set gate on its own.
+    expect(screen.getByText(/1 uploaded/)).toBeInTheDocument();
+    expect(screen.getByText(/1 need attention/)).toBeInTheDocument();
+  });
+
+  it("gives a failed document a plain sentence when the server sends no reason", async () => {
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([doc({ status: "failed", error: "" })]),
+    });
+    renderUpload(store);
+    expect(await screen.findByText("E-set.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/couldn't be read/i)).toHaveClass("upload-status--unsupported");
+    expect(screen.queryByText("Uploaded")).not.toBeInTheDocument();
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeDisabled());
+  });
+
+  it("announces a row's state through a polite live region, with the progress figure kept out of it", async () => {
+    let progress;
+    const store = makeStore({
+      uploadDocument: vi.fn((projectId, file, docType, opts) => { progress = opts.onProgress; return new Promise(() => {}); }),
+    });
+    renderUpload(store);
+    drop([pdf("E-set.pdf")]);
+    const cell = (await screen.findByText(/Uploading…/)).closest("td");
+    expect(cell).toHaveAttribute("aria-live", "polite");
+    expect(cell).toHaveAttribute("aria-atomic", "true");
+    act(() => progress(42));
+    // The number is visible but aria-hidden: a region that re-announces
+    // every tick is one nobody keeps switched on.
+    expect(within(cell).getByText("42%")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("keeps the filename's guess when the content-based second look cannot reach the engine", async () => {
+    classifyDoc.mockRejectedValueOnce(new Error("engine unreachable"));
+    const store = makeStore({
+      // "scan.pdf" carries no type hint, so detectDocTypeInfo falls to
+      // its default (Drawings) and the content-based second look runs.
+      uploadDocument: vi.fn().mockResolvedValue(doc({ filename: "scan.pdf", docType: "Drawings" })),
+    });
+    renderUpload(store);
+    drop([pdf("scan.pdf")]);
+    await waitFor(() => expect(screen.getByText("Uploaded")).toBeInTheDocument());
+    await waitFor(() => expect(classifyDoc).toHaveBeenCalled());
+    // No unhandled rejection, no retype, the guess stands.
+    expect(store.setDocumentType).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/type for scan.pdf/i)).toHaveValue("Drawings");
+    expect(screen.getByText("Detected")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed write of the content-based type on the row and keeps the type the server holds", async () => {
+    classifyDoc.mockResolvedValueOnce("Specifications");
+    const store = makeStore({
+      uploadDocument: vi.fn().mockResolvedValue(doc({ filename: "scan.pdf", docType: "Drawings" })),
+      setDocumentType: vi.fn().mockRejectedValue({ code: "network", message: "Couldn't reach the server. Check the connection and try again." }),
+    });
+    renderUpload(store);
+    drop([pdf("scan.pdf")]);
+    await waitFor(() => expect(store.setDocumentType).toHaveBeenCalledWith("d1", "Specifications"));
+    expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
+    // The select shows what the server holds, not what the write
+    // hoped for, and the row is still counted.
+    expect(screen.getByLabelText(/type for scan.pdf/i)).toHaveValue("Drawings");
+    // The tab summary and the footer both carry the count.
+    expect(screen.getAllByText(/1 uploaded/).length).toBeGreaterThan(0);
   });
 });

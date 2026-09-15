@@ -72,6 +72,38 @@ function formatSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// What the row says when the server marks a document failed but gives
+// no reason. The server's own `error` text is preferred whenever it is
+// there; this is only the floor under an empty one, because a failed
+// document with no words next to it is exactly the silence that reads
+// as completeness.
+const FAILED_FALLBACK = "This file couldn't be read. Upload it again, or replace it.";
+
+/** A persisted document, as the API returns it, turned into a row.
+ *
+ *  The row's state comes from the server's `status`, never assumed.
+ *  `uploaded` is the only status this slice writes, and it is the row's
+ *  "ready" state. Anything else is not "Uploaded" and must not render
+ *  as if it were: the worker that lands later (B2) reports back through
+ *  this same field, and the day it writes `failed`, that document has
+ *  to show the failure and its `error` text in the failed tone -- not
+ *  sit in the list looking done. Until the worker's intermediate
+ *  statuses exist to be rendered, every non-`uploaded` status takes the
+ *  failed tone rather than the "done" one; the honest default is the
+ *  one that does not overstate.
+ *
+ *  `error` is left off the row deliberately: on a row it means a failed
+ *  retype or remove on an otherwise-ready document (see setDocType and
+ *  confirmRemove), and the server's `error` is a different thing --
+ *  it is why the document itself failed, and it goes in `message`, the
+ *  same field a duplicate or unsupported upload's copy lives in. */
+function rowFromDocument(d) {
+  if (d.status === "uploaded") {
+    return { ...d, error: undefined, state: "ready", progress: 100 };
+  }
+  return { ...d, error: undefined, state: "failed", progress: 100, message: d.error || FAILED_FALLBACK };
+}
+
 export default function UploadDocuments({ store }) {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -132,7 +164,7 @@ export default function UploadDocuments({ store }) {
         // hasn't reached the server yet (uploading, or one that never
         // will -- duplicate, unsupported, failed) must survive the mount
         // list landing, not be clobbered by it.
-        const seeded = docs.map((d) => ({ ...d, state: "ready", progress: 100, key: d.id }));
+        const seeded = docs.map((d) => ({ ...rowFromDocument(d), key: d.id }));
         setRowsSafe((prev) => [...seeded, ...prev.filter((r) => !seeded.some((s) => s.key === r.key))]);
       })
       .catch(() => {
@@ -206,7 +238,13 @@ export default function UploadDocuments({ store }) {
           const localRow = rowsRef.current.find((r) => r.key === key);
           const localDocType = localRow?.docType;
           const localTypeAuto = localRow?.typeAuto ?? true;
-          setRowsSafe((prev) => prev.map((r) => (r.key === key ? { ...doc, state: "ready", progress: 100, key: doc.id } : r)));
+          // `typeAuto` is the row's own knowledge, not the server's --
+          // it has to be carried across the overwrite. Dropping it here
+          // did two things at once: the "Detected" hint vanished the
+          // moment an upload settled, and the content-based second look
+          // below, which checks `row.typeAuto` before writing, found
+          // it undefined and never wrote anything.
+          setRowsSafe((prev) => prev.map((r) => (r.key === key ? { ...rowFromDocument(doc), key: doc.id, typeAuto: localTypeAuto } : r)));
 
           if (!localTypeAuto && localDocType && localDocType !== doc.docType) {
             // Forward the retype that happened mid-upload, now that
@@ -221,18 +259,35 @@ export default function UploadDocuments({ store }) {
             // A filename that wasn't informative gets a content-based
             // second look, applied to the persisted row -- but only if
             // the estimator hasn't since set the type by hand.
-            classifyDoc(file).then((type) => {
-              if (!type) return;
-              // Read the live mirror synchronously rather than deciding
-              // inside a setRows updater -- an updater has to stay pure
-              // and isn't guaranteed to run eagerly, so it's not a safe
-              // place to gate a side effect. rowsRef is always current
-              // because every row update goes through setRowsSafe.
-              const row = rowsRef.current.find((r) => r.key === doc.id);
-              if (!row || !row.typeAuto) return;
-              store.setDocumentType(doc.id, type);
-              setRowsSafe((prev) => prev.map((r) => (r.key === doc.id ? { ...r, docType: type } : r)));
-            });
+            classifyDoc(file)
+              .then((type) => {
+                if (!type) return;
+                // Read the live mirror synchronously rather than deciding
+                // inside a setRows updater -- an updater has to stay pure
+                // and isn't guaranteed to run eagerly, so it's not a safe
+                // place to gate a side effect. rowsRef is always current
+                // because every row update goes through setRowsSafe.
+                const row = rowsRef.current.find((r) => r.key === doc.id);
+                if (!row || !row.typeAuto) return;
+                // The persisted row is the truth; the select follows the
+                // server's answer rather than the guess. A write that
+                // fails leaves the row on the type it was uploaded with
+                // -- still "Detected", still counted -- and says so in
+                // the state column, the same way a manual retype that
+                // fails does.
+                store
+                  .setDocumentType(doc.id, type)
+                  .then((updated) => {
+                    setRowsSafe((prev) => prev.map((r) => (r.key === doc.id ? { ...r, docType: updated.docType, error: undefined } : r)));
+                  })
+                  .catch((err) => update(doc.id, { error: err.message }));
+              })
+              // The engine being unreachable is the common case, not an
+              // edge one -- it runs on the estimator's own machine. The
+              // second look is a refinement of a guess that already
+              // stands; without it the row simply keeps the type its
+              // filename suggested, which is what it showed all along.
+              .catch(() => {});
           }
         })
         .catch((err) => {
@@ -502,7 +557,17 @@ export default function UploadDocuments({ store }) {
                           {row.typeAuto ? <span className="doctype-detected">Detected</span> : null}
                         </div>
                       </td>
-                      <td>
+                      {/* A live region per row, so a state that changes
+                          after the estimator has moved on -- an upload
+                          settling, a duplicate refused, a retype the
+                          server would not take -- is announced rather
+                          than appearing silently (WCAG 2.2 4.1.3). The
+                          progress percentage is hidden from it: it
+                          changes many times a second, and a live region
+                          that re-announces every tick is one nobody
+                          keeps switched on. "Uploading…" is announced
+                          once; the number stays visual. */}
+                      <td aria-live="polite" aria-atomic="true">
                         {/* row.error carries a failed retype or a failed
                             remove on an otherwise-ready row -- the row's
                             own state stays "ready" (it still counts, and
@@ -510,13 +575,17 @@ export default function UploadDocuments({ store }) {
                             to come from `error`'s presence rather than
                             from `state`. */}
                         <span className={`upload-status upload-status--${row.error ? STATE_TONE.failed : STATE_TONE[row.state]}`}>
-                          {row.state === "uploading"
-                            ? `Uploading… ${row.progress}%`
-                            : row.error
-                              ? row.error
-                              : row.state === "ready"
-                                ? "Uploaded"
-                                : row.message}
+                          {row.state === "uploading" ? (
+                            <>
+                              Uploading… <span aria-hidden="true" className="tabular">{row.progress}%</span>
+                            </>
+                          ) : row.error ? (
+                            row.error
+                          ) : row.state === "ready" ? (
+                            "Uploaded"
+                          ) : (
+                            row.message
+                          )}
                         </span>
                       </td>
                       <td>

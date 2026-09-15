@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.auth.router import router as auth_router
 from app.collab.router import router as collab_router
 from app.db import get_db
+from app.documents.router import router as documents_router
 from app.errors import DomainError, domain_error_handler
 from app.observability import RequestIdMiddleware, configure_logging, request_id_var
 from app.takeoff.actions import CrossOrgActionError
@@ -95,6 +96,7 @@ app.include_router(auth_router)
 app.include_router(takeoff_router)
 app.include_router(takeoff_mutations_router)
 app.include_router(pricing_router)
+app.include_router(documents_router)
 app.include_router(collab_router)
 
 

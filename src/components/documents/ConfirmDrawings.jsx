@@ -125,9 +125,26 @@ export default function ConfirmDrawings({ store }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store, projectId]);
 
+  // The select follows the server. It shows the new type at once, but a
+  // write the server refuses reverts it and puts the server's own words
+  // on the row -- otherwise the select shows a type the server never
+  // accepted, "Start takeoff" enables on a drawing set that does not
+  // exist server-side, and processing reads the old type. The row stays
+  // in every count either way: the document is still there, and can be
+  // retyped again. Same behaviour as UploadDocuments.setDocType.
   const setType = (id, docType) => {
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, docType } : r)));
-    store.setDocumentType(id, docType).catch(() => {});
+    const previous = rows.find((r) => r.id === id)?.docType;
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, docType, error: undefined } : r)));
+    store
+      .setDocumentType(id, docType)
+      .then(() => {
+        if (!aliveRef.current) return;
+        setRows((prev) => prev.map((r) => (r.id === id ? { ...r, error: undefined } : r)));
+      })
+      .catch((err) => {
+        if (!aliveRef.current) return;
+        setRows((prev) => prev.map((r) => (r.id === id ? { ...r, docType: previous, error: err.message } : r)));
+      });
   };
 
   const counts = rows.reduce((acc, r) => ({ ...acc, [r.docType]: (acc[r.docType] || 0) + 1 }), {});
@@ -227,6 +244,13 @@ export default function ConfirmDrawings({ store }) {
   const blockingCount = checklist.filter((row) => row.state === "blocking").length;
   const attentionCount = checklist.filter((row) => row.state === "attention").length;
   const unresolvedCount = blockingCount + attentionCount;
+  // A deferred line is neither confirmed nor unresolved -- it is a
+  // question this screen cannot answer yet, and it says so. The tally
+  // counts only the lines that can be confirmed here, so "4 of 4
+  // confirmed" is true rather than "5 of 5" with one of the five
+  // reading "Not known yet".
+  const confirmableCount = checklist.filter((row) => row.state !== "deferred").length;
+  const confirmedCount = checklist.filter((row) => row.state === "ok").length;
 
   return (
     <>
@@ -302,6 +326,7 @@ export default function ConfirmDrawings({ store }) {
                         id={`confirm-type-${r.id}`}
                         className="field field--compact"
                         value={r.docType}
+                        aria-describedby={r.error ? `confirm-type-error-${r.id}` : undefined}
                         onChange={(e) => setType(r.id, e.target.value)}
                       >
                         {DOC_TYPES.map((type) => (
@@ -310,6 +335,19 @@ export default function ConfirmDrawings({ store }) {
                           </option>
                         ))}
                       </select>
+                      {/* Always rendered so the live region exists before
+                          it has anything to say -- a region created at
+                          the same moment as its content is not reliably
+                          announced. Adjacent to the field it describes
+                          (spec §8), in the failed tone the upload table
+                          uses for the same kind of failure. */}
+                      <p
+                        id={`confirm-type-error-${r.id}`}
+                        className="upload-status upload-status--unsupported doctype-error"
+                        aria-live="polite"
+                      >
+                        {r.error || null}
+                      </p>
                     </td>
                   </tr>
                 ))}
@@ -326,8 +364,8 @@ export default function ConfirmDrawings({ store }) {
                 }
               >
                 {unresolvedCount > 0
-                  ? `${unresolvedCount} of ${checklist.length} need your attention`
-                  : `${checklist.length} of ${checklist.length} confirmed`}
+                  ? `${unresolvedCount} of ${confirmableCount} need your attention`
+                  : `${confirmedCount} of ${confirmableCount} confirmed`}
               </p>
             </header>
             <ul className="checklist">

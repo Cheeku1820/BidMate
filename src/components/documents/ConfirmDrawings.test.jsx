@@ -11,7 +11,7 @@
    ============================================================ */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ConfirmDrawings from "./ConfirmDrawings.jsx";
 
@@ -154,5 +154,53 @@ describe("ConfirmDrawings", () => {
     expect(link).toHaveAttribute("href", "/projects/p1/documents");
     expect(document.querySelector('input[type="file"]')).toBeNull();
     expect(screen.queryByRole("button", { name: /add files/i })).toBeNull();
+  });
+
+  it("reverts the select and surfaces the server's message when a type change fails, without un-counting the document", async () => {
+    // Before this the failure was swallowed: the select showed the new
+    // type, "Start takeoff" enabled on it, and the server still held
+    // the old one -- processing would have read a type the estimator
+    // never saw.
+    const store = makeStore([docFrom(pdf("specs_part_1.pdf"), "Specifications")]);
+    store.setDocumentType.mockRejectedValue({ code: "network", message: "Couldn't reach the server. Check the connection and try again." });
+    renderConfirm(store);
+    await screen.findByText("specs_part_1.pdf");
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeDisabled());
+
+    const select = screen.getByLabelText(/type for specs_part_1\.pdf/i);
+    fireEvent.change(select, { target: { value: "Drawings" } });
+
+    expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
+    expect(select).toHaveValue("Specifications");
+    expect(select).toHaveAccessibleDescription(/Couldn't reach the server/);
+    // The server still holds no drawing set, so the gate stays shut.
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeDisabled());
+    // Still counted: one document, not zero.
+    expect(document.querySelector(".workspace-footer-status")).toHaveTextContent("1 document");
+
+    // A retry that succeeds clears the message.
+    store.setDocumentType.mockResolvedValue(undefined);
+    fireEvent.change(select, { target: { value: "Drawings" } });
+    await waitFor(() => expect(screen.queryByText(/Couldn't reach the server/)).not.toBeInTheDocument());
+    expect(select).toHaveValue("Drawings");
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+  });
+
+  it("counts only the lines it can confirm -- a deferred line is neither confirmed nor unresolved", async () => {
+    const store = makeStore([
+      docFrom(pdf("cd_biddrawings.pdf"), "Drawings"),
+      docFrom(pdf("specs_part_1.pdf"), "Specifications"),
+    ]);
+    renderConfirm(store);
+    await screen.findByText("cd_biddrawings.pdf");
+
+    // Five lines drawn; "Legends and scales" is deferred to processing.
+    expect(screen.getByLabelText(/not known yet/i)).toBeInTheDocument();
+    expect(screen.getByText("4 of 4 confirmed")).toBeInTheDocument();
+    expect(screen.queryByText(/5 of 5/)).not.toBeInTheDocument();
+
+    // And the attention phrasing uses the same denominator.
+    fireEvent.change(screen.getByLabelText(/type for specs_part_1\.pdf/i), { target: { value: "Other" } });
+    expect(await screen.findByText("2 of 4 need your attention")).toBeInTheDocument();
   });
 });

@@ -1810,6 +1810,17 @@ button {
   color: var(--red);
 }
 
+/* The confirm screen's failed-retype line, under the type select. Kept
+   in the flow even when empty so its live region exists before it has
+   anything to announce; an empty one takes no height. */
+.doctype-error {
+  display: block;
+  margin: 0;
+}
+.doctype-error:not(:empty) {
+  margin-top: 4px;
+}
+
 .processing-list {
   list-style: none;
   margin: 16px 0;

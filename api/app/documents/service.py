@@ -1,6 +1,7 @@
-"""Documents: stored, listed, retyped, removed, streamed. The API never
-opens one -- it streams bytes, hashes them, records them. Opening an
-untrusted PDF is the worker's job (B2); see docs/specs/documents-stored.md §1.
+"""Documents: stored and listed; Task 4 adds retype, remove, stream. The
+API never opens one -- it streams bytes, hashes them, records them.
+Opening an untrusted PDF is the worker's job (B2); see
+docs/specs/documents-stored.md §1.
 
 Every mutation goes through actions.commit() so it is attributed and in
 the audit log. None is undoable: a deleted blob cannot be replayed from
@@ -10,10 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from typing import BinaryIO
 
 from fastapi import UploadFile
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
 from app.documents.blobstore import BlobStore
@@ -25,6 +26,7 @@ from app.takeoff.models import Document, Project
 from app.takeoff.router import load_project, not_found
 
 _CHUNK = 1024 * 1024
+_MAX_FILENAME = 300
 
 
 def storage_key(project: Project, document_id: uuid.UUID) -> str:
@@ -44,6 +46,14 @@ def _is_pdf(filename: str, content_type: str) -> bool:
     return filename.lower().endswith(".pdf") and content_type == "application/pdf"
 
 
+def _duplicate_error(existing: Document) -> DomainError:
+    return DomainError(
+        "duplicate_document",
+        f"This appears to be the same file as {existing.filename}, uploaded earlier. Remove one copy or upload a different file.",
+        status=409,
+    )
+
+
 def store_upload(db: DbSession, *, actor: User, project: Project, upload: UploadFile, doc_type: str, store: BlobStore) -> Document:
     filename = upload.filename or "document.pdf"
     content_type = upload.content_type or ""
@@ -54,6 +64,12 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
             "unsupported_document",
             f"{filename} isn't a PDF. Upload PDF drawings, specifications, addenda, and scope documents.",
             status=415,
+        )
+    if len(filename) > _MAX_FILENAME:
+        raise DomainError(
+            "filename_too_long",
+            "The file name is too long to store. Rename it and upload again.",
+            status=422,
         )
 
     # Hash and size in one pass over the upload's spooled file, then
@@ -68,13 +84,14 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     sha = digest.hexdigest()
     upload.file.seek(0)
 
+    # This select gives the common case a clean 409 without an exception
+    # round-trip. It is not enough on its own: two uploads of the same
+    # bytes in flight together (screen C drops files in parallel) can
+    # both pass it before either commits, which is what the flush below
+    # is for.
     existing = db.scalar(select(Document).where(Document.project_id == project.id, Document.sha256 == sha))
     if existing is not None:
-        raise DomainError(
-            "duplicate_document",
-            f"This appears to be the same file as {existing.filename}, uploaded earlier. Remove one copy or upload a different file.",
-            status=409,
-        )
+        raise _duplicate_error(existing)
 
     document = Document(
         id=uuid.uuid4(), project_id=project.id, filename=filename, doc_type=doc_type,
@@ -82,9 +99,27 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
         uploaded_by=actor.id,
     )
     document.storage_key = storage_key(project, document.id)
-    store.put(document.storage_key, upload.file, "application/pdf", size)
     db.add(document)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # The race the pre-flush select can't close: another upload of
+        # the same bytes committed between that select and this flush.
+        # The database, not the app, is the tiebreaker -- roll back this
+        # attempt before it ever touches storage, and name the row that
+        # won.
+        db.rollback()
+        existing = db.scalar(select(Document).where(Document.project_id == project.id, Document.sha256 == sha))
+        if existing is not None:
+            raise _duplicate_error(existing) from None
+        raise
+
+    # Storage is touched only after the row's own insert has cleared the
+    # database's uniqueness check. If put() raises, the row is still
+    # uncommitted -- the route never reaches its own db.commit() -- so a
+    # storage failure never leaves an orphan blob or a half-written
+    # document.
+    store.put(document.storage_key, upload.file, "application/pdf", size)
     actions.commit(
         db, actor=actor, project_id=project.id, kind="document_add",
         label=f"Uploaded {filename} as {doc_type}", before={}, after=_row_fields(document),

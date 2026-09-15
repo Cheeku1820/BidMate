@@ -5,9 +5,11 @@ parsing; other org's project 404; the audit row carries no bytes."""
 
 import hashlib
 import io
+import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
+from sqlalchemy.orm import sessionmaker
 
 from app.documents import blobstore
 from app.main import app
@@ -78,6 +80,104 @@ def test_an_unknown_doc_type_is_refused(client, signed_in_user, project, store):
     assert r.status_code == 422
 
 
+def test_a_filename_too_long_to_store_is_refused_before_hashing(client, signed_in_user, project, store):
+    long_name = "a" * 297 + ".pdf"  # 301 chars, over Document.filename's 300-char column
+    r = _upload(client, project.id, name=long_name)
+    assert r.status_code == 422
+    assert "too long" in r.json()["detail"]["message"].lower()
+    assert store.blobs == {}
+
+
+def test_two_uploads_of_the_same_bytes_racing_are_refused_by_the_database(client, signed_in_user, project, db, store):
+    """Deterministic stand-in for two uploads of the same bytes in
+    flight together (screen C drops files in parallel): both would pass
+    the service's pre-flush `select` clean, so the database -- not the
+    app -- has to be the tiebreaker. A `before_flush` hook lands and
+    commits a colliding row, through a second session on the same
+    engine, at the exact moment the service's own flush is about to
+    insert -- after its own `select` already came back empty.
+
+    Fixture data (project/org/dana) is only flushed, not committed, at
+    this point, so it commits here first -- the racer's insert needs
+    `project` and `dana` to already be visible outside this session, and
+    a bare `db.rollback()` after the race would otherwise erase them
+    along with the failed attempt (see test_action_log.py's note on the
+    same hazard).
+    """
+    db.commit()
+    sha = hashlib.sha256(PDF).hexdigest()
+    Racer = sessionmaker(bind=db.get_bind())
+    fired = False
+
+    def _insert_racer(session, flush_context, instances):
+        nonlocal fired
+        if fired or not any(isinstance(o, Document) and o.sha256 == sha for o in session.new):
+            return
+        fired = True
+        racer = Racer()
+        try:
+            racer.add(Document(
+                id=uuid.uuid4(), project_id=project.id, filename="racer.pdf", doc_type="Drawings",
+                content_type="application/pdf", size_bytes=len(PDF), sha256=sha,
+                storage_key=f"orgs/{project.org_id}/projects/{project.id}/documents/racer.pdf",
+                uploaded_by=signed_in_user.id,
+            ))
+            racer.commit()
+        finally:
+            racer.close()
+
+    event.listen(db, "before_flush", _insert_racer)
+    try:
+        r = _upload(client, project.id, name="mine.pdf")
+    finally:
+        event.remove(db, "before_flush", _insert_racer)
+
+    assert fired, "the race window never fired -- the test didn't exercise the race"
+    assert r.status_code == 409
+    assert "racer.pdf" in r.json()["detail"]["message"]
+    assert len(store.blobs) == 0
+
+
+def test_a_storage_failure_leaves_no_row_and_no_action(client, signed_in_user, project, db):
+    """If `store.put()` raises after the document's own flush, nothing
+    persists: the row was flushed but never committed, which is what a
+    real request-scoped session's close-without-commit would do too.
+    Checked from a second, independent session -- not `db` itself, which
+    would still see its own uncommitted flush -- so this proves nothing
+    landed durably, not just that `db` hasn't been asked to look yet."""
+
+    class _ExplodingStore:
+        blobs: dict = {}
+
+        def put(self, key, stream, content_type, size):
+            raise RuntimeError("storage unavailable")
+
+        def open(self, key):
+            raise blobstore.BlobNotFound(key)
+
+        def delete(self, key):
+            pass
+
+        def exists(self, key):
+            return False
+
+    app.dependency_overrides[blobstore.get_blob_store] = lambda: _ExplodingStore()
+    try:
+        r = _upload(client, project.id)
+    finally:
+        app.dependency_overrides.pop(blobstore.get_blob_store, None)
+
+    assert r.status_code == 500
+
+    Checker = sessionmaker(bind=db.get_bind())
+    checker = Checker()
+    try:
+        assert checker.scalar(select(Document).where(Document.project_id == project.id)) is None
+        assert checker.scalar(select(Action).where(Action.project_id == project.id, Action.kind == "document_add")) is None
+    finally:
+        checker.close()
+
+
 def test_other_orgs_project_is_not_found_not_forbidden(client, other_org_project, store):
     assert _upload(client, other_org_project.id).status_code == 404
     assert client.get(f"/api/projects/{other_org_project.id}/documents").status_code == 404
@@ -96,5 +196,5 @@ def test_upload_is_audited_without_bytes(client, signed_in_user, project, db, st
     action = db.scalar(select(Action).where(Action.project_id == project.id, Action.kind == "document_add"))
     assert action is not None
     assert action.label == "Uploaded E-set.pdf as Drawings"
-    assert action.after["filename"] == "E-set.pdf" and "content" not in action.after
-    assert PDF.decode("latin-1") not in str(action.after)
+    assert set(action.after) == {"id", "filename", "doc_type", "size_bytes", "sha256", "status"}
+    assert action.after["filename"] == "E-set.pdf"

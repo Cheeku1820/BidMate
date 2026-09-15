@@ -6,6 +6,10 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 DOC_TYPES = ("Drawings", "Specifications", "Addendum", "Scope", "Other")
+# The closed set `documents.status` is constrained to, in the database
+# (migration 0020's `ck_documents_status`) as well as here. B1 only ever
+# writes 'uploaded'; the other three are the worker's from B2 on, and
+# the constraint is what stops that writer inventing a fifth.
 DOC_STATUSES = ("uploaded", "processing", "processed", "failed")
 
 

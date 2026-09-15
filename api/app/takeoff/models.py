@@ -11,6 +11,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+# The wire shape's closed set, reused as the column's check constraint --
+# one definition, enforced in both places. app.documents.schemas imports
+# nothing from app, so this direction adds no cycle.
+from app.documents.schemas import DOC_STATUSES
 
 
 class ReviewStatus(enum.Enum):
@@ -156,7 +160,20 @@ class Document(Base):
     are where the worker reports back. docs/specs/documents-stored.md."""
 
     __tablename__ = "documents"
-    __table_args__ = (UniqueConstraint("project_id", "sha256", name="uq_document_project_sha256"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "sha256", name="uq_document_project_sha256"),
+        # `status` is a closed set of four, and the database is what
+        # closes it. B1 only ever writes 'uploaded'; B2's worker writes
+        # the other three, and without this a typo there ('error' for
+        # 'failed', say) would persist a status no screen knows how to
+        # render, silently. Mirrors app.documents.schemas.DOC_STATUSES,
+        # which is imported rather than retyped so the two cannot drift,
+        # and migration 0020's ck_documents_status.
+        CheckConstraint(
+            "status in ('" + "', '".join(DOC_STATUSES) + "')",
+            name="ck_documents_status",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)

@@ -5,7 +5,7 @@
    first; the primary action needs a Drawings document.
    ============================================================ */
 import { StrictMode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import UploadDocuments from "./UploadDocuments.jsx";
@@ -19,6 +19,10 @@ function makeStore(over = {}) {
     uploadDocument: vi.fn(),
     setDocumentType: vi.fn(),
     deleteDocument: vi.fn().mockResolvedValue(null),
+    // A default every "reading" row's poll effect can call safely even
+    // when a test doesn't care about polling -- an empty document list
+    // matches nothing, so rows are left exactly as they were.
+    getProcessing: vi.fn().mockResolvedValue({ documents: [], run: null }),
     ...over,
   };
 }
@@ -40,6 +44,12 @@ function drop(files) {
 }
 
 describe("UploadDocuments", () => {
+  afterEach(() => {
+    // A test that throws before reaching its own vi.useRealTimers() call
+    // must not leave fake timers armed for the next test in the file.
+    vi.useRealTimers();
+  });
+
   it("shows what was already uploaded, from the API, on mount", async () => {
     const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]) });
     renderUpload(store);
@@ -322,5 +332,38 @@ describe("UploadDocuments", () => {
     // The number is visible but aria-hidden: a region that re-announces
     // every tick is one nobody keeps switched on.
     expect(within(cell).getByText("42%")).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("polls processing while a document is being read and shows the sheet count once read", async () => {
+    vi.useFakeTimers();
+    const getProcessing = vi
+      .fn()
+      .mockResolvedValueOnce({ documents: [{ id: "d1", filename: "a.pdf", docType: "Drawings", state: "reading", reason: "", sheetCount: 0 }], run: null })
+      .mockResolvedValue({ documents: [{ id: "d1", filename: "a.pdf", docType: "Drawings", state: "read", reason: "", sheetCount: 14 }], run: null });
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([doc({ id: "d1", filename: "a.pdf", status: "processing" })]),
+      getProcessing,
+    });
+    renderUpload(store);
+    // React's own scheduling (outside this test's explicit act calls)
+    // leans on timers that useFakeTimers also replaces, so the initial
+    // mount has to be flushed the same way the polling ticks below are.
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Reading…")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    expect(screen.getByText("Read · 14 sheets")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    expect(getProcessing).toHaveBeenCalledTimes(2); // polling stops once nothing is reading
+  });
+
+  it("shows a failed read's reason and keeps the row removable", async () => {
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([
+        doc({ id: "d1", filename: "a.pdf", status: "failed", error: "Couldn't read — the file is password protected. Upload an unlocked copy." }),
+      ]),
+    });
+    renderUpload(store);
+    expect(await screen.findByText(/password protected/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /remove a\.pdf/i })).toBeInTheDocument();
   });
 });

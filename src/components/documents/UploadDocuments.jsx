@@ -9,6 +9,15 @@
    stashed locally for the next screen -- ConfirmDrawings reads the same
    project's documents from the API itself.
 
+   A stored document doesn't stay stored -- the worker (B2) picks it up
+   and reads it automatically, moving `status` through
+   uploaded/processing -> processed | failed on its own, with no action
+   from this screen. This screen just watches that happen: while any row
+   is still "reading", it polls store.getProcessing every few seconds and
+   merges the state, sheet count, and failure reason it reports back onto
+   the matching row by id, and stops polling the moment nothing is
+   reading anymore. See the read-polling effect below.
+
    `rows` holds both persisted documents (state "ready", from the API,
    carrying the server's id) and in-flight local rows (uploading, or one
    that never reached the server: duplicate / unsupported / failed) in
@@ -89,6 +98,15 @@ function formatSize(bytes) {
 // document with no words next to it is exactly the silence that reads
 // as completeness.
 const FAILED_FALLBACK = "This file couldn't be read. Upload it again, or replace it.";
+
+// A spec or an addendum can genuinely carry no drawing sheets -- that's
+// not a failure, so 0 reads as plain "Read" rather than "Read · 0
+// sheets". Singular "1 sheet" so the phrase stays grammatical, since
+// this is a per-file count, not a total that's always large.
+function readLabel(sheetCount) {
+  if (!sheetCount) return "Read";
+  return `Read · ${sheetCount} ${sheetCount === 1 ? "sheet" : "sheets"}`;
+}
 
 /** A persisted document, as the API returns it, turned into a row.
  *
@@ -195,6 +213,47 @@ export default function UploadDocuments({ store }) {
 
   const update = (key, patch) =>
     setRowsSafe((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+
+  // Whether any row is still being read by the worker. A primitive
+  // (not the row array itself) so the poll effect below only restarts
+  // when reading starts or stops -- not on every unrelated row change,
+  // like a progress tick or a retype.
+  const anyReading = rows.some((r) => r.state === "reading");
+
+  // While a document is being read, ask the API what the worker has
+  // found every few seconds and merge it onto the matching row by id.
+  // Polls once immediately (so a page landed on mid-read shows the
+  // freshest state without waiting out the first interval), then every
+  // 3s until no row is reading anymore, and always on unmount.
+  useEffect(() => {
+    if (!anyReading) return undefined;
+
+    const poll = () => {
+      store
+        .getProcessing(projectId)
+        .then((processing) => {
+          if (!aliveRef.current) return;
+          setRowsSafe((prev) =>
+            prev.map((r) => {
+              const match = processing.documents.find((d) => d.id === r.key);
+              if (!match) return r;
+              if (match.state === "failed") {
+                return { ...r, state: "failed", message: match.reason || FAILED_FALLBACK, sheetCount: match.sheetCount };
+              }
+              return { ...r, state: match.state, sheetCount: match.sheetCount };
+            }),
+          );
+        })
+        // A poll failure is silent: rows keep their last known state,
+        // and the next tick tries again. Flipping the whole page into
+        // loadError here would be a worse failure than one stale row.
+        .catch(() => {});
+    };
+
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => clearInterval(interval);
+  }, [store, projectId, anyReading]);
 
   const addFiles = (fileList) => {
     for (const file of Array.from(fileList)) {
@@ -571,7 +630,7 @@ export default function UploadDocuments({ store }) {
                             </>
                           ) : row.state === "read" ? (
                             <>
-                              <CheckCircle2 aria-hidden="true" size={14} className="ink-blue" /> Read
+                              <CheckCircle2 aria-hidden="true" size={14} className="ink-blue" /> {readLabel(row.sheetCount)}
                             </>
                           ) : (
                             row.message

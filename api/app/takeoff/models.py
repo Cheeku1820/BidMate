@@ -15,6 +15,8 @@ from app.db import Base
 # one definition, enforced in both places. app.documents.schemas imports
 # nothing from app, so this direction adds no cycle.
 from app.documents.schemas import DOC_STATUSES
+from app.jobs.schemas import JOB_KINDS, JOB_STATUSES
+from app.scope.schemas import SCOPE_KINDS, SCOPE_STATUSES
 
 
 class ReviewStatus(enum.Enum):
@@ -152,6 +154,14 @@ class Sheet(Base):
     # counted items. Its own axis -- never one of the four review labels.
     kind: Mapped[str] = mapped_column(String(20), default="plan", server_default="plan")
 
+    # Written by the read job so classify and sheet jobs never re-open
+    # the file for them: the schedule/legend text, the drawing region
+    # counting runs within ([x0, y0, x1, y1] in page points), and the
+    # parsed legend rows (LegendEntry dicts).
+    schedule_text: Mapped[str] = mapped_column(Text, default="", server_default="")
+    region: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    legend: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
 
 class Document(Base):
     """An uploaded file, as stored. The API streams and hashes it; it
@@ -186,6 +196,98 @@ class Document(Base):
     status: Mapped[str] = mapped_column(String(20), default="uploaded", server_default="uploaded")
     error: Mapped[str] = mapped_column(Text, default="", server_default="")
     uploaded_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    context_text: Mapped[str] = mapped_column(Text, default="", server_default="")
+
+
+class Job(Base):
+    """One unit of worker work. The queue is this table (spec §2.1): the
+    worker claims with FOR UPDATE SKIP LOCKED, so two workers share it
+    with no coordinator. The two partial unique indexes are what make
+    "one read per document, one run per project at a time" true -- the
+    route checks first for a good message, the database decides."""
+
+    __tablename__ = "jobs"
+    __table_args__ = (
+        CheckConstraint("kind in ('" + "', '".join(JOB_KINDS) + "')", name="ck_jobs_kind"),
+        CheckConstraint("status in ('" + "', '".join(JOB_STATUSES) + "')", name="ck_jobs_status"),
+        Index("ix_jobs_poll", "status", "kind", "queued_at"),
+        Index("uq_jobs_read_in_flight", "document_id", unique=True,
+              postgresql_where=text("kind = 'read' AND status IN ('queued', 'running')")),
+        Index("uq_jobs_classify_in_flight", "project_id", unique=True,
+              postgresql_where=text("kind = 'classify' AND status IN ('queued', 'running')")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=True)
+    sheet_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sheets.id", ondelete="CASCADE"), nullable=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
+    progress: Mapped[str] = mapped_column(String(20), default="", server_default="")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+    error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    locked_by: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Classification(Base):
+    """One run's classification: the tag -> spec map and the pricing
+    basis, written once by the classify job and read by every sheet job
+    of that run (spec §2.4). One per project run, so the labor rate and
+    material factor are one number per project."""
+
+    __tablename__ = "classifications"
+    __table_args__ = (UniqueConstraint("run_id", name="uq_classifications_run"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    specs_by_tag: Mapped[dict] = mapped_column(JSONB, default=dict)
+    labor_rate: Mapped[float] = mapped_column(Numeric(10, 2))
+    material_factor: Mapped[float] = mapped_column(Numeric(6, 3))
+    source: Mapped[str] = mapped_column(String(20))
+    location_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    wiring_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    unmatched_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ScopeStatement(Base):
+    """What the documents say the electrical work is -- found by the
+    worker, settled by a person (spec §2.5). `status` is deliberately
+    not the four review labels: those describe an item's evidence; this
+    describes whether a person has settled a statement, exactly as a
+    note's confirmed/open does."""
+
+    __tablename__ = "scope_statements"
+    __table_args__ = (
+        CheckConstraint("kind in ('" + "', '".join(SCOPE_KINDS) + "')", name="ck_scope_kind"),
+        CheckConstraint("status in ('" + "', '".join(SCOPE_STATUSES) + "')", name="ck_scope_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    page_index: Mapped[int] = mapped_column(Integer, default=0)
+    kind: Mapped[str] = mapped_column(String(20))
+    text: Mapped[str] = mapped_column(String(500))
+    quote: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(20), default="found", server_default="found")
+    edited_text: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

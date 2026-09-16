@@ -26,6 +26,7 @@ This file:
 """
 
 import io
+import uuid
 
 import pytest
 from sqlalchemy import text
@@ -33,7 +34,7 @@ from sqlalchemy import text
 from app.auth.passwords import hash_password
 from app.identity.models import Org, User
 from app.main import app
-from app.takeoff.models import Document, Note
+from app.takeoff.models import Document, Note, ScopeStatement
 
 PDF = b"%PDF-1.4\n%tenancy\n"
 
@@ -67,6 +68,22 @@ def note(db, project, dana):
     db.add(n)
     db.flush()
     return n
+
+
+@pytest.fixture
+def scope_statement(db, project, document, dana):
+    """A scope statement row under the existing `project` and `document`
+    fixtures -- the `PATCH /api/scope/{id}` route is keyed by statement
+    id rather than project id, same reason `note`/`document` above get
+    their own fixture instead of reusing the (p, s, i) shape."""
+    s = ScopeStatement(
+        org_id=project.org_id, project_id=project.id, document_id=document.id, page_index=0,
+        kind="excluded", text="Site lighting and pole bases.", quote="- Site lighting and pole bases.",
+        status="found", run_id=uuid.uuid4(),
+    )
+    db.add(s)
+    db.flush()
+    return s
 
 
 @pytest.fixture
@@ -201,6 +218,8 @@ TENANCY_TABLE = [
      lambda p, s, i: f"/api/projects/{p.id}/material-pricing", None, None),
     ("GET", "/api/projects/{project_id}/documents",
      lambda p, s, i: f"/api/projects/{p.id}/documents", None, None),
+    ("GET", "/api/projects/{project_id}/scope",
+     lambda p, s, i: f"/api/projects/{p.id}/scope", None, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]
@@ -236,6 +255,19 @@ DOCUMENT_TENANCY_TABLE = [
 ]
 
 DOCUMENT_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE]
+
+# The one scope route keyed by statement_id rather than project_id, same
+# shape and same reasoning as NOTE_TENANCY_TABLE / DOCUMENT_TENANCY_TABLE
+# above: it needs the `scope_statement` fixture, which the main table's
+# (p, s, i) lambdas were never written to accept. `GET
+# /api/projects/{project_id}/scope` IS project-keyed and lives in
+# TENANCY_TABLE above instead.
+SCOPE_TENANCY_TABLE = [
+    ("PATCH", "/api/scope/{statement_id}",
+     lambda s: f"/api/scope/{s.id}", lambda s: {"status": "confirmed"}, None),
+]
+
+SCOPE_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in SCOPE_TENANCY_TABLE]
 
 # POST /api/projects/{project_id}/documents is project-scoped like every
 # row in TENANCY_TABLE, but it cannot be probed from that table: both
@@ -411,6 +443,39 @@ def test_an_unauthenticated_caller_gets_401_on_every_document_route(
     assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
 
 
+# --- The scope route, keyed by statement_id rather than project_id ---
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", SCOPE_TENANCY_TABLE, ids=SCOPE_TENANCY_IDS)
+def test_a_rival_org_gets_404_on_every_scope_route(
+    client, dana, rival, scope_statement, method, path_template, path_fn, body_fn, headers_fn
+):
+    _sign_in_as(client, "rival@example.com", "hunter2")
+    path = path_fn(scope_statement)
+    body = body_fn(scope_statement) if body_fn else None
+    headers = headers_fn(scope_statement) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 404, (
+        f"{method} {path} leaked status {response.status_code} to a rival org, expected 404"
+    )
+    assert response.json()["detail"]["code"] == "project_not_found"
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", SCOPE_TENANCY_TABLE, ids=SCOPE_TENANCY_IDS)
+def test_an_unauthenticated_caller_gets_401_on_every_scope_route(
+    client, scope_statement, method, path_template, path_fn, body_fn, headers_fn
+):
+    path = path_fn(scope_statement)
+    body = body_fn(scope_statement) if body_fn else None
+    headers = headers_fn(scope_statement) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
+
+
 # --- The upload route, probed with a real multipart body ---
 
 
@@ -498,6 +563,7 @@ def test_every_project_scoped_route_is_covered_by_the_tenancy_table():
         {(method, template) for method, template, _, _, _ in TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in SCOPE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _ in MULTIPART_TENANCY_TABLE}
         | NON_PROJECT_SCOPED_ROUTES
     )
@@ -518,6 +584,7 @@ def test_the_tenancy_table_does_not_list_a_route_that_no_longer_exists():
         {(method, template) for method, template, _, _, _ in TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in SCOPE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _ in MULTIPART_TENANCY_TABLE}
     ) - live
 

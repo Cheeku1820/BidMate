@@ -1,0 +1,8 @@
+{
+  "document": "United Utility Supply/SPECS/0_SPECIFICATIONS_UUS_BID DOCUMENTS_20260608_2.pdf",
+  "doc_type": "Specifications",
+  "expected": [
+    {"kind": "included", "text_contains": "Electrical Power and Lighting"},
+    {"kind": "included", "text_contains": "Fire Alarm: Alter existing system"}
+  ]
+}

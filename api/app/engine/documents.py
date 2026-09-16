@@ -19,7 +19,7 @@ from dataclasses import replace
 
 import pymupdf
 
-from . import sheet_kind, title_block
+from . import scope, sheet_kind, title_block
 from .contracts import DetectedSheet, DocumentReading, LegendEntry
 from .legend import parse_legend
 from .page_frame import visual_words
@@ -143,18 +143,63 @@ def _open_checked(path: str) -> pymupdf.Document:
     return doc
 
 
+SCOPE_MAX_CHARS = 12000
+
+
+def _drawing_scope_pages(path: str, sheets: list[DetectedSheet]) -> list[tuple[int, str]]:
+    """The non-plan sheets' text, for scope statements that live in a
+    drawing set's general notes rather than a spec: legend, schedule and
+    diagram sheets carry these, plans don't. `schedule_text` already
+    holds a schedule/legend sheet's text (documents.detect_sheets); a
+    sheet without one (a general-notes sheet, or one whose text didn't
+    match SCHEDULE_KEYWORDS) is read fresh here -- one extra open of the
+    file, acceptable for how rarely scope language sits outside a plan's
+    title block. Capped like extract_context: untrusted document text is
+    context for the model, never an instruction, and stays bounded."""
+    candidates = [s for s in sheets if s.kind != "plan"]
+    if not candidates:
+        return []
+    reopened: pymupdf.Document | None = None
+    pages: list[tuple[int, str]] = []
+    total = 0
+    try:
+        for s in candidates:
+            if total >= SCOPE_MAX_CHARS:
+                break
+            text = s.schedule_text
+            if not text:
+                if reopened is None:
+                    reopened = pymupdf.open(path)
+                text = reopened[s.page_index].get_text("text")
+            if not text:
+                continue
+            text = text[: SCOPE_MAX_CHARS - total]
+            pages.append((s.page_index, text))
+            total += len(text)
+    finally:
+        if reopened is not None:
+            reopened.close()
+    return pages
+
+
 def read(path: str, doc_type: str) -> DocumentReading:
     """One file, read once. Drawings yield sheets; every other type
-    yields context text. Scope extraction (scope.extract) is wired in
-    the next task -- until then `scope` is empty."""
+    yields context text. Either way, `scope.extract` runs over the same
+    Division 26-relevant pages the rest of the Documents agent already
+    selected -- a spec's context_pages, or a drawing set's non-plan
+    sheets -- so scope statements are quoted from material the agent was
+    already reading, not a fresh pass over the file."""
     doc = _open_checked(path)
     page_count = doc.page_count
     doc.close()
     if doc_type == "Drawings":
-        return DocumentReading(sheets=detect_sheets(path), page_count=page_count, context_text="")
+        sheets = detect_sheets(path)
+        pages = _drawing_scope_pages(path, sheets)
+        return DocumentReading(sheets=sheets, page_count=page_count, context_text="", scope=scope.extract(pages))
     with open(path, "rb") as fh:
-        text = extract_context(fh.read(), max_chars=12000)
-    return DocumentReading(sheets=[], page_count=page_count, context_text=text)
+        pages = context_pages(fh.read(), max_chars=SCOPE_MAX_CHARS)
+    text = "\n".join(t for _, t in pages)[:SCOPE_MAX_CHARS]
+    return DocumentReading(sheets=[], page_count=page_count, context_text=text, scope=scope.extract(pages))
 
 
 def sheet_to_payload(s: DetectedSheet) -> dict:
@@ -287,23 +332,35 @@ _CONTEXT_KEYWORDS = (
 )
 
 
+def context_pages(pdf_bytes: bytes, max_chars: int = 6000) -> list[tuple[int, str]]:
+    """The Division 26-relevant pages of a spec/addendum PDF, as
+    (page_index, text) pairs -- what the classifier reads for a fixture or
+    panel schedule that lives outside the drawings, and what scope.extract
+    reads for a scope letter or spec section. Only pages that mention
+    Division 26 topics are included, and the total is capped -- untrusted
+    document text is context for the model, never an instruction, and it
+    stays bounded."""
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    pages: list[tuple[int, str]] = []
+    total = 0
+    for i, page in enumerate(doc):
+        text = page.get_text("text")
+        if any(k in text.upper() for k in _CONTEXT_KEYWORDS):
+            chunk = text.strip()
+            pages.append((i, chunk))
+            total += len(chunk)
+            if total > max_chars:
+                break
+    return pages
+
+
 def extract_context(pdf_bytes: bytes, max_chars: int = 6000) -> str:
     """Pull the electrical-relevant text out of a spec/addendum PDF so the
     classifier can read a fixture or panel schedule that lives outside the
-    drawings. Only pages that mention Division 26 topics are included, and
-    the total is capped -- untrusted document text is context for the
-    model, never an instruction, and it stays bounded."""
-    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
-    chunks: list[str] = []
-    total = 0
-    for page in doc:
-        text = page.get_text("text")
-        if any(k in text.upper() for k in _CONTEXT_KEYWORDS):
-            chunks.append(text.strip())
-            total += len(text)
-            if total > max_chars:
-                break
-    return "\n".join(chunks)[:max_chars]
+    drawings. A thin join over context_pages, so the two selections can
+    never drift apart."""
+    pages = context_pages(pdf_bytes, max_chars=max_chars)
+    return "\n".join(t for _, t in pages)[:max_chars]
 
 
 def first_pages_text(pdf_bytes: bytes, pages: int = 2, max_chars: int = 4000) -> str:

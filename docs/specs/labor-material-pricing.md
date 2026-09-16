@@ -371,11 +371,12 @@ src/components/pricing/
   pricingColumns.js
 ```
 
-Both screens are plain tables in this codebase's existing style (see
-`TakeoffSpreadsheet.jsx` for the pattern: sortable columns, tabular
-numerals on every quantity/cost, inline edit on a cell, autosave with the
-top bar's `Saving…`/`Saved` indicator — no save button). Filter chips for
-the four statuses, matching every other workspace's filter convention.
+Both screens were first built as plain tables in the takeoff table's
+style. They now render through the shared editable grid in
+`src/components/grid/` — see
+[`docs/specs/pricing-grid.md`](pricing-grid.md) for cell navigation,
+in-place editing, clearing an entry, the footer, and the save-state
+and toast wiring. Filter chips were never built on these two screens.
 
 `src/lib/store/api.js` / `api-mapping.js` gain the store methods for the
 eight endpoints above, following the exact existing pattern (`mapItem`

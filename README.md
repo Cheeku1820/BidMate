@@ -128,6 +128,10 @@ src/
       NoteForm.jsx             add/edit, with the context/reference control
       ApplyNotesBanner.jsx     offers the re-run when context notes are pending
       noteVocabulary.js        a note's own words, distinct from the review labels
+    grid/                      the editable grid under Labor and Material pricing
+      DataGrid.jsx             cells, in-place editors, validation, the Clear affordance
+      useGridNavigation.js     the active-cell movement rules
+    labor/, pricing/           Labor and Material pricing on that grid
     documents/                 the intake path — upload (C), confirm (D), processing (E)
       UploadDocuments.jsx      screen C as a view onto the API: uploads persist, progress is real
       ConfirmDrawings.jsx      screen D: the set as stored, plus the scope the documents state
@@ -181,6 +185,7 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 - **The blueprint is drawn geometry, not a rendered PDF.** A production build would layer markers over `pdf.js` output.
 - **Export produces a CSV, not yet a real Excel workbook.**
 - **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. Labor and Material pricing are now built and routed, each carrying a pricing basis note. See [`ROADMAP.md`](ROADMAP.md).
+- **The pricing grid edits one cell at a time.** Labor and Material pricing behave like a spreadsheet at the cell level — click or type to edit, Tab/Enter/arrows to move, Delete to clear an entry — but there is no range selection, fill-down, or paste yet. Crew mix and per-line notes are stored by the API and not shown; a project default crew mix in project settings is the intended next step.
 - **Applying a note is audited but not undoable.** The re-run lands as one attributable entry in the action log; there is no single press that puts the takeoff back. Undo still covers approve, reject, edit, delete, bulk approve, and scale, across a re-run.
 - **An upload cancelled after its body was sent may still land.** Removing a row mid-upload aborts the request, but once the last byte has left the browser the server may finish storing the document before the abort reaches it. If that happens the document appears on the next load, "Uploaded", and can be removed like any other.
 - **Nothing reaps stored files.** Deleting a document removes its file, but there is no retention policy or sweep: a file whose row was lost, or every file under an archived project, stays in storage indefinitely. See [`ROADMAP.md`](ROADMAP.md) §2.2.

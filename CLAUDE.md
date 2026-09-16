@@ -77,6 +77,8 @@ src/
       NoteForm.jsx           add/edit, with the context/reference control
       ApplyNotesBanner.jsx   offers the re-run when context notes are pending
       noteVocabulary.js      a note's own words — deliberately not the four review labels
+    grid/                    the editable grid: DataGrid.jsx + useGridNavigation.js
+    labor/, pricing/         Labor and Material pricing, rendered through it
     documents/               the intake path: upload (C), confirm (D), processing (E)
       UploadDocuments.jsx    screen C as a view onto the API — uploads persist, progress is real
       ConfirmDrawings.jsx    screen D — the set as stored, and the scope the documents state

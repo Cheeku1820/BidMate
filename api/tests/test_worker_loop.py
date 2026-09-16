@@ -30,8 +30,15 @@ def handler(monkeypatch):
         if behaviour["raise"] is not None:
             raise behaviour["raise"]
 
+    # The real handlers first, so the stubs replace existing keys and
+    # teardown puts the real ones back -- otherwise a mid-test import of
+    # a handler module (worker._finish_run pulls in classify_job) would
+    # re-register under a key monkeypatch then deletes, and every later
+    # worker test would find no handler for that kind.
+    handlers._load_handlers()
     monkeypatch.setitem(handlers.HANDLERS, "read", stub)
     monkeypatch.setitem(handlers.HANDLERS, "sheet", stub)
+    monkeypatch.setitem(handlers.HANDLERS, "classify", stub)
     monkeypatch.setattr(handlers, "_load_handlers", lambda: None)
     behaviour["calls"] = calls
     return behaviour
@@ -98,6 +105,32 @@ def test_a_sheet_job_that_raised_fails_with_the_sheet_copy(db, project, dana, in
     db.refresh(sj); db.refresh(c); db.refresh(project)
     assert sj.status == "failed" and sj.error == copy.SHEET_FAILED
     assert c.progress == "complete" and project.stage == "review"   # the run still completes
+
+
+def test_a_classify_job_that_raised_fails_with_the_run_copy(db, project, dana, inline, handler):
+    """Not "re-save the file": the drawings were read fine. What failed
+    is the run, and the recovery is to start it again."""
+    c = queue.enqueue_classify(db, project, dana.id); db.commit()
+    handler["raise"] = RuntimeError("classification exploded")
+    worker.tick("t")
+    db.refresh(c)
+    assert c.status == "failed" and c.error == copy.RUN_FAILED
+
+
+def test_a_classify_timeout_fails_with_the_run_copy(db, project, dana, inline, handler, monkeypatch):
+    c = queue.enqueue_classify(db, project, dana.id); db.commit()
+    monkeypatch.setattr(worker, "run_one", lambda job_id, kind: ("timeout", ""))
+    worker.tick("t")
+    db.refresh(c)
+    assert c.status == "failed" and c.error == copy.RUN_FAILED
+
+
+def test_a_classify_job_keeps_its_own_terminal_reason(db, project, dana, inline, handler):
+    c = queue.enqueue_classify(db, project, dana.id); db.commit()
+    handler["raise"] = sandbox.Terminal(copy.NO_DRAWINGS)
+    worker.tick("t")
+    db.refresh(c)
+    assert c.status == "failed" and c.error == copy.NO_DRAWINGS
 
 
 def test_a_timeout_outcome_fails_the_job_with_the_generic_copy(db, project, dana, inline, handler, monkeypatch):

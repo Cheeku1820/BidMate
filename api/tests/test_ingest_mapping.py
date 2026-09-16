@@ -314,6 +314,23 @@ def test_map_payload_replaces_a_warning_that_references_an_unknown_sheet_in_fix(
     assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
 
 
+def test_map_payload_keeps_a_warning_naming_a_sibling_sheet_the_caller_vouches_for():
+    """A sheet job maps a one-sheet payload. A warning that sends the
+    estimator to the schedule on E0.1 is grounded when E0.1 is on the
+    project, so the caller passes the project's sheet numbers and the
+    model's own text survives."""
+    warning = {"reason": "legend", "title": "x", "found": "y",
+               "why": "z", "fix": "Check the luminaire schedule on E0.1 for this type.", "where": "E2.1 and E0.1"}
+    item = {**_payload()["items"][0], "status": "attention", "warning": warning, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]), valid_sheet_numbers={"E0.1", "E2.1"})
+    assert mapped.items[0]["warning"] == warning
+    # The payload's own sheets still count, and a number on neither still falls back.
+    fabricated = {**warning, "fix": "Check the schedule on E9.9 for this type."}
+    item = {**_payload()["items"][0], "status": "attention", "warning": fabricated, "tag": "F2"}
+    mapped = map_payload(_payload(items=[item]), valid_sheet_numbers={"E0.1"})
+    assert mapped.items[0]["warning"]["title"] == "Item type needs confirmation"
+
+
 def test_map_payload_replaces_a_warning_carrying_ai_framing():
     warning = {"reason": "legend", "title": "x",
                "found": "The AI is not confident about type F2 on E2.1.",

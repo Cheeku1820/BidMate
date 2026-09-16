@@ -8,7 +8,7 @@ import uuid
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.auth.dependencies import current_user
@@ -34,9 +34,14 @@ def start_takeoff(project_id: uuid.UUID, user: User = Depends(current_user), db:
     and refused outright when no drawing set has been read -- a run
     with nothing to count would only fail later, out of sight."""
     project = load_project(project_id, db, user)
-    readable = db.scalar(select(func.count()).select_from(Document).where(
-        Document.project_id == project.id, Document.doc_type == "Drawings", Document.status == "processed"))
-    if not readable:
+    drawings = db.scalars(select(Document).where(Document.project_id == project.id, Document.doc_type == "Drawings")).all()
+    # A set still being read would be silently left out of the run --
+    # classify lists only `processed` drawings -- and its sheets would
+    # then show as waiting under a run that has finished. Refused until
+    # the read lands; screen D disables Start for the same reason.
+    if any(d.status in ("uploaded", "processing") for d in drawings):
+        raise DomainError("drawings_still_reading", copy.DRAWINGS_READING, status=409)
+    if not any(d.status == "processed" for d in drawings):
         raise DomainError("no_readable_drawings", copy.NO_DRAWINGS, status=409)
     job = queue.enqueue_classify(db, project, user.id)
     actions.commit(db, actor=user, project_id=project.id, kind="takeoff_start", label="Started takeoff", before={}, after={})

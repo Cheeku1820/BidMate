@@ -308,11 +308,18 @@ def _grounded_or_fallback(raw_warning, sheet_number: str, valid_sheet_numbers: s
     return fallback_warning(tag, quantity, sheet_number, warning["reason"]), True
 
 
-def map_payload(payload: dict) -> MappedTakeoff:
+def map_payload(payload: dict, valid_sheet_numbers: set[str] | None = None) -> MappedTakeoff:
     """Engine payload -> domain rows, keyed by the engine's sheet ids.
 
     `sheet_key` on each item names the sheet dict's `key`; the service
     layer resolves those to real database ids after inserting sheets.
+
+    `valid_sheet_numbers` widens the groundedness check beyond the
+    sheets in this payload. A sheet job maps a one-sheet payload, and a
+    model-written warning on a plan sheet legitimately points at a
+    sibling -- "check the luminaire schedule on E0.1" -- so the caller
+    passes every sheet number the project holds, and only a number that
+    is on none of them counts as fabricated.
     """
     sheets: list[dict] = []
     dims: dict[str, tuple[int, int]] = {}
@@ -351,7 +358,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
             "kind": kind,
         })
 
-    valid_sheet_numbers = {s["number"] for s in sheets}
+    grounded_numbers = {s["number"] for s in sheets} | set(valid_sheet_numbers or ())
     fallback = sheets[0]["key"] if sheets else None
     items: list[dict] = []
     # Counted, never contented: the design's section B asks for the
@@ -381,7 +388,7 @@ def map_payload(payload: dict) -> MappedTakeoff:
         png_b64 = raw.get("evidence_png_b64")
         sheet_number = next((s["number"] for s in sheets if s["key"] == key), "")
         item_warning, fell_back = _grounded_or_fallback(
-            warning, sheet_number, valid_sheet_numbers, str(raw.get("tag") or ""), raw.get("quantity") or 0
+            warning, sheet_number, grounded_numbers, str(raw.get("tag") or ""), raw.get("quantity") or 0
         )
         fallback_count += fell_back
         items.append({

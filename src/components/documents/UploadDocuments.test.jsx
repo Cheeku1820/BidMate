@@ -265,6 +265,24 @@ describe("UploadDocuments", () => {
     screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
   });
 
+  it("shows the server's reason on the row when a remove is refused because the takeoff is running", async () => {
+    // The server refuses a remove mid-run (run_in_flight) so the run is
+    // never left without its completion. The row stays, in the failed
+    // tone, with the server's own words -- not a generic failure.
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([doc({ status: "processed" })]),
+      deleteDocument: vi.fn().mockRejectedValue({ code: "run_in_flight", message: "Wait for the takeoff to finish before removing a document." }),
+    });
+    renderUpload(store);
+    await screen.findByText("E-set.pdf");
+    fireEvent.click(screen.getByRole("button", { name: /remove E-set.pdf/i }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /^remove$/i }));
+    expect(await screen.findByText("Wait for the takeoff to finish before removing a document.")).toBeInTheDocument();
+    expect(screen.getByText("E-set.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /remove E-set.pdf/i })).toBeInTheDocument();
+  });
+
   it("forwards a type change made while still uploading, once the document has an id", async () => {
     let resolveUpload;
     const store = makeStore({

@@ -303,6 +303,15 @@ export function mapProcessing(raw) {
       state: d.state,
       reason: d.reason,
       sheetCount: d.sheet_count,
+      // What read found in a drawing set -- screen D's sheet table. Empty
+      // for a set still reading and for anything that is not drawings.
+      sheets: (d.sheets ?? []).map((s) => ({
+        id: s.id,
+        number: s.number,
+        title: s.title,
+        kind: s.kind,
+        unreadableReason: s.unreadable_reason,
+      })),
     })),
     run: raw.run
       ? {

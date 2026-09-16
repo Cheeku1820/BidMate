@@ -17,7 +17,7 @@ from app.jobs.schemas import MAX_ATTEMPTS, RETRY_BACKOFF_SECONDS, STALE_GRACE_SE
 from app.takeoff.models import Document, Job, Project, Sheet
 
 _IN_FLIGHT = ("queued", "running")
-_RUN_IN_FLIGHT = "This project's takeoff is already running. Wait for it to finish before starting another."
+_RUN_IN_FLIGHT = copy.RUN_IN_FLIGHT
 
 
 def _now() -> datetime:
@@ -43,8 +43,21 @@ def enqueue_read(db: Session, document: Document) -> Job:
 
 
 def in_flight_run(db: Session, project_id: uuid.UUID) -> Job | None:
-    return db.scalars(select(Job).where(
+    """The run the project is in the middle of, as its classify job, or
+    None. A run is in flight from the moment its classify job is queued
+    until its last sheet job is terminal -- not just while classify
+    itself runs. A second run started during the sheet phase would have
+    two runs merging into the same sheets, and whichever finished last
+    would own the pricing basis."""
+    classify = db.scalars(select(Job).where(
         Job.kind == "classify", Job.project_id == project_id, Job.status.in_(_IN_FLIGHT))).first()
+    if classify is not None:
+        return classify
+    open_sheet = db.scalars(select(Job).where(
+        Job.kind == "sheet", Job.project_id == project_id, Job.status.in_(_IN_FLIGHT)).order_by(Job.queued_at)).first()
+    if open_sheet is None:
+        return None
+    return db.scalars(select(Job).where(Job.kind == "classify", Job.run_id == open_sheet.run_id)).first()
 
 
 def enqueue_classify(db: Session, project: Project, requested_by: uuid.UUID) -> Job:
@@ -100,12 +113,14 @@ def claim_next(db: Session, worker_id: str) -> Job | None:
 
 def terminal_copy(job: Job, message: str) -> str:
     """The estimator copy a terminal failure lands with. A body that gave
-    no reason of its own gets the generic one -- and on a sheet job that
-    generic ("re-save the file") would be wrong, because the file was
-    read fine; what failed was this sheet's takeoff, and the recovery is
-    to start it again."""
+    no reason of its own gets the generic one -- and on a sheet or a
+    classify job that generic ("re-save the file") would be wrong,
+    because the file was read fine; what failed was the takeoff, and
+    the recovery is to start it again."""
     if job.kind == "sheet" and message in ("", copy.UNREADABLE):
         return copy.SHEET_FAILED
+    if job.kind == "classify" and message in ("", copy.UNREADABLE):
+        return copy.RUN_FAILED
     return message or copy.UNREADABLE
 
 

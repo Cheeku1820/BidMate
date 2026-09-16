@@ -12,9 +12,9 @@ from app.engine import classification as cls_mod, counting, sheet as sheet_mod
 from app.engine.contracts import Classification, DeviceCluster, Placement, SheetResult
 from app.jobs import copy, queue
 from app.jobs.schemas import STALE_GRACE_SECONDS, timeout_for
-from app.takeoff.models import Action, Classification as ClassificationRow, Item, Job, Note, Sheet
+from app.takeoff.models import Action, Classification as ClassificationRow, Item, Job, Note, Sheet, Warning
 from app.worker import __main__ as worker, handlers
-from tests.test_worker_read import _pdf, _run_all, _stored, inline  # noqa: F401
+from tests.test_worker_read import _pdf, _pdf_pages, _run_all, _stored, inline  # noqa: F401
 
 
 def _row(tag, x, y, page):
@@ -83,6 +83,33 @@ def test_each_sheet_job_carries_its_own_clusters_and_lands_on_its_own_sheet(db, 
     for page, sheet in sheets.items():
         [item] = db.scalars(select(Item).where(Item.sheet_id == sheet.id))
         assert item.source_tag == "R" and item.evidence["sheet"] == "E2.1"
+
+
+def test_a_warning_pointing_at_a_sibling_sheet_keeps_the_models_own_text(db, project, dana, inline, monkeypatch, fake_engine):
+    """A sheet job maps a one-sheet payload. A warning on E2.1 that sends
+    the estimator to the luminaire schedule on E0.1 is grounded -- E0.1
+    is on the project -- and must not degrade to the generic template."""
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _stored(db, project, dana, inline, _pdf_pages(["E2.1 POWER PLAN", "E0.1 LUMINAIRE SCHEDULE\nTYPE F2  2x4 LED TROFFER"]))
+    queue.enqueue_read(db, d); _run_all(db)
+    sheets = {s.number: s for s in db.scalars(select(Sheet).where(Sheet.project_id == project.id))}
+    assert set(sheets) == {"E2.1", "E0.1"}
+    sheets["E0.1"].kind = "schedule"; db.commit()
+    warning = {"reason": "legend", "title": "Fixture type needs confirmation",
+               "found": "Type F2 appears 1 time on E2.1, but the schedule lists no F2.",
+               "why": "F2's exact fixture and price depend on which schedule entry it matches.",
+               "fix": "Check the luminaire schedule on E0.1 for a type F2 entry.",
+               "where": "E2.1 and the luminaire schedule on E0.1."}
+
+    def finish(path, sheet, clusters, classification, sheets):
+        return SheetResult(rows=[{**_row("F2", 300, 300, sheet.page_index), "status": "attention", "warning": warning}], ai_reading=None)
+    monkeypatch.setattr(sheet_mod, "finish", finish)
+    queue.enqueue_classify(db, project, dana.id); _run_all(db)
+    [item] = db.scalars(select(Item).where(Item.project_id == project.id))
+    assert item.sheet_id == sheets["E2.1"].id
+    stored = db.scalars(select(Warning).where(Warning.item_id == item.id)).one()
+    assert stored.fix == warning["fix"] and stored.where_ == warning["where"]
+    assert stored.title == "Fixture type needs confirmation"
 
 
 def test_context_notes_reach_the_classifier_and_are_stamped_applied(db, project, dana, inline, monkeypatch, fake_engine):

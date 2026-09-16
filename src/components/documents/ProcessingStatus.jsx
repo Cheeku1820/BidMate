@@ -99,7 +99,10 @@ export default function ProcessingStatus({ store }) {
           } catch (err) {
             if (err?.code === "run_in_flight") {
               // Already going -- the outcome wanted.
-            } else if (err?.code === "no_readable_drawings") {
+            } else if (err?.code === "no_readable_drawings" || err?.code === "drawings_still_reading") {
+              // Nothing to run yet, in the server's words: no readable
+              // set, or one still being read. Either way the way
+              // forward is back on the documents screens.
               if (!aliveRef.current) return;
               setProcessing(current);
               setError(err.message);

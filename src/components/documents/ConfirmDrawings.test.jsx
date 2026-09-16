@@ -14,7 +14,7 @@
    ============================================================ */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ConfirmDrawings from "./ConfirmDrawings.jsx";
 
@@ -34,9 +34,18 @@ function docFrom(file, docType, extra = {}) {
     state: "read",
     reason: "",
     sheetCount: docType === "Drawings" ? 14 : 0,
+    sheets: [],
     ...extra,
   };
 }
+
+const sheet = (number, title, kind = "Electrical plan", unreadableReason = "") => ({
+  id: `sheet-${number}`,
+  number,
+  title,
+  kind,
+  unreadableReason,
+});
 
 function makeStore(docs = []) {
   return {
@@ -121,6 +130,74 @@ describe("ConfirmDrawings", () => {
     expect(store.getProcessing).toHaveBeenCalledTimes(calls);
   });
 
+  it("lists the sheets found in each read drawing set, with unreadable ones marked in words", async () => {
+    const store = makeStore([
+      docFrom(pdf("cd_biddrawings.pdf"), "Drawings", {
+        sheetCount: 3,
+        sheets: [
+          sheet("E0.1", "Luminaire schedule", "Schedule"),
+          sheet("E2.1", "First floor power plan"),
+          sheet("E2.2", "Second floor power plan", "Electrical plan", "The sheet is a scanned image with no readable drawing content."),
+        ],
+      }),
+      docFrom(pdf("specs_part_1.pdf"), "Specifications"),
+      docFrom(pdf("addendum.pdf"), "Drawings", { state: "reading", sheetCount: 0 }),
+    ]);
+    renderConfirm(store);
+    await screen.findByText("cd_biddrawings.pdf");
+
+    const table = screen.getByRole("table", { name: "Sheets in cd_biddrawings.pdf" });
+    expect(within(table).getByRole("columnheader", { name: "Sheet" })).toBeInTheDocument();
+    expect(within(table).getByRole("rowheader", { name: "E2.1" })).toBeInTheDocument();
+    expect(within(table).getByText("First floor power plan")).toBeInTheDocument();
+    expect(within(table).getByText("Schedule")).toBeInTheDocument();
+    expect(within(table).getAllByText("Electrical plan")).toHaveLength(2);
+    // Unreadable is a word and the worker's reason, not a colour and not a review label.
+    expect(within(table).getByText(/Unreadable — The sheet is a scanned image/)).toBeInTheDocument();
+    expect(within(table).queryByText(/needs attention|missing information|ready to review/i)).toBeNull();
+    // A specification and a set still reading list no sheets.
+    expect(screen.queryByRole("table", { name: "Sheets in specs_part_1.pdf" })).toBeNull();
+    expect(screen.queryByRole("table", { name: "Sheets in addendum.pdf" })).toBeNull();
+  });
+
+  it("disables Start while a document is still being read, and says why beneath it", async () => {
+    vi.useFakeTimers();
+    const reading = docFrom(pdf("addendum.pdf"), "Drawings", { state: "reading", sheetCount: 0 });
+    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings"), reading]);
+    store.getProcessing
+      .mockResolvedValueOnce({ documents: [docFrom(pdf("cd_biddrawings.pdf"), "Drawings"), reading], run: null })
+      .mockResolvedValue({ documents: [docFrom(pdf("cd_biddrawings.pdf"), "Drawings"), { ...reading, state: "read", sheetCount: 2 }], run: null });
+    renderConfirm(store);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    const buttons = screen.getAllByRole("button", { name: /start takeoff/i });
+    buttons.forEach((b) => expect(b).toBeDisabled());
+    expect(screen.getByText("A drawing set is still being read. Wait for it to finish before starting the takeoff.")).toBeInTheDocument();
+    buttons.forEach((b) => expect(b).toHaveAccessibleDescription(/still being read/));
+    fireEvent.click(buttons[0]);
+    expect(store.startTakeoff).not.toHaveBeenCalled();
+
+    // Once the read lands, the gate opens and the help goes away.
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+    expect(screen.queryByText(/still being read/)).toBeNull();
+  });
+
+  it("stays and shows the server's message when a start is refused because a set is still being read", async () => {
+    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
+    store.startTakeoff.mockRejectedValue({
+      code: "drawings_still_reading",
+      message: "A drawing set is still being read. Wait for it to finish before starting the takeoff.",
+    });
+    renderConfirm(store);
+    await screen.findByText("cd_biddrawings.pdf");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("A drawing set is still being read");
+    expect(screen.queryByText("processing")).toBeNull();
+  });
+
   it("mounts the scope section above the table", async () => {
     const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
     store.listScope.mockResolvedValue([
@@ -131,7 +208,7 @@ describe("ConfirmDrawings", () => {
     expect(await screen.findByText("1 statement found · 0 confirmed · 0 dismissed")).toBeInTheDocument();
     expect(store.listScope).toHaveBeenCalledWith("p1");
     const scope = screen.getByRole("heading", { name: "Scope stated in the documents" });
-    const table = screen.getByRole("table");
+    const [table] = screen.getAllByRole("table");
     expect(scope.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 

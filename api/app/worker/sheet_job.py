@@ -75,7 +75,11 @@ def run(db: Session, job: Job) -> None:
     payload = {"takeoff_id": str(doc.id), "source": cls.source,
                "sheets": [{**documents.sheet_to_payload(detected), "ai_reading": result.ai_reading}],
                "items": [{**r, "sheet_id": str(detected.page_index)} for r in result.rows]}
-    mapped = map_payload(payload)
+    # The groundedness check sees every sheet on the project, not just
+    # this one: a warning that sends the estimator to the schedule on
+    # E0.1 is grounded, and a one-sheet payload alone would call it
+    # fabricated and swap in the generic template.
+    mapped = map_payload(payload, valid_sheet_numbers={s.number for s in all_sheets})
     merge.merge_sheet(db, project=project, sheet=sheet, rows=mapped.items, ai_reading=mapped.sheets[0]["ai_reading"])
     # "unchecked" surfaces as copy.SCHEDULES_UNCHECKED on screen E; a
     # checked sheet clears the "checking" the side session wrote.

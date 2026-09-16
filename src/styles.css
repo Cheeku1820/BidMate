@@ -2273,6 +2273,41 @@ button {
 .filetable-filename { display: block; font-weight: 600; }
 .filetable-meta { display: block; font-size: 11.5px; color: var(--ink-3); }
 
+/* The sheets one read drawing set holds, under its row on the confirm
+   screen. A compact table inside the document table's row: quieter
+   type, tighter rows, the paper tone so it reads as belonging to the
+   row above. An unreadable sheet carries an icon plus words; the red is
+   reinforcement, not the message. */
+.filecard .sheetlist-holder > td { padding: 0 14px 12px 40px; background: var(--paper-1); }
+.sheetlist { width: 100%; border-collapse: collapse; }
+.filecard .sheetlist th,
+.filecard .sheetlist td {
+  padding: 5px 10px;
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--line-1);
+  background: transparent;
+  vertical-align: top;
+}
+.filecard .sheetlist thead th { font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
+.filecard .sheetlist tbody th { font-weight: 600; white-space: nowrap; }
+.filecard .sheetlist tbody tr:last-child th,
+.filecard .sheetlist tbody tr:last-child td { border-bottom: 0; }
+.sheetlist-unreadable {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  color: var(--red);
+  font-size: 12px;
+}
+
+/* The footer's primary action with a line of help beneath it: why it is
+   disabled, when it is. Empty (and heightless) when there is nothing to
+   say, so the id it carries resolves the moment there is. */
+.footer-primary { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.footer-help { margin: 0; font-size: 12px; color: var(--ink-3); max-width: 44ch; text-align: right; }
+.footer-help:empty { display: none; }
+
 .page-intro { max-width: 72ch; margin-top: 0; }
 .dropzone-hint { font-size: 12.5px; color: var(--ink-3); max-width: 56ch; }
 .warncard-list { margin: 6px 0 0; padding-left: 18px; }

@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.documents import blobstore
-from app.jobs import queue
+from app.jobs import copy, queue
 from app.main import app
 from app.takeoff.models import Action, Document, Item, Job, ReviewStatus, Sheet
 
@@ -63,6 +63,110 @@ def test_start_takeoff_refuses_without_readable_drawings(client, db, project, si
     assert res.status_code == 409 and res.json()["detail"]["code"] == "no_readable_drawings"
 
 
+def test_start_takeoff_refuses_while_a_drawing_set_is_still_being_read(client, db, project, dana, signed_in_user):
+    """A set still reading would be left out of the run silently -- and
+    its sheets would then show as waiting under a finished run."""
+    _processed_drawing(db, project, dana)
+    reading = Document(project_id=project.id, filename="E-addendum.pdf", doc_type="Drawings", content_type="application/pdf",
+                       size_bytes=3, sha256=uuid.uuid4().hex * 2, storage_key="k2", uploaded_by=dana.id, status="processing")
+    db.add(reading); db.flush()
+    res = client.post(f"/api/projects/{project.id}/takeoff")
+    assert res.status_code == 409 and res.json()["detail"]["code"] == "drawings_still_reading"
+    assert res.json()["detail"]["message"] == copy.DRAWINGS_READING
+    assert db.scalars(select(Job).where(Job.kind == "classify")).all() == []
+    # A specification still reading does not hold the run up: it is context, not sheets.
+    reading.doc_type = "Specifications"; db.flush()
+    assert client.post(f"/api/projects/{project.id}/takeoff").status_code == 202
+
+
+def test_start_takeoff_refuses_during_the_sheet_phase(client, db, project, dana, signed_in_user):
+    """"One run at a time" covers the whole run, not just its classify
+    job: with classify done and a sheet job still open, a second Start
+    is refused, so two runs never merge onto the same sheets."""
+    _processed_drawing(db, project, dana)
+    assert client.post(f"/api/projects/{project.id}/takeoff").status_code == 202
+    c = db.scalars(select(Job).where(Job.kind == "classify")).one()
+    plan = db.scalars(select(Sheet).where(Sheet.kind == "plan")).one()
+    [sj] = queue.enqueue_sheets(db, c, [(plan, {})]); queue.mark_done(db, c); db.flush()
+    res = client.post(f"/api/projects/{project.id}/takeoff")
+    assert res.status_code == 409 and res.json()["detail"]["code"] == "run_in_flight"
+    sj.status = "done"; db.flush()
+    assert client.post(f"/api/projects/{project.id}/takeoff").status_code == 202
+
+
+def test_removing_a_document_is_refused_while_a_run_is_in_flight(client, db, project, dana, signed_in_user, blob_store):
+    """Cascading a queued sheet job away with its sheet would leave the
+    run with nobody to complete it. Refused during the sheet phase too,
+    and allowed again once the run is done."""
+    d = _processed_drawing(db, project, dana)
+    assert client.post(f"/api/projects/{project.id}/takeoff").status_code == 202
+    c = db.scalars(select(Job).where(Job.kind == "classify")).one()
+    plan = db.scalars(select(Sheet).where(Sheet.kind == "plan")).one()
+    [sj] = queue.enqueue_sheets(db, c, [(plan, {})]); queue.mark_done(db, c); db.flush()
+    res = client.delete(f"/api/documents/{d.id}")
+    assert res.status_code == 409 and res.json()["detail"] == {"code": "run_in_flight", "message": copy.REMOVE_DURING_RUN}
+    assert db.get(Document, d.id) is not None
+    assert db.scalars(select(Job).where(Job.id == sj.id)).one().status == "queued"
+    sj.status = "done"; db.flush()
+    assert client.delete(f"/api/documents/{d.id}").status_code == 204
+
+
+def test_a_plan_sheet_read_after_the_run_started_needs_attention_not_waiting(client, db, project, dana, signed_in_user):
+    """A drawing set whose read finished after classify queued its sheet
+    jobs is not in the run. Its plan sheets say so, and the run is
+    complete with failures rather than complete."""
+    _processed_drawing(db, project, dana)
+    client.post(f"/api/projects/{project.id}/takeoff")
+    c = db.scalars(select(Job).where(Job.kind == "classify")).one()
+    plan = db.scalars(select(Sheet).where(Sheet.kind == "plan")).one()
+    [sj] = queue.enqueue_sheets(db, c, [(plan, {})]); queue.mark_done(db, c)
+    late = Document(project_id=project.id, filename="E-late.pdf", doc_type="Drawings", content_type="application/pdf",
+                    size_bytes=3, sha256=uuid.uuid4().hex * 2, storage_key="k3", uploaded_by=dana.id, status="processed", page_count=1)
+    db.add(late); db.flush()
+    db.add(Sheet(project_id=project.id, number="E3", title="late plan", discipline="Electrical", revision="", scale="",
+                 scale_options=[], plan="", takeoff_id=str(late.id), page_index=0, kind="plan"))
+    db.flush()
+    run = client.get(f"/api/projects/{project.id}/processing").json()["run"]
+    late_row = next(s for s in run["sheets"] if s["number"] == "E3")
+    assert run["state"] == "running"
+    assert late_row["stage"] == "attention" and late_row["reason"] == copy.SHEET_NOT_IN_RUN
+    sj.status = "done"; db.flush()
+    run = client.get(f"/api/projects/{project.id}/processing").json()["run"]
+    assert run["state"] == "complete_with_failures" and run["complete_count"] == 2 and run["total_count"] == 3
+
+
+def test_a_plan_sheet_with_no_job_under_a_queued_run_is_still_waiting(client, db, project, dana, signed_in_user):
+    _processed_drawing(db, project, dana)
+    client.post(f"/api/projects/{project.id}/takeoff")
+    run = client.get(f"/api/projects/{project.id}/processing").json()["run"]
+    assert run["state"] == "queued"
+    assert next(s for s in run["sheets"] if s["number"] == "E0")["stage"] == "waiting"
+
+
+def test_processing_lists_each_read_drawing_sets_sheets_with_unreadable_ones_marked(client, db, project, dana, signed_in_user):
+    """Screen D's sheet table (spec §8): number, title, kind label, and
+    the reason a sheet is unreadable. A set still reading, and a
+    specification, list none."""
+    d = _processed_drawing(db, project, dana)
+    plan = db.scalars(select(Sheet).where(Sheet.kind == "plan")).one()
+    plan.unreadable_reason = "The sheet is a scanned image with no readable drawing content."
+    reading = Document(project_id=project.id, filename="E-2.pdf", doc_type="Drawings", content_type="application/pdf",
+                       size_bytes=3, sha256=uuid.uuid4().hex * 2, storage_key="k2", uploaded_by=dana.id, status="processing")
+    spec = Document(project_id=project.id, filename="spec.pdf", doc_type="Specifications", content_type="application/pdf",
+                    size_bytes=3, sha256=uuid.uuid4().hex * 2, storage_key="k4", uploaded_by=dana.id, status="processed")
+    db.add_all([reading, spec]); db.flush()
+    body = client.get(f"/api/projects/{project.id}/processing").json()
+    by_name = {doc["filename"]: doc for doc in body["documents"]}
+    sheets = by_name["E-set.pdf"]["sheets"]
+    assert [s["number"] for s in sheets] == ["E0", "E1"]
+    assert sheets[0] == {"id": str(plan.id), "number": "E0", "title": "t", "kind": "Electrical plan",
+                         "unreadable_reason": "The sheet is a scanned image with no readable drawing content."}
+    assert sheets[1]["kind"] == "Schedule" and sheets[1]["unreadable_reason"] == ""
+    assert by_name["E-2.pdf"]["sheets"] == [] and by_name["spec.pdf"]["sheets"] == []
+    text = json.dumps(body).lower()
+    assert not any(w in text for w in FORBIDDEN), text
+
+
 def test_processing_reports_documents_and_sheets_in_stage_words(client, db, project, dana, signed_in_user):
     d = _processed_drawing(db, project, dana)
     client.post(f"/api/projects/{project.id}/takeoff")
@@ -70,7 +174,8 @@ def test_processing_reports_documents_and_sheets_in_stage_words(client, db, proj
     plan = db.scalars(select(Sheet).where(Sheet.kind == "plan")).one()
     queue.enqueue_sheets(db, c, [(plan, {})]); queue.mark_done(db, c); db.flush()
     body = client.get(f"/api/projects/{project.id}/processing").json()
-    assert body["documents"] == [{"id": str(d.id), "filename": "E-set.pdf", "doc_type": "Drawings", "state": "read", "reason": "", "sheet_count": 2}]
+    [doc] = body["documents"]
+    assert {k: v for k, v in doc.items() if k != "sheets"} == {"id": str(d.id), "filename": "E-set.pdf", "doc_type": "Drawings", "state": "read", "reason": "", "sheet_count": 2}
     run = body["run"]
     assert run["state"] == "running" and run["total_count"] == 2 and run["complete_count"] == 1
     stages = {s["number"]: s["stage"] for s in run["sheets"]}

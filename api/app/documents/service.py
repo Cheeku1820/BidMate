@@ -22,7 +22,7 @@ from app.documents.blobstore import BlobNotFound, BlobStore
 from app.documents.schemas import DOC_TYPES
 from app.errors import DomainError
 from app.identity.models import User
-from app.jobs import queue
+from app.jobs import copy, queue
 from app.takeoff import actions, merge
 from app.takeoff.models import Document, Job, Project, Sheet
 from app.takeoff.router import load_project, not_found
@@ -182,6 +182,14 @@ def delete_document(db: DbSession, *, actor: User, document: Document) -> str:
     failed rather than actually removing the document. Returning the
     key instead, and leaving the blob delete to the route, means the
     row is durably gone before storage is ever touched."""
+    # A run in flight -- classify queued or running, or any of its sheet
+    # jobs still open -- may be about to merge onto this document's
+    # sheets, and cascading a queued sheet job away with its sheet
+    # leaves the run with nobody to complete it: the project stays
+    # `processing`, no pricing basis, no ingest action. Refused until
+    # the run is done; the estimator removes the document afterwards.
+    if queue.in_flight_run(db, document.project_id) is not None:
+        raise DomainError("run_in_flight", copy.REMOVE_DURING_RUN, status=409)
     before = _row_fields(document)
     project_id, filename, key = document.project_id, document.filename, document.storage_key
     # A queued read of a document that is about to be gone would only

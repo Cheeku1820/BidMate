@@ -7,20 +7,27 @@ from __future__ import annotations
 from sqlalchemy import func, select
 
 from app.jobs import copy
+from app.takeoff.ingest import SHEET_KIND_LABELS
 from app.takeoff.models import Document, Item, Job, Project, Sheet
 
 _DOC_STATE = {"uploaded": "reading", "processing": "reading", "processed": "read", "failed": "failed"}
 _TERMINAL = ("done", "failed")
 
 
-def _sheet_stage(sheet: Sheet, job: Job | None) -> tuple[str, str, str]:
+def _sheet_stage(sheet: Sheet, job: Job | None, classify: Job) -> tuple[str, str, str]:
     """(stage, reason, note). A sheet unreadable at read time never gets
     a job, so it is `attention` with its own reason first; a non-plan
-    sheet has nothing to count and is complete with a note saying so."""
+    sheet has nothing to count and is complete with a note saying so.
+    A plan sheet with no job under a classify that has finished queuing
+    was read after the run started -- it is not in this run, and saying
+    `waiting` under a run that will never reach it is silence reading
+    as completeness."""
     if sheet.unreadable_reason:
         return "attention", sheet.unreadable_reason, ""
     if sheet.kind != "plan":
         return "complete", "", copy.NON_PLAN
+    if job is None and classify.status == "done":
+        return "attention", copy.SHEET_NOT_IN_RUN, ""
     if job is None or job.status == "queued":
         return "waiting", "", ""
     if job.status == "running":
@@ -46,16 +53,29 @@ def _run_state(classify: Job, sheet_jobs: list[Job], rows: list[dict]) -> str:
     return "complete_with_failures" if failed else "complete"
 
 
+def _sheet_summary(s: Sheet) -> dict:
+    return {"id": str(s.id), "number": s.number, "title": s.title,
+            "kind": SHEET_KIND_LABELS.get(s.kind, SHEET_KIND_LABELS["other"]),
+            "unreadable_reason": s.unreadable_reason}
+
+
 def build_processing(db, project: Project) -> dict:
     docs = list(db.scalars(select(Document).where(Document.project_id == project.id).order_by(Document.created_at, Document.id)))
     sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id).order_by(Sheet.sort_order, Sheet.page_index)))
-    sheets_per_doc: dict[str, int] = {}
+    sheets_per_doc: dict[str, list[Sheet]] = {}
     for s in sheets:
-        sheets_per_doc[s.takeoff_id] = sheets_per_doc.get(s.takeoff_id, 0) + 1
+        sheets_per_doc.setdefault(s.takeoff_id, []).append(s)
     documents = [{"id": str(d.id), "filename": d.filename, "doc_type": d.doc_type,
                   "state": _DOC_STATE.get(d.status, "reading"),
                   "reason": d.error if d.status == "failed" else "",
-                  "sheet_count": sheets_per_doc.get(str(d.id), 0)} for d in docs]
+                  "sheet_count": len(sheets_per_doc.get(str(d.id), [])),
+                  # What read found in a drawing set, for screen D's sheet
+                  # table (spec §8). Only a read drawing set lists them: a
+                  # set still reading has nothing settled to show, and a
+                  # specification carries no sheets the takeoff will count.
+                  "sheets": [_sheet_summary(s) for s in sheets_per_doc.get(str(d.id), [])]
+                  if d.doc_type == "Drawings" and d.status == "processed" else []}
+                 for d in docs]
 
     classify = db.scalars(select(Job).where(Job.project_id == project.id, Job.kind == "classify")
                           .order_by(Job.queued_at.desc())).first()
@@ -74,7 +94,7 @@ def build_processing(db, project: Project) -> dict:
     ).all()) if listed else {}
     rows = []
     for s in listed:
-        stage, reason, note = _sheet_stage(s, job_by_sheet.get(s.id))
+        stage, reason, note = _sheet_stage(s, job_by_sheet.get(s.id), classify)
         rows.append({"id": str(s.id), "number": s.number, "title": s.title, "stage": stage, "reason": reason,
                      "note": note, "item_count": int(item_counts.get(s.id, 0))})
     return {"documents": documents,

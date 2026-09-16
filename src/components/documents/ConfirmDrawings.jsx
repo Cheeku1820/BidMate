@@ -18,12 +18,22 @@
    a set that finishes reading while the estimator is looking at it
    shows its sheet counts without a reload.
 
+   Under each drawing set the worker has read, the sheets it found are
+   listed -- number, title, kind, and, for a sheet the worker could not
+   read, the reason -- so the estimator sees what the takeoff will
+   count before starting it (spec §8). An unreadable sheet is marked
+   with an icon and words, never a colour alone, and never with the
+   four review labels: a sheet's readability is not an item's evidence.
+
    "Start takeoff" asks the server to start a run (store.startTakeoff)
-   and then goes to processing. A run already in flight is treated as
-   already started -- the estimator lands on the same processing screen
-   either way. A set with nothing readable is a message to show here,
-   inline, next to the documents that need replacing; not a page to
-   leave.
+   and then goes to processing. It is disabled while any document is
+   still being read -- a set the worker has not finished with would be
+   left out of the run silently, and the server refuses the same case
+   (`drawings_still_reading`), shown inline if it ever lands. A run
+   already in flight is treated as already started -- the estimator
+   lands on the same processing screen either way. A set with nothing
+   readable is a message to show here, inline, next to the documents
+   that need replacing; not a page to leave.
 
    Sheet-level detail (revisions, per-sheet scale) is detected when the
    engine reads the drawings, so it belongs to processing, not this
@@ -45,7 +55,7 @@
    real per-document decision persisted through the API.
    ============================================================ */
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, FileText, Loader2 } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
@@ -60,6 +70,11 @@ const READ_POLL_MS = 3000;
 // no reason -- the server's own words are preferred; this is only the
 // floor under an empty one.
 const FAILED_FALLBACK = "This file couldn't be read. Upload it again, or replace it.";
+
+// Why Start is disabled while a document is still being read. The same
+// sentence the server answers with (copy.DRAWINGS_READING) when a start
+// reaches it in that state, so the two never disagree.
+const READING_HELP = "A drawing set is still being read. Wait for it to finish before starting the takeoff.";
 
 // A spec or an addendum can genuinely carry no drawing sheets -- that's
 // not a failure, so 0 reads as plain "Read" rather than "Read · 0
@@ -87,6 +102,44 @@ function ReadState({ row }) {
     <span className="upload-status upload-status--reading">
       <Loader2 aria-hidden="true" size={14} className="spin" /> Reading…
     </span>
+  );
+}
+
+/** The sheets the worker found in one read drawing set, as a compact
+ *  table under the document's row. An unreadable sheet says so with an
+ *  icon and the worker's own reason -- hue reinforces, never carries
+ *  (CLAUDE.md). No review-label pill: readability describes a sheet,
+ *  not an item's evidence, and dressing it as one would make the four
+ *  labels five. */
+function SheetList({ row }) {
+  return (
+    <table className="sheetlist" aria-label={`Sheets in ${row.name}`}>
+      <thead>
+        <tr>
+          <th scope="col">Sheet</th>
+          <th scope="col">Title</th>
+          <th scope="col">Kind</th>
+        </tr>
+      </thead>
+      <tbody>
+        {row.sheets.map((sheet) => (
+          <tr key={sheet.id} className={sheet.unreadableReason ? "sheetlist-row--unreadable" : undefined}>
+            <th scope="row" className="tabular">
+              {sheet.number}
+            </th>
+            <td>
+              {sheet.title}
+              {sheet.unreadableReason ? (
+                <span className="sheetlist-unreadable">
+                  <AlertTriangle aria-hidden="true" size={13} /> Unreadable — {sheet.unreadableReason}
+                </span>
+              ) : null}
+            </td>
+            <td>{sheet.kind}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -161,6 +214,7 @@ export default function ConfirmDrawings({ store }) {
     state: d.state,
     reason: d.reason,
     sheetCount: d.sheetCount,
+    sheets: d.sheets ?? [],
   });
 
   const loadDocuments = () => {
@@ -236,13 +290,17 @@ export default function ConfirmDrawings({ store }) {
   const hasDrawings = drawings.length > 0;
 
   const sheetsRead = rows.reduce((n, r) => n + (r.sheetCount || 0), 0);
+  // Start waits for every read to land. A document the worker has not
+  // finished with would be left out of the run, and its sheets would
+  // then sit at "Waiting" under a run that has finished.
+  const canStart = hasDrawings && !anyReading && !starting;
 
   // The server decides whether a run can start. A run already in flight
   // is the outcome the estimator wanted -- processing is where they were
   // headed -- so it is not an error here. Anything else stays on this
   // screen with the server's own words next to the documents.
   const start = () => {
-    if (!hasDrawings || starting) return;
+    if (!canStart) return;
     setStarting(true);
     setStartError("");
     store
@@ -367,7 +425,13 @@ export default function ConfirmDrawings({ store }) {
         title="Confirm documents"
         breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}
         primaryAction={
-          <button type="button" className="btn btn--primary" disabled={!hasDrawings || starting} onClick={start}>
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={!canStart}
+            aria-describedby={anyReading ? "start-takeoff-help" : undefined}
+            onClick={start}
+          >
             Start takeoff
           </button>
         }
@@ -431,49 +495,58 @@ export default function ConfirmDrawings({ store }) {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id}>
-                    <th scope="row" className="upload-name">
-                      <FileText aria-hidden="true" size={16} className="filetable-icon" />
-                      <span className="filetable-filename">{r.name}</span>
-                    </th>
-                    <td>
-                      <label className="sr-only" htmlFor={`confirm-type-${r.id}`}>
-                        Type for {r.name}
-                      </label>
-                      <select
-                        id={`confirm-type-${r.id}`}
-                        className="field field--compact"
-                        value={r.docType}
-                        aria-describedby={r.error ? `confirm-type-error-${r.id}` : undefined}
-                        onChange={(e) => setType(r.id, e.target.value)}
-                      >
-                        {DOC_TYPES.map((type) => (
-                          <option key={type} value={type}>
-                            {type}
-                          </option>
-                        ))}
-                      </select>
-                      {/* Always rendered so the live region exists before
-                          it has anything to say -- a region created at
-                          the same moment as its content is not reliably
-                          announced. Adjacent to the field it describes
-                          (spec §8), in the failed tone the upload table
-                          uses for the same kind of failure. */}
-                      <p
-                        id={`confirm-type-error-${r.id}`}
-                        className="upload-status upload-status--unsupported doctype-error"
-                        aria-live="polite"
-                      >
-                        {r.error || null}
-                      </p>
-                    </td>
-                    {/* A live region per row, so a document that finishes
-                        reading after the estimator has moved on is
-                        announced rather than changing silently. */}
-                    <td aria-live="polite" aria-atomic="true">
-                      <ReadState row={r} />
-                    </td>
-                  </tr>
+                  <Fragment key={r.id}>
+                    <tr>
+                      <th scope="row" className="upload-name">
+                        <FileText aria-hidden="true" size={16} className="filetable-icon" />
+                        <span className="filetable-filename">{r.name}</span>
+                      </th>
+                      <td>
+                        <label className="sr-only" htmlFor={`confirm-type-${r.id}`}>
+                          Type for {r.name}
+                        </label>
+                        <select
+                          id={`confirm-type-${r.id}`}
+                          className="field field--compact"
+                          value={r.docType}
+                          aria-describedby={r.error ? `confirm-type-error-${r.id}` : undefined}
+                          onChange={(e) => setType(r.id, e.target.value)}
+                        >
+                          {DOC_TYPES.map((type) => (
+                            <option key={type} value={type}>
+                              {type}
+                            </option>
+                          ))}
+                        </select>
+                        {/* Always rendered so the live region exists before
+                            it has anything to say -- a region created at
+                            the same moment as its content is not reliably
+                            announced. Adjacent to the field it describes
+                            (spec §8), in the failed tone the upload table
+                            uses for the same kind of failure. */}
+                        <p
+                          id={`confirm-type-error-${r.id}`}
+                          className="upload-status upload-status--unsupported doctype-error"
+                          aria-live="polite"
+                        >
+                          {r.error || null}
+                        </p>
+                      </td>
+                      {/* A live region per row, so a document that finishes
+                          reading after the estimator has moved on is
+                          announced rather than changing silently. */}
+                      <td aria-live="polite" aria-atomic="true">
+                        <ReadState row={r} />
+                      </td>
+                    </tr>
+                    {r.docType === "Drawings" && r.state === "read" && r.sheets.length > 0 ? (
+                      <tr className="sheetlist-holder">
+                        <td colSpan={3}>
+                          <SheetList row={r} />
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -521,9 +594,22 @@ export default function ConfirmDrawings({ store }) {
           <Link className="btn" to={`/projects/${projectId}/documents`}>
             Back to documents
           </Link>
-          <button type="button" className="btn btn--primary" disabled={!hasDrawings || starting} onClick={start}>
-            Start takeoff
-          </button>
+          <div className="footer-primary">
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={!canStart}
+              aria-describedby={anyReading ? "start-takeoff-help" : undefined}
+              onClick={start}
+            >
+              Start takeoff
+            </button>
+            {/* Always in the tree so the id resolves the moment a read
+                starts; empty when nothing is reading. */}
+            <p id="start-takeoff-help" className="footer-help">
+              {anyReading ? READING_HELP : null}
+            </p>
+          </div>
         </div>
       </footer>
     </>

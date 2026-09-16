@@ -11,6 +11,11 @@
 - §6's `merge_sheet` has a sibling, `takeoff/merge.py`'s `drop_sheets(db, sheet_ids)`, not named in this spec: sheets whose page is gone (a re-read reporting fewer pages, or the document itself removed) follow the same rule as a merge's leftover sweep — an un-approved item on the vanished page is deleted, but if an approved item is among them the sheet row stays, marked unreadable with `copy.PAGE_GONE`, so that item keeps a sheet to belong to. Lives in `takeoff/` rather than `worker/` because the API calls it too, from `documents.service.delete_document`, and the API may not import `app.worker`.
 - §5.5's `reclaim_stale` returns the run ids its failures completed (`list[uuid.UUID]`), not a count — a stale sheet job can be the last one its run was waiting on, and the caller needs to know which runs to finish, the same as `mark_failed` and `requeue` already report.
 - §7.1's `_run_state` has one more rule than the table implies: a **finished** run is `complete_with_failures`, not `complete`, when any listed sheet's stage is `attention` — including a run where every sheet was unreadable at read time and so never got a sheet job at all. Judging completion by jobs alone called that run `complete` with every row `attention` and zero rows `complete`, which is silence reading as completeness (BUILD-STAGES' own rule, applied to the run state itself). A **queued** run with an unreadable sheet still reads `queued`; the rule only changes the terminal branch.
+- **"One run at a time" covers the whole run, not just its classify job.** §2.1's partial unique index guards the classify job against two concurrent presses of Start; `queue.in_flight_run` is wider — a run is in flight from the moment its `classify` job is queued until the last of its `sheet` jobs is terminal. A second Start during the sheet phase used to queue run 2 while run 1's sheets were still merging, and with two workers and a transient retry a stale sheet result could land after run 2's, with run 1's completion then overwriting the pricing basis. `POST …/takeoff` answers `409 run_in_flight` for the whole span, and `DELETE /api/documents/{id}` answers the same 409 (§7) — cascading a queued sheet job away with its sheet left the run with nobody to complete it.
+- **Start is refused while a drawing set is still being read** (`409 drawings_still_reading`, §7). `classify` lists only `processed` drawings, so a set mid-read was silently left out, and its plan sheets then showed *Waiting* under a run that had finished. Screen D disables Start for the same case with the same sentence beneath the button; a plan sheet that does slip through (its read finished after classify had already queued its sheet jobs) reads `attention` with `copy.SHEET_NOT_IN_RUN` rather than `waiting` (§7.1).
+- **Screen E starts a run when none exists.** Reached by navigating straight to `/processing` with no run queued, it calls `startTakeoff` itself; screen D's Start is the deliberate act, and E only exists downstream of it, so a visit to E with nothing running is read as that act having been meant. `run_in_flight` is absorbed as success; `no_readable_drawings` and `drawings_still_reading` render the server's words with a way back to documents.
+- **§8's review-workspace line is not built in B2.** The rail does not yet show a running sheet's stage word in place of its count; that lands in B3, which reworks the rail for rendered pages. Until then a sheet still processing shows in the rail as it always has, with whatever items have merged so far.
+- **§8's sheet table on screen D is built from the processing response**, not the takeoff snapshot: each read drawing set in `GET …/processing` lists its sheets (§7.1), and screen D renders them under the document's row — number, title, kind label, and for an unreadable sheet an icon plus "Unreadable — <reason>". No review-label pill: a sheet's readability is not an item's evidence.
 
 ## 1. What this changes
 
@@ -233,9 +238,9 @@ A project with zero readable plan sheets completes the run with no sheet jobs an
 
 - `store_upload` (B1) → one `read` job; `status = processing`. Under the same transaction as the document row.
 - `set_doc_type` → re-queue `read` (a file retyped Other → Specifications now contributes context).
-- `POST /projects/{id}/takeoff` → one `classify` job, fresh `run_id`, `requested_by` = actor. 409 `run_in_flight` while the partial unique index says one exists.
+- `POST /projects/{id}/takeoff` → one `classify` job, fresh `run_id`, `requested_by` = actor. 409 `run_in_flight` while `queue.in_flight_run` finds one — a classify job queued or running, or any sheet job of the latest run still open; the partial unique index is the race guard under two concurrent presses. 409 `drawings_still_reading` while any Drawings document is still being read.
 - Notes re-run → the same route. `/reprocess` is deleted.
-- `delete_document` → its queued jobs deleted, its sheets (and their items, warnings, evidence) deleted, its scope statements deleted, in the same transaction, row-first as B1 does. **B1 residual I3 fixed here**: the route commits, *then* `store.delete` under `try/except` with a log line; a blob that outlives its row is the reaper's problem (ROADMAP §2.2), never a row that points at nothing.
+- `delete_document` → refused with 409 `run_in_flight` while a run is in flight (a queued sheet job cascading away with its sheet would leave the run with nobody to complete it); otherwise its queued jobs deleted, its sheets (and their items, warnings, evidence) deleted, its scope statements deleted, in the same transaction, row-first as B1 does. **B1 residual I3 fixed here**: the route commits, *then* `store.delete` under `try/except` with a log line; a blob that outlives its row is the reaper's problem (ROADMAP §2.2), never a row that points at nothing.
 
 ## 6. One write path: `takeoff/merge.py`
 
@@ -258,7 +263,8 @@ All org-scoped through `load_project` → 404 never 403; all registered in `test
 
 | route | request | response |
 |---|---|---|
-| `POST /api/projects/{id}/takeoff` | `{}` | `202 {run_id}`; `409 run_in_flight`; `409 no_readable_drawings` |
+| `POST /api/projects/{id}/takeoff` | `{}` | `202 {run_id}`; `409 run_in_flight` (classify queued or running, or any sheet job of the run still open); `409 drawings_still_reading` (a Drawings document is still being read); `409 no_readable_drawings` |
+| `DELETE /api/documents/{id}` (B1) | — | gains `409 run_in_flight` while a run is in flight, with `copy.REMOVE_DURING_RUN` |
 | `GET /api/projects/{id}/processing` | — | §7.1 |
 | `GET /api/projects/{id}/scope` | — | `[ScopeStatementOut]` |
 | `PATCH /api/scope/{id}` | `{status}` or `{edited_text}` | `ScopeStatementOut` |
@@ -273,7 +279,13 @@ All org-scoped through `load_project` → 404 never 403; all registered in `test
     {"id": "…", "filename": "E-set.pdf", "doc_type": "Drawings",
      "state": "read",            // reading | read | failed
      "reason": "",               // copy when failed
-     "sheet_count": 14}
+     "sheet_count": 14,
+     "sheets": [                 // what read found, for screen D's sheet table;
+                                 // [] for a set still reading and for non-drawings
+       {"id": "…", "number": "E2.1", "title": "First floor power plan",
+        "kind": "Electrical plan",          // the label, from SHEET_KIND_LABELS
+        "unreadable_reason": ""}            // copy when the worker could not read it
+     ]}
   ],
   "run": {                       // null when no run has been queued
     "state": "running",          // queued | running | complete | complete_with_failures
@@ -289,7 +301,7 @@ All org-scoped through `load_project` → 404 never 403; all registered in `test
 }
 ```
 
-Stage words map to spec §5 E: *Waiting* (queued), *Finding electrical items* (running, before rows), *Checking schedules* (running, vision), *Complete*, *Needs attention* (failed, with reason). A sheet unreadable at read time is listed with stage `attention` and its `unreadable_reason` — it never gets a job.
+Stage words map to spec §5 E: *Waiting* (queued), *Finding electrical items* (running, before rows), *Checking schedules* (running, vision), *Complete*, *Needs attention* (failed, with reason). A sheet unreadable at read time is listed with stage `attention` and its `unreadable_reason` — it never gets a job. A readable plan sheet with no job under a classify job that is `done` was read after the run queued its sheet jobs: it is listed with stage `attention` and `copy.SHEET_NOT_IN_RUN` rather than `waiting`, and `_run_state` then reports the finished run as `complete_with_failures`. Under a `queued` or `running` classify the same sheet still reads `waiting`.
 
 ### 7.2 Audit
 
@@ -303,7 +315,7 @@ Scope decisions: `actions.commit` kind `scope_decide`, label `Confirmed: <text>`
 
 **Screen C** — the per-file state cell reads the document's `status`: `uploaded`/`processing` → "Reading…", `processed` → "Read · N sheets", `failed` → the reason, with the retry being "remove and upload an unlocked copy". Polls `/processing` every 3 s while any document is `processing`. Primary action stays **Review detected drawings**.
 
-**Screen D** — gains the **Scope** section above the sheet table: a summary line ("14 statements found · 3 confirmed · 1 dismissed"), the list grouped by kind (Included / Excluded / By others / Alternates), each row with the sentence (edited text when present, original in a tooltip), the source document and page, **View source** (the quote, inline expand), and **Confirm / Edit / Dismiss**. Status rendered with the note-status tokens and an icon plus label. The sheet table lists sheets from the store (they exist now, from `read`), with unreadable ones marked. **Start takeoff** posts to the new route and navigates to screen E; on `run_in_flight` it navigates to E without posting.
+**Screen D** — gains the **Scope** section above the sheet table: a summary line ("14 statements found · 3 confirmed · 1 dismissed"), the list grouped by kind (Included / Excluded / By others / Alternates), each row with the sentence (edited text when present, original in a tooltip), the source document and page, **View source** (the quote, inline expand), and **Confirm / Edit / Dismiss**. Status rendered with the note-status tokens and an icon plus label. The sheet table lists, under each read drawing set, the sheets `read` found — from the processing response's per-document `sheets` (§7.1) — with unreadable ones marked by an icon and the reason. **Start takeoff** posts to the new route and navigates to screen E; on `run_in_flight` it navigates to E without posting. It is disabled, with the reason beneath it, while any document is still being read; `drawings_still_reading` and `no_readable_drawings` are shown inline.
 
 **Screen E** — a real list from the poll, one row per sheet, stage icon + stage label per spec, the document read states above it. Polls every 3 s until the run is `complete`/`complete_with_failures`, then stops. **Continue to review** enables at the first `complete` sheet. Reload-safe: everything is server state. Copy: "You can leave this page. Sheets keep processing and are reviewable as they finish."
 
@@ -326,6 +338,10 @@ Every terminal outcome is one of a fixed set, each naming a recovery:
 | no readable drawings | No drawings have been read yet. | Upload a drawing set, or wait for reading to finish. |
 | a page an approved item lived on is gone from a re-read | This page is no longer in the uploaded file. | (the sheet stays, marked unreadable, so the approved item keeps somewhere to belong; nothing to start again) |
 | the run's `classify` job failed before any sheet ran (so no sheet reads *attention* either) | Processing couldn't finish | `run.reason` — the classify job's own failure copy — renders as the recovery. |
+| classify job failed terminally with no reason of its own (timeout, exception, stale and out of attempts) | Processing couldn't finish. | Start the takeoff again to retry it. (`copy.RUN_FAILED` — substituted for the generic "re-save the file" exactly as `SHEET_FAILED` is for a sheet job; the drawings were read fine) |
+| a plan sheet's read finished after the run had queued its sheet jobs | This sheet was read after the takeoff started. | Start the takeoff again to include it. (`copy.SHEET_NOT_IN_RUN`, stage `attention`) |
+| Start pressed while a drawing set is still being read | A drawing set is still being read. | Wait for it to finish before starting the takeoff. (`copy.DRAWINGS_READING`; screen D disables Start with the same sentence) |
+| a document removed while a run is in flight | Wait for the takeoff to finish before removing a document. | (`copy.REMOVE_DURING_RUN`, shown on the document's row on screen C) |
 
 Two more terminal outcomes than the table above once had, both added once a live run against the corpus produced them: a re-read that reports fewer pages than last time (`copy.PAGE_GONE`, written by `merge.drop_sheets`), and a run whose classification never reached a single sheet (the client's "Processing couldn't finish" heading, since the formula "N sheets needing attention" reads oddly at N = 0). Neither is a *sheet* stage word — the first is a sheet's `unreadable_reason`, the second is the run's own terminal state — but both are terminal copy in the same sense as the rows above: fixed, named, no exception underneath.
 

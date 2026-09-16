@@ -274,6 +274,22 @@ describe("ProcessingStatus", () => {
     expect(store.getProcessing).toHaveBeenCalledTimes(1);
   });
 
+  it("shows the server's message and a way back when a set is still being read, and does not poll", async () => {
+    vi.useFakeTimers();
+    const store = {
+      getProcessing: vi.fn().mockResolvedValue({ ...poll(), run: null }),
+      startTakeoff: vi
+        .fn()
+        .mockRejectedValue({ code: "drawings_still_reading", message: "A drawing set is still being read. Wait for it to finish before starting the takeoff." }),
+    };
+    renderScreen(store);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText(/a drawing set is still being read/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /back to documents/i })).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(9500));
+    expect(store.getProcessing).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces a failure to load processing status as an error, with a way back to documents", async () => {
     const store = { getProcessing: vi.fn().mockRejectedValue({}), startTakeoff: vi.fn() };
     renderScreen(store);

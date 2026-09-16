@@ -171,9 +171,48 @@ def test_failing_the_last_sheet_job_completes_its_run(db, project, dana):
     assert queue.complete_run_if_finished(db, c.run_id) is False
 
 
-def test_in_flight_run_sees_a_queued_or_running_classify_and_nothing_else(db, project, dana):
+def test_in_flight_run_covers_the_sheet_phase_not_just_classify(db, project, dana):
+    """A run is in flight until its last sheet job is terminal. Before
+    this, a second Start during the sheet phase queued run 2 while run
+    1's sheets were still merging, and whichever finished last owned
+    the pricing basis."""
     assert queue.in_flight_run(db, project.id) is None
     c = queue.enqueue_classify(db, project, dana.id)
     assert queue.in_flight_run(db, project.id).id == c.id
+    jobs = queue.enqueue_sheets(db, c, [(_sheet(db, project, i), {}) for i in range(2)])
+    queue.mark_done(db, c)
+    assert queue.in_flight_run(db, project.id).id == c.id       # classify done, sheets open
+    with pytest.raises(Exception) as exc:
+        queue.enqueue_classify(db, project, dana.id)
+    assert getattr(exc.value, "code", "") == "run_in_flight"
+    jobs[0].status = "done"; db.flush()
+    assert queue.in_flight_run(db, project.id).id == c.id       # one sheet still open
+    jobs[1].status = "failed"; db.flush()
+    assert queue.in_flight_run(db, project.id) is None          # every sheet terminal
+
+
+def test_in_flight_run_is_none_once_a_run_with_no_sheets_is_done(db, project, dana):
+    c = queue.enqueue_classify(db, project, dana.id)
     queue.mark_done(db, c)
     assert queue.in_flight_run(db, project.id) is None
+
+
+def test_a_stale_classify_job_out_of_attempts_fails_with_the_run_copy(db, project, dana):
+    """The generic "re-save the file" is wrong for a classify job: the
+    file was read fine, the run is what failed, and the recovery is to
+    start it again."""
+    queue.enqueue_classify(db, project, dana.id); db.commit()
+    c = queue.claim_next(db, "dead"); db.commit()
+    c.attempts = c.max_attempts
+    c.started_at = datetime.now(timezone.utc) - _past_stale("classify")
+    db.commit()
+    assert queue.reclaim_stale(db) == []
+    db.refresh(c)
+    assert c.status == "failed" and c.error == copy.RUN_FAILED
+
+
+def test_terminal_copy_substitutes_the_run_copy_for_a_classify_job_only_when_it_gave_no_reason(db, project, dana):
+    c = queue.enqueue_classify(db, project, dana.id)
+    assert queue.terminal_copy(c, "") == copy.RUN_FAILED
+    assert queue.terminal_copy(c, copy.UNREADABLE) == copy.RUN_FAILED
+    assert queue.terminal_copy(c, copy.NO_DRAWINGS) == copy.NO_DRAWINGS

@@ -192,6 +192,8 @@ TENANCY_TABLE = [
     ("PATCH", "/api/items/{item_id}/material-price",
      lambda p, s, i: f"/api/items/{i.id}/material-price",
      lambda p, s, i: {"priceOverride": 15.5, "source": "project_price"}, None),
+    ("DELETE", "/api/items/{item_id}/material-price",
+     lambda p, s, i: f"/api/items/{i.id}/material-price", None, None),
     ("POST", "/api/projects/{project_id}/items/bulk-approve",
      lambda p, s, i: f"/api/projects/{p.id}/items/bulk-approve",
      lambda p, s, i: {"item_ids": [str(i.id)]}, None),

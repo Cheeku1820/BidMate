@@ -5,7 +5,7 @@ import pymupdf
 import pytest
 
 from app.engine import classification, documents, estimate, sheet as sheet_mod
-from app.engine.contracts import Classification, DeviceCluster, Placement
+from app.engine.contracts import DeviceCluster, Placement
 from tests.bid_set import first_vector_set  # existing helper naming a corpus PDF, skips if absent
 
 
@@ -58,7 +58,7 @@ def test_classify_run_without_a_key_is_deterministic(monkeypatch):
     cls = classification.classify_run(clusters, sheets, "", "", [], "Charlotte, NC")
     assert cls.source == "deterministic"
     assert cls.labor_rate > 0 and cls.material_factor > 0
-    assert "R" in cls.catalog_items
+    assert "R" in cls.classified_tags
 
 
 def test_finish_prices_a_sheets_clusters_and_crops_evidence(monkeypatch):

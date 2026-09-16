@@ -295,14 +295,13 @@ def classify_run(
         except Exception as exc:  # noqa: BLE001 -- any failure falls back; the takeoff must not break
             logger.warning("automated pricing unavailable (%s); used regional table", type(exc).__name__)
             location_note += "  Automated pricing wasn't available, so regional cost data was used."
-    items = classify(clusters, sheets)
     return Classification(
         specs_by_tag={},
         labor_rate=labor_rate,
         material_factor=material_factor,
         source="deterministic",
         location_note=location_note,
-        catalog_items={c.tag: it for c, it in zip(clusters, items)},
+        classified_tags={c.tag for c in clusters},
     )
 
 

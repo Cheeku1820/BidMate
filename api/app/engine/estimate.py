@@ -159,7 +159,7 @@ def _compute(path: str, location: str, context: str = "", estimator_notes: list[
             if result.ai_reading:
                 readings[s.page_index] = result.ai_reading
         else:
-            sheet_rows, applied, bare = sheet.rows_for(s, sheet_clusters, cls, sheets)
+            sheet_rows, applied, bare = sheet.rows_for(sheet_clusters, cls, sheets)
         rows.extend(sheet_rows)
         assembly_applied = assembly_applied or applied
         bare_names |= bare
@@ -189,7 +189,6 @@ def _totals(rows: list[dict]) -> dict:
         "item_count": len(rows),
         "attention_count": sum(1 for r in rows if r["status"] == "attention"),
     }
-
 
 
 def estimate(path: str, location: str) -> dict:

@@ -201,9 +201,14 @@ class DocumentReading:
 @dataclass
 class Classification:
     """The one-per-run classification: tag -> spec, plus the pricing basis.
-    `specs_by_tag` is the model's answer (JSON-serialisable); `catalog_items`
-    is the deterministic classifier's, keyed the same way. Exactly one of
-    them is populated, decided by `source`."""
+    `specs_by_tag` is the model's answer (JSON-serialisable), and it is
+    the whole answer: a spec prices every cluster that carries its tag.
+    `classified_tags` is the deterministic path's, and it is deliberately
+    only a set: that classifier's answer is per cluster (a tag counted on
+    seven sheets is seven items with seven counts and seven warnings), so
+    the record names which tags it classified and a sheet prices each of
+    its clusters through `classification.classify_cluster`. Exactly one
+    of the two is populated, decided by `source`."""
 
     specs_by_tag: dict
     labor_rate: float
@@ -212,7 +217,7 @@ class Classification:
     location_note: str = ""
     wiring_note: str = ""
     unmatched_note: str = ""
-    catalog_items: dict | None = None  # tag -> ClassifiedItem
+    classified_tags: set[str] = field(default_factory=set)
 
 
 @dataclass

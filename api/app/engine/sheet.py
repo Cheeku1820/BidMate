@@ -16,14 +16,13 @@ logger = logging.getLogger(__name__)
 
 
 def rows_for(
-    sheet: DetectedSheet,
     clusters: list[DeviceCluster],
     classification: Classification,
     sheets: list[DetectedSheet],
 ) -> tuple[list[dict], bool, set[str]]:
-    """Returns (rows, assembly_applied, bare_names) -- the last two feed
-    the wiring and unmatched notes, which are folded up across sheets by
-    whoever runs the whole set.
+    """Price one sheet's clusters. Returns (rows, assembly_applied,
+    bare_names) -- the last two feed the wiring and unmatched notes,
+    which are folded up across sheets by whoever runs the whole set.
 
     A cluster whose tag the run never classified yields no row on either
     path: the run's classification decides what is priced, and a tag it
@@ -50,15 +49,13 @@ def rows_for(
                 bare.add(row["name"])
             rows.append(row)
     else:
-        known = classification.catalog_items or {}
         for c in clusters:
-            if c.tag not in known:
+            if c.tag not in classification.classified_tags:
                 continue
-            # `catalog_items` is keyed by tag and a tag can be counted on
-            # several sheets, each its own cluster with its own count. The
-            # run-level entry says the tag was classified; the row is
-            # priced from this cluster's own classification so its
-            # quantity, placements and warning text are this sheet's.
+            # The run says which tags it classified; the answer itself is
+            # per cluster, so the row is priced from this cluster's own
+            # classification and its quantity, placements and warning
+            # text are this sheet's.
             item = classification_mod.classify_cluster(c, sheets)
             if assemblies.expand(item.catalog_id, 1).lines:
                 applied = True
@@ -114,7 +111,7 @@ def finish(
     """One sheet, priced and evidenced: rows in the review store's shape,
     each carrying a crop of the source page around its placements, and
     the vision reading when a key is present."""
-    rows, applied, bare = rows_for(sheet, clusters, classification, sheets)
+    rows, applied, bare = rows_for(clusters, classification, sheets)
     for row in rows:
         placements = row["placements"] or [(row["x"], row["y"])]
         png = documents.render_evidence_crop(path, sheet.page_index, sheet.width_pt, sheet.height_pt, placements)

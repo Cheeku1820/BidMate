@@ -10,16 +10,18 @@ This is screen F of a larger specification. It was built first because every oth
 
 ## Run it
 
-Everything runs against a real backend — Postgres, object storage, the API, and the takeoff engine. There is no fixture data: every row comes from a document you upload. You need [Docker](https://www.docker.com/), Python 3.12, and Node 18+.
+Everything runs against a real backend — Postgres, object storage, the API, a job queue, and the worker that runs the takeoff engine. There is no fixture data: every row comes from a document you upload. You need [Docker](https://www.docker.com/) and Node 18+. A host Python environment is not needed to run the app — `.enginevenv` (`cd api && python3 -m venv ../.enginevenv && ../.enginevenv/bin/pip install -r requirements.txt`) is only for running the backend test suite (`../.enginevenv/bin/python -m pytest`) directly on the host instead of inside the `api` container.
 
-Postgres, object storage (MinIO), and the API run in containers — dependencies install inside the image, nothing to set up on the host for this part:
+Postgres, object storage (MinIO), the API, and the worker all run in containers — dependencies install inside the image, nothing to set up on the host for this part:
 
 ```bash
-docker compose up -d postgres minio minio-init api
+docker compose up -d postgres minio minio-init api worker
 docker compose run --rm api alembic upgrade head
 ```
 
 Uploaded documents are stored in MinIO, not on the API container's own disk, so an upload survives a reload or a container restart. `minio-init` creates the bucket the API writes to on first start; the dev credentials it uses are in [`docker-compose.yml`](docker-compose.yml), and the MinIO console is at http://localhost:9001 if you want to browse what got stored.
+
+The `worker` container is the only process that opens a PDF. It polls a `jobs` table for documents to read and takeoffs to run, does the work — the same takeoff engine the prototype always had, just no longer reached by the browser directly — and writes sheets, items, and warnings back into the database the API also reads. It runs the same image as `api` with a different command, capped at 2 GB of memory and 256 processes so a hostile or malformed file is a one-container problem, and every job body runs inside a further sandboxed child process with a wall-clock timeout. Set `ANTHROPIC_API_KEY` in the environment before bringing the stack up for language-model classification and scope extraction; without a key the worker falls back to its deterministic paths.
 
 Create the first account. There is no default password — choose your own:
 
@@ -28,15 +30,6 @@ docker compose run --rm \
   -e ADMIN_EMAIL="you@example.com" \
   -e ADMIN_PASSWORD="choose-a-password" \
   api python -m app.create_admin
-```
-
-The takeoff engine runs directly on your machine, not in a container — the browser fetches a project's uploaded documents back from the API and posts them straight to `localhost:8100` itself, so the engine needs its own Python environment. This is an interim arrangement: a later change puts the engine behind the API too and this round trip through the browser goes away. Install the engine's dependencies once into a virtual environment, then start it, from `api/`:
-
-```bash
-cd api
-python3 -m venv ../.enginevenv
-../.enginevenv/bin/pip install -r requirements.txt
-../.enginevenv/bin/uvicorn estimate_service:app --port 8100
 ```
 
 Then the client, also on the host:
@@ -137,24 +130,34 @@ src/
       noteVocabulary.js        a note's own words, distinct from the review labels
     documents/                 the intake path — upload (C), confirm (D), processing (E)
       UploadDocuments.jsx      screen C as a view onto the API: uploads persist, progress is real
-      ConfirmDrawings.jsx      screen D: the set as stored, types editable before processing
-      ProcessingStatus.jsx     screen E: feeds the engine from stored documents
+      ConfirmDrawings.jsx      screen D: the set as stored, plus the scope the documents state
+      ScopeSection.jsx         screen D's scope list — found/confirmed/dismissed, not the four review labels
+      ProcessingStatus.jsx     screen E: polls per-sheet progress from the worker's queue
+      SheetProgressList.jsx    the per-sheet stage list screen E and the notes re-run both render
 ```
 
-The two API modules behind the notes screen, and the package behind the documents screens:
+The API modules behind those screens:
 
 ```
 api/app/takeoff/
   notes.py                     note CRUD, audited through commit(), not undoable
-  reprocess.py                 the approval-preserving merge behind a re-run
+  merge.py                     the one write path for engine output — approval-preserving, per sheet
 api/app/documents/
   blobstore.py                 the storage boundary — S3BlobStore over MinIO, MemoryBlobStore for tests
   service.py                   store / list / retype / delete / stream, each audited, none undoable
   router.py                    the five document routes, org-scoped through the project they belong to
   schemas.py                   the wire shape and the closed sets of document types and statuses
+api/app/jobs/
+  queue.py                     enqueue / claim / retry / stale-reclaim — the queue is the `jobs` table, no Redis
+  status.py                    the stage words screen E polls; never a job id, an attempt count, or a source
+api/app/scope/
+  service.py                   scope statement CRUD, audited through commit(), not undoable
+api/app/worker/
+  __main__.py                  the poll loop — the only process that opens a PDF
+  sandbox.py                   runs every job body in a child process with a per-kind wall-clock timeout
 ```
 
-Uploaded files are stored in MinIO (S3 in deployment) under a key built from the owning org and project, with one row per upload in the `documents` table carrying its hash and storage key. The API streams and hashes a file; it never opens one. Design in [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md).
+Uploaded files are stored in MinIO (S3 in deployment) under a key built from the owning org and project, with one row per upload in the `documents` table carrying its hash and storage key. The API streams and hashes a file; it never opens one — that's the worker's job, inside the sandbox above. Design in [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md) and [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md).
 
 If you open this repo in Claude Code, [`CLAUDE.md`](CLAUDE.md) loads automatically and carries the design context — status vocabulary, the rules that are easy to break, and the decisions still open.
 
@@ -181,6 +184,9 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 - **Applying a note is audited but not undoable.** The re-run lands as one attributable entry in the action log; there is no single press that puts the takeoff back. Undo still covers approve, reject, edit, delete, bulk approve, and scale, across a re-run.
 - **An upload cancelled after its body was sent may still land.** Removing a row mid-upload aborts the request, but once the last byte has left the browser the server may finish storing the document before the abort reaches it. If that happens the document appears on the next load, "Uploaded", and can be removed like any other.
 - **Nothing reaps stored files.** Deleting a document removes its file, but there is no retention policy or sweep: a file whose row was lost, or every file under an archived project, stays in storage indefinitely. See [`ROADMAP.md`](ROADMAP.md) §2.2.
+- **Screen D confirms, but doesn't yet correct.** Include/exclude, discipline, revision, and scale corrections have no control on the confirm screen — every listed document runs through the takeoff, and sheet-level detail is whatever the worker's last read reported. See [`docs/roadmap/full-webapp-plan.md`](docs/roadmap/full-webapp-plan.md) Phase B4.
+- **The queue has no priority, per-tenant cap, or dead-letter handling.** Jobs are claimed oldest-first regardless of whose bid is due sooner, nothing limits how many of one project's jobs a worker pool can be occupied by, and a job that exhausts its three retries just sits `failed` — the recovery is starting the takeoff again, not a separate retry queue. See [`ROADMAP.md`](ROADMAP.md) §2.5.
+- **No page rendering yet.** The worker reads sheets, scale, legends, and schedules, but doesn't render page images — the canvas still shows blank paper under the markers, not the source drawing. See [`ROADMAP.md`](ROADMAP.md) §2.1 and the "What's in the drawing" section above.
 
 ---
 

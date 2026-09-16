@@ -4,6 +4,14 @@
 **Branch:** `feat/engine-behind-api`, stacked on `feat/document-pipeline` (B1)
 **Implements:** `docs/roadmap/full-webapp-plan.md` Phase B, second of four sub-projects. Order: B1 documents stored → **B2 engine behind the API with per-sheet jobs** → B3 drawing behind the markers → B4 confirm-drawings write-back and metering.
 
+**As built.** Execution landed on this spec closely; the handful of places it deviated:
+
+- §3's `Classification` carries `classified_tags: set[str]` for the deterministic path rather than a `catalog_items` dict — the deterministic classifier's answer is per cluster (a tag counted on seven sheets is seven items with seven counts and seven warnings), so the record only needs to say which tags it classified; `sheet.finish` prices each cluster itself through `classification.classify_cluster`.
+- `Sheet.page_index` is stored **1-based** (the read job stores the engine payload's `page`, which existing rows, evidence crops, and the upsert key all depend on) — the engine itself opens pages 0-based, and the worker converts once, at the store's edge (`classify_job._detected`), rather than the store adopting 0-based throughout.
+- §6's `merge_sheet` has a sibling, `takeoff/merge.py`'s `drop_sheets(db, sheet_ids)`, not named in this spec: sheets whose page is gone (a re-read reporting fewer pages, or the document itself removed) follow the same rule as a merge's leftover sweep — an un-approved item on the vanished page is deleted, but if an approved item is among them the sheet row stays, marked unreadable with `copy.PAGE_GONE`, so that item keeps a sheet to belong to. Lives in `takeoff/` rather than `worker/` because the API calls it too, from `documents.service.delete_document`, and the API may not import `app.worker`.
+- §5.5's `reclaim_stale` returns the run ids its failures completed (`list[uuid.UUID]`), not a count — a stale sheet job can be the last one its run was waiting on, and the caller needs to know which runs to finish, the same as `mark_failed` and `requeue` already report.
+- §7.1's `_run_state` has one more rule than the table implies: a **finished** run is `complete_with_failures`, not `complete`, when any listed sheet's stage is `attention` — including a run where every sheet was unreadable at read time and so never got a sheet job at all. Judging completion by jobs alone called that run `complete` with every row `attention` and zero rows `complete`, which is silence reading as completeness (BUILD-STAGES' own rule, applied to the run state itself). A **queued** run with an unreadable sheet still reads `queued`; the rule only changes the terminal branch.
+
 ## 1. What this changes
 
 Today the browser runs the engine. `ProcessingStatus.jsx` fetches every document's bytes back from the API and posts them to `api/estimate_service.py` at `localhost:8100` — a second FastAPI app with no auth, no database and CORS `*` — then posts the result to `POST /projects/{id}/takeoff`, which replaces the project's takeoff in one transaction and refuses when approvals exist. The notes re-run does the same round trip into `POST /projects/{id}/reprocess`. One request, one stage indicator on a timer, a 66-sheet set that lands all at once or not at all, and a page the estimator cannot leave.
@@ -316,6 +324,10 @@ Every terminal outcome is one of a fixed set, each naming a recovery:
 | sheet job failed terminally | This sheet couldn't be processed. | Start the takeoff again to retry it. |
 | vision read failed | Complete — schedules weren't checked on this sheet. | Items stay *Needs attention* where a reading would have confirmed them. |
 | no readable drawings | No drawings have been read yet. | Upload a drawing set, or wait for reading to finish. |
+| a page an approved item lived on is gone from a re-read | This page is no longer in the uploaded file. | (the sheet stays, marked unreadable, so the approved item keeps somewhere to belong; nothing to start again) |
+| the run's `classify` job failed before any sheet ran (so no sheet reads *attention* either) | Processing couldn't finish | `run.reason` — the classify job's own failure copy — renders as the recovery. |
+
+Two more terminal outcomes than the table above once had, both added once a live run against the corpus produced them: a re-read that reports fewer pages than last time (`copy.PAGE_GONE`, written by `merge.drop_sheets`), and a run whose classification never reached a single sheet (the client's "Processing couldn't finish" heading, since the formula "N sheets needing attention" reads oddly at N = 0). Neither is a *sheet* stage word — the first is a sheet's `unreadable_reason`, the second is the run's own terminal state — but both are terminal copy in the same sense as the rows above: fixed, named, no exception underneath.
 
 No "Something went wrong", no exception names, no model names, no "AI".
 
@@ -336,3 +348,4 @@ No "Something went wrong", no exception names, no model names, no "AI".
 - A scope statement changing a quantity or excluding items — the conversation layer proposes, a person applies.
 - Multi-worker deployment beyond "two share a table"; a reaper for orphaned blobs.
 - Resumable multipart upload — unchanged from B1.
+- A refinement to the deterministic scope fallback's section-break rule: a short (one to four words) all-caps content line ends whatever block is open, on the theory that it reads as a heading like "GENERAL NOTES" — which also means a short all-caps line that is not a heading (a stray "N/A" under an open block, say) silently closes that block early. A longer all-caps line stays inside its block correctly; only the short case is a false positive, and it has not shown up against the corpus fixtures.

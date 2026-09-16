@@ -100,10 +100,11 @@ The single largest omission from the previous version of this document. The READ
 
 ### 2.5 Processing infrastructure
 
-- Job queue with retries, dead-letter handling, and per-sheet partial success — screen E's partial-failure states are a contract with this queue
-- **Prioritization by bid date.** Bid deadlines are hard deadlines. An estimator whose sheets sit behind a competitor's 400-sheet hospital set at 4pm the day before a bid has already churned.
-- Backpressure and per-tenant concurrency limits
-- Reprocessing: a single sheet, a revision delta, or a whole set after an engine improvement
+- **Job queue with retries and per-sheet partial success — built** (B2, [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md)): a `jobs` table (`read` per document, `classify` per project run, `sheet` per plan sheet), claimed oldest-first with `FOR UPDATE SKIP LOCKED` so two workers share the table with no coordinator. A worker runs every job body in a sandboxed child process with a per-kind wall-clock timeout; a transient failure (storage or database unreachable, a classification call timing out) requeues with a 30 s backoff for up to three attempts, a terminal one (an encrypted file, a parser exception, zero pages) fails on the first attempt. A `running` job whose worker died is reclaimed once its timeout plus a grace period has passed, attempt count intact. Screen E's partial-failure states are real: a corrupt file marks its document, a sheet that cannot be counted marks that sheet, and every other sheet stays reviewable while the rest run.
+- **Dead-letter handling beyond `max_attempts` — not built.** A job that exhausts its three attempts just sits `failed`; the only recovery today is starting the takeoff again, which queues a fresh run rather than retrying the one job that died.
+- **Prioritization by bid date — not built.** Bid deadlines are hard deadlines. An estimator whose sheets sit behind a competitor's 400-sheet hospital set at 4pm the day before a bid has already churned. Every ready job is claimed oldest-first regardless of whose bid is due sooner.
+- **Backpressure and per-tenant concurrency limits — not built.** Nothing stops one tenant's set from occupying every worker; two workers sharing one `jobs` table is the only concurrency story that has been exercised.
+- Reprocessing: **a whole set is built** — Start takeoff again re-merges every sheet's rows into what is already there, approvals preserved, exactly as the notes re-run does. A single-sheet or revision-delta re-run is not built; every re-run is project-wide.
 
 ### 2.6 The conversation layer
 

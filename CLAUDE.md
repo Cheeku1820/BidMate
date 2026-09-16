@@ -36,6 +36,7 @@ Every screen is a different view onto this same state. When building a new scree
 - **No save buttons.** Everything autosaves, with save state in the top bar and an undoable toast per action.
 - **Approving a *Missing information* item is blocked at the item level**, with inline copy explaining why — so the estimator hits the rule while looking at the evidence, not later in a summary dialog.
 - **A note's status is not an item's status.** Notes carry their own confirmed/open vocabulary describing a *note*; the four labels above describe an *item's evidence*. Never render a note's status using the item-status components or colours — a note pill in amber reads as *Needs attention* and quietly makes the four labels into five. `--slate`/`--plum` in `styles.css` exist for exactly this separation.
+- **The engine never discards a person's judgment.** A run — the first one or the hundredth — merges into each sheet rather than replacing it: an *Estimator approved* item is never overwritten or deleted by processing. A page that vanishes from a re-read keeps its sheet, marked unreadable, for as long as an approved item still lives on it. A clean slate is a deliberate act (deleting the items), never a side effect of re-running.
 - **The conversation panel never becomes the only path to anything.** See the section below.
 
 ## The conversation panel is additive, never load-bearing
@@ -78,24 +79,40 @@ src/
       noteVocabulary.js      a note's own words — deliberately not the four review labels
     documents/               the intake path: upload (C), confirm (D), processing (E)
       UploadDocuments.jsx    screen C as a view onto the API — uploads persist, progress is real
-      ConfirmDrawings.jsx    screen D — the set as stored, types editable before processing
-      ProcessingStatus.jsx   screen E — feeds the engine from stored documents
+      ConfirmDrawings.jsx    screen D — the set as stored, and the scope the documents state
+      ScopeSection.jsx       screen D's scope list — found/confirmed/dismissed, never the four review labels
+      ProcessingStatus.jsx   screen E — polls per-sheet progress from the worker's queue
+      SheetProgressList.jsx  the per-sheet stage list screen E and the notes re-run both render
 ```
 
-On the API side, two modules carry notes, and one package carries documents:
+On the API side:
 
 ```
 api/app/takeoff/
   notes.py                   note CRUD, audited through commit(), not undoable
-  reprocess.py               the approval-preserving merge behind a re-run
+  merge.py                   the one write path for engine output — approval-preserving, per sheet
 api/app/documents/
   blobstore.py               the storage boundary: S3BlobStore over MinIO, MemoryBlobStore for tests
   service.py                 store / list / retype / delete / stream, each audited, none undoable
   router.py                  the five document routes, org-scoped through load_document → load_project
   schemas.py                 DocumentOut and the closed sets DOC_TYPES / DOC_STATUSES
+api/app/jobs/
+  queue.py                   enqueue / claim / retry / stale-reclaim — the queue is the `jobs` table, no Redis
+  status.py                  build_processing — the stage words screen E polls, never a job id or a source
+  router.py                  POST .../takeoff (queues a run), GET .../processing
+api/app/scope/
+  service.py                 scope statement CRUD, audited through commit(), not undoable
+  router.py                  GET .../scope, PATCH /scope/{id}
+api/app/worker/
+  __main__.py                the poll loop — the only process that opens a PDF
+  sandbox.py                 every job body runs in a child process with a per-kind wall-clock timeout
+  handlers.py, read_job.py, classify_job.py, sheet_job.py   the three job kinds
+api/app/engine/
+  sheet.py                   finishes one sheet: rows, evidence crops, the vision pass
+  scope.py                   scope extraction — LLM with verbatim-quote validation, or a deterministic fallback
 ```
 
-Uploaded files live in object storage (MinIO locally, S3 in deployment), under a key built from the owning org and project — never from anything the client sent. The `documents` table (migration 0019; `status` constrained to its four values by 0020) holds one row per upload with its hash and storage key. The API streams and hashes an upload; it never opens one — that is the worker's job (B2), because a PDF parser is a remote-code-execution surface and the API is not where untrusted bytes get parsed. Spec: [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md).
+Uploaded files live in object storage (MinIO locally, S3 in deployment), under a key built from the owning org and project — never from anything the client sent. The `documents` table (migration 0019; `status` constrained to its four values by 0020) holds one row per upload with its hash and storage key. The API streams and hashes an upload; it never opens one — that is `app/worker`'s job, run inside `sandbox.py`'s child process with a wall-clock timeout, because a PDF parser is a remote-code-execution surface and the API is not where untrusted bytes get parsed. **The process boundary is enforced, not just described**: `app.worker` is the only package that imports `app.engine` or a PDF parser, `app.main` never imports the engine, and `app.worker` never imports a router — all three subprocess-tested, plus a test proving the worker process can resolve every foreign key on its own. Specs: [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md) (B1), [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md) (B2).
 
 Sheet space is a 1000 x 750 unit coordinate system. Item positions are in sheet units, so markers land on real plan geometry.
 
@@ -103,7 +120,7 @@ Marker rendering keeps three channels independent: **glyph** = item type, **ring
 
 ## The engine is five agents
 
-Nothing in `src/` implements these yet. They are the settled boundaries the pipeline gets built against — full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
+Documents, Counting, and Classification now run, behind the API: `api/app/engine/` holds them, `api/app/worker/` is what calls them, on every upload (`read`) and every **Start takeoff** (`classify` and `sheet`). Pricing today is only the coarse labor-rate/material-factor guess `classify_run` also returns — the assembly-expansion half (`engine/pricing.py`, `assemblies.py`) is not wired into that path. Conversation is designed but unbuilt: `engine/conversation.py` routes an utterance to a typed proposal, and nothing in `src/` calls it or renders a panel. Full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
 
 | Agent | Nature | Produces |
 |---|---|---|

@@ -4,10 +4,9 @@ Revision ID: 0021
 Revises: 0020
 Create Date: 2026-09-15 00:00:00.000000
 
-The schema behind B2 (docs/superpowers/specs/2026-08-18-bidmate-agent-
-architecture-design.md): moving the takeoff engine behind the API so a
-worker polls a queue instead of the browser posting straight to
-localhost:8100.
+The schema behind B2 (docs/specs/engine-behind-the-api.md): moving the
+takeoff engine behind the API so a worker polls a queue instead of the
+browser posting the file straight to the old standalone engine service.
 
 `jobs` is the queue itself -- the worker claims a row with FOR UPDATE
 SKIP LOCKED, so two workers can share it with no coordinator. The two

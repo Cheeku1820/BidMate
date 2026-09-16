@@ -26,6 +26,7 @@ Five documents at the repository root are the entry points: `README.md` (how to 
 | Close the known gaps | — | `plans/done/close-the-known-gaps.md` | merged |
 | Engine sheet fidelity | `specs/engine-sheet-fidelity.md` | `plans/engine-sheet-fidelity.md` | branch `fix/engine-sheet-fidelity`, under review |
 | B1 — documents stored | `specs/documents-stored.md` | `plans/documents-stored.md` | branch `feat/document-pipeline` |
+| B2 — the engine behind the API | `specs/engine-behind-the-api.md` | `plans/engine-behind-the-api.md` | branch `feat/engine-behind-api` |
 | Firm price book | `specs/firm-price-book.md` (branch `feat/corpus-price-book`) | — | designed, parked behind Phase B |
 
 ## Adding a document

@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProject, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
+import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProcessing, mapProject, mapScopeStatement, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -350,17 +350,40 @@ export function createApiStore() {
     return mapProject(raw);
   }
 
-  /** Writes a processed takeoff into the project. The server replaces
-   *  rather than appends, and refuses with `approved_items_present` when
-   *  that would discard estimator approvals — pass confirmReplace only
-   *  after a person has actually been asked. */
-  async function attachEngineTakeoff(id, payload, { confirmReplace = false } = {}) {
-    const result = await request(`/api/projects/${id}/takeoff`, {
-      method: "POST",
-      body: { payload, confirm_replace: confirmReplace },
-    });
+  /** Starts a takeoff run behind the API (B2) -- the client no longer
+   *  drives the engine itself or posts a payload; it only asks the
+   *  server to start reading the project's stored documents. Rejects
+   *  with the same {code, message} shape as every other mutation here:
+   *  `run_in_flight` when a run is already going, `no_readable_drawings`
+   *  when nothing in the set can be read. */
+  async function startTakeoff(id) {
+    const raw = await request(`/api/projects/${id}/takeoff`, { method: "POST" });
     invalidateCache();
-    return result;
+    return { runId: raw.run_id };
+  }
+
+  /** The intake and run status behind screen E: which documents are in
+   *  what state, and -- once a run has started -- the per-sheet stages
+   *  it's working through. Polled from the processing screen rather
+   *  than folded into getSnapshot(), since it describes the run itself
+   *  rather than the reviewable takeoff. */
+  async function getProcessing(id) {
+    return mapProcessing(await request(`/api/projects/${id}/processing`));
+  }
+
+  /** Scope statements the documents themselves push out of Division 26
+   *  ("by others") -- surfaced for the estimator to confirm or correct
+   *  before they're taken as read. */
+  async function listScope(id) {
+    const rows = await request(`/api/projects/${id}/scope`);
+    return (rows ?? []).map(mapScopeStatement);
+  }
+
+  async function decideScope(id, changes) {
+    const body = {};
+    if (Object.prototype.hasOwnProperty.call(changes, "status")) body.status = changes.status;
+    if (Object.prototype.hasOwnProperty.call(changes, "editedText")) body.edited_text = changes.editedText;
+    return mapScopeStatement(await request(`/api/scope/${id}`, { method: "PATCH", body }));
   }
 
   async function listDocuments(projectId) {
@@ -420,14 +443,6 @@ export function createApiStore() {
     return request(`/api/documents/${documentId}`, { method: "DELETE" });
   }
 
-  /** The stored bytes back as a File, for the interim engine call that
-   *  still runs in the browser until B2 moves the engine behind the API. */
-  async function fetchDocumentFile(doc) {
-    const res = await fetch(`/api/documents/${doc.id}/content`, { credentials: "include" });
-    if (!res.ok) throw await parseErrorBody(res);
-    return new File([await res.blob()], doc.filename, { type: "application/pdf" });
-  }
-
   // Notes and assumptions (Task 4): the client half of the endpoints
   // built in Task 2. No local cache here — unlike getSnapshot(), the
   // screen (Task 5) fetches on mount and after each write rather than
@@ -448,19 +463,6 @@ export function createApiStore() {
 
   async function deleteNote(noteId) {
     await request(`/api/notes/${noteId}`, { method: "DELETE" });
-  }
-
-  /** Applies context notes by re-running the engine's output through the
-   *  approval-preserving merge. Distinct from attachEngineTakeoff, which
-   *  replaces wholesale — this one never overwrites approved work.
-   *  A re-run changes the takeoff, so the cached snapshot is invalidated
-   *  exactly like every other mutation in this file (see invalidateCache's
-   *  own comment) rather than left to serve stale totals until the next
-   *  poll happens to notice. */
-  async function reprocess(id, payload) {
-    const result = await request(`/api/projects/${id}/reprocess`, { method: "POST", body: { payload } });
-    invalidateCache();
-    return result;
   }
 
   // Labor and Material Pricing (task-9-brief.md): the client half of
@@ -486,8 +488,8 @@ export function createApiStore() {
   async function setLaborLine(itemId, changes) {
     // A labor edit changes the item's laborCost/totalCost, both of
     // which mapItem carries and getSnapshot()'s cache can serve stale
-    // via a 304 -- invalidate exactly like mutateItem/attachEngineTakeoff/
-    // reprocess do, per invalidateCache()'s own comment above.
+    // via a 304 -- invalidate exactly like mutateItem/startTakeoff do,
+    // per invalidateCache()'s own comment above.
     const result = await request(`/api/items/${itemId}/labor`, { method: "PATCH", body: changes });
     invalidateCache();
     return result;
@@ -558,17 +560,18 @@ export function createApiStore() {
     redo,
     listProjects,
     createProject,
-    attachEngineTakeoff,
+    startTakeoff,
+    getProcessing,
+    listScope,
+    decideScope,
     listDocuments,
     uploadDocument,
     setDocumentType,
     deleteDocument,
-    fetchDocumentFile,
     listNotes,
     createNote,
     updateNote,
     deleteNote,
-    reprocess,
     getLaborRows,
     setLaborLine,
     getMaterialRows,

@@ -278,63 +278,105 @@ describe("api.js conversions", () => {
   });
 });
 
-describe("attachEngineTakeoff", () => {
-  it("posts the engine payload to the project's takeoff endpoint", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ sheets: 2, items: 47 }), { status: 200 }),
-    );
+describe("startTakeoff", () => {
+  it("posts to the project's takeoff endpoint with no payload, and returns the run id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ run_id: "r1" }), { status: 202 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const store = createApiStore();
-    const result = await store.attachEngineTakeoff("p1", { sheets: [], items: [] });
+    const result = await store.startTakeoff("p1");
 
-    expect(result).toEqual({ sheets: 2, items: 47 });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/projects/p1/takeoff");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({
-      payload: { sheets: [], items: [] },
-      confirm_replace: false,
-    });
+    expect(result).toEqual({ runId: "r1" });
   });
 
-  it("sends confirm_replace only when the estimator has confirmed", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ sheets: 1, items: 1 }), { status: 200 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const store = createApiStore();
-    await store.attachEngineTakeoff("p1", { sheets: [] }, { confirmReplace: true });
-
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body).confirm_replace).toBe(true);
-  });
-
-  it("surfaces the server's refusal code so the caller can confirm", async () => {
-    const body = JSON.stringify({
-      detail: {
-        code: "approved_items_present",
-        message: "3 item(s) on this project are estimator approved.",
-      },
-    });
+  it("surfaces run_in_flight so the caller can treat it as already running", async () => {
+    const body = JSON.stringify({ detail: { code: "run_in_flight", message: "A run is already in progress." } });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status: 409 })));
 
     const store = createApiStore();
-    await expect(store.attachEngineTakeoff("p1", {})).rejects.toMatchObject({
-      code: "approved_items_present",
-    });
+    await expect(store.startTakeoff("p1")).rejects.toMatchObject({ code: "run_in_flight" });
+  });
+
+  it("surfaces no_readable_drawings", async () => {
+    const body = JSON.stringify({ detail: { code: "no_readable_drawings", message: "None of the uploaded documents could be read." } });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, { status: 409 })));
+
+    const store = createApiStore();
+    await expect(store.startTakeoff("p1")).rejects.toMatchObject({ code: "no_readable_drawings" });
   });
 });
 
-
-describe("reprocess", () => {
-  it("posts a re-run to the reprocess endpoint, not to ingest", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({ reclassified: 7, preserved: 3, added: 0, removed: 1 }), { status: 200 }));
+describe("getProcessing", () => {
+  it("fetches the project's processing status and maps it to camelCase", async () => {
+    const raw = {
+      documents: [{ id: "d1", filename: "E.pdf", doc_type: "Drawings", state: "read", reason: "", sheet_count: 2 }],
+      run: { state: "running", reason: "", complete_count: 1, total_count: 2, sheets: [] },
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(raw), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const out = await createApiStore().reprocess("p1", { sheets: [], items: [] });
-    expect(fetchMock.mock.calls[0][0]).toBe("/api/projects/p1/reprocess");
-    expect(out.preserved).toBe(3);
+
+    const store = createApiStore();
+    const result = await store.getProcessing("p1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/projects/p1/processing");
+    expect(result.documents[0].docType).toBe("Drawings");
+    expect(result.run.completeCount).toBe(1);
+  });
+});
+
+describe("listScope", () => {
+  it("fetches the project's scope statements and maps every row", async () => {
+    const raw = [{ id: "s1", kind: "by_others", text: "t", edited_text: null, status: "found", document_id: "d1", document_filename: "spec.pdf", page: 4, quote: "t" }];
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(raw), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const result = await store.listScope("p1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/projects/p1/scope");
+    expect(result[0]).toEqual({ id: "s1", kind: "by_others", text: "t", editedText: null, status: "found", documentId: "d1", documentFilename: "spec.pdf", page: 4, quote: "t" });
+  });
+});
+
+describe("decideScope", () => {
+  it("PATCHes {status} when given a status", async () => {
+    const raw = { id: "s1", kind: "by_others", text: "t", edited_text: null, status: "confirmed", document_id: "d1", document_filename: "spec.pdf", page: 4, quote: "t" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(raw), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const result = await store.decideScope("s1", { status: "confirmed" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/scope/s1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({ status: "confirmed" });
+    expect(result.status).toBe("confirmed");
+  });
+
+  it("PATCHes {edited_text} when given editedText", async () => {
+    const raw = { id: "x", kind: "by_others", text: "t", edited_text: "t", status: "found", document_id: "d", document_filename: "s.pdf", page: 1, quote: "q" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(raw), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    await store.decideScope("x", { editedText: "t" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/scope/x");
+    expect(JSON.parse(init.body)).toEqual({ edited_text: "t" });
+  });
+});
+
+describe("the engine-behind-the-API deletions", () => {
+  it("no longer exposes attachEngineTakeoff, reprocess, or fetchDocumentFile", () => {
+    const store = createApiStore();
+    expect(store.attachEngineTakeoff).toBeUndefined();
+    expect(store.reprocess).toBeUndefined();
+    expect(store.fetchDocumentFile).toBeUndefined();
   });
 });
 
@@ -348,21 +390,21 @@ describe("the store interface", () => {
    *  failure, and that is the class of regression worth pinning here. */
   const CALLED_BY_THE_APP = [
     "approveItem",
-    "attachEngineTakeoff",
     "bulkApprove",
     "createNote",
     "createProject",
     "deleteItem",
     "deleteNote",
     "editItem",
+    "getProcessing",
     "getSnapshot",
     "listNotes",
     "listProjects",
     "redo",
     "rejectItem",
-    "reprocess",
     "setPresence",
     "setScale",
+    "startTakeoff",
     "subscribe",
     "undo",
     "unrejectItem",
@@ -476,7 +518,7 @@ describe("labor and material pricing cache invalidation", () => {
   // that a cached version IS sent as If-None-Match when nothing has
   // invalidated it; these pin that setLaborLine/setMaterialPrice DO
   // invalidate it, the same way every other mutation in this file
-  // (mutateItem, attachEngineTakeoff, reprocess) already does --
+  // (mutateItem, startTakeoff) already does --
   // otherwise a getSnapshot() poll right after a successful labor or
   // material-price edit can be answered with a 304 and serve the stale
   // cached item.materialCost/laborCost/totalCost.

@@ -93,13 +93,4 @@ describe("the other document methods", () => {
     expect(f.mock.calls[1][0]).toBe("/api/documents/d1");
     expect(f.mock.calls[1][1].method).toBe("DELETE");
   });
-
-  test("fetchDocumentFile returns a File named after the document", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Blob([new Uint8Array(3)]), { status: 200 })));
-    const file = await store.fetchDocumentFile(mapDocument(raw));
-    expect(file).toBeInstanceOf(File);
-    expect(file.name).toBe("E-set.pdf");
-    expect(file.type).toBe("application/pdf");
-    expect(fetch).toHaveBeenCalledWith("/api/documents/d1/content", expect.objectContaining({ credentials: "include" }));
-  });
 });

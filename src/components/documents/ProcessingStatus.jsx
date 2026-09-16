@@ -1,195 +1,68 @@
 /* ============================================================
-   ProcessingStatus.jsx — spec §5 screen E, driving the real engine.
+   ProcessingStatus.jsx — spec §5 screen E, minimal stub.
 
-   If the project has documents, this fetches their bytes back from the
-   API (store.listDocuments, then store.fetchDocumentFile per document --
-   documents live server-side now, not in a browser-held map) and posts
-   them to the takeoff engine (engineClient), showing a genuine
-   multi-stage loading sequence while the request is in flight, then
-   ingests the result into the project's store (attachEngineTakeoff) and
-   sends them to review. The stage labels are indicative -- the engine
-   runs as one request -- but completion is real. This round trip through
-   the browser is interim: B2 moves the engine behind the API and this
-   screen stops fetching document bytes itself.
+   The engine now runs behind the API (B2): this screen no longer
+   fetches document bytes or drives the engine itself. On mount it asks
+   the API what's already going (store.getProcessing) and, if nothing
+   is running yet, starts one (store.startTakeoff). A run already in
+   flight (`run_in_flight`) is treated as success, not an error -- the
+   estimator gets the same "reading your drawings" state either way. A
+   set with no readable drawings (`no_readable_drawings`) is the one
+   failure worth naming specifically, with a way back to fix it.
 
-   With no documents, there is nothing to process -- this is an error
-   state, not a fallback, since a project only reaches this screen after
-   Upload documents requires a drawing set. Re-entering a project that
-   already has a takeoff never re-runs.
+   Tasks 13-15 replace this with the real per-sheet progress view (the
+   documents/run shape store.getProcessing already returns); this stub
+   exists only to keep the build green at this commit.
    ============================================================ */
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { CheckCircle2, Loader2, AlertTriangle } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import { estimateProject } from "../../lib/engineClient.js";
-
-const ENGINE_STAGES = ["Uploading documents", "Reading drawings and specifications", "Counting devices", "Classifying and pricing"];
-
-const money = (n) => "$" + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
-
-// Module-level so StrictMode's double-invoked effect (and its cleanup)
-// can't fire the engine twice: both invocations await the same in-flight
-// request, and only the one still mounted applies the result.
-const engineRuns = new Map(); // projectId -> Promise<payload>
-
 
 export default function ProcessingStatus({ store }) {
   const { projectId } = useParams();
 
-  const [mode, setMode] = useState("checking"); // checking | engine | confirm-replace | done | error
-  const [engineStage, setEngineStage] = useState(0);
-  const [summary, setSummary] = useState(null);
-  const [reviewPath, setReviewPath] = useState("");
+  const [mode, setMode] = useState("checking"); // checking | reading | error
   const [error, setError] = useState(null);
-  // Set when the server refuses to replace a takeoff that holds
-  // approvals. Carries the server's own message, which names the count —
-  // the estimator is told what they would lose, not asked a vague
-  // "are you sure".
-  const [replaceConfirm, setReplaceConfirm] = useState(null);
-
-  const attachTakeoff = useCallback(
-    async (payload, { confirmReplace = false } = {}) => {
-      try {
-        await store.attachEngineTakeoff(projectId, payload, { confirmReplace });
-        setReplaceConfirm(null);
-        setReviewPath(`/projects/${projectId}/takeoff`);
-        setMode("done");
-      } catch (err) {
-        if (err?.code === "approved_items_present") {
-          setReplaceConfirm({ message: err.message, payload });
-          setMode("confirm-replace");
-          return;
-        }
-        throw err;
-      }
-    },
-    [store, projectId],
-  );
-
-  // The confirm dialog's own retry. A rejection here can't fall back on
-  // the mount effect's try/catch the way the first attempt does -- this is
-  // what turns a second failure (network blip, a 500, a stale project)
-  // into the same error state instead of an unhandled rejection that
-  // leaves the estimator staring at a confirm button that looks broken.
-  const confirmReplace = useCallback(async () => {
-    if (!replaceConfirm) return;
-    try {
-      await attachTakeoff(replaceConfirm.payload, { confirmReplace: true });
-    } catch (err) {
-      setReplaceConfirm(null);
-      setError(err?.message || "The takeoff couldn't be replaced.");
-      setMode("error");
-    }
-  }, [attachTakeoff, replaceConfirm]);
 
   useEffect(() => {
-    // `alive` is per-invocation and re-created here, so StrictMode's
-    // mount→cleanup→mount cycle leaves the final invocation with alive=true
-    // (the earlier one's cleanup only flips its own closure). The engine
-    // call itself is deduped module-side (engineRuns), so it fires once.
     let alive = true;
-    const timers = [];
 
     (async () => {
-      let project = null;
       try {
-        const rows = (await store.listProjects?.({ includeArchived: true })) ?? [];
-        project = rows.find((p) => p.id === projectId) ?? null;
-      } catch {
-        project = null;
-      }
-      if (!alive) return;
+        const processing = await store.getProcessing(projectId);
+        if (!alive) return;
 
-      // Already has a takeoff — show complete, never re-run.
-      if (project && project.itemsTotal > 0) {
-        setReviewPath(`/projects/${projectId}/takeoff`);
-        setMode("done");
-        return;
-      }
-
-      let docs;
-      let listFailed = false;
-      try {
-        docs = await store.listDocuments(projectId);
-      } catch {
-        listFailed = true;
-        docs = [];
-      }
-      if (!alive) return;
-
-      if (docs.length > 0) {
-        // --- real engine path ---
-        setMode("engine");
-        let stage = 0;
-        const iv = setInterval(() => {
-          if (!alive) return;
-          stage = Math.min(stage + 1, ENGINE_STAGES.length - 1);
-          setEngineStage(stage);
-        }, 2500);
-        timers.push(() => clearInterval(iv));
-        try {
-          // Dedupe the network call across StrictMode's double invoke --
-          // the byte-fetch-back and the estimate call together, so a
-          // document's content isn't fetched from the API twice either.
-          let run = engineRuns.get(projectId);
-          if (!run) {
-            run = (async () => {
-              // Holds all N documents' bytes in memory at once -- fine at
-              // interim scale, but B2 removes this whole round trip rather
-              // than needing to stream it.
-              const uploaded = await Promise.all(
-                docs.map(async (d) => ({ file: await store.fetchDocumentFile(d), docType: d.docType })),
-              );
-              return estimateProject(uploaded, project?.location || "", []);
-            })();
-            engineRuns.set(projectId, run);
+        if (!processing.run) {
+          try {
+            await store.startTakeoff(projectId);
+          } catch (err) {
+            if (err?.code === "run_in_flight") {
+              // Already running -- nothing more to do here.
+            } else if (err?.code === "no_readable_drawings") {
+              if (alive) {
+                setError(err.message);
+                setMode("error");
+              }
+              return;
+            } else {
+              throw err;
+            }
           }
-          const payload = await run;
-          engineRuns.delete(projectId);
-          if (!alive) return;
-          clearInterval(iv);
-          setSummary({
-            items: payload.totals.item_count,
-            total: payload.totals.total_direct_cost,
-            sheets: payload.sheets.length,
-            location: payload.location,
-            source: payload.source,
-          });
-          await attachTakeoff(payload);
-        } catch (err) {
-          engineRuns.delete(projectId); // let a retry start fresh
-          if (!alive) return;
-          clearInterval(iv);
-          setError(err.message);
-          setMode("error");
         }
-        return;
-      }
 
-      // A failed list is not the same fact as an empty one -- telling an
-      // estimator with forty documents to "upload a drawing set" because
-      // the request to list them failed is actively misleading.
-      setError(
-        listFailed
-          ? "Couldn't load this project's documents. Check the connection and try again."
-          : "No documents have been uploaded for this project yet. Upload a drawing set to start a takeoff.",
-      );
-      setMode("error");
+        if (alive) setMode("reading");
+      } catch (err) {
+        if (!alive) return;
+        setError(err?.message || "Couldn't load this project's processing status. Try again.");
+        setMode("error");
+      }
     })();
 
     return () => {
       alive = false;
-      timers.forEach((t) => (typeof t === "function" ? t() : clearTimeout(t)));
     };
   }, [store, projectId]);
-
-  const heading =
-    mode === "done"
-      ? "Processing complete"
-      : mode === "error"
-        ? "Couldn't finish processing"
-        : "Reading your drawings";
 
   return (
     <>
@@ -197,8 +70,8 @@ export default function ProcessingStatus({ store }) {
         title="Processing"
         breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}
         primaryAction={
-          mode === "done" && reviewPath ? (
-            <Link className="btn btn--primary" to={reviewPath}>
+          mode === "reading" ? (
+            <Link className="btn btn--primary" to={`/projects/${projectId}/takeoff`}>
               Continue to review
             </Link>
           ) : null
@@ -206,7 +79,7 @@ export default function ProcessingStatus({ store }) {
       />
 
       <div className="page">
-        <h1 className="page-heading">{heading}</h1>
+        <h1 className="page-heading">{mode === "error" ? "Couldn't start processing" : "Reading your drawings"}</h1>
 
         {mode === "error" ? (
           <div className="load-error" role="alert">
@@ -217,76 +90,12 @@ export default function ProcessingStatus({ store }) {
           </div>
         ) : null}
 
-        {mode === "confirm-replace" && replaceConfirm ? (
-          <div className="processing-confirm" role="alertdialog" aria-labelledby="replace-confirm-title">
-            <h2 id="replace-confirm-title">Replacing this takeoff discards approved items</h2>
-            <p>{replaceConfirm.message}</p>
-            <p>
-              Approving an item is a record that a person checked it. Replacing the takeoff removes those records
-              along with the items.
-            </p>
-            <div className="processing-confirm-actions">
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  setReplaceConfirm(null);
-                  setReviewPath(`/projects/${projectId}/takeoff`);
-                  setMode("done");
-                }}
-              >
-                Keep the current takeoff
-              </button>
-              <button type="button" className="btn btn--danger" onClick={confirmReplace}>
-                Replace the takeoff
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        {mode === "engine" ? (
+        {mode === "reading" ? (
           <>
-            <p className="muted">
-              This can take a moment on a large set — the last step checks the drawings against the schedules. You can
-              leave this page.
-            </p>
-            <ul className="processing-list">
-              {ENGINE_STAGES.map((label, idx) => {
-                const complete = idx < engineStage;
-                const active = idx === engineStage;
-                return (
-                  <li key={label} className="processing-row">
-                    <span className="processing-icon" aria-hidden="true">
-                      {complete ? (
-                        <CheckCircle2 size={18} className="ink-blue" />
-                      ) : active ? (
-                        <Loader2 size={18} className="spin" />
-                      ) : (
-                        <span className="processing-dot" />
-                      )}
-                    </span>
-                    <span className="processing-title">{label}</span>
-                    <span className="processing-stage">{complete ? "Done" : active ? "Working…" : "Waiting"}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        ) : null}
-
-        {mode === "done" ? (
-          <>
-            <p className="muted">
-              {summary
-                ? `${summary.sheets} electrical sheet${summary.sheets === 1 ? "" : "s"} read, ${summary.items} line items, ${money(summary.total)} total direct cost${summary.location ? " for " + summary.location : ""}. Continue to review.`
-                : "Every sheet finished. Continue to review the takeoff."}
-            </p>
+            <p className="muted">Sheets keep processing and are reviewable as they finish.</p>
             <div className="form-actions">
-              <Link className="btn btn--primary" to={reviewPath || `/projects/${projectId}`}>
+              <Link className="btn btn--primary" to={`/projects/${projectId}/takeoff`}>
                 Continue to review
-              </Link>
-              <Link className="btn" to={`/projects/${projectId}`}>
-                Back to project
               </Link>
             </div>
           </>

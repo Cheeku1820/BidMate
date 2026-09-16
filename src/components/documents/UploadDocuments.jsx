@@ -39,7 +39,6 @@ import { AlertCircle, AlertTriangle, CheckCircle2, FileText, Loader2, Upload, X 
 import AppTopBar from "../shell/AppTopBar.jsx";
 import Modal from "../Modal.jsx";
 import { DOC_TYPES, detectDocTypeInfo } from "../../lib/detectDocType.js";
-import { classifyDoc } from "../../lib/engineClient.js";
 
 // The tabs, in the order the mockup lists them: everything, then one per
 // document type. Plural display labels ("Addenda") over the stored
@@ -252,11 +251,8 @@ export default function UploadDocuments({ store }) {
           const localDocType = localRow?.docType;
           const localTypeAuto = localRow?.typeAuto ?? true;
           // `typeAuto` is the row's own knowledge, not the server's --
-          // it has to be carried across the overwrite. Dropping it here
-          // did two things at once: the "Detected" hint vanished the
-          // moment an upload settled, and the content-based second look
-          // below, which checks `row.typeAuto` before writing, found
-          // it undefined and never wrote anything.
+          // it has to be carried across the overwrite, or the "Detected"
+          // hint would vanish the moment an upload settled.
           setRowsSafe((prev) => prev.map((r) => (r.key === key ? { ...rowFromDocument(doc), key: doc.id, typeAuto: localTypeAuto } : r)));
 
           if (!localTypeAuto && localDocType && localDocType !== doc.docType) {
@@ -268,39 +264,6 @@ export default function UploadDocuments({ store }) {
                 setRowsSafe((prev) => prev.map((r) => (r.key === doc.id ? { ...r, docType: updated.docType, error: undefined } : r)));
               })
               .catch((err) => update(doc.id, { error: err.message }));
-          } else if (localTypeAuto && detected.source === "default") {
-            // A filename that wasn't informative gets a content-based
-            // second look, applied to the persisted row -- but only if
-            // the estimator hasn't since set the type by hand.
-            classifyDoc(file)
-              .then((type) => {
-                if (!type) return;
-                // Read the live mirror synchronously rather than deciding
-                // inside a setRows updater -- an updater has to stay pure
-                // and isn't guaranteed to run eagerly, so it's not a safe
-                // place to gate a side effect. rowsRef is always current
-                // because every row update goes through setRowsSafe.
-                const row = rowsRef.current.find((r) => r.key === doc.id);
-                if (!row || !row.typeAuto) return;
-                // The persisted row is the truth; the select follows the
-                // server's answer rather than the guess. A write that
-                // fails leaves the row on the type it was uploaded with
-                // -- still "Detected", still counted -- and says so in
-                // the state column, the same way a manual retype that
-                // fails does.
-                store
-                  .setDocumentType(doc.id, type)
-                  .then((updated) => {
-                    setRowsSafe((prev) => prev.map((r) => (r.key === doc.id ? { ...r, docType: updated.docType, error: undefined } : r)));
-                  })
-                  .catch((err) => update(doc.id, { error: err.message }));
-              })
-              // The engine being unreachable is the common case, not an
-              // edge one -- it runs on the estimator's own machine. The
-              // second look is a refinement of a guess that already
-              // stands; without it the row simply keeps the type its
-              // filename suggested, which is what it showed all along.
-              .catch(() => {});
           }
         })
         .catch((err) => {

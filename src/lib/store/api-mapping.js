@@ -286,3 +286,58 @@ export function mapDocument(raw) {
     createdAt: raw.created_at,
   };
 }
+
+/** GET /api/projects/{id}/processing -> store shape (task-12-brief.md).
+ *  `documents` are the intake rows; `run` is null until a takeoff run
+ *  has been started, and carries the per-sheet stages the engine (now
+ *  behind the API) reports as it works through the set. Stage words
+ *  (`state`, `stage`, `reason`) are carried verbatim -- they're already
+ *  the estimator-facing vocabulary the server owns, not processing
+ *  internals to translate here. */
+export function mapProcessing(raw) {
+  return {
+    documents: (raw.documents ?? []).map((d) => ({
+      id: d.id,
+      filename: d.filename,
+      docType: d.doc_type,
+      state: d.state,
+      reason: d.reason,
+      sheetCount: d.sheet_count,
+    })),
+    run: raw.run
+      ? {
+          state: raw.run.state,
+          reason: raw.run.reason,
+          sheets: (raw.run.sheets ?? []).map((s) => ({
+            id: s.id,
+            number: s.number,
+            title: s.title,
+            stage: s.stage,
+            reason: s.reason,
+            note: s.note,
+            itemCount: s.item_count,
+          })),
+          completeCount: raw.run.complete_count,
+          totalCount: raw.run.total_count,
+        }
+      : null,
+  };
+}
+
+/** GET /api/projects/{id}/scope row -> store shape. What the drawings
+ *  push out of Division 26 scope ("by others"), surfaced for the
+ *  estimator to confirm or edit -- kind and status are the server's own
+ *  closed sets, carried through unchanged. */
+export function mapScopeStatement(raw) {
+  return {
+    id: raw.id,
+    kind: raw.kind,
+    text: raw.text,
+    editedText: raw.edited_text ?? null,
+    status: raw.status,
+    documentId: raw.document_id,
+    documentFilename: raw.document_filename,
+    page: raw.page,
+    quote: raw.quote,
+  };
+}

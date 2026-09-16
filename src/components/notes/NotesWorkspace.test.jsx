@@ -12,25 +12,11 @@
    than reading notes off `snapshot`.
    ============================================================ */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import NotesWorkspace from "./NotesWorkspace.jsx";
-import * as engineClient from "../../lib/engineClient.js";
-
-const storedDoc = (over = {}) => ({
-  id: "d1",
-  projectId: "p1",
-  filename: "e1.1.pdf",
-  docType: "Drawings",
-  sizeBytes: 1,
-  status: "uploaded",
-  error: "",
-  createdAt: "2026-08-28T10:00:00Z",
-  ...over,
-});
-const fetchedFile = () => new File([new Uint8Array(1)], "e1.1.pdf", { type: "application/pdf" });
 
 const NOTE = {
   id: "n1",
@@ -51,15 +37,13 @@ const NOTE = {
   appliedAt: null,
 };
 
-function makeStore({ notes = [], documents = [storedDoc()] } = {}) {
+function makeStore({ notes = [] } = {}) {
   return {
     listNotes: vi.fn().mockResolvedValue(notes),
     createNote: vi.fn().mockResolvedValue({ ...NOTE, id: "new" }),
     updateNote: vi.fn().mockResolvedValue(NOTE),
     deleteNote: vi.fn().mockResolvedValue(undefined),
-    reprocess: vi.fn().mockResolvedValue({ reclassified: 0, preserved: 0, added: 0, removed: 0 }),
-    listDocuments: vi.fn().mockResolvedValue(documents),
-    fetchDocumentFile: vi.fn().mockResolvedValue(fetchedFile()),
+    startTakeoff: vi.fn().mockResolvedValue({ runId: "r1" }),
   };
 }
 
@@ -227,89 +211,33 @@ describe("NotesWorkspace", () => {
   });
 
   describe("applying notes and re-running", () => {
-    // A re-run needs the engine's payload for the same project's current
-    // documents -- fetched fresh from the API (store.listDocuments, then
-    // store.fetchDocumentFile per document) rather than held in browser
-    // memory. These two tests exercise the happy and unhappy paths for
-    // what happens once that payload exists and store.reprocess is
-    // reached; the "no documents" state gets its own test below.
-    beforeEach(() => {
-      vi.spyOn(engineClient, "estimateProject").mockResolvedValue({ sheets: [], items: [] });
-    });
-
-    afterEach(() => {
-      vi.restoreAllMocks();
-    });
-
-    it("says how many approved items a re-run left alone", async () => {
+    // The engine now runs behind the API (B2) -- this screen just starts
+    // a run (store.startTakeoff) rather than fetching document bytes and
+    // driving the engine itself.
+    it("starts a run and shows that sheets keep processing", async () => {
       const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
-      store.reprocess = vi.fn().mockResolvedValue({ reclassified: 7, preserved: 3, added: 0, removed: 0 });
       renderNotes({ store });
       await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
-      expect(await screen.findByText(/3 approved items were left unchanged/i)).toBeInTheDocument();
-      expect(screen.getByText(/7 items reclassified/i)).toBeInTheDocument();
-      // The bytes fetched back are the project's actual listed document,
-      // not some other id -- store.listDocuments and store.fetchDocumentFile
-      // are wired to the same document.
-      expect(store.fetchDocumentFile).toHaveBeenCalledWith(expect.objectContaining({ id: "d1" }));
+      expect(store.startTakeoff).toHaveBeenCalledWith("p1");
+      expect(await screen.findByText(/re-run started/i)).toBeInTheDocument();
+      expect(screen.getByText(/sheets keep processing and are reviewable as they finish/i)).toBeInTheDocument();
+    });
+
+    it("treats run_in_flight as success, not an error", async () => {
+      const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
+      store.startTakeoff = vi.fn().mockRejectedValue({ code: "run_in_flight", message: "A run is already in progress." });
+      renderNotes({ store });
+      await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
+      expect(await screen.findByText(/re-run started/i)).toBeInTheDocument();
+      expect(screen.queryByText(/run is already in progress/i)).not.toBeInTheDocument();
     });
 
     it("reports a failed re-run with a recovery action", async () => {
       const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
-      store.reprocess = vi.fn().mockRejectedValue({ code: "request_failed", message: "Couldn't reach the estimate service. Start it in the api folder." });
+      store.startTakeoff = vi.fn().mockRejectedValue({ code: "no_readable_drawings", message: "None of the uploaded documents could be read." });
       renderNotes({ store });
       await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
-      expect(await screen.findByText(/Couldn't reach the estimate service/)).toBeInTheDocument();
+      expect(await screen.findByText(/none of the uploaded documents could be read/i)).toBeInTheDocument();
     });
-
-    it("only sends context notes to the engine, never a reference-only one", async () => {
-      const store = makeStore({
-        notes: [
-          { ...NOTE, id: "ctx", usage: "context", appliedAt: null, title: "Feeds it" },
-          { ...NOTE, id: "ref", usage: "reference", appliedAt: null, title: "Reference only note" },
-        ],
-      });
-      store.reprocess = vi.fn().mockResolvedValue({ reclassified: 1, preserved: 0, added: 0, removed: 0 });
-      renderNotes({ store });
-      await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
-      await waitFor(() => expect(store.reprocess).toHaveBeenCalled());
-      const sentNotes = engineClient.estimateProject.mock.calls[0][2];
-      expect(sentNotes).toHaveLength(1);
-      expect(sentNotes[0].title).toBe("Feeds it");
-    });
-
-    it("re-sends an already-applied note, so a second run does not revert the first", async () => {
-      // The regression guard for the worst bug this slice shipped. The
-      // engine has no memory of a previous run's notes and the merge
-      // overwrites every matched un-approved item from the payload it is
-      // handed, so a payload built from the *unapplied* notes alone
-      // silently reverts every earlier note's effect -- while the screen
-      // still says "Used in this estimate" and the server re-stamps the
-      // applied timestamp. A wrong bid total from using the feature
-      // normally twice.
-      const store = makeStore({
-        notes: [
-          { ...NOTE, id: "a", usage: "context", appliedAt: "2026-08-28T10:00:00Z", title: "Applied earlier" },
-          { ...NOTE, id: "b", usage: "context", appliedAt: null, title: "Added just now" },
-        ],
-      });
-      store.reprocess = vi.fn().mockResolvedValue({ reclassified: 2, preserved: 0, added: 0, removed: 0 });
-      renderNotes({ store });
-      await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
-      await waitFor(() => expect(store.reprocess).toHaveBeenCalled());
-
-      const sentNotes = engineClient.estimateProject.mock.calls[0][2];
-      expect(sentNotes.map((n) => n.title).sort()).toEqual(["Added just now", "Applied earlier"]);
-    });
-  });
-
-  it("says plainly when no source drawings remain to re-run, rather than failing obscurely", async () => {
-    // A project with no documents -- the re-run has nothing to send the
-    // engine.
-    const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }], documents: [] });
-    renderNotes({ store });
-    await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
-    expect(await screen.findByText(/no source drawings|drawings aren't available|upload/i)).toBeInTheDocument();
-    expect(store.reprocess).not.toHaveBeenCalled();
   });
 });

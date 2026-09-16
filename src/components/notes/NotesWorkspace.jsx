@@ -16,28 +16,15 @@
    form, field, or menu. This screen has no conversation panel at all
    (deliberately out of scope for this slice); it is the form.
 
-   The apply banner ("Apply notes and re-run") wires a real re-run: fetch
-   the project's current document list from the API and fetch each
-   document's bytes back (store.listDocuments, store.fetchDocumentFile --
-   documents live server-side now, not in a browser-held map), run them
-   back through the engine with EVERY standing context note as the
-   authoritative notes channel (engineClient.js's estimateProject) --
-   not just the unapplied ones, which drive only whether the banner
-   appears. Sending only the unapplied set would let a second re-run
-   overwrite the first note's effect with a payload that no longer
-   mentions it, silently reverting a change nobody asked to undo. And
-   hand the resulting payload to the approval-preserving merge
-   (store.reprocess, Task 7). The summary names exactly what the server
-   reported -- reclassified and preserved counts -- never a number this
-   screen invented.
-
-   The document list is fetched fresh at re-run time, not cached from an
-   earlier mount -- an estimator can add or remove a document between
-   opening this screen and pressing the button, and the re-run has to
-   reflect the project's actual current documents, not a stale snapshot.
-   A project with no documents is handled plainly rather than surfacing
-   as an obscure fetch failure. This whole round trip is interim -- B2
-   removes it once the engine sits behind the API.
+   The apply banner ("Apply notes and re-run") starts a real re-run
+   behind the API (store.startTakeoff) -- the engine now lives there
+   (B2), so this screen no longer fetches document bytes or drives the
+   engine itself. A run already in flight (`run_in_flight`) is treated
+   as success rather than an error: whatever is already running will
+   pick up the standing notes the same way a fresh run would. Sheets
+   keep processing and are reviewable as they finish, exactly as
+   ProcessingStatus.jsx says -- this banner is a second entry point to
+   the same run, not a different mechanism.
    ============================================================ */
 
 import { useCallback, useEffect, useState } from "react";
@@ -50,12 +37,10 @@ import {
   CATEGORY_LABELS,
   calculationEffect,
   SCOPE_LABELS,
-  standingContextNotes,
   unappliedContextNotes,
 } from "./noteVocabulary.js";
 import { formatTimestamp } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
-import { estimateProject } from "../../lib/engineClient.js";
 
 const SCOPE_FILTERS = ["company", "project", "sheet", "item"];
 
@@ -128,7 +113,7 @@ function pluralize(count, singular, plural) {
 }
 
 export default function NotesWorkspace() {
-  const { store, projectId, project, snapshot } = useWorkspaceContext();
+  const { store, projectId, snapshot } = useWorkspaceContext();
 
   const [notes, setNotes] = useState(null);
   const [loadError, setLoadError] = useState(null);
@@ -178,16 +163,12 @@ export default function NotesWorkspace() {
   // explicit here because it's the fact this count is actually about.
   const affectCount = (notes ?? []).filter((n) => n.usage === "context").length;
   const openRfiCount = (notes ?? []).filter((n) => n.rfiNeeded && n.status !== "confirmed").length;
-  // Two sets, two jobs, and conflating them is finding 1 of the final
-  // review. `unapplied` drives the *banner* -- "is there anything new to
-  // apply?" -- so it is the notes no re-run has carried in yet.
-  // `standing` is the *payload*: the whole context this project is
-  // estimated under, re-sent on every run, because the engine has no
-  // memory of a previous run's notes and the merge overwrites from
-  // whatever payload it is handed. See `standingContextNotes` in
-  // noteVocabulary.js for the failure this separation prevents.
+  // `unapplied` drives the *banner* -- "is there anything new to apply?"
+  // -- so it is the context notes no re-run has carried in yet. The
+  // re-run itself (handleApplyAndRerun, below) just starts the engine's
+  // run behind the API; the run reads the project's standing notes
+  // itself, so this screen no longer builds or sends that payload.
   const unapplied = unappliedContextNotes(notes ?? []);
-  const standing = standingContextNotes(notes ?? []);
 
   const summaryParts = notes
     ? [
@@ -241,57 +222,29 @@ export default function NotesWorkspace() {
     }
   }
 
-  // The real re-run. Only `usage === "context"` notes are the engine's
-  // authoritative notes channel (a reference-only note must never reach
-  // the classifier), and the set sent is `standing` -- every context
-  // note, not only the ones not yet applied. The banner's `unapplied`
-  // set says whether there is anything new; it is not a filter on what
-  // the engine may see.
-  //
-  // Worth writing down plainly: "a reference note never reaches the
-  // classifier" is enforced HERE, client-side, and nowhere else. The
-  // `/reprocess` endpoint accepts whatever takeoff payload it is given
-  // and never talks to the engine itself -- the browser drives the
-  // engine directly (engineClient.js, localhost:8100) and posts the
-  // result. That is inherent to the current browser-drives-engine
-  // architecture rather than a structural guarantee like the
-  // two-channel agent split, so it holds only as long as this filter
-  // does. If the engine ever moves behind the API, this rule moves with
-  // it and stops being a client concern.
+  // Starts a re-run behind the API. `run_in_flight` is treated as
+  // success rather than an error -- a run is already going, and it
+  // reads the project's standing context notes the same way a freshly
+  // started one would, so there is nothing this screen needs to do
+  // differently.
   async function handleApplyAndRerun() {
     setApplyError(null);
     setApplyBusy(true);
     try {
-      const docs = await store.listDocuments(projectId);
-      if (docs.length === 0) {
-        setApplyError(
-          "This project doesn't have any source drawings to re-run. Upload a drawing set to run the takeoff.",
-        );
-        return;
+      try {
+        await store.startTakeoff(projectId);
+      } catch (err) {
+        if (err?.code !== "run_in_flight") throw err;
       }
-      // Holds all N documents' bytes in memory at once -- fine at interim
-      // scale, but B2 removes this whole round trip rather than needing
-      // to stream it.
-      const uploaded = await Promise.all(
-        docs.map(async (d) => ({ file: await store.fetchDocumentFile(d), docType: d.docType })),
-      );
-      const contextNotes = standing.map((n) => ({
-        scope: n.scope,
-        title: n.title,
-        body: n.body,
-        source_ref: n.sourceRef,
-      }));
-      const payload = await estimateProject(uploaded, project?.location || "", contextNotes);
-      const result = await store.reprocess(projectId, payload);
       const id = Date.now();
       setApplyMessage({
         id,
-        text: `${result.reclassified} ${result.reclassified === 1 ? "item" : "items"} reclassified. ${result.preserved} approved ${result.preserved === 1 ? "item was" : "items were"} left unchanged.`,
+        text: "Re-run started. Sheets keep processing and are reviewable as they finish.",
       });
       setTimeout(() => setApplyMessage((m) => (m && m.id === id ? null : m)), 5000);
       await load();
     } catch (err) {
-      setApplyError(err?.message || "The re-run couldn't be completed. Try again.");
+      setApplyError(err?.message || "The re-run couldn't be started. Try again.");
     } finally {
       setApplyBusy(false);
     }

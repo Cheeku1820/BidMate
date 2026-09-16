@@ -10,12 +10,6 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import UploadDocuments from "./UploadDocuments.jsx";
 
-// The content-sniff fallback (detected.source === "default") calls this
-// for real otherwise -- an actual fetch to the standalone engine service
-// that most of these tests have no reason to reach.
-vi.mock("../../lib/engineClient.js", () => ({ classifyDoc: vi.fn().mockResolvedValue(null) }));
-import { classifyDoc } from "../../lib/engineClient.js";
-
 const pdf = (name, size = 1024) => new File([new Uint8Array(size)], name, { type: "application/pdf" });
 const doc = (over = {}) => ({ id: "d1", projectId: "p1", filename: "E-set.pdf", docType: "Drawings", sizeBytes: 1024, status: "uploaded", error: "", createdAt: "2026-09-15T00:00:00Z", ...over });
 
@@ -328,39 +322,5 @@ describe("UploadDocuments", () => {
     // The number is visible but aria-hidden: a region that re-announces
     // every tick is one nobody keeps switched on.
     expect(within(cell).getByText("42%")).toHaveAttribute("aria-hidden", "true");
-  });
-
-  it("keeps the filename's guess when the content-based second look cannot reach the engine", async () => {
-    classifyDoc.mockRejectedValueOnce(new Error("engine unreachable"));
-    const store = makeStore({
-      // "scan.pdf" carries no type hint, so detectDocTypeInfo falls to
-      // its default (Drawings) and the content-based second look runs.
-      uploadDocument: vi.fn().mockResolvedValue(doc({ filename: "scan.pdf", docType: "Drawings" })),
-    });
-    renderUpload(store);
-    drop([pdf("scan.pdf")]);
-    await waitFor(() => expect(screen.getByText("Reading…")).toBeInTheDocument());
-    await waitFor(() => expect(classifyDoc).toHaveBeenCalled());
-    // No unhandled rejection, no retype, the guess stands.
-    expect(store.setDocumentType).not.toHaveBeenCalled();
-    expect(screen.getByLabelText(/type for scan.pdf/i)).toHaveValue("Drawings");
-    expect(screen.getByText("Detected")).toBeInTheDocument();
-  });
-
-  it("surfaces a failed write of the content-based type on the row and keeps the type the server holds", async () => {
-    classifyDoc.mockResolvedValueOnce("Specifications");
-    const store = makeStore({
-      uploadDocument: vi.fn().mockResolvedValue(doc({ filename: "scan.pdf", docType: "Drawings" })),
-      setDocumentType: vi.fn().mockRejectedValue({ code: "network", message: "Couldn't reach the server. Check the connection and try again." }),
-    });
-    renderUpload(store);
-    drop([pdf("scan.pdf")]);
-    await waitFor(() => expect(store.setDocumentType).toHaveBeenCalledWith("d1", "Specifications"));
-    expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
-    // The select shows what the server holds, not what the write
-    // hoped for, and the row is still counted -- a failed retype does
-    // not knock a reading, Drawings-typed row out of the gate.
-    expect(screen.getByLabelText(/type for scan.pdf/i)).toHaveValue("Drawings");
-    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
   });
 });

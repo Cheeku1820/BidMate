@@ -360,16 +360,21 @@ def test_a_rival_org_gets_404_never_403_or_500_on_every_project_scoped_route(
     assert response.json()["detail"]["code"] == "project_not_found"
 
 
-# Reads are already covered by test_snapshot.py's
-# test_unauthenticated_requests_get_401_on_every_read_route; this covers
-# the nine mutation routes plus presence, per correction 5's "Also assert
-# the same for unauthenticated callers (401) on every mutation."
-MUTATION_TABLE = [row for row in TENANCY_TABLE if row[0] != "GET"]
-MUTATION_IDS = [f"{method} {template}" for method, template, _, _, _ in MUTATION_TABLE]
-
-
-@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", MUTATION_TABLE, ids=MUTATION_IDS)
-def test_an_unauthenticated_caller_gets_401_on_every_mutation_route(
+# This used to run only over the mutation rows (`row[0] != "GET"`), on
+# the assumption that every GET in TENANCY_TABLE was also covered by
+# test_snapshot.py's test_unauthenticated_requests_get_401_on_every_read_
+# route -- a hardcoded four-path list written before this table existed.
+# A task-5 review caught the gap directly: that list never grew to
+# include the tile routes (`GET .../tiles/{z}/{x}/{y}.png`, `GET
+# .../thumb.png`), so their unauthenticated-401 behavior was asserted
+# nowhere. Rather than extend two places that are supposed to describe
+# the same set of routes, this now runs over the whole table -- GET rows
+# included -- the same way DOCUMENT_TENANCY_TABLE's single 401 test does
+# for its own rows. A future GET added to TENANCY_TABLE is covered by
+# construction; test_snapshot.py's list stays as a narrower, redundant
+# check on the four routes it already names.
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", TENANCY_TABLE, ids=TENANCY_IDS)
+def test_an_unauthenticated_caller_gets_401_on_every_project_scoped_route(
     client, project, sheet, item, method, path_template, path_fn, body_fn, headers_fn
 ):
     path = path_fn(project, sheet, item)

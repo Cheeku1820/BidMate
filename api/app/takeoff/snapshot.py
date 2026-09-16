@@ -94,6 +94,9 @@ def sheet_out(sheet: Sheet) -> SheetOut:
         unreadable_reason=sheet.unreadable_reason,
         ai_reading=sheet.ai_reading,
         kind=sheet.kind,
+        render_status=sheet.render_status,
+        render_error=sheet.render_error,
+        max_zoom=sheet.max_zoom,
     )
 
 

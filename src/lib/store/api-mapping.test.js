@@ -78,4 +78,17 @@ describe("mapSheet", () => {
     expect(mapSheet({ id: "x", number: "E1", title: "t", kind: "diagram" }).kind).toBe("diagram");
     expect(mapSheet({ id: "x", number: "E1", title: "t" }).kind).toBe("plan");
   });
+
+  test("carries the render fields, never render_key", () => {
+    const mapped = mapSheet({
+      id: "x", number: "E1", title: "t", render_status: "rendered", render_error: "", max_zoom: 3,
+    });
+    expect(mapped).toMatchObject({ renderStatus: "rendered", renderError: "", maxZoom: 3 });
+    expect(mapped.renderKey).toBeUndefined();
+  });
+
+  test("defaults the render fields when the wire omits them", () => {
+    const mapped = mapSheet({ id: "x", number: "E1", title: "t" });
+    expect(mapped).toMatchObject({ renderStatus: "pending", renderError: "", maxZoom: null });
+  });
 });

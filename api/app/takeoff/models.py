@@ -21,7 +21,7 @@ import app.identity.models  # noqa: E402, F401
 # one definition, enforced in both places. app.documents.schemas imports
 # nothing from app, so this direction adds no cycle.
 from app.documents.schemas import DOC_STATUSES
-from app.jobs.schemas import JOB_KINDS, JOB_STATUSES
+from app.jobs.schemas import JOB_KINDS, JOB_STATUSES, RENDER_STATUSES
 from app.scope.schemas import SCOPE_KINDS, SCOPE_STATUSES
 
 
@@ -128,6 +128,9 @@ class Project(Base):
 
 class Sheet(Base):
     __tablename__ = "sheets"
+    __table_args__ = (
+        CheckConstraint("render_status in ('" + "', '".join(RENDER_STATUSES) + "')", name="ck_sheets_render_status"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
@@ -171,6 +174,13 @@ class Sheet(Base):
     schedule_text: Mapped[str] = mapped_column(Text, default="", server_default="")
     region: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     legend: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+    # The rendered page behind the markers (B3). `render_status` is a sheet
+    # property on its own axis, like `kind` -- never a review label.
+    render_key: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    render_status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    render_error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    max_zoom: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Document(Base):

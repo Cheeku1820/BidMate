@@ -2,10 +2,14 @@
 (check constraints), queue.py, and the worker -- never retyped."""
 import os
 
-JOB_KINDS = ("read", "classify", "sheet")
+JOB_KINDS = ("read", "classify", "sheet", "render")
 JOB_STATUSES = ("queued", "running", "done", "failed")
 
-_DEFAULT_TIMEOUTS = {"read": 120, "classify": 300, "sheet": 180}
+# B3: the closed set for Sheet.render_status -- a sheet property on its
+# own axis (like `kind`), never one of the four review labels.
+RENDER_STATUSES = ("pending", "rendered", "failed")
+
+_DEFAULT_TIMEOUTS = {"read": 120, "classify": 300, "sheet": 180, "render": 300}
 
 
 def timeout_for(kind: str) -> int:

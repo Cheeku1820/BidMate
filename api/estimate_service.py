@@ -14,10 +14,8 @@ still works, using the deterministic classifier and regional pricing.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import re
 import tempfile
 import uuid
 
@@ -28,6 +26,7 @@ from fastapi.responses import JSONResponse
 from app.engine import documents as documents_mod
 from app.engine import estimate as estimate_mod
 from app.engine import llm
+from app.engine.sheet import reconcile_vision  # noqa: F401 -- the vision pass moved into sheet.finish; this file is deleted in a later task
 
 app = FastAPI(title="Takeoff estimate service")
 
@@ -117,67 +116,6 @@ def _totals(items: list[dict]) -> dict:
     }
 
 
-def _render_and_read(pdf_bytes: bytes, page: int, number: str) -> dict:
-    png = documents_mod.render_vision_png_bytes(pdf_bytes, page - 1)
-    return llm.read_sheet_image(png, number)
-
-
-_TAG_IN_NAME = re.compile(r"\btype\s+([A-Z]\d?)\b|\(([A-Z]{1,2}\d?)\)", re.I)
-
-
-def _tag_of(device_name: str) -> str | None:
-    m = _TAG_IN_NAME.search(device_name or "")
-    if not m:
-        return None
-    return (m.group(1) or m.group(2)).upper()
-
-
-def _reconcile_vision(sheets: list[dict], items: list[dict]) -> None:
-    """Feed the vision reading back into the counted takeoff: where Claude
-    identified the fixture behind a counted tag (e.g. it read "Type A
-    recessed luminaire" for the sheet's A tags), adopt that richer name and,
-    since the drawing itself confirmed the type, move the item from Needs
-    attention to Ready and clear its fixture-needs-confirmation warning.
-    The count and position stay exactly as the deterministic reader found
-    them -- vision resolves *what* it is, not *how many*."""
-    reading_by_sheet = {s["id"]: s.get("ai_reading") for s in sheets if s.get("ai_reading")}
-    for item in items:
-        reading = reading_by_sheet.get(item.get("sheet_id"))
-        if not reading:
-            continue
-        tag = (item.get("tag") or "").upper()
-        if not tag:
-            continue
-        for dev in reading.get("devices", []):
-            if _tag_of(dev.get("name", "")) == tag:
-                item["ai_confirmed"] = True  # the AI saw this device on the drawing
-                # Only let vision RENAME + resolve an item the counter was
-                # unsure about (a fixture awaiting its schedule). An item the
-                # deterministic classifier was already confident about keeps
-                # its name -- vision can misread a symbol, and it should not
-                # overwrite a good classification, only rescue an uncertain one.
-                if item.get("status") == "attention":
-                    item["name"] = dev["name"]
-                    item["status"] = "ready"
-                    item["warning"] = None
-                break
-
-
-async def _read_sheets_with_vision(sheets: list[dict], pdf_bytes_by_id: dict[str, bytes]) -> None:
-    if not llm.available():
-        return
-    targets = [s for s in sheets if not s.get("unreadable") and pdf_bytes_by_id.get(s.get("takeoff_id"))]
-    if not targets:
-        return
-    results = await asyncio.gather(
-        *[asyncio.to_thread(_render_and_read, pdf_bytes_by_id[s["takeoff_id"]], s["page"], s.get("number") or f"page {s['page']}") for s in targets],
-        return_exceptions=True,
-    )
-    for sheet, res in zip(targets, results):
-        if isinstance(res, dict) and res.get("devices"):
-            sheet["ai_reading"] = res
-
-
 @app.post("/estimate/project")
 async def estimate_project_endpoint(
     files: list[UploadFile] = File(...),
@@ -190,10 +128,10 @@ async def estimate_project_endpoint(
     its electrical-relevant text extracted as context so the classifier can
     read schedules that live outside the drawings. Each sheet keeps its own
     takeoff_id so several drawing files merge without their sheet
-    references colliding, and so the vision pass below can find the right
-    document's bytes for each sheet within this same request."""
+    references colliding. A sheet the vision pass read carries its
+    reading as `ai_reading`; that pass runs inside `sheet.finish`, per
+    sheet, so nothing here re-reads a document."""
     drawings: list[tuple[str, str, str]] = []  # (takeoff_id, temp_path, filename)
-    pdf_bytes_by_id: dict[str, bytes] = {}
     context_parts: list[str] = []
     try:
         for f, t in zip(files, types):
@@ -203,7 +141,6 @@ async def estimate_project_endpoint(
                 continue
             if t == "Drawings":
                 takeoff_id = uuid.uuid4().hex
-                pdf_bytes_by_id[takeoff_id] = data
                 fd, path = tempfile.mkstemp(suffix=".pdf")
                 with os.fdopen(fd, "wb") as tmp:
                     tmp.write(data)
@@ -243,13 +180,6 @@ async def estimate_project_endpoint(
                 merged_sheets.append({**sheet, "id": f"{takeoff_id}:{sheet['id']}", "takeoff_id": takeoff_id})
             for item in payload["items"]:
                 merged_items.append({**item, "sheet_id": f"{takeoff_id}:{item['sheet_id']}"})
-
-        # Vision pass: Claude reads each readable sheet's rendered image and
-        # reports the devices it sees, attached to the sheet as `ai_reading`.
-        # Purely additive enrichment -- run in parallel, and any failure just
-        # leaves a sheet without a reading rather than failing the takeoff.
-        await _read_sheets_with_vision(merged_sheets, pdf_bytes_by_id)
-        _reconcile_vision(merged_sheets, merged_items)
 
         return {
             **(meta or {"location": location, "labor_rate": 78.0, "material_factor": 1.0, "source": "deterministic", "location_note": "", "wiring_note": "", "unmatched_note": ""}),

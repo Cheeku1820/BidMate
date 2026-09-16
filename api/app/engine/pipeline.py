@@ -17,7 +17,7 @@ from .pricing import DEFAULT_LABOR_RATE
 
 
 def run(path: str, labor_rate: float = DEFAULT_LABOR_RATE) -> TakeoffResult:
-    sheets = documents.detect_sheets(path)
+    sheets = documents.read(path, "Drawings").sheets
     clusters = counting.count(path, sheets)
     classified = classification.classify(clusters, sheets)
     priced = pricing.price(classified, labor_rate)

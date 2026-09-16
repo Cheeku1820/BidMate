@@ -38,10 +38,16 @@ does not change anything downstream.
 
 from __future__ import annotations
 
+import logging
 import re
+from collections import defaultdict
 
+from . import llm, regions
 from .catalog import CATALOG, TAG_TO_CATALOG, is_fixture_type
-from .contracts import ClassifiedItem, DetectedSheet, DeviceCluster
+from .context import build_classifier_context
+from .contracts import Classification, ClassifiedItem, DetectedSheet, DeviceCluster
+
+logger = logging.getLogger(__name__)
 
 
 def _fixture_warning(tag: str, count: int, sheet_no: str) -> dict:
@@ -246,3 +252,64 @@ def _rename(cat, name: str):
     from dataclasses import replace
 
     return replace(cat, name=name)
+
+
+def classify_run(
+    clusters: list[DeviceCluster],
+    sheets: list[DetectedSheet],
+    schedule_text: str,
+    context: str,
+    estimator_notes: list[dict] | None,
+    location: str,
+) -> Classification:
+    """The one-per-run classification: every cluster in the set named, and
+    the pricing basis it will be priced at.
+
+    With a key present the model reads the schedules and prices each tag;
+    without one, or when the model call fails, the deterministic chain
+    above names the clusters and the regional table sets the rates. Which
+    path ran is recorded in `source`, and the fallback is disclosed in
+    `location_note` in the estimator's terms -- the exception class name
+    is a processing internal and stops at the log.
+
+    `wiring_note` and `unmatched_note` depend on which rows got an
+    assembly, which is only known once the rows are built, so they are
+    left empty here and filled by whoever folds the sheets up.
+    """
+    tag_counts: dict[str, int] = defaultdict(int)
+    for c in clusters:
+        tag_counts[c.tag] += c.count
+    tags = [{"tag": t, "count": n} for t, n in sorted(tag_counts.items(), key=lambda kv: -kv[1])]
+    full_context = build_classifier_context(schedule_text, context, estimator_notes)
+    labor_rate, material_factor, location_note = regions.lookup(location)
+    if llm.available():
+        try:
+            result = llm.estimate(tags, full_context, location)
+            return Classification(
+                specs_by_tag={i["tag"]: i for i in result["items"]},
+                labor_rate=float(result["location_labor_rate"]),
+                material_factor=float(result["material_factor"]),
+                source="llm",
+                location_note=result.get("location_note", location_note),
+            )
+        except Exception as exc:  # noqa: BLE001 -- any failure falls back; the takeoff must not break
+            logger.warning("automated pricing unavailable (%s); used regional table", type(exc).__name__)
+            location_note += "  Automated pricing wasn't available, so regional cost data was used."
+    items = classify(clusters, sheets)
+    return Classification(
+        specs_by_tag={},
+        labor_rate=labor_rate,
+        material_factor=material_factor,
+        source="deterministic",
+        location_note=location_note,
+        catalog_items={c.tag: it for c, it in zip(clusters, items)},
+    )
+
+
+def classify_cluster(cluster: DeviceCluster, sheets: list[DetectedSheet]) -> ClassifiedItem:
+    """The deterministic classification of one cluster. `classify` carries
+    no state from one cluster to the next -- only the legend, which is
+    the sheets' -- so a cluster classified alone gets the same answer it
+    gets in the full set, with its own count, placements and warning
+    text rather than another sheet's."""
+    return classify([cluster], sheets)[0]

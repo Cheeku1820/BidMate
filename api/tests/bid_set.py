@@ -43,3 +43,13 @@ RASTER_SETS = {
 
 def corpus_path(rel: str) -> str:
     return os.path.join(CORPUS, rel)
+
+
+def first_vector_set() -> str:
+    """The drawings PDF of the Unalaska set -- the one the corpus sheet
+    tests count placements on -- or a skip when the corpus is absent."""
+    import pytest
+
+    if not os.path.exists(BID):
+        pytest.skip("corpus set not present: Unalaska Bid")
+    return BID

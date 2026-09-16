@@ -173,3 +173,55 @@ class Proposal:
     field: str
     value: str
     summary: str
+
+
+@dataclass
+class ScopeStatement:
+    """Documents agent output: one statement about the electrical scope,
+    in the document's own words, with the verbatim passage it came from.
+    The quote is the evidence; a statement without a locatable quote is
+    not emitted."""
+
+    kind: str  # included | excluded | by_others | alternate
+    text: str
+    quote: str
+    page_index: int
+
+
+@dataclass
+class DocumentReading:
+    """Documents agent output for one file: what the read job stores."""
+
+    sheets: list[DetectedSheet]
+    page_count: int
+    context_text: str
+    scope: list[ScopeStatement] = field(default_factory=list)
+
+
+@dataclass
+class Classification:
+    """The one-per-run classification: tag -> spec, plus the pricing basis.
+    `specs_by_tag` is the model's answer (JSON-serialisable); `catalog_items`
+    is the deterministic classifier's, keyed the same way. Exactly one of
+    them is populated, decided by `source`."""
+
+    specs_by_tag: dict
+    labor_rate: float
+    material_factor: float
+    source: str  # llm | deterministic
+    location_note: str = ""
+    wiring_note: str = ""
+    unmatched_note: str = ""
+    catalog_items: dict | None = None  # tag -> ClassifiedItem
+
+
+@dataclass
+class SheetResult:
+    """One sheet, priced and evidenced. `assembly_applied` and `bare_names`
+    are what the project-level wiring and unmatched notes are built from;
+    a sheet reports its own and whoever runs the set folds them up."""
+
+    rows: list[dict]
+    ai_reading: dict | None = None
+    assembly_applied: bool = False
+    bare_names: set[str] = field(default_factory=set)

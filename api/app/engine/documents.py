@@ -20,7 +20,7 @@ from dataclasses import replace
 import pymupdf
 
 from . import sheet_kind, title_block
-from .contracts import DetectedSheet
+from .contracts import DetectedSheet, DocumentReading, LegendEntry
 from .legend import parse_legend
 from .page_frame import visual_words
 
@@ -120,8 +120,74 @@ def _scale(text: str) -> str:
     return m.group(0) if m else ""
 
 
+class EncryptedDocument(Exception):
+    """The file needs a password to open."""
+
+
+class UnreadableDocument(Exception):
+    """Not a PDF the parser can read, or zero pages."""
+
+
+def _open_checked(path: str) -> pymupdf.Document:
+    """Open a PDF or raise one of the two typed errors above. `read` and
+    `detect_sheets` both go through here so they agree on what an
+    unreadable file is."""
+    try:
+        doc = pymupdf.open(path)
+    except Exception as exc:  # noqa: BLE001 -- pymupdf raises several types for bad bytes
+        raise UnreadableDocument(type(exc).__name__) from exc
+    if doc.is_encrypted and doc.needs_pass:
+        raise EncryptedDocument()
+    if doc.page_count == 0:
+        raise UnreadableDocument("zero pages")
+    return doc
+
+
+def read(path: str, doc_type: str) -> DocumentReading:
+    """One file, read once. Drawings yield sheets; every other type
+    yields context text. Scope extraction (scope.extract) is wired in
+    the next task -- until then `scope` is empty."""
+    doc = _open_checked(path)
+    page_count = doc.page_count
+    doc.close()
+    if doc_type == "Drawings":
+        return DocumentReading(sheets=detect_sheets(path), page_count=page_count, context_text="")
+    with open(path, "rb") as fh:
+        text = extract_context(fh.read(), max_chars=12000)
+    return DocumentReading(sheets=[], page_count=page_count, context_text=text)
+
+
+def sheet_to_payload(s: DetectedSheet) -> dict:
+    """The dict `estimate.full_takeoff` emits per sheet."""
+    return {
+        "id": str(s.page_index),
+        "number": s.number,
+        "page": s.page_index + 1,
+        "width_pt": s.width_pt,
+        "height_pt": s.height_pt,
+        "unreadable": s.unreadable_reason or None,
+        "title": s.title,
+        "scale": s.scale,
+        "kind": s.kind,
+    }
+
+
+def sheet_from_row(page_index, number, title, scale, width_pt, height_pt, region, kind,
+                   schedule_text, legend, unreadable_reason) -> DetectedSheet:
+    """Rebuild the Documents agent's record from what the read job stored,
+    so classify and sheet jobs never re-open the file to get it."""
+    entries = [LegendEntry(**e) for e in (legend or [])]
+    return DetectedSheet(
+        page_index=page_index, number=number or "", title=title or "", discipline="Electrical",
+        scale=scale or "", width_pt=float(width_pt), height_pt=float(height_pt),
+        region=tuple(region) if region else (0.0, 0.0, float(width_pt), float(height_pt)),
+        kind=kind or "plan", schedule_text=schedule_text or "", legend=entries,
+        unreadable_reason=unreadable_reason or "",
+    )
+
+
 def detect_sheets(path: str) -> list[DetectedSheet]:
-    doc = pymupdf.open(path)
+    doc = _open_checked(path)
     sheets: list[DetectedSheet] = []
     for pno in range(doc.page_count):
         page = doc[pno]
@@ -308,8 +374,7 @@ def render_evidence_crop(
     ever discards a placement to keep zoom high.
 
     Returns None on any failure -- a missing crop must never fail the
-    takeoff, the same principle the vision pass in estimate_service.py
-    already follows.
+    takeoff, the same principle the vision pass in sheet.finish follows.
     """
     if not placements or page_width_pt <= 0 or page_height_pt <= 0:
         return None

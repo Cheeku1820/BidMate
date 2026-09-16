@@ -120,7 +120,7 @@ Marker rendering keeps three channels independent: **glyph** = item type, **ring
 
 ## The engine is five agents
 
-Documents, Counting, and Classification now run, behind the API: `api/app/engine/` holds them, `api/app/worker/` is what calls them, on every upload (`read`) and every **Start takeoff** (`classify` and `sheet`). Pricing today is only the coarse labor-rate/material-factor guess `classify_run` also returns — the assembly-expansion half (`engine/pricing.py`, `assemblies.py`) is not wired into that path. Conversation is designed but unbuilt: `engine/conversation.py` routes an utterance to a typed proposal, and nothing in `src/` calls it or renders a panel. Full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
+Documents, Counting, Classification, and Pricing now run, behind the API: `api/app/engine/` holds them, `api/app/worker/` is what calls them, on every upload (`read`) and every **Start takeoff** (`classify` and `sheet`). Pricing's basis — labor rate and material factor — comes from the one classification call with a key, or the regional table without one (`classify_run`). Per-row assembly expansion (box, plate, ring, wire, conduit, per `engine/assemblies.py`) is wired into both classification paths through `engine/rows.py` (`resolve_assembly_parent` for the model-classified path, `pricing.price_item` for the deterministic one), called from the sheet job — not just the CLI. Conversation is designed but unbuilt: `engine/conversation.py` routes an utterance to a typed proposal, and nothing in `src/` calls it or renders a panel. Full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
 
 | Agent | Nature | Produces |
 |---|---|---|

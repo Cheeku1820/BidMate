@@ -3,7 +3,6 @@ frame -- the same frame the engine's placements are in (page_frame.py),
 so a stored marker maps to a tile pixel exactly."""
 
 import math
-import os
 
 import pymupdf
 import pytest

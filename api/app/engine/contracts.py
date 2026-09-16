@@ -230,3 +230,27 @@ class SheetResult:
     ai_reading: dict | None = None
     assembly_applied: bool = False
     bare_names: set[str] = field(default_factory=set)
+
+
+@dataclass
+class Level:
+    """One zoom level of a sheet's tile pyramid: cols x rows tiles, each
+    up to TILE px, at `scale` (page points -> pixels)."""
+
+    z: int
+    cols: int
+    rows: int
+    scale: float  # page points -> pixels at this level
+
+
+@dataclass
+class TileSet:
+    """tiles.render_sheet's output: what a sheet's tile pyramid looks like
+    on disk, relative to the out_dir it was written into. No storage
+    reference here -- the worker uploads what this names."""
+
+    levels: list[Level]
+    thumb: str
+    files: list[str]
+    width_pt: float
+    height_pt: float

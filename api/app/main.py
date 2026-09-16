@@ -10,6 +10,7 @@ from app.collab.router import router as collab_router
 from app.db import get_db
 from app.documents.router import router as documents_router
 from app.errors import DomainError, domain_error_handler
+from app.jobs.router import router as processing_router
 from app.observability import RequestIdMiddleware, configure_logging, request_id_var
 from app.takeoff.actions import CrossOrgActionError
 from app.takeoff.mutations import router as takeoff_mutations_router
@@ -97,6 +98,7 @@ app.include_router(takeoff_router)
 app.include_router(takeoff_mutations_router)
 app.include_router(pricing_router)
 app.include_router(documents_router)
+app.include_router(processing_router)
 app.include_router(collab_router)
 
 

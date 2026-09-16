@@ -14,7 +14,7 @@ import uuid
 from typing import BinaryIO
 
 from fastapi import UploadFile
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 
@@ -22,8 +22,9 @@ from app.documents.blobstore import BlobNotFound, BlobStore
 from app.documents.schemas import DOC_TYPES
 from app.errors import DomainError
 from app.identity.models import User
-from app.takeoff import actions
-from app.takeoff.models import Document, Project
+from app.jobs import queue
+from app.takeoff import actions, merge
+from app.takeoff.models import Document, Job, Project, Sheet
 from app.takeoff.router import load_project, not_found
 
 _CHUNK = 1024 * 1024
@@ -121,6 +122,10 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     # storage failure never leaves an orphan blob or a half-written
     # document.
     store.put(document.storage_key, upload.file, "application/pdf", size)
+    # The read is queued in the same transaction as the row, so a
+    # document never exists without the job that will read it. The
+    # audit row below therefore records the document as `processing`.
+    queue.enqueue_read(db, document)
     actions.commit(
         db, actor=actor, project_id=project.id, kind="document_add",
         label=f"Uploaded {filename} as {doc_type}", before={}, after=_row_fields(document),
@@ -152,6 +157,10 @@ def set_doc_type(db: DbSession, *, actor: User, document: Document, doc_type: st
         db, actor=actor, project_id=document.project_id, kind="document_type",
         label=f"Changed {document.filename} to {doc_type}", before=before, after=_row_fields(document),
     )
+    # A retyped file is read again: Other -> Specifications now
+    # contributes context, Drawings -> Other stops contributing sheets.
+    # Idempotent while a read is already in flight.
+    queue.enqueue_read(db, document)
     return document
 
 
@@ -172,6 +181,14 @@ def delete_document(db: DbSession, *, actor: User, document: Document) -> str:
     row is durably gone before storage is ever touched."""
     before = _row_fields(document)
     project_id, filename, key = document.project_id, document.filename, document.storage_key
+    # A queued read of a document that is about to be gone would only
+    # fail; a running one finds no document to write to and its result
+    # is dropped by the worker (which re-reads the job row before
+    # applying an outcome). Its sheets go under the same rule a re-read
+    # applies to a vanished page -- `merge.drop_sheets` keeps any sheet
+    # an approved item lives on. Scope statements cascade from the row.
+    db.execute(delete(Job).where(Job.document_id == document.id))
+    merge.drop_sheets(db, db.scalars(select(Sheet.id).where(Sheet.takeoff_id == str(document.id))).all())
     db.delete(document)
     db.flush()
     actions.commit(

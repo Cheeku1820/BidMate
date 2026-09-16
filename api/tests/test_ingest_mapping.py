@@ -526,7 +526,7 @@ def test_the_basis_note_carries_both_engine_notes():
 
 def test_a_payload_with_neither_note_yields_an_empty_basis_note():
     """A payload that repriced nothing has always yielded "", and that is
-    load-bearing: ingest_service falls back to the project's existing note
+    load-bearing: merge_payload falls back to the project's existing note
     rather than clearing it, and clearing flips every labor and material
     row to Missing information."""
     from app.takeoff.ingest import basis_note

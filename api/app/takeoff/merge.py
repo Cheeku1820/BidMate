@@ -1,9 +1,9 @@
 """merge.py -- the one write path for engine output, per sheet.
 
-Deliberately not ingest_service. Ingest replaces a takeoff wholesale and
-refuses when approvals exist; this one preserves them and proceeds. Two
-different intentions about what may be destroyed, so two entry points
-rather than one with a flag deciding which.
+There is no wholesale replace path any more (the old one refused when
+approvals existed and otherwise discarded everything); a run merges,
+preserving a person's judgment and proceeding. A clean slate is a
+deliberate act: delete the items.
 
 The merge key is (sheet number, source_tag). Counting is deterministic
 geometry -- the same drawing yields the same cluster tag on the same
@@ -57,6 +57,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.identity.models import User
+from app.jobs import copy
 from app.takeoff import actions, undo
 from app.takeoff.evidence_images import upsert_evidence_image
 from app.takeoff.ingest import basis_note, map_payload
@@ -419,6 +420,41 @@ def merge_sheet(db, *, project, sheet, rows, ai_reading) -> MergeCounts:
     sheet.ai_reading = ai_reading
     db.flush()
     return counts
+
+
+def drop_sheets(db: DbSession, sheet_ids) -> None:
+    """Sheets whose page is gone -- a re-read that reports fewer pages,
+    or the document itself removed. The same rule as the leftover sweep
+    in `merge_sheet` ("an un-approved leftover is gone; an approved one
+    stays"): nothing here discards a person's judgment.
+
+    Un-approved items on the sheet are deleted, warnings explicitly (to
+    match this module's convention; ItemEvidenceImage is ON DELETE
+    CASCADE and so is not repeated). If an approved item is among them,
+    the sheet row stays too, so that item keeps a sheet to belong to,
+    and is marked `PAGE_GONE` so the review queue explains why nothing
+    can update it. Only a sheet left holding nothing is deleted.
+
+    Lives here rather than in the worker because the API calls it too
+    (`documents.service.delete_document`) and the API may not import
+    `app.worker` -- one implementation, two callers."""
+    ids = list(sheet_ids)
+    if not ids:
+        return
+    for sheet in db.scalars(select(Sheet).where(Sheet.id.in_(ids))):
+        any_approved = False
+        for item in db.scalars(select(Item).where(Item.sheet_id == sheet.id)):
+            if item.status is ReviewStatus.APPROVED:
+                any_approved = True
+                continue
+            db.execute(delete(Warning).where(Warning.item_id == item.id))
+            db.delete(item)
+        if any_approved:
+            sheet.unreadable_reason = copy.PAGE_GONE
+        else:
+            db.execute(delete(Warning).where(Warning.sheet_id == sheet.id))
+            db.delete(sheet)
+    db.flush()
 
 
 def merge_payload(db, *, actor, project, payload) -> dict:

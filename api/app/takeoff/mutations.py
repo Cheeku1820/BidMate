@@ -33,16 +33,14 @@ from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import bulk, review
 from app.takeoff import notes as notes_service
-from app.takeoff import reprocess as reprocess_module
 from app.takeoff import scale as scale_module
 from app.takeoff import snapshot as snapshot_module
 from app.takeoff import undo as undo_module
-from app.takeoff.ingest_service import ingest_takeoff
 from app.takeoff.models import ItemEvidenceImage, Note, Project
 from app.takeoff.router import load_item, load_project, load_sheet, not_found
 from app.takeoff.schemas import (
-    BulkApproveOut, ItemMutationOut, NoteCreateIn, NoteOut, NoteUpdateIn, ReprocessIn, ReprocessOut,
-    ScaleMutationOut, SkippedItemOut, TakeoffIngestIn, TakeoffIngestOut, UndoRedoOut,
+    BulkApproveOut, ItemMutationOut, NoteCreateIn, NoteOut, NoteUpdateIn,
+    ScaleMutationOut, SkippedItemOut, UndoRedoOut,
 )
 
 router = APIRouter(prefix="/api", tags=["takeoff-mutations"])
@@ -338,40 +336,6 @@ def set_scale(
     db.commit()
     version = snapshot_module.version(db, project_id)
     return ScaleMutationOut(label=action.label, snapshot=snapshot_module.build(db, user, project_id, version))
-
-
-@router.post("/projects/{project_id}/takeoff", response_model=TakeoffIngestOut)
-def post_takeoff(
-    project_id: uuid.UUID,
-    payload: TakeoffIngestIn,
-    db: DbSession = Depends(get_db),
-    user: User = Depends(current_user),
-) -> TakeoffIngestOut:
-    project = load_project(project_id, db, user)
-    result = ingest_takeoff(
-        db, actor=user, project=project,
-        payload=payload.payload, confirm_replace=payload.confirm_replace,
-    )
-    db.commit()
-    return TakeoffIngestOut(**result)
-
-
-@router.post("/projects/{project_id}/reprocess", response_model=ReprocessOut)
-def post_reprocess(
-    project_id: uuid.UUID,
-    payload: ReprocessIn,
-    db: DbSession = Depends(get_db),
-    user: User = Depends(current_user),
-) -> ReprocessOut:
-    project = load_project(project_id, db, user)
-    result = reprocess_module.reprocess_takeoff(db, actor=user, project=project, payload=payload.payload)
-    # Only the notes that actually fed this run are stamped applied.
-    # Marking a reference-only note as applied would claim it changed
-    # something it was never given to the engine to change.
-    applied = [n for n in notes_service.list_notes(db, project.id) if n.usage == "context"]
-    notes_service.mark_applied(db, applied)
-    db.commit()
-    return ReprocessOut(**result)
 
 
 @router.post("/projects/{project_id}/undo", response_model=UndoRedoOut)

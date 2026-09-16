@@ -38,7 +38,7 @@ def test_upload_stores_bytes_and_a_row(client, signed_in_user, project, db, stor
     r = _upload(client, project.id)
     assert r.status_code == 201, r.text
     body = r.json()
-    assert body["filename"] == "E-set.pdf" and body["doc_type"] == "Drawings" and body["status"] == "uploaded"
+    assert body["filename"] == "E-set.pdf" and body["doc_type"] == "Drawings" and body["status"] == "processing"
     assert body["size_bytes"] == len(PDF)
     # The hash is stored and is what the duplicate rule keys on, but it
     # is deliberately not on the wire -- spec §7 keeps "hash" out of

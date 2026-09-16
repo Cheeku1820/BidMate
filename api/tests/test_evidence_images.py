@@ -1,6 +1,6 @@
-"""upsert_evidence_image is the one function both first-time ingest and a
-reprocess re-run call to keep an item's evidence image in sync with what
-the engine most recently produced for it."""
+"""upsert_evidence_image is the one function merge.py calls, for an
+inserted item and a matched one alike, to keep an item's evidence image
+in sync with what the engine most recently produced for it."""
 import uuid
 
 from app.takeoff.evidence_images import upsert_evidence_image

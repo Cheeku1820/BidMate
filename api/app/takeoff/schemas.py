@@ -343,34 +343,6 @@ class UndoRedoOut(BaseModel):
     snapshot: SnapshotOut | None = None
 
 
-class TakeoffIngestIn(BaseModel):
-    """The engine's payload, plus the estimator's explicit consent to
-    replace approved work (see ingest_service for when that is required)."""
-
-    payload: dict
-    confirm_replace: bool = False
-
-
-class TakeoffIngestOut(BaseModel):
-    sheets: int
-    items: int
-
-
-class ReprocessIn(BaseModel):
-    """The engine's payload from a re-run. Unlike TakeoffIngestIn, there
-    is no `confirm_replace` -- this endpoint never replaces wholesale, so
-    there is nothing to consent to."""
-
-    payload: dict
-
-
-class ReprocessOut(BaseModel):
-    reclassified: int
-    preserved: int
-    added: int
-    removed: int
-
-
 NOTE_SCOPES = ("company", "project", "sheet", "item")
 NOTE_CATEGORIES = (
     "existing_condition", "exclusion", "customer_instruction",

@@ -1,8 +1,8 @@
-"""upsert_evidence_image -- the one function both first-time ingest
-(ingest_service.py) and a reprocess re-run (reprocess.py) call to keep an
-item's evidence image in sync with what the engine most recently produced
-for it. Split out rather than living in either caller: both need the
-exact same replace-or-clear behavior, and ingest.py's mapping stays a
+"""upsert_evidence_image -- the one function merge.py calls, for an
+inserted item and a matched one alike, to keep an item's evidence image
+in sync with what the engine most recently produced for it. Split out
+rather than living in the caller: both paths need the exact same
+replace-or-clear behavior, and ingest.py's mapping stays a
 pure function (its own docstring's stated contract) by not touching the
 database itself.
 """

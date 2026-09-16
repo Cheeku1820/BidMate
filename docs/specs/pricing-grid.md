@@ -35,7 +35,12 @@ workspace already shows, and adds a pinned totals row to each.
   in the top bar and the five-second undo toast, both through the
   mechanisms `useReviewStore` already has.
 - Row-level optimistic update from the PATCH response instead of a
-  full-table refetch.
+  full-table refetch. The PATCH routes start returning the resolved row.
+- **Clearing an entry.** Emptying a cell the estimator filled in removes
+  that override, and the row falls back to the next source — company
+  standard, estimated basis, or *Missing information* if there is
+  nothing else. No retyping the company figure by hand, and "I don't
+  want anything here" is a state the row can hold.
 
 **Deliberately out of scope**
 
@@ -97,6 +102,8 @@ descriptor:
     value: (row) => row.rate, // what the editor opens with
     options: [...],           // select only: [{ value, label }]
     disabled: (row) => bool,  // optional: this cell is read-only on this row
+    hasEntry: (row) => bool,  // the estimator set this; clearing is allowed
+    minMessage: "Rate can't be negative",
   },
   header: true,               // optional: <th scope="row"> instead of <td>
 }
@@ -166,10 +173,37 @@ input with `aria-describedby`):
   "Price can't be negative" / "Adjustment can't be below −100%" (the
   column supplies the copy through `edit.minMessage`)
 
-Clearing a number cell to empty and leaving it is **not** a commit —
-today's rule ("an estimator clearing the field is not a value to save")
-carries over, because the API has no "unset this override" operation
-and inventing one is out of scope.
+Emptying a cell is a commit — see "Clearing an entry" below. It is
+never a validation error.
+
+### Clearing an entry
+
+An estimator who typed `0.75` into Hours has made an override; the row
+says *Estimator entered* and the company figure is ignored. Going back
+must not require typing the company figure in again — and if there is
+no company figure, "nothing here" has to be a state the row can hold.
+
+Three ways to clear, all the same commit:
+
+- **Empty the editor and leave it** (Backspace the value out, then
+  Enter, Tab, or click away).
+- **Delete or Backspace on an active cell** that is not being edited —
+  the spreadsheet gesture.
+- **The Clear button.** When the active cell holds an estimator entry
+  (the row's source label for that column is *Estimator entered*,
+  *Project price*, or *Allowance*), a small `×` button renders at the
+  cell's right edge, `aria-label="Clear entry"`. It is visible whenever
+  the cell is active, so it is reachable by keyboard and never a
+  hover-only control. Cells without an override have no button.
+
+The grid calls `onCommit(row, key, null)`. The screen sends the clear
+(below), and the row comes back resolved to whatever is next in the
+chain, with its source tag — *Company standard*, *Estimated basis*, or
+`—` and *Missing information*. The toast names where it landed: "Cleared
+rate on 20A duplex receptacle — now Company crew rate", or "— nothing
+else is set" when the row is now *Missing information*.
+
+Clearing a cell that has no override is a no-op: nothing is sent.
 
 ### Accessibility
 
@@ -204,11 +238,26 @@ fields are independent on the wire (`LaborLineUpdateIn` already takes
 each one nullable), so a reason typed before the percent, or after, is
 never lost.
 
-**Backend change.** `LaborRowOut` gains `adjustment_percent:
-Decimal | None` and `adjustment_reason: str` (both already on the
-`ProjectLaborLine` row `pricing.py` resolves from); `mapLaborRow` carries
-them as `adjustmentPercent` / `adjustmentReason`. No new endpoint, no
-migration.
+**Clearing** sends the same PATCH with the field explicitly `null`
+(`{ "hoursOverride": null }`). `patch_labor` already applies exactly the
+fields the body sets, the columns are nullable, and
+`_labor_override_has_any_field` already decides the row's status from
+what is left — so an explicit null clears today. It is untested today;
+it gets a test. Clearing the adjustment reason sends `""`, which the
+route already normalises.
+
+**Backend changes.**
+
+- `LaborRowOut` gains `adjustment_percent: Decimal | None` and
+  `adjustment_reason: str` (both already on the `ProjectLaborLine` row
+  `pricing.py` resolves from); `mapLaborRow` carries them as
+  `adjustmentPercent` / `adjustmentReason`.
+- `PATCH /api/items/{id}/labor` returns the resolved `LaborRowOut` for
+  that item instead of `{ itemId }`. The per-item resolution in
+  `get_labor`'s loop moves into a `labor_row(item, project, db, user)`
+  helper the list route and the PATCH route both call, so there is one
+  place a labor row is built. The action label and undo are unchanged.
+- No migration.
 
 **Footer.** Sums Adj. hours and Labor cost across rows that have both.
 Rows whose status is *Missing information* have neither, so they cannot
@@ -258,6 +307,30 @@ goes when the reason commits. Escape in that Reason editor reverts Basis
 to *Project price* and sends nothing. Clearing an existing allowance's
 reason to empty is refused the same way.
 
+**Clearing** the Unit price removes the whole override — price, basis,
+and reason together — because `ProjectMaterialPrice` has no nullable
+price; an override without a price is not a state the table can hold.
+The row falls back to *Company price*, *Regional baseline*, or `—` with
+*Missing information*. Basis and Reason cannot be cleared on their own:
+Basis has two real options and no empty one, and an empty Reason on an
+allowance is the refusal described above. Delete on the Basis or Reason
+cell does nothing; only the price cell shows the Clear button.
+
+**Backend changes.**
+
+- New `DELETE /api/items/{id}/material-price` → the resolved
+  `MaterialRowOut` for the item (not `204`: the screen needs the
+  fallen-back row to render and to word the toast). Deletes the
+  `ProjectMaterialPrice` row, records it through `actions.commit()` as
+  `material_price_edit` with the row's snapshot as `before` and `{}` as
+  `after` — `undo_apply._apply_sparse_pricing_row` already treats an
+  empty state as "this row should not exist", so undo and redo of a
+  clear work with no undo-side change. `404` if there is no override to
+  clear. Label: "Cleared material price for {item.name}".
+- `PATCH /api/items/{id}/material-price` returns the resolved
+  `MaterialRowOut` instead of `{ itemId }`, through a `material_row()`
+  helper shared with the list route, as for labor.
+
 **Footer.** Sums Line total across rows with a price; the same "N rows
 not yet priced are not in this total" caption.
 
@@ -270,9 +343,9 @@ not yet priced are not in this total" caption.
    locally derivable figure (line total), so the footer moves at once.
 3. The screen sends the PATCH through `runMutation` (below).
 4. On success, the screen replaces that one row with the mapped response
-   — the endpoints already return the full recomputed row, including the
-   resolved rate, adjusted hours, cost, status, and source labels — and
-   shows the toast.
+   — the PATCH and DELETE routes return the full recomputed row,
+   including the resolved rate, adjusted hours, cost, status, and source
+   labels — and shows the toast.
 5. On failure, the screen restores the row's pre-edit values and shows
    the existing `load-error` banner with the server's message or "That
    change couldn't be saved. Try again."
@@ -299,14 +372,16 @@ Both screens then:
 - call `showToast(label)` after each successful commit, in the
   estimator's words: "Set rate to $62.00/hr on 20A duplex receptacle",
   "Set adjustment to +25% on High bay fixture", "Marked LED troffer as
-  allowance", "Set price to $12.50 on 20A duplex receptacle";
+  allowance", "Set price to $12.50 on 20A duplex receptacle", "Cleared
+  hours on High bay fixture — now Company standard";
 - render the same toast markup screen G renders, with its Undo button
   calling the context's `undo()` and then the screen's `load()`, since
   the reversal lands in the action log and the polled snapshot but not
   in this screen's own rows.
 
 `labor_edit` and `material_price_edit` are already in
-`undo.REVERSIBLE`; nothing changes server-side for undo.
+`undo.REVERSIBLE`, and a clear is recorded under the same kinds; nothing
+changes server-side for undo.
 
 ### Concurrency
 
@@ -334,6 +409,8 @@ All in `styles.css`, tokens only:
   var(--surface)`, top border in `--line-2`, bold totals.
 - `.grid td.is-pending` — the held-locally allowance state: a dashed
   outline in `--ink-3`, consistent with "unverified is dashed."
+- `.grid .grid-clear` — the `×` Clear button, 24px square inside the
+  active cell's right edge, icon in `--ink-2`, the standard focus ring.
 
 No colour is introduced for any of this. Status is the `Pill`; nothing
 else on the row is coloured.
@@ -357,6 +434,10 @@ suite):
 - `edit.disabled(row)` makes a cell read-only for that row only
 - invalid number input keeps the editor open, shows the column's message,
   and does not call `onCommit`
+- emptying the editor and leaving, Delete/Backspace on an active cell,
+  and the Clear button each call `onCommit(row, key, null)` when the
+  column's `edit.hasEntry(row)` is true, and nothing when it is false;
+  the Clear button renders only on an active cell with an entry
 - markup: `role="grid"`, exactly one `tabindex="0"` cell, `aria-selected`
   on it, editor `aria-label` is "Column, Item name"
 - focus moves synchronously on commit, before any promise resolves
@@ -367,6 +448,9 @@ suite):
   `adjustmentPercent` / `adjustmentReason` as separate PATCHes
 - a commit patches the one row from the response without refetching the
   list
+- clearing hours sends `{ hoursOverride: null }`; the row re-renders
+  from the response with the fallen-back source tag; the toast names
+  the new source, or says nothing else is set
 - footer sums only rows with both figures and captions the excluded
   count; no caption when every row is priced
 - the top bar shows `Saving…` during a commit and `Saved` after
@@ -381,6 +465,9 @@ suite):
   to Reason, opens the editor, shows the message; committing a reason
   then sends `source: "allowance"`; Escape reverts Basis
 - line total is `quantity × unitPrice` and `—` when unpriced
+- clearing the price calls `DELETE`, the row re-renders with the
+  fallen-back tag and empty basis/reason; Delete on Basis or Reason
+  sends nothing
 - footer and toast, as for labor
 
 **Backend** (`test_pricing_endpoints.py`, existing suite):
@@ -388,6 +475,16 @@ suite):
 - `GET /api/projects/{id}/labor` returns `adjustment_percent` and
   `adjustment_reason` for a row that has them, `null` / `""` for one
   that doesn't
+- `PATCH /labor` and `PATCH /material-price` return the resolved row,
+  equal to the matching row of the list route after the write
+- `PATCH /labor` with `{ "hours_override": null }` on a row with an
+  override clears it: the row resolves to the company standard when one
+  exists and to *Missing information* when none does; the action's
+  `after` snapshot holds `null`; undo restores the value
+- `DELETE /material-price` removes the override, returns the fallen-back
+  row, records `material_price_edit` with `after = {}`, `404` when there
+  is nothing to clear; undo restores the row with its price, source,
+  and reason
 
 **Removed:** the tests that assert the checkbox and the stacked reason
 field, and any that assert a refetch after save.
@@ -396,11 +493,13 @@ field, and any that assert a refetch after save.
 
 Named so the next person does not read absence as oversight:
 
-- **Unsetting an override.** The grid cannot clear an estimator-entered
-  hours or rate back to the company or baseline tier, because the API
-  has no delete for a `ProjectLaborLine` field. Needs an endpoint
-  decision.
-- **Crew mix and notes** on labor rows.
+- **Crew mix and notes** on labor rows. Crew mix is stored per item
+  today, but the intended home is a **project default crew mix** in
+  project settings — one crew for the whole job, a new tier in the rate
+  chain between a per-item entry and the estimated basis, since most
+  jobs run one crew and a per-item count is the exception. That is a
+  small backend addition (three counts on `Project`, one step in
+  `resolve_rate`) and its own slice. Notes stay per-item and unbuilt.
 - **Range selection, fill-down, paste**, the next natural step toward a
   spreadsheet and the one that makes a 400-row hospital set tolerable.
 - **Sort and status filter chips** on these two screens.

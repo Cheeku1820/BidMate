@@ -95,6 +95,27 @@ describe("MaterialPricingWorkspace", () => {
     expect(review.showToast).toHaveBeenCalledWith("Set price to $15.50 on 20A duplex receptacle");
   });
 
+  test("editing only the price of an existing allowance keeps it an allowance with its reason", async () => {
+    // Guards the one line in commit() that carries row.source and
+    // row.reason through a price edit -- without it a price change
+    // would quietly turn an allowance back into a project price.
+    const allowanceRow = { ...projectRow, source: "allowance", sourceLabel: "Allowance", reason: "No vendor quote yet" };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [allowanceRow] }),
+      setMaterialPrice: vi.fn().mockResolvedValue({ ...allowanceRow, unitPrice: 20 }),
+    };
+    renderMaterial({ store });
+    await loaded();
+    // Unit price is the first editable cell, so it is already active on mount.
+    const price = cellFor("20A duplex receptacle", "Unit price");
+    fireEvent.keyDown(price, { key: "2" });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "20" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await waitFor(() =>
+      expect(store.setMaterialPrice).toHaveBeenCalledWith("i1", { priceOverride: 20, source: "allowance", reason: "No vendor quote yet" }),
+    );
+  });
+
   test("Basis becomes a select once an entry exists; choosing Allowance with a reason sends the trio", async () => {
     const allowanceRow = { ...projectRow, source: "allowance", sourceLabel: "Allowance", reason: "No vendor quote yet" };
     const store = {

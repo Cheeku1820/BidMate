@@ -1,8 +1,12 @@
 """conversation_messages
 
-Revision ID: 0022
-Revises: 0021
+Revision ID: 0023
+Revises: 0022
 Create Date: 2026-09-16 00:00:00.000000
+
+Numbered 0023: 0022 is sheet_render, which landed first on main; this
+migration was written as 0022 on its own branch and renumbered at
+integration so the chain stays linear.
 
 One row per turn of a project's conversation thread
 (docs/specs/conversation-panel.md). `role` is constrained to the
@@ -16,8 +20,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
-revision: str = '0022'
-down_revision: Union[str, None] = '0021'
+revision: str = '0023'
+down_revision: Union[str, None] = '0022'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

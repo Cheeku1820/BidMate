@@ -130,7 +130,7 @@ It reuses the API's existing read paths rather than re-querying: `snapshot.build
 
 ### Schema
 
-Migration `0022_conversation_messages`:
+Migration `0023_conversation_messages` (written as 0022; renumbered at integration behind `0022_sheet_render`):
 
 ```
 conversation_messages

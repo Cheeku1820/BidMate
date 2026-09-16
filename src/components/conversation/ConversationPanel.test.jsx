@@ -81,6 +81,46 @@ describe("ConversationPanel", () => {
     await waitFor(() => expect(box.disabled).toBe(false));
   });
 
+  it("resets pending, draft, and unavailable when the project changes mid-stream", async () => {
+    const store = {
+      listConversation: vi.fn().mockResolvedValue([]),
+      sendMessage: vi.fn((_id, _body, onDelta, signal) => new Promise((_resolve, reject) => {
+        onDelta("Partial");
+        signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      })),
+    };
+    const onToggle = vi.fn();
+    const { rerender } = render(
+      <ConversationScreenProvider panelOpen={true} setPanelOpen={onToggle}>
+        <ConversationPanel store={store} projectId="p1" pathname="/projects/p1/export" open={true} onToggle={onToggle} />
+      </ConversationScreenProvider>,
+    );
+    const box = await screen.findByLabelText("Ask a question");
+    await userEvent.type(box, "What's missing?{Enter}");
+    await screen.findByText("Partial");
+    expect(box.disabled).toBe(true);
+
+    rerender(
+      <ConversationScreenProvider panelOpen={true} setPanelOpen={onToggle}>
+        <ConversationPanel store={store} projectId="p2" pathname="/projects/p2/export" open={true} onToggle={onToggle} />
+      </ConversationScreenProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Ask a question").disabled).toBe(false));
+    expect(screen.queryByText("Partial")).toBeNull();
+    expect(screen.getByLabelText("Ask a question").value).toBe("");
+  });
+
+  it("disables the composer while the conversation is loading", async () => {
+    const store = {
+      listConversation: vi.fn(() => new Promise(() => {})),
+      sendMessage: vi.fn(),
+    };
+    renderPanel({ store });
+    const box = await screen.findByLabelText("Ask a question");
+    expect(box.disabled).toBe(true);
+  });
+
   it("keeps a newline on Shift+Enter without sending", async () => {
     const { store } = renderPanel();
     const box = await screen.findByLabelText("Ask a question");

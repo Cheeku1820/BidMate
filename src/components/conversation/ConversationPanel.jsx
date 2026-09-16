@@ -47,11 +47,17 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
   const [draft, setDraft] = useState("");
   const [unavailable, setUnavailable] = useState(null);
   const lastQuestion = useRef(null);
+  const lastLocalId = useRef(null);
   const abort = useRef(null);
 
   useEffect(() => {
     let alive = true;
     setMessages(null);
+    setPending(null);
+    setDraft("");
+    setUnavailable(null);
+    lastQuestion.current = null;
+    lastLocalId.current = null;
     store.listConversation(projectId)
       .then((rows) => { if (alive) setMessages(rows); })
       .catch(() => { if (alive) setMessages([]); });
@@ -63,10 +69,12 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
 
   const send = useCallback(async (text) => {
     const question = text.trim();
-    if (!question || pending?.state === "streaming") return;
+    if (!question || messages === null || pending?.state === "streaming") return;
     const screen = toWire(name, selection, view);
     lastQuestion.current = { text: question, screen };
-    setMessages((m) => [...(m ?? []), { id: `local-${Date.now()}`, role: "estimator", text: question, screen }]);
+    const localId = `local-${Date.now()}`;
+    lastLocalId.current = localId;
+    setMessages((m) => [...(m ?? []), { id: localId, role: "estimator", text: question, screen }]);
     setPending({ state: "streaming", text: "" });
     setDraft("");
     abort.current = new AbortController();
@@ -87,12 +95,16 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
       }
       setPending((p) => ({ state: "error", text: p?.text ?? "", message: err?.message ?? "Answer interrupted — ask again", retry: err?.code === "busy" }));
     }
-  }, [store, projectId, name, selection, view, pending]);
+  }, [store, projectId, name, selection, view, pending, messages]);
 
   const retry = () => {
     const last = lastQuestion.current;
     if (!last) return;
-    setMessages((m) => (m ?? []).slice(0, -1));
+    setMessages((m) => {
+      const rows = m ?? [];
+      const lastRow = rows[rows.length - 1];
+      return lastRow?.id === lastLocalId.current ? rows.slice(0, -1) : rows;
+    });
     send(last.text);
   };
 
@@ -114,6 +126,7 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
   }
 
   const streaming = pending?.state === "streaming";
+  const loading = messages === null;
   const examples = messages && messages.length === 0 && !pending ? exampleQuestions(name) : [];
 
   return (
@@ -153,9 +166,9 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
           onKeyDown={onKeyDown}
           rows={2}
           maxLength={4000}
-          disabled={streaming || Boolean(unavailable)}
+          disabled={streaming || loading || Boolean(unavailable)}
         />
-        <button type="submit" className="btn btn--primary" disabled={streaming || Boolean(unavailable) || !draft.trim()} aria-label="Send">
+        <button type="submit" className="btn btn--primary" disabled={streaming || loading || Boolean(unavailable) || !draft.trim()} aria-label="Send">
           <Send size={16} />
         </button>
       </form>

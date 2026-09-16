@@ -1688,6 +1688,91 @@ button {
 .takeoff-table th, .takeoff-table td { padding: 7px 10px; }
 .takeoff-table thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
 .takeoff-table tbody tr.is-selected { background: var(--blue-tint); }
+
+/* The pricing grid (docs/specs/pricing-grid.md, "Styling"). Extends the
+   takeoff table: sticky header, same cell padding. Three things are
+   added and none of them is a colour for a state -- the editable mark,
+   the active ring, and the pinned footer. Status stays the Pill. */
+.grid td, .grid th { position: relative; }
+.grid td[data-editable], .grid th[data-editable] {
+  box-shadow: inset -2px 0 0 var(--ink-3);
+  cursor: text;
+}
+/* The active cell: a ring, never a fill, so selection cannot read as a
+   status. Replaces the global :focus-visible outline on the cell. */
+.grid [aria-selected="true"] {
+  box-shadow: inset 0 0 0 2px var(--blue);
+  outline: none;
+}
+.grid [aria-selected="true"][data-editable] { padding-right: 32px; }
+/* A change held locally until the estimator finishes it (an allowance
+   waiting on its reason): dashed, the same channel unverified
+   measurements use. */
+.grid td.is-pending { outline: 1px dashed var(--ink-3); outline-offset: -4px; }
+
+.grid-editor-wrap { position: relative; }
+.grid-editor {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  outline: none;
+}
+.grid-cell-error {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 2;
+  margin-top: 2px;
+  padding: 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--red);
+  border-radius: var(--r-sm);
+  color: var(--red);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.grid-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.grid-clear:hover { background: var(--paper-1); }
+
+.grid tfoot td, .grid tfoot th {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--surface);
+  border-top: 2px solid var(--line-2);
+  border-bottom: 0;
+  font-weight: 600;
+}
+.grid-footer-note {
+  display: block;
+  margin-top: 2px;
+  font-weight: 400;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
 .takeoff-sort {
   background: none;
   border: 0;

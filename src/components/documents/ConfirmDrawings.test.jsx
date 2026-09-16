@@ -1,42 +1,50 @@
 /* ============================================================
-   ConfirmDrawings.test.jsx — screen D, reading the real uploaded set
-   from the API (store.listDocuments). What matters: it groups the
-   documents by type, blocks starting without a drawing set, flags
-   unrecognized documents in a Needs attention section above the table,
-   and lets the estimator correct a type before processing. There is no
-   include/exclude control in this slice (a prior version had one, but
-   it never reached processing -- see ConfirmDrawings.jsx's header) and
-   no local file picker (a document is added through screen C, which is
-   the only place one is actually persisted).
+   ConfirmDrawings.test.jsx — screen D, reading the set as the worker
+   has read it (store.getProcessing). What matters: it lists every
+   document with what the worker made of it -- read with a sheet count,
+   still reading, or failed with the reason -- blocks starting without a
+   drawing set, flags unrecognized documents in a Needs attention section
+   above the table, lets the estimator correct a type before processing,
+   and routes Start takeoff through store.startTakeoff, treating a run
+   already in flight as already started and a set with nothing readable
+   as a message to show, not a page to leave. There is no include/exclude
+   control in this slice (see ConfirmDrawings.jsx's header) and no local
+   file picker (a document is added through screen C, the only place one
+   is actually persisted).
    ============================================================ */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ConfirmDrawings from "./ConfirmDrawings.jsx";
 
 const pdf = (name) => new File([new Uint8Array(2048)], name, { type: "application/pdf" });
 
 let nextId = 0;
-/** A stored document as the API would return it (mapDocument's shape). */
-function docFrom(file, docType) {
+/** A document as the processing response describes it (mapProcessing's
+ *  shape): what the worker made of it, not the upload record. Read by
+ *  default, with sheets on a drawing set, so the gate the server keeps
+ *  (a readable drawing) is open unless a test closes it. */
+function docFrom(file, docType, extra = {}) {
   nextId += 1;
   return {
     id: `doc-${nextId}`,
-    projectId: "p1",
     filename: file.name,
     docType,
-    sizeBytes: file.size,
-    status: "uploaded",
-    error: "",
-    createdAt: "2026-09-15T00:00:00Z",
+    state: "read",
+    reason: "",
+    sheetCount: docType === "Drawings" ? 14 : 0,
+    ...extra,
   };
 }
 
 function makeStore(docs = []) {
   return {
-    listDocuments: vi.fn().mockResolvedValue(docs),
+    getProcessing: vi.fn().mockResolvedValue({ documents: docs, run: null }),
     setDocumentType: vi.fn().mockResolvedValue(undefined),
+    startTakeoff: vi.fn().mockResolvedValue({ runId: "r1" }),
+    listScope: vi.fn().mockResolvedValue([]),
+    decideScope: vi.fn(),
   };
 }
 
@@ -57,6 +65,10 @@ beforeEach(() => {
   nextId = 0;
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("ConfirmDrawings", () => {
   it("lists the uploaded documents and can start when a drawing set is present", async () => {
     const store = makeStore([
@@ -69,7 +81,110 @@ describe("ConfirmDrawings", () => {
     expect(screen.getByText("specs_part_1.pdf")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /start takeoff/i })[0]).toBeEnabled();
     expect(screen.queryByText(/no drawing set/i)).toBeNull();
-    expect(store.listDocuments).toHaveBeenCalledWith("p1");
+    expect(store.getProcessing).toHaveBeenCalledWith("p1");
+  });
+
+  it("shows what the worker read per document -- sheet counts, reading, or the reason it failed", async () => {
+    const store = makeStore([
+      docFrom(pdf("cd_biddrawings.pdf"), "Drawings", { sheetCount: 14 }),
+      docFrom(pdf("specs_part_1.pdf"), "Specifications", { sheetCount: 0 }),
+      docFrom(pdf("addendum_1.pdf"), "Addendum", { state: "reading", sheetCount: 0 }),
+      docFrom(pdf("locked.pdf"), "Drawings", { state: "failed", reason: "This file is password protected. Upload an unlocked copy.", sheetCount: 0 }),
+    ]);
+    renderConfirm(store);
+
+    expect(await screen.findByText("Read · 14 sheets")).toBeInTheDocument();
+    expect(screen.getByText("Read")).toBeInTheDocument();
+    expect(screen.getByText("Reading…")).toBeInTheDocument();
+    expect(screen.getByText("This file is password protected. Upload an unlocked copy.")).toBeInTheDocument();
+    // The state is a column with a heading, not a colour.
+    expect(screen.getByRole("columnheader", { name: "State" })).toBeInTheDocument();
+  });
+
+  it("keeps polling while a document is still being read, and stops once nothing is", async () => {
+    vi.useFakeTimers();
+    const reading = docFrom(pdf("cd_biddrawings.pdf"), "Drawings", { state: "reading", sheetCount: 0 });
+    const store = makeStore([reading]);
+    store.getProcessing
+      .mockResolvedValueOnce({ documents: [reading], run: null })
+      .mockResolvedValueOnce({ documents: [reading], run: null })
+      .mockResolvedValue({ documents: [{ ...reading, state: "read", sheetCount: 9 }], run: null });
+    renderConfirm(store);
+
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Reading…")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    expect(screen.getByText("Read · 9 sheets")).toBeInTheDocument();
+    const calls = store.getProcessing.mock.calls.length;
+    await act(() => vi.advanceTimersByTimeAsync(6200));
+    expect(store.getProcessing).toHaveBeenCalledTimes(calls);
+  });
+
+  it("mounts the scope section above the table", async () => {
+    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
+    store.listScope.mockResolvedValue([
+      { id: "s1", kind: "by_others", text: "Temporary power by GC.", editedText: null, status: "found", documentId: "d", documentFilename: "spec.pdf", page: 2, quote: "Temporary power by GC." },
+    ]);
+    renderConfirm(store);
+
+    expect(await screen.findByText("1 statement found · 0 confirmed · 0 dismissed")).toBeInTheDocument();
+    expect(store.listScope).toHaveBeenCalledWith("p1");
+    const scope = screen.getByRole("heading", { name: "Scope stated in the documents" });
+    const table = screen.getByRole("table");
+    expect(scope.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("starts the takeoff through the store, then goes to processing", async () => {
+    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
+    renderConfirm(store);
+    await screen.findByText("cd_biddrawings.pdf");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
+
+    expect(store.startTakeoff).toHaveBeenCalledWith("p1");
+    expect(await screen.findByText("processing")).toBeInTheDocument();
+  });
+
+  it("treats a run already in flight as started -- goes to processing, no error", async () => {
+    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
+    store.startTakeoff.mockRejectedValue({ code: "run_in_flight", message: "A run is already in progress." });
+    renderConfirm(store);
+    await screen.findByText("cd_biddrawings.pdf");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
+
+    expect(await screen.findByText("processing")).toBeInTheDocument();
+    expect(screen.queryByText(/already in progress/i)).toBeNull();
+  });
+
+  it("stays and shows the server's message when nothing in the set could be read", async () => {
+    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings", { state: "failed", reason: "Corrupt file.", sheetCount: 0 })]);
+    store.startTakeoff.mockRejectedValue({
+      code: "no_readable_drawings",
+      message: "None of the uploaded documents could be read. Replace the drawing set and try again.",
+    });
+    renderConfirm(store);
+    await screen.findByText("cd_biddrawings.pdf");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("None of the uploaded documents could be read");
+    expect(screen.queryByText("processing")).toBeNull();
+    // Still here, still able to try again once the set is fixed.
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+  });
+
+  it("shows any other failure's message inline and stays", async () => {
+    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
+    store.startTakeoff.mockRejectedValue({ code: "network", message: "Couldn't reach the server. Check the connection and try again." });
+    renderConfirm(store);
+    await screen.findByText("cd_biddrawings.pdf");
+
+    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
+
+    expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
+    expect(screen.queryByText("processing")).toBeNull();
   });
 
   it("blocks starting when nothing is typed Drawings", async () => {
@@ -105,7 +220,7 @@ describe("ConfirmDrawings", () => {
 
   it("shows a recoverable error, not an empty state, when the document list can't be loaded", async () => {
     const store = makeStore([]);
-    store.listDocuments = vi.fn().mockRejectedValue(new Error("network"));
+    store.getProcessing = vi.fn().mockRejectedValue(new Error("network"));
     renderConfirm(store);
     expect(await screen.findByText(/couldn't load this project's documents/i)).toBeTruthy();
     expect(screen.queryByText(/no documents to confirm/i)).toBeNull();

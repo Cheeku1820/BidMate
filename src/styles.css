@@ -2294,6 +2294,67 @@ button {
 .checklist-row--attention .checklist-title { color: var(--amber); }
 .checklist-detail { font-size: 12.5px; color: var(--ink-2); }
 
+/* ---- Scope stated in the documents (ScopeSection.jsx, screen D) ---- */
+
+.scope-card {
+  margin: 0 0 20px;
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  padding: 16px 18px 18px;
+}
+.scope-head { margin-bottom: 12px; }
+.scope-head h2 { margin: 0 0 4px; font-size: 14px; }
+.scope-head p { margin: 0; font-size: 12.5px; max-width: 72ch; }
+
+.scope-state { margin: 0; font-size: 13px; }
+.scope-state--failed { color: var(--red); }
+
+.scope-summary { margin: 0 0 8px; font-size: 13px; color: var(--ink-2); }
+
+.scope-group { margin-top: 12px; }
+.scope-group__title {
+  margin: 0 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.scope-list { list-style: none; margin: 0; padding: 0; }
+
+.scope-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--line-1);
+}
+.scope-row__head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.scope-row__text { margin: 0 0 6px; font-size: 13.5px; line-height: 1.45; }
+.scope-row__original { margin: -2px 0 8px; font-size: 12.5px; }
+
+.scope-row__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.scope-row__edit { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+.scope-row__textarea { resize: vertical; min-height: 68px; font: inherit; font-size: 13.5px; }
+
+/* The source, revealed on demand: the verbatim quote, then where it came
+   from. Document text is data, drawn as a quotation, never restyled into
+   interface copy. */
+.scope-row__source { margin: 10px 0 0; }
+.scope-row__quote {
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--line-2);
+  background: var(--paper-1);
+  font-size: 13px;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+}
+.scope-row__cite { margin-top: 4px; font-size: 12px; color: var(--ink-3); }
+
+/* Kept in the flow even when empty so its live region exists before it
+   has anything to announce; an empty one takes no height. */
+.scope-row__error { display: block; margin: 4px 0 0; font-size: 12.5px; color: var(--red); }
+.scope-row__error:empty { margin: 0; }
+
 /* Once the set is populated the drop target steps back to a strip below
    the table (UploadDocuments.jsx). Same target, less of the screen. */
 .dropzone--compact {
@@ -2352,6 +2413,11 @@ button {
 }
 .note-status--confirmed { background: var(--slate-tint); color: var(--slate); border-color: var(--slate-line); }
 .note-status--open { background: var(--plum-tint); color: var(--plum); border-color: var(--plum-line); }
+/* A scope statement (ScopeSection.jsx) speaks the same vocabulary: found
+   is the undecided state, so it takes the plum "open" hue; dismissed is
+   set aside, so it drops to neutral ink. Neither is ever amber or green. */
+.note-status--found { background: var(--plum-tint); color: var(--plum); border-color: var(--plum-line); }
+.note-status--dismissed { background: var(--paper-0); color: var(--ink-3); border-color: var(--line-2); }
 
 /* The RFI flag is a separate boolean from status, so it gets its own
    small marker rather than folding into the status pill above. */

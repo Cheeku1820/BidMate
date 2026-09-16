@@ -121,7 +121,7 @@ src/
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx
     Modal.jsx, FinishReviewModal.jsx, MiscModals.jsx, Pill.jsx
     BlueprintCanvas.jsx        pan/zoom viewport, markers, measurements, minimap
-    PlanDrawing.jsx            honest blank-paper base layer under markers
+    TileLayer.jsx              the rendered page as tiles under the markers, at its true aspect
     Symbols.jsx                electrical symbol glyphs
     notes/                     notes & assumptions — what the drawings don't say
       NotesWorkspace.jsx       the screen: list, filters, apply-and-re-run

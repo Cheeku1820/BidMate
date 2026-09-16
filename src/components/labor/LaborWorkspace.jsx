@@ -1,39 +1,43 @@
 /* ============================================================
-   LaborWorkspace.jsx — the Labor workspace
-   (docs/specs/labor-material-pricing.md).
+   LaborWorkspace.jsx — the Labor workspace on the pricing grid
+   (docs/specs/pricing-grid.md, "The two screens → Labor").
 
    Labor rows are not part of the review snapshot useReviewStore polls
-   -- Task 9's getLaborRows/setLaborLine are a separate surface, exactly
-   the way NotesWorkspace.jsx's listNotes/createNote sit outside the
-   polled snapshot because a labor edit is a pricing fact, not a
-   takeoff mutation. So this screen fetches its own rows through
-   `store` from useWorkspaceContext() rather than reading them off
-   `snapshot`, and refetches after every write rather than waiting on
-   the shared poll -- the same pattern NotesWorkspace's load()/useEffect
-   follow.
+   -- getLaborRows/setLaborLine are a separate surface, because a labor
+   edit is a pricing fact, not a takeoff mutation. So this screen
+   fetches its own rows through `store` from useWorkspaceContext(), and
+   after a write replaces the one row the PATCH response describes
+   rather than refetching the list (the grid's active cell must not
+   lose its place mid-Tab).
 
-   A plain table in this codebase's established style
-   (TakeoffSpreadsheet.jsx): tabular numerals on every quantity/cost,
-   the shared NONE ("—") mark for a value nothing resolved, inline edit
-   on a cell, autosave with no save button. Status renders through the
-   same Pill component every other screen uses (never a bespoke color
-   here) -- CLAUDE.md's "status is never color alone." The
-   precedence-tier label ("Estimated basis," "Company standard," ...)
-   renders as its own neutral tag (.pill--neutral, already the
-   sanctioned "non-status marker" per styles.css's own comment on that
-   class) next to -- never merged into -- the status pill, per the
-   design doc's "the precedence-tier label renders as its own tag,
-   styled distinctly from the four-label status pill."
+   What it borrows from the review store is the reporting: runMutation
+   drives the top bar's Saving…/Saved, showToast the five-second Undo.
+   Undo pulls from the shared stack and lands in the action log, not in
+   this screen's rows, so the toast's Undo reloads them.
    ============================================================ */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import Pill from "../Pill.jsx";
-import { COLUMNS } from "./laborColumns.js";
+import DataGrid from "../grid/DataGrid.jsx";
+import { COLUMNS, FIELDS, money } from "./laborColumns.jsx";
+import { saveStateText } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 
+const SOURCE_OF = { hoursPerUnit: "hoursSourceLabel", rate: "rateSourceLabel" };
+
+function toastFor(key, value, row, updated) {
+  const field = FIELDS[key];
+  if (value === null) {
+    const source = SOURCE_OF[key] ? updated[SOURCE_OF[key]] : null;
+    if (!SOURCE_OF[key]) return `Cleared ${field.noun} on ${row.itemName}`;
+    return `Cleared ${field.noun} on ${row.itemName} — ${source ? "now " + source : "nothing else is set"}`;
+  }
+  if (!field.format) return `Set ${field.noun} on ${row.itemName}`;
+  return `Set ${field.noun} to ${field.format(value)} on ${row.itemName}`;
+}
+
 export default function LaborWorkspace() {
-  const { store, projectId } = useWorkspaceContext();
+  const { store, projectId, runMutation, showToast, saved, toast, dismissToast, undo } = useWorkspaceContext();
 
   const [rows, setRows] = useState(null); // null = loading
   const [pricingSource, setPricingSource] = useState(null);
@@ -57,52 +61,60 @@ export default function LaborWorkspace() {
     load();
   }, [load]);
 
-  const editHours = async (itemId, raw) => {
-    if (raw === "") return; // an estimator clearing the field is not a value to save
-    const n = Number(raw);
-    if (Number.isNaN(n)) return;
+  const replaceRow = (itemId, next) =>
+    setRows((current) => current.map((r) => (r.itemId === itemId ? next : r)));
+
+  // The grid reports one changed cell; this sends it, patches the row
+  // from the response, and restores the row on failure. A clear is a
+  // null value on the wire for the numeric fields and "" for the
+  // reason, which the API normalises the same way.
+  const commit = async (row, key, value) => {
+    const field = FIELDS[key];
+    const wire = key === "adjustmentReason" && value === null ? "" : value;
+    replaceRow(row.itemId, { ...row, [key]: value });
     setSaveError(null);
     try {
-      await store.setLaborLine(itemId, { hoursOverride: n });
-      await load();
+      const updated = await runMutation(() => store.setLaborLine(row.itemId, { [field.wire]: wire }));
+      replaceRow(row.itemId, updated);
+      showToast(toastFor(key, value, row, updated));
     } catch (err) {
+      replaceRow(row.itemId, row);
       setSaveError(err?.message || "That change couldn't be saved. Try again.");
     }
   };
 
-  // Rate is a second, independently-resolved precedence chain -- an
-  // estimator can have hours from a company standard and still need to
-  // enter the rate by hand. Without this the screen's own copy ("Set
-  // hours and rates directly on each row below") is only half true, and
-  // on any project the pricing assistant did not price, every labor row
-  // is stuck at Missing information with no in-product remedy.
-  const editRate = async (itemId, raw) => {
-    if (raw === "") return; // an estimator clearing the field is not a value to save
-    const n = Number(raw);
-    if (Number.isNaN(n)) return;
-    setSaveError(null);
-    try {
-      await store.setLaborLine(itemId, { rateOverride: n });
-      await load();
-    } catch (err) {
-      setSaveError(err?.message || "That change couldn't be saved. Try again.");
-    }
-  };
+  const totals = useMemo(() => {
+    if (!rows) return null;
+    const priced = rows.filter((r) => r.adjustedHours != null && r.laborCost != null);
+    return {
+      hours: priced.reduce((sum, r) => sum + Number(r.adjustedHours), 0),
+      cost: priced.reduce((sum, r) => sum + Number(r.laborCost), 0),
+      leftOut: rows.length - priced.length,
+    };
+  }, [rows]);
+
+  const footer = totals ? (
+    <tr>
+      <td colSpan={COLUMNS.length - 2}>
+        Total
+        {totals.leftOut > 0 ? (
+          <span className="grid-footer-note">
+            {totals.leftOut} {totals.leftOut === 1 ? "row" : "rows"} not yet priced {totals.leftOut === 1 ? "is" : "are"} not in this total
+          </span>
+        ) : null}
+      </td>
+      <td className="tabular" style={{ textAlign: "right" }}>{totals.hours.toFixed(2)}</td>
+      <td className="tabular" style={{ textAlign: "right" }}>{money(totals.cost)}</td>
+    </tr>
+  ) : null;
 
   return (
     <>
-      <AppTopBar title="Labor" />
+      <AppTopBar title="Labor" saveState={saveStateText(saved)} />
 
       <div className="page">
         <h1 className="page-heading">Labor</h1>
 
-        {/* Two different facts, so two independent renders. The basis
-            note used to be gated behind the automatic source, which meant
-            a project priced from the regional table -- no key configured,
-            or any automated attempt that fell back -- wrote the note and
-            then never showed it. That is where the branch-wiring
-            assumption lives, and it is 27 of 45 items and half the labour
-            hours on a real set. */}
         {pricingSource !== "llm" ? (
           <p className="muted">
             This project has no automatic labor-hour estimate. Set hours and rates directly on each row below, or
@@ -135,87 +147,33 @@ export default function LaborWorkspace() {
               <p>This project has no takeoff items to price yet.</p>
             </div>
           ) : (
-            <div className="takeoff-table-scroll">
-              <table className="data-table takeoff-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Status</th>
-                    {COLUMNS.map((c) => (
-                      <th key={c.key} scope="col" style={{ textAlign: c.align }}>
-                        {c.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.itemId}>
-                      <td>
-                        <Pill status={row.status} />
-                      </td>
-                      {COLUMNS.map((c) => (
-                        <td
-                          key={c.key}
-                          className={c.align === "right" ? "tabular" : undefined}
-                          style={{ textAlign: c.align }}
-                        >
-                          {c.key === "itemName" && row.basisNote ? (
-                            <>
-                              {c.render(row)}
-                              <div className="muted">{row.basisNote}</div>
-                            </>
-                          ) : c.key === "hoursPerUnit" ? (
-                            <input
-                              // Keyed on the fetched value so a reload after a save (or a
-                              // Try again after an error) remounts the field with the fresh
-                              // figure -- defaultValue only applies on mount, and an
-                              // uncontrolled input would otherwise keep showing whatever was
-                              // last typed even after the store returns something else.
-                              key={row.hoursPerUnit}
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              aria-label="Hours per unit"
-                              defaultValue={row.hoursPerUnit ?? ""}
-                              onBlur={(event) => editHours(row.itemId, event.target.value)}
-                              className="field field--number tabular"
-                            />
-                          ) : c.key === "rate" ? (
-                            <input
-                              key={row.rate}
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              aria-label="Rate"
-                              defaultValue={row.rate ?? ""}
-                              onBlur={(event) => editRate(row.itemId, event.target.value)}
-                              className="field field--number tabular"
-                            />
-                          ) : c.key === "hoursSourceLabel" ? (
-                            row.hoursSourceLabel ? (
-                              <span className="pill pill--neutral">{row.hoursSourceLabel}</span>
-                            ) : (
-                              c.render(row)
-                            )
-                          ) : c.key === "rateSourceLabel" ? (
-                            row.rateSourceLabel ? (
-                              <span className="pill pill--neutral">{row.rateSourceLabel}</span>
-                            ) : (
-                              c.render(row)
-                            )
-                          ) : (
-                            c.render(row)
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataGrid
+              columns={COLUMNS}
+              rows={rows}
+              rowKey={(row) => row.itemId}
+              rowLabel={(row) => row.itemName}
+              onCommit={commit}
+              footer={footer}
+              caption="Labor by item"
+            />
           )
         ) : null}
       </div>
+
+      {toast ? (
+        <div className="toast" role="status">
+          {toast.text}
+          <button
+            type="button"
+            onClick={() => {
+              undo().then(load);
+              dismissToast();
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

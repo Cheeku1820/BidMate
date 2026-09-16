@@ -9,6 +9,8 @@ import socket
 import time
 import uuid
 
+from sqlalchemy import select
+
 from app.jobs import copy, queue
 from app.jobs.schemas import timeout_for
 from app.takeoff.models import Job
@@ -40,9 +42,22 @@ def apply_outcome(db, job: Job, outcome: sandbox.Outcome) -> None:
     if kind == "ok":
         return
     if kind == "transient":
-        queue.requeue(db, job, message or copy.UNAVAILABLE)
+        completed_run = queue.requeue(db, job, message or copy.UNAVAILABLE)
     else:  # terminal or timeout
-        queue.mark_failed(db, job, queue.terminal_copy(job, message))
+        completed_run = queue.mark_failed(db, job, queue.terminal_copy(job, message))
+    if completed_run:
+        _finish_run(db, job)
+
+
+def _finish_run(db, sheet_job: Job) -> None:
+    """A failed sheet job was the last of its run to finish, so the run
+    completed here rather than in a sheet handler -- and the project
+    writes that handler would have made are owed here instead."""
+    from app.takeoff.models import Project
+    from app.worker.classify_job import _finish_project   # the queue cannot import the worker; this module can
+
+    classify = db.scalars(select(Job).where(Job.kind == "classify", Job.run_id == sheet_job.run_id)).one()
+    _finish_project(db, db.get(Project, sheet_job.project_id), classify)
 
 
 def tick(worker_id: str) -> bool:

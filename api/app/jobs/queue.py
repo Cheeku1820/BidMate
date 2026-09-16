@@ -133,10 +133,12 @@ def mark_done(db: Session, job: Job) -> None:
     db.flush()
 
 
-def mark_failed(db: Session, job: Job, error: str) -> None:
+def mark_failed(db: Session, job: Job, error: str) -> bool:
     """Terminal. A read's failure is the document's failure, in the same
     words; a sheet's failure may be the last thing its run was waiting
-    on, so the run gets its chance to complete."""
+    on, so the run gets its chance to complete. Returns whether this
+    failure completed a run -- the caller then owes the run its
+    project-level writes, which live on the worker's side."""
     job.status, job.finished_at, job.error = "failed", _now(), error
     if job.kind == "read" and job.document_id:
         doc = db.get(Document, job.document_id)
@@ -144,19 +146,21 @@ def mark_failed(db: Session, job: Job, error: str) -> None:
             doc.status, doc.error = "failed", error
     db.flush()
     if job.kind == "sheet" and job.run_id:
-        complete_run_if_finished(db, job.run_id)
+        return complete_run_if_finished(db, job.run_id)
+    return False
 
 
-def requeue(db: Session, job: Job, error: str) -> None:
+def requeue(db: Session, job: Job, error: str) -> bool:
     """A transient failure: try again after the backoff, until the
     attempts run out, at which point the last transient reason is the
-    terminal one."""
+    terminal one. Returns whether that terminal failure completed a run,
+    as `mark_failed` does."""
     if job.attempts >= job.max_attempts:
-        mark_failed(db, job, error)
-        return
+        return mark_failed(db, job, error)
     job.status, job.locked_by, job.error = "queued", "", error
     job.not_before = _now() + timedelta(seconds=RETRY_BACKOFF_SECONDS)
     db.flush()
+    return False
 
 
 def complete_run_if_finished(db: Session, run_id: uuid.UUID) -> bool:

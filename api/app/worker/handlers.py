@@ -28,17 +28,9 @@ def register(kind: str):
 
 
 def _load_handlers() -> None:
-    # The three handler modules register themselves on import. Each is
-    # wrapped until it exists -- read_job lands with the read job,
-    # classify_job and sheet_job with the takeoff run -- after which the
-    # guards come off and a missing module is the error it should be.
+    # The three handler modules register themselves on import.
     for name in ("read_job", "classify_job", "sheet_job"):
-        module = f"app.worker.{name}"
-        try:
-            __import__(module)
-        except ModuleNotFoundError as exc:
-            if exc.name != module:   # a handler that exists but lacks a dependency is a real error
-                raise
+        __import__(f"app.worker.{name}")
 
 
 @contextlib.contextmanager

@@ -1,42 +1,51 @@
 /* ============================================================
-   MaterialPricingWorkspace.jsx — the Material Pricing workspace
-   (docs/specs/labor-material-pricing.md).
+   MaterialPricingWorkspace.jsx — the Material pricing workspace on
+   the pricing grid (docs/specs/pricing-grid.md, "The two screens →
+   Material pricing").
 
-   Material rows are not part of the review snapshot useReviewStore polls
-   -- Task 9's getMaterialRows/setMaterialPrice are a separate surface, exactly
-   the way LaborWorkspace.jsx's getLaborRows/setLaborLine sit outside the
-   polled snapshot because a material pricing edit is a pricing fact, not a
-   takeoff mutation. So this screen fetches its own rows through
-   `store` from useWorkspaceContext() rather than reading them off
-   `snapshot`, and refetches after every write rather than waiting on
-   the shared poll -- the same pattern LaborWorkspace follows.
+   Same shape as LaborWorkspace.jsx: rows fetched through `store`,
+   one row patched from each write's response, save state and the undo
+   toast from the review store. What is particular here:
 
-   A plain table in this codebase's established style
-   (TakeoffSpreadsheet.jsx): tabular numerals on every quantity/cost,
-   the shared NONE ("—") mark for a value nothing resolved, inline edit
-   on a cell, autosave with no save button. Status renders through the
-   same Pill component every other screen uses (never a bespoke color
-   here) -- CLAUDE.md's "status is never color alone." The
-   precedence-tier label ("Estimated basis," "Company standard," ...)
-   renders as its own neutral tag (.pill--neutral, already the
-   sanctioned "non-status marker" per styles.css's own comment on that
-   class) next to -- never merged into -- the status pill.
+   - Unit price, Basis, and Reason are one entry on the wire. A commit
+     on any of them sends all three from the row's current state plus
+     the change.
+   - An allowance needs a reason, and the API refuses one without. The
+     rule is met on the cell: choosing Allowance with an empty Reason
+     holds the choice locally (pendingSource), moves to Reason, opens
+     its editor with the message, and sends when the reason commits.
+     Escape there drops the held choice.
+   - Clearing the price removes the whole entry (DELETE) -- an entry
+     without a price is not a state the table can hold.
    ============================================================ */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import Pill from "../Pill.jsx";
-import { COLUMNS } from "./pricingColumns.js";
+import DataGrid from "../grid/DataGrid.jsx";
+import { ALLOWANCE_REASON_MESSAGE, COLUMNS, money } from "./pricingColumns.jsx";
+import { saveStateText } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 
+function toastFor(key, value, row, updated) {
+  if (key === "unitPrice" && value === null) {
+    return `Cleared price on ${row.itemName} — ${updated.sourceLabel ? "now " + updated.sourceLabel : "nothing else is set"}`;
+  }
+  if (key === "source") {
+    return value === "allowance" ? `Marked ${row.itemName} as allowance` : `Marked ${row.itemName} as project price`;
+  }
+  if (key === "reason") return `Set reason on ${row.itemName}`;
+  return `Set price to ${money(value)} on ${row.itemName}`;
+}
+
 export default function MaterialPricingWorkspace() {
-  const { store, projectId } = useWorkspaceContext();
+  const { store, projectId, runMutation, showToast, saved, toast, dismissToast, undo } = useWorkspaceContext();
 
   const [rows, setRows] = useState(null); // null = loading
   const [pricingSource, setPricingSource] = useState(null);
   const [pricingNote, setPricingNote] = useState("");
   const [loadError, setLoadError] = useState(null);
   const [saveError, setSaveError] = useState(null);
+  const grid = useRef(null);
 
   const load = useCallback(() => {
     setLoadError(null);
@@ -46,16 +55,6 @@ export default function MaterialPricingWorkspace() {
         setRows(result.rows);
         setPricingSource(result.pricingSource);
         setPricingNote(result.pricingNote);
-        // Seed local allowance intent from what the server actually has
-        // stored, every load -- otherwise a reload forgets an existing
-        // allowance's checkbox and reason, and a later price-only edit
-        // would silently revert it to a plain project price and erase
-        // why the number was a placeholder.
-        setAllowance(
-          Object.fromEntries(
-            result.rows.map((row) => [row.itemId, { on: row.source === "allowance", reason: row.reason || "" }])
-          )
-        );
       })
       .catch((err) => setLoadError(err?.message || "Couldn't load material pricing. Check your connection and try again."));
   }, [store, projectId]);
@@ -64,57 +63,83 @@ export default function MaterialPricingWorkspace() {
     load();
   }, [load]);
 
-  // Per-row allowance intent, itemId -> { on, reason }. Held here rather
-  // than on the row because it is what the estimator is *about* to save,
-  // not what the store returned -- the row itself carries no allowance
-  // flag until a price has been written with one.
-  const [allowance, setAllowance] = useState({});
+  const replaceRow = (itemId, next) =>
+    setRows((current) => current.map((r) => (r.itemId === itemId ? next : r)));
 
-  const setAllowanceField = (itemId, field, value) =>
-    setAllowance((prev) => ({ ...prev, [itemId]: { ...prev[itemId], [field]: value } }));
-
-  const editPrice = async (itemId, raw) => {
-    if (raw === "" || raw == null) return; // an estimator clearing the field is not a value to save
-    const n = Number(raw);
-    if (Number.isNaN(n)) return;
-    const entry = allowance[itemId];
-    const isAllowance = Boolean(entry?.on);
-    const reason = (entry?.reason || "").trim();
-    // Caught here rather than left to the 422: the backend rejects an
-    // allowance with no reason (MaterialPriceUpdateIn), and an estimator
-    // reading a total needs to know what a placeholder number is
-    // standing in for.
-    if (isAllowance && !reason) {
-      setSaveError("An allowance needs a reason — say what it's standing in for, so the total can be traced back.");
-      return;
-    }
+  const send = async (row, key, value, request) => {
     setSaveError(null);
     try {
-      await store.setMaterialPrice(itemId, {
-        priceOverride: n,
-        source: isAllowance ? "allowance" : "project_price",
-        reason: isAllowance ? reason : "",
-      });
-      await load();
+      const updated = await runMutation(request);
+      replaceRow(row.itemId, updated);
+      showToast(toastFor(key, value, row, updated));
     } catch (err) {
+      replaceRow(row.itemId, { ...row, pendingSource: undefined });
       setSaveError(err?.message || "That change couldn't be saved. Try again.");
     }
   };
 
+  const commit = (row, key, value) => {
+    if (key === "unitPrice" && value === null) {
+      replaceRow(row.itemId, { ...row, unitPrice: null });
+      return send(row, key, value, () => store.clearMaterialPrice(row.itemId));
+    }
+    const next = {
+      priceOverride: key === "unitPrice" ? value : row.unitPrice,
+      source: key === "source" ? value : row.pendingSource || row.source || "project_price",
+      reason: key === "reason" ? value : row.reason,
+    };
+    if (next.source === "allowance" && !next.reason.trim()) {
+      // Hold the choice, ask for the reason where the estimator is looking.
+      replaceRow(row.itemId, { ...row, pendingSource: "allowance" });
+      grid.current.openEditor(row.itemId, "reason", { message: ALLOWANCE_REASON_MESSAGE });
+      return undefined;
+    }
+    replaceRow(row.itemId, {
+      ...row,
+      unitPrice: next.priceOverride,
+      source: next.source,
+      reason: next.reason,
+      pendingSource: undefined,
+    });
+    const toastKey = row.pendingSource && key === "reason" ? "source" : key;
+    const toastValue = toastKey === "source" ? next.source : value;
+    return send(row, toastKey, toastValue, () => store.setMaterialPrice(row.itemId, next));
+  };
+
+  const cancel = (row, key) => {
+    if (key === "reason" && row.pendingSource) replaceRow(row.itemId, { ...row, pendingSource: undefined });
+  };
+
+  const totals = useMemo(() => {
+    if (!rows) return null;
+    const priced = rows.filter((r) => r.unitPrice != null);
+    return {
+      cost: priced.reduce((sum, r) => sum + Number(r.quantity) * Number(r.unitPrice), 0),
+      leftOut: rows.length - priced.length,
+    };
+  }, [rows]);
+
+  const footer = totals ? (
+    <tr>
+      <td colSpan={COLUMNS.length - 1}>
+        Total
+        {totals.leftOut > 0 ? (
+          <span className="grid-footer-note">
+            {totals.leftOut} {totals.leftOut === 1 ? "row" : "rows"} not yet priced {totals.leftOut === 1 ? "is" : "are"} not in this total
+          </span>
+        ) : null}
+      </td>
+      <td className="tabular" style={{ textAlign: "right" }}>{money(totals.cost)}</td>
+    </tr>
+  ) : null;
+
   return (
     <>
-      <AppTopBar title="Material pricing" />
+      <AppTopBar title="Material pricing" saveState={saveStateText(saved)} />
 
       <div className="page">
         <h1 className="page-heading">Material pricing</h1>
 
-        {/* Two different facts, so two independent renders. The basis
-            note used to be gated behind the automatic source, which meant
-            a project priced from the regional table -- no key configured,
-            or any automated attempt that fell back -- wrote the note and
-            then never showed it. That is where the branch-wiring
-            assumption lives, and it is 27 of 45 items and half the labour
-            hours on a real set. */}
         {pricingSource !== "llm" ? (
           <p className="muted">
             This project has no automatic regional price estimate. Set a price directly on each row below, or
@@ -147,102 +172,35 @@ export default function MaterialPricingWorkspace() {
               <p>This project has no takeoff items to price yet.</p>
             </div>
           ) : (
-            <div className="takeoff-table-scroll">
-              <table className="data-table takeoff-table">
-                <thead>
-                  <tr>
-                    <th scope="col">Status</th>
-                    {COLUMNS.map((c) => (
-                      <th key={c.key} scope="col" style={{ textAlign: c.align }}>
-                        {c.label}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.itemId}>
-                      <td>
-                        <Pill status={row.status} />
-                      </td>
-                      {COLUMNS.map((c) => (
-                        <td
-                          key={c.key}
-                          className={c.align === "right" ? "tabular" : undefined}
-                          style={{ textAlign: c.align }}
-                        >
-                          {c.key === "itemName" && row.basisNote ? (
-                            <>
-                              {c.render(row)}
-                              <div className="muted">{row.basisNote}</div>
-                            </>
-                          ) : c.key === "unitPrice" ? (
-                            <>
-                              <input
-                                key={row.unitPrice}
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                aria-label="Unit price"
-                                defaultValue={row.unitPrice ?? ""}
-                                onBlur={(event) => editPrice(row.itemId, event.target.value)}
-                                className="field field--number tabular"
-                              />
-                              <label className="switch">
-                                <input
-                                  type="checkbox"
-                                  checked={Boolean(allowance[row.itemId]?.on)}
-                                  onChange={(event) =>
-                                    setAllowanceField(row.itemId, "on", event.target.checked)
-                                  }
-                                />
-                                Mark as allowance
-                              </label>
-                              {allowance[row.itemId]?.on ? (
-                                <>
-                                  <label
-                                    className="formfield-label"
-                                    htmlFor={`allowance-reason-${row.itemId}`}
-                                  >
-                                    Allowance reason
-                                  </label>
-                                  <input
-                                    id={`allowance-reason-${row.itemId}`}
-                                    className="field"
-                                    type="text"
-                                    value={allowance[row.itemId]?.reason ?? ""}
-                                    onChange={(event) =>
-                                      setAllowanceField(row.itemId, "reason", event.target.value)
-                                    }
-                                    // Blurring the reason commits the price already on
-                                    // the row, so an estimator who priced first and
-                                    // marked it an allowance second does not have to
-                                    // retype the number. No save button, same as
-                                    // everywhere else in this product.
-                                    onBlur={() => editPrice(row.itemId, row.unitPrice)}
-                                  />
-                                </>
-                              ) : null}
-                            </>
-                          ) : c.key === "sourceLabel" ? (
-                            row.sourceLabel ? (
-                              <span className="pill pill--neutral">{row.sourceLabel}</span>
-                            ) : (
-                              c.render(row)
-                            )
-                          ) : (
-                            c.render(row)
-                          )}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataGrid
+              ref={grid}
+              columns={COLUMNS}
+              rows={rows}
+              rowKey={(row) => row.itemId}
+              rowLabel={(row) => row.itemName}
+              onCommit={commit}
+              onCancel={cancel}
+              footer={footer}
+              caption="Material pricing by item"
+            />
           )
         ) : null}
       </div>
+
+      {toast ? (
+        <div className="toast" role="status">
+          {toast.text}
+          <button
+            type="button"
+            onClick={() => {
+              undo().then(load);
+              dismissToast();
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

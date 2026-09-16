@@ -211,9 +211,15 @@ def delete_document(db: DbSession, *, actor: User, document: Document) -> str:
     db.execute(delete(Job).where(Job.document_id == document.id))
     # A render is keyed by its sheet, not its document, and a sheet an
     # approved item keeps alive would otherwise keep its queued render
-    # too -- for a page that is no longer in any file.
+    # too -- for a page that is no longer in any file. `in_flight_run`
+    # above already refused this delete while any sheet job could be
+    # queued or running, so `render` is the only kind this can still
+    # find here -- named explicitly rather than left implicit, so a
+    # future job kind keyed by sheet_id doesn't get swept up by
+    # accident the day someone adds one.
     sheet_ids = db.scalars(select(Sheet.id).where(Sheet.takeoff_id == str(document.id))).all()
-    db.execute(delete(Job).where(Job.sheet_id.in_(sheet_ids), Job.status.in_(("queued", "running"))))
+    db.execute(delete(Job).where(
+        Job.sheet_id.in_(sheet_ids), Job.kind == "render", Job.status.in_(("queued", "running"))))
     merge.drop_sheets(db, sheet_ids)
     db.delete(document)
     db.flush()

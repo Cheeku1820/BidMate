@@ -73,6 +73,72 @@ def test_a_failing_render_marks_only_its_sheet(db, project, dana, inline, monkey
     assert by_page[2].render_key is None
 
 
+def test_a_transient_storage_error_on_upload_requeues_rather_than_failing(db, project, dana, inline, monkeypatch):
+    """A storage blip on the way the tiles go *out* must retry like any
+    other job -- not go straight to a terminal RENDER_FAILED the way it
+    did before the download-side classification in blobs.storage_errors
+    was reused for the upload loop too."""
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _stored(db, project, dana, inline, _pdf("E2.1 POWER PLAN", pages=1))
+    queue.enqueue_read(db, d); db.commit()
+
+    def flaky_put(key, stream, content_type, size):
+        raise ConnectionError("storage down")
+
+    monkeypatch.setattr(inline, "put", flaky_put)
+    while worker.tick("t"):
+        pass
+    db.commit()
+
+    render_job = db.scalars(select(Job).where(Job.kind == "render")).one()
+    assert (render_job.status, render_job.attempts) == ("queued", 1)
+    assert render_job.not_before is not None
+    assert render_job.error == copy.UNAVAILABLE
+    sheet = db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))).one()
+    assert sheet.render_status == "pending"
+
+
+def test_a_transient_storage_error_on_upload_fails_terminally_once_attempts_are_exhausted(db, project, dana, inline, monkeypatch):
+    """Repeated retries eventually exhaust `max_attempts` and the sheet
+    lands `failed`. The copy it fails with is the honest transient
+    reason (`copy.UNAVAILABLE`), not `copy.RENDER_FAILED` -- because
+    `queue.requeue`'s attempts-exhausted path hands its message straight
+    to `mark_failed` without going through `terminal_copy` (unlike
+    `reclaim_stale`'s), and `tests/test_jobs_queue.py::
+    test_requeue_backs_off_then_fails_after_max_attempts` already pins
+    that as deliberate: a job that kept failing for a known reason keeps
+    that reason through to its terminal state instead of losing it to a
+    generic label. This test is the render-kind instance of the same
+    rule, not a gap in this fix -- what matters here is that the sheet
+    reaches a genuinely terminal `failed` state at all, rather than
+    retrying forever."""
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _stored(db, project, dana, inline, _pdf("E2.1 POWER PLAN", pages=1))
+    queue.enqueue_read(db, d); db.commit()
+
+    def flaky_put(key, stream, content_type, size):
+        raise ConnectionError("storage down")
+
+    monkeypatch.setattr(inline, "put", flaky_put)
+    render_job = None
+    # Run past the read, then force every retry's backoff so the render
+    # job becomes claimable again without waiting real seconds.
+    for _ in range(6):
+        while worker.tick("t"):
+            pass
+        db.commit()
+        render_job = db.scalars(select(Job).where(Job.kind == "render")).first()
+        if render_job is None or render_job.status == "failed":
+            break
+        render_job.not_before = None
+        db.commit()
+
+    assert render_job.status == "failed" and render_job.attempts == render_job.max_attempts
+    assert render_job.error == copy.UNAVAILABLE
+    sheet = db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))).one()
+    assert sheet.render_status == "failed" and sheet.render_error == copy.UNAVAILABLE
+
+
 def test_deleting_a_document_cancels_its_queued_renders(client, db, project, dana, inline, monkeypatch, signed_in_user):
     monkeypatch.setattr("app.db.SessionLocal", lambda: db)
     app.dependency_overrides[blobstore.get_blob_store] = lambda: inline   # the route's own blob delete

@@ -37,6 +37,18 @@ def test_e_size_reaches_150_dpi_at_a_deeper_level_than_d_size():
     assert len(tiles.levels_for(48 * 72, 36 * 72)) > len(tiles.levels_for(24 * 72, 18 * 72))
 
 
+def test_arch_d_and_arch_e_both_reach_150_dpi_at_z_4():
+    """docs/specs/drawing-behind-the-markers.md §3 used to say "typically
+    z = 3 for D-size, 4 for E-size" -- wrong on both counts. ARCH D (24 x
+    36 in) and ARCH E (36 x 48 in) both land on z = 4: each doubling
+    roughly doubles dpi, so the one-size-larger E sheet needs the same
+    level D does once D has already overshot 150 dpi at z = 4."""
+    d = tiles.levels_for(24 * 72, 36 * 72)
+    e = tiles.levels_for(36 * 72, 48 * 72)
+    assert d[-1].z == 4 and 72 * d[-1].scale >= tiles.TARGET_DPI
+    assert e[-1].z == 4 and 72 * e[-1].scale >= tiles.TARGET_DPI
+
+
 def test_render_writes_every_tile_and_the_thumbnail(tmp_path):
     out = tmp_path / "out"
     ts = tiles.render_sheet(_pdf(tmp_path, 36, 24), 0, str(out))

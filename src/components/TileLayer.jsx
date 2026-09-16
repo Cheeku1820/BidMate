@@ -12,17 +12,26 @@
    landscape page the last column is a full tile and only the rows are
    clipped (tiles.py does the same arithmetic on the engine side).
    ============================================================ */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { paperSize, SHEET_W } from "../lib/sheetGeometry.js";
 
 const TILE = 512;
 
 /** Smallest level whose long-edge width covers the page as drawn on
  *  screen, capped at the finest level the worker rendered. A sheet with
- *  no finest level yet (maxZoom null) has only level 0 to offer. */
-export function levelFor(viewScale, maxZoom) {
+ *  no finest level yet (maxZoom null) has only level 0 to offer.
+ *
+ *  The on-screen long edge is `paper`'s long edge (matching
+ *  `gridFor`/`tiles.py`, not the stored 1000-unit width) times the view
+ *  scale times the device pixel ratio -- a portrait page's long edge is
+ *  its height, and a high-DPI screen needs a finer level to actually
+ *  show 512 real pixels per tile. `window` is read defensively: a test
+ *  environment without `devicePixelRatio` falls back to 1. */
+export function levelFor(viewScale, maxZoom, paper) {
   const cap = maxZoom ?? 0;
-  const onScreen = SHEET_W * viewScale;
+  const long = Math.max(paper?.w ?? SHEET_W, paper?.h ?? SHEET_H);
+  const dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1;
+  const onScreen = long * viewScale * dpr;
   let z = 0;
   while (TILE * 2 ** z < onScreen && z < cap) z += 1;
   return Math.min(z, cap);
@@ -67,6 +76,8 @@ export function visibleTiles(viewport, grid, paper) {
  *  the sheet-level state carries any copy, never a tile. */
 function Tile({ sheet, t }) {
   const [attempt, setAttempt] = useState(0);
+  const timerRef = useRef(null);
+  useEffect(() => () => clearTimeout(timerRef.current), []);
   const src = `/api/sheets/${sheet.id}/tiles/${t.z}/${t.x}/${t.y}.png${attempt ? `?r=${attempt}` : ""}`;
   return (
     <img
@@ -76,7 +87,7 @@ function Tile({ sheet, t }) {
       draggable={false}
       style={{ left: t.left, top: t.top, width: t.width, height: t.height }}
       onError={() => {
-        if (attempt === 0) setTimeout(() => setAttempt(1), 2000);
+        if (attempt === 0) timerRef.current = setTimeout(() => setAttempt(1), 2000);
       }}
     />
   );
@@ -100,7 +111,7 @@ export default function TileLayer({ sheet, view, size }) {
       </div>
     );
   }
-  const z = levelFor(view.scale, sheet.maxZoom);
+  const z = levelFor(view.scale, sheet.maxZoom, paper);
   const viewport = { x: -view.tx / view.scale, y: -view.ty / view.scale, w: size.w / view.scale, h: size.h / view.scale };
   const tiles = visibleTiles(viewport, gridFor(z, paper), paper);
   // Level 0 always sits underneath, so zooming never flashes to white

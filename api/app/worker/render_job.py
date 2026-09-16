@@ -26,11 +26,15 @@ def run(db: Session, job: Job) -> None:
         ts = tiles.render_sheet(path, sheet.page_index - 1, out)   # the store is 1-based
         # Every tile lands before the row flips, so a reader never sees
         # a key whose pyramid is half there. Re-uploading the same keys
-        # (a reclaimed job re-running) is harmless.
-        for rel in ts.files:
-            full = os.path.join(out, rel)
-            with open(full, "rb") as fh:
-                store.put(prefix + rel, fh, "image/png", os.path.getsize(full))
+        # (a reclaimed job re-running) is harmless. The same classification
+        # blob_to_tempfile's download uses applies here too -- a storage
+        # blip on the way out is transient and retries like any other job,
+        # not a terminal RENDER_FAILED.
+        with blobs.storage_errors(doc.filename):
+            for rel in ts.files:
+                full = os.path.join(out, rel)
+                with open(full, "rb") as fh:
+                    store.put(prefix + rel, fh, "image/png", os.path.getsize(full))
     sheet.render_key, sheet.render_status, sheet.render_error = prefix, "rendered", ""
     sheet.max_zoom = ts.levels[-1].z
     db.flush()

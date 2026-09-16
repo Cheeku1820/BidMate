@@ -668,6 +668,13 @@ button {
   overflow: hidden;
 }
 
+/* No rendered page yet (pending or failed) -- the same dashed language
+   an unverified measurement uses, so the estimator reads "not yet
+   confirmed" rather than mistaking blank paper for an empty sheet. */
+.tilelayer--blank {
+  border: 2px dashed var(--line-2);
+}
+
 .tile {
   position: absolute;
   image-rendering: auto;

@@ -48,6 +48,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # A render job row (kind='render') cannot satisfy the three-kind
+    # constraint being restored below, so any that exist have to go
+    # first -- otherwise the CHECK CONSTRAINT this recreates would be
+    # violated by existing rows and this downgrade would fail outright
+    # once a single render job had ever run. Render jobs are disposable
+    # queue entries, not audit history (the append-only `actions` table
+    # is that), so deleting them here loses nothing this migration is
+    # responsible for preserving.
+    op.execute("DELETE FROM jobs WHERE kind = 'render'")
+
     op.drop_constraint('ck_jobs_kind', 'jobs', type_='check')
     op.create_check_constraint('ck_jobs_kind', 'jobs', f"kind in ({_JOB_KINDS_OLD})")
 

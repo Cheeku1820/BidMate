@@ -4,15 +4,34 @@ import TileLayer, { levelFor, visibleTiles, gridFor } from "./TileLayer.jsx";
 
 const D = { id: "s1", number: "E2.1", widthPt: 2592, heightPt: 1728, renderStatus: "rendered", renderError: "", maxZoom: 3 };
 
+const LANDSCAPE = { w: 1000, h: 750 };   // width is the long edge: SHEET_W * viewScale behaves the same as before
+
 describe("levelFor", () => {
   it("picks the smallest level whose width covers the on-screen page, capped", () => {
-    expect(levelFor(0.4, 3)).toBe(0);   // 400 px on screen -> level 0 (512)
-    expect(levelFor(1.1, 3)).toBe(2);   // 1100 px -> 2048
-    expect(levelFor(9, 3)).toBe(3);     // capped
+    expect(levelFor(0.4, 3, LANDSCAPE)).toBe(0);   // 400 px on screen -> level 0 (512)
+    expect(levelFor(1.1, 3, LANDSCAPE)).toBe(2);   // 1100 px -> 2048
+    expect(levelFor(9, 3, LANDSCAPE)).toBe(3);     // capped
   });
   it("falls back to level 0 when the sheet reports no finest level", () => {
-    expect(levelFor(4, null)).toBe(0);
-    expect(levelFor(4, undefined)).toBe(0);
+    expect(levelFor(4, null, LANDSCAPE)).toBe(0);
+    expect(levelFor(4, undefined, LANDSCAPE)).toBe(0);
+  });
+  it("uses the paper's long edge, not the stored 1000-unit width, for a portrait page", () => {
+    // SHEET_W * viewScale (the pre-fix comparison) would give 1000 px on
+    // screen -> level 1 (1024). The long edge here is the height (1500),
+    // so the true on-screen long edge is 1500 px -> level 2 (2048).
+    expect(levelFor(1, 3, { w: 1000, h: 1500 })).toBe(2);
+  });
+  it("factors in devicePixelRatio, so a high-DPI screen picks a finer level for the same paper scale", () => {
+    const original = window.devicePixelRatio;
+    try {
+      Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true });
+      // 400 css px * dpr 2 = 800 on-screen px -> level 1 (1024), where
+      // dpr 1 (the first case above) stays at level 0.
+      expect(levelFor(0.4, 3, LANDSCAPE)).toBe(1);
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", { value: original, configurable: true });
+    }
   });
 });
 
@@ -47,6 +66,11 @@ describe("TileLayer", () => {
     expect(imgs[0].getAttribute("src")).toBe("/api/sheets/s1/tiles/0/0/0.png");
     expect(imgs[0].getAttribute("alt")).toBe("");
     expect(imgs[0].getAttribute("draggable")).toBe("false");
+  });
+  it("selects a level-1 tile URL at a scale that resolves to z=1", () => {
+    const { container } = render(<TileLayer sheet={D} view={{ scale: 0.6, tx: 0, ty: 0 }} size={{ w: 800, h: 534 }} />);
+    const srcs = [...container.querySelectorAll("img.tile")].map((img) => img.getAttribute("src"));
+    expect(srcs).toContain("/api/sheets/s1/tiles/1/0/0.png");
   });
   it("renders only the level-0 backdrop when the page fits inside one tile on screen", () => {
     const { container } = render(<TileLayer sheet={D} view={{ scale: 0.4, tx: 0, ty: 0 }} size={{ w: 800, h: 534 }} />);

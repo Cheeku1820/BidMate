@@ -1,5 +1,6 @@
 """Thin HTTP layer for documents. router -> service -> models."""
 
+import logging
 import re
 import uuid
 from urllib.parse import quote
@@ -18,6 +19,7 @@ from app.identity.models import User
 from app.takeoff.router import load_project
 
 router = APIRouter(prefix="/api", tags=["documents"])
+logger = logging.getLogger(__name__)
 
 # Characters that would break or split a Content-Disposition header line:
 # a quote (closes the quoted-string early), or a raw CR/LF (a multipart
@@ -76,8 +78,12 @@ def patch_document(document_id: uuid.UUID, body: DocumentTypeIn, user: User = De
 @router.delete("/documents/{document_id}", status_code=204)
 def delete_document(document_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db), store: BlobStore = Depends(get_blob_store)) -> None:
     document = service.load_document(document_id, db, user)
-    service.delete_document(db, actor=user, document=document, store=store)
+    key = service.delete_document(db, actor=user, document=document)
     db.commit()
+    try:
+        store.delete(key)
+    except Exception:  # noqa: BLE001 -- the row is gone; an orphan blob is the harmless outcome
+        logger.warning("blob delete failed after row delete", extra={"storage_key": key})
 
 
 @router.get("/documents/{document_id}/content")

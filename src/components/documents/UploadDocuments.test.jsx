@@ -50,8 +50,36 @@ describe("UploadDocuments", () => {
     const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]) });
     renderUpload(store);
     expect(await screen.findByText("E-set.pdf")).toBeInTheDocument();
-    expect(screen.getByText("Uploaded")).toBeInTheDocument();
+    // Status "uploaded" is the read-in-flight state, same as "processing"
+    // -- see the "renders processing and processed..." test below. It is
+    // not "Uploaded": B2's automatic read means this row is about to be
+    // read, not done.
+    expect(screen.getByText("Reading…")).toBeInTheDocument();
     expect(store.listDocuments).toHaveBeenCalledWith("p1");
+  });
+
+  it("renders processing and processed documents by their own state, not as failed", async () => {
+    // B1 residual I5: before this fix, any status other than the literal
+    // "uploaded" rendered in the failed tone with the generic fallback
+    // copy -- so the day the worker started writing "processing" and
+    // "processed" (docs/specs/engine-behind-the-api.md), every one of
+    // those documents would have looked like a read failure.
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([
+        doc({ id: "d1", filename: "a.pdf", status: "processing" }),
+        doc({ id: "d2", filename: "b.pdf", status: "processed" }),
+        doc({ id: "d3", filename: "c.pdf", status: "failed", error: "Couldn't read this file." }),
+      ]),
+    });
+    renderUpload(store);
+    expect(await screen.findByText("Reading…")).toBeInTheDocument();
+    expect(screen.getByText("Read")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't read this file.")).toBeInTheDocument();
+    expect(screen.queryAllByText(/couldn't be read/i)).toHaveLength(0);
+    // b.pdf (processed, Drawings) satisfies the drawing-set gate on its
+    // own -- neither a and b's non-failed states nor c's failure should
+    // block continuing.
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
   });
 
   it("uploads a dropped PDF with progress and settles to Uploaded", async () => {
@@ -129,14 +157,16 @@ describe("UploadDocuments", () => {
     expect(await screen.findByText("confirm screen")).toBeInTheDocument();
   });
 
-  it("resolves a drop to Uploaded, swapping the row's key to the server id and enabling the primary action", async () => {
+  it("resolves a drop to reading, swapping the row's key to the server id and enabling the primary action", async () => {
     const store = makeStore({
       uploadDocument: vi.fn().mockResolvedValue(doc()),
     });
     renderUpload(store);
     screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeDisabled());
     drop([pdf("E-set.pdf")]);
-    await waitFor(() => expect(screen.getByText("Uploaded")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Reading…")).toBeInTheDocument());
+    // A row that's reading, not failed and not still uploading, already
+    // satisfies the drawing-set gate.
     screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
     // The row now carries the server's id -- removing it asks first,
     // same as a row that arrived from the initial list.
@@ -196,7 +226,7 @@ describe("UploadDocuments", () => {
 
     fireEvent.change(screen.getByLabelText(/type for E-set.pdf/i), { target: { value: "Addendum" } });
     await waitFor(() => expect(screen.queryByText("Couldn't change the type. Try again.")).not.toBeInTheDocument());
-    expect(screen.getByText("Uploaded")).toBeInTheDocument();
+    expect(screen.getByText("Reading…")).toBeInTheDocument();
   });
 
   it("keeps the row and surfaces the server's message when a delete fails, without disabling continuing", async () => {
@@ -231,7 +261,7 @@ describe("UploadDocuments", () => {
     await act(async () => { resolveUpload(doc({ docType: "Drawings" })); });
 
     await waitFor(() => expect(store.setDocumentType).toHaveBeenCalledWith("d1", "Addendum"));
-    expect(await screen.findByText("Uploaded")).toBeInTheDocument();
+    expect(await screen.findByText("Reading…")).toBeInTheDocument();
     expect(screen.getByLabelText(/type for E-set.pdf/i)).toHaveValue("Addendum");
   });
 
@@ -267,11 +297,9 @@ describe("UploadDocuments", () => {
 
     const reason = screen.getByText("The file is password protected. Upload an unlocked copy.");
     expect(reason).toHaveClass("upload-status--unsupported");
-    expect(screen.getAllByText("Uploaded")).toHaveLength(1);
+    expect(screen.getAllByText("Reading…")).toHaveLength(1);
     // Counted where it belongs: with the files that need attention,
-    // not with the uploaded ones -- and it does not satisfy the
-    // drawing-set gate on its own.
-    expect(screen.getByText(/1 uploaded/)).toBeInTheDocument();
+    // not with the readable ones.
     expect(screen.getByText(/1 need attention/)).toBeInTheDocument();
   });
 
@@ -311,7 +339,7 @@ describe("UploadDocuments", () => {
     });
     renderUpload(store);
     drop([pdf("scan.pdf")]);
-    await waitFor(() => expect(screen.getByText("Uploaded")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Reading…")).toBeInTheDocument());
     await waitFor(() => expect(classifyDoc).toHaveBeenCalled());
     // No unhandled rejection, no retype, the guess stands.
     expect(store.setDocumentType).not.toHaveBeenCalled();
@@ -330,9 +358,9 @@ describe("UploadDocuments", () => {
     await waitFor(() => expect(store.setDocumentType).toHaveBeenCalledWith("d1", "Specifications"));
     expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
     // The select shows what the server holds, not what the write
-    // hoped for, and the row is still counted.
+    // hoped for, and the row is still counted -- a failed retype does
+    // not knock a reading, Drawings-typed row out of the gate.
     expect(screen.getByLabelText(/type for scan.pdf/i)).toHaveValue("Drawings");
-    // The tab summary and the footer both carry the count.
-    expect(screen.getAllByText(/1 uploaded/).length).toBeGreaterThan(0);
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
   });
 });

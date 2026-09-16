@@ -60,32 +60,32 @@ def test_delete_removes_row_and_blob_and_is_audited_not_undoable(client, uploade
     assert undo.status_code == 200 and undo.json()["performed"] is False
 
 
-def test_a_storage_failure_during_delete_leaves_the_row_rather_than_a_dangling_one(client, uploaded, db, store):
-    """The reason delete_document deletes the row before the blob. If
-    storage fails, the transaction the row's deletion is in never
-    commits, so the estimator keeps a document that is still listed,
-    still counted, and still openable -- rather than a row whose bytes
-    are gone, which is the failure they would only discover on opening
-    it. The orphan the reverse ordering leaves (a blob no row points at)
-    is unreachable by any route, since every key is reached through a
-    row."""
+def test_delete_commits_the_row_before_touching_storage(client, uploaded, db, project, store):
+    """I3: the old ordering called `store.delete` before the route's own
+    `db.commit()`, so a storage failure rolled the whole transaction
+    back -- the row's deletion never took effect, and the estimator's
+    remove silently didn't happen. The fix commits the row first: the
+    remove always takes effect, and a storage failure only leaves an
+    orphan blob nothing references -- ROADMAP.md §2.2's reaper problem,
+    not a dangling row and not a delete that quietly failed."""
     key = db.get(Document, uploaded["id"]).storage_key
+    calls = []
+    original = store.delete
 
-    def refuse(_key):
-        raise RuntimeError("storage is unreachable")
+    def failing_delete(k):
+        calls.append(k)
+        raise RuntimeError("storage down")
 
-    store.delete = refuse
+    store.delete = failing_delete
+    try:
+        res = client.delete(f"/api/documents/{uploaded['id']}")
+    finally:
+        store.delete = original
 
-    # The request-id middleware turns an unhandled exception into a 500
-    # rather than letting it escape the app, so this is the status the
-    # estimator's client sees -- the remove plainly did not happen.
-    assert client.delete(f"/api/documents/{uploaded['id']}").status_code == 500
-
-    # What a real request's session teardown does with a transaction
-    # that never reached the route's own db.commit().
-    db.rollback()
-    assert db.get(Document, uploaded["id"]) is not None
-    assert store.exists(key)
+    assert res.status_code == 204
+    assert calls == [key]
+    assert db.get(Document, uploaded["id"]) is None
+    assert client.get(f"/api/projects/{project.id}/documents").json() == []
 
 
 def test_content_streams_the_exact_bytes_privately(client, uploaded):

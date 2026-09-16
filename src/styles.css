@@ -1805,6 +1805,17 @@ button {
   color: var(--blue);
 }
 
+/* Reading is in flight, not done -- neutral ink, not blue, so it never
+   reads as "Uploaded" at a glance. Read is done reading, same blue as
+   ready always has been: done, not yet judged, never green. */
+.upload-status--reading {
+  color: var(--ink-2);
+}
+
+.upload-status--read {
+  color: var(--blue);
+}
+
 .upload-status--duplicate,
 .upload-status--unsupported {
   color: var(--red);

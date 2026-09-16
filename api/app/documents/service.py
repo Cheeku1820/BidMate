@@ -155,26 +155,21 @@ def set_doc_type(db: DbSession, *, actor: User, document: Document, doc_type: st
     return document
 
 
-def delete_document(db: DbSession, *, actor: User, document: Document, store: BlobStore) -> None:
-    """Row first, then blob -- deliberately, and the order is the whole
-    point of this function.
+def delete_document(db: DbSession, *, actor: User, document: Document) -> str:
+    """Row first, committed by the route, then the blob -- the route
+    deletes the blob only after its own db.commit() succeeds, so a
+    storage failure can never leave a row that points at nothing. The
+    orphan a failed storage delete leaves is unreachable by any route
+    (every key is reached through a row) and is the reaper's problem
+    (ROADMAP.md §2.2).
 
-    Either order leaves a window. Deleting the blob first means a
-    storage success followed by a database failure leaves a row pointing
-    at nothing: the document is still listed, still counts toward the
-    drawing-set gate, and fails the moment anyone opens it. Deleting the
-    row first means a database success followed by a storage failure
-    leaves a blob no row references -- unreachable by any route, since
-    every key is reached through a row. The second is the harmless one,
-    so it is the one this takes.
-
-    The orphan it can leave is real and is not swept up by anything:
-    blob retention and reaping are not built (ROADMAP.md §2.2).
-
-    `store.delete` runs after `actions.commit` but before the route's
-    own `db.commit()`, so a storage failure rolls the row back too and
-    the estimator is told the remove failed rather than left with a list
-    that quietly disagrees with storage."""
+    I3: the previous version called `store.delete` from inside this
+    function, before the route's own `db.commit()` -- so a storage
+    failure rolled the whole transaction back, and the row's deletion
+    never took effect. The estimator's remove looked like it silently
+    failed rather than actually removing the document. Returning the
+    key instead, and leaving the blob delete to the route, means the
+    row is durably gone before storage is ever touched."""
     before = _row_fields(document)
     project_id, filename, key = document.project_id, document.filename, document.storage_key
     db.delete(document)
@@ -183,7 +178,7 @@ def delete_document(db: DbSession, *, actor: User, document: Document, store: Bl
         db, actor=actor, project_id=project_id, kind="document_delete",
         label=f"Removed {filename}", before=before, after={},
     )
-    store.delete(key)
+    return key
 
 
 def open_content(document: Document, store: BlobStore) -> BinaryIO:

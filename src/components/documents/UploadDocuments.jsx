@@ -35,7 +35,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { AlertCircle, AlertTriangle, FileText, Upload, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, FileText, Loader2, Upload, X } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import Modal from "../Modal.jsx";
 import { DOC_TYPES, detectDocTypeInfo } from "../../lib/detectDocType.js";
@@ -57,14 +57,26 @@ const TABS = [
 // the state -- CLAUDE.md: status is never colour alone). `STATE_TONE` maps
 // each state onto the existing red/blue CSS hues in styles.css so a new
 // failure kind doesn't need a new stylesheet rule: duplicate, unsupported,
-// and failed all read as "needs attention" red, same as before.
+// and failed all read as "needs attention" red, same as before. `reading`
+// is neutral -- a read hasn't finished, so it isn't "done" yet -- and
+// `read` takes the same blue as `ready` always has: done, not yet judged,
+// never the green CLAUDE.md reserves for estimator approval.
 const STATE_TONE = {
   uploading: "uploading",
   ready: "ready",
+  reading: "reading",
+  read: "read",
   duplicate: "unsupported",
   unsupported: "unsupported",
   failed: "unsupported",
 };
+
+// A row in one of these states never reached (or no longer represents)
+// a usable document: rejected before or by the server, or the document
+// itself failed to read. Shared by the footer's "need attention" count
+// and the drawing-set gate below, so the two can't drift on what counts
+// as blocked.
+const BLOCKED_STATES = ["duplicate", "unsupported", "failed"];
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
@@ -82,26 +94,27 @@ const FAILED_FALLBACK = "This file couldn't be read. Upload it again, or replace
 /** A persisted document, as the API returns it, turned into a row.
  *
  *  The row's state comes from the server's `status`, never assumed.
- *  `uploaded` is the only status this slice writes, and it is the row's
- *  "ready" state. Anything else is not "Uploaded" and must not render
- *  as if it were: the worker that lands later (B2) reports back through
- *  this same field, and the day it writes `failed`, that document has
- *  to show the failure and its `error` text in the failed tone -- not
- *  sit in the list looking done. Until the worker's intermediate
- *  statuses exist to be rendered, every non-`uploaded` status takes the
- *  failed tone rather than the "done" one; the honest default is the
- *  one that does not overstate.
+ *  B1 residual I5: the previous version of this function only knew
+ *  `uploaded` (its own "ready" state) and treated every other status --
+ *  including `processing` and `processed`, which nothing wrote yet --
+ *  as `failed`. The day the worker (B2) started writing those statuses,
+ *  every reading or already-read document would have rendered as a
+ *  read failure with the generic fallback copy. Only `failed` is
+ *  failed. `uploaded` and `processing` are the worker's read in flight
+ *  -- reading is automatic now, so an uploaded document is on its way
+ *  to being read, not sitting done -- and `processed` is read.
  *
  *  `error` is left off the row deliberately: on a row it means a failed
- *  retype or remove on an otherwise-ready document (see setDocType and
+ *  retype or remove on an otherwise-good document (see setDocType and
  *  confirmRemove), and the server's `error` is a different thing --
  *  it is why the document itself failed, and it goes in `message`, the
  *  same field a duplicate or unsupported upload's copy lives in. */
 function rowFromDocument(d) {
-  if (d.status === "uploaded") {
-    return { ...d, error: undefined, state: "ready", progress: 100 };
+  if (d.status === "failed") {
+    return { ...d, error: undefined, state: "failed", progress: 100, message: d.error || FAILED_FALLBACK };
   }
-  return { ...d, error: undefined, state: "failed", progress: 100, message: d.error || FAILED_FALLBACK };
+  if (d.status === "processed") return { ...d, error: undefined, state: "read", progress: 100 };
+  return { ...d, error: undefined, state: "reading", progress: 100 };
 }
 
 export default function UploadDocuments({ store }) {
@@ -373,8 +386,14 @@ export default function UploadDocuments({ store }) {
   // Derived from `rows`, never from the filtered view. See the header.
   const readyCount = rows.filter((r) => r.state === "ready").length;
   const uploadingCount = rows.filter((r) => r.state === "uploading").length;
-  const blockedRows = rows.filter((r) => ["duplicate", "unsupported", "failed"].includes(r.state));
-  const drawingsCount = rows.filter((r) => r.state === "ready" && r.docType === "Drawings").length;
+  const blockedRows = rows.filter((r) => BLOCKED_STATES.includes(r.state));
+  // A row counts toward the drawing-set gate once it's a real, non-
+  // rejected document that isn't still in flight -- "ready" (dead now
+  // that rowFromDocument never writes it, kept for an in-flight upload
+  // that just finished), "reading", or "read" all qualify. Not "failed",
+  // "duplicate", or "unsupported" (never became a usable document), and
+  // not "uploading" (isn't one yet).
+  const drawingsCount = rows.filter((r) => !BLOCKED_STATES.includes(r.state) && r.state !== "uploading" && r.docType === "Drawings").length;
   // The takeoff runs on the drawing set, so at least one file has to be
   // typed Drawings before there's anything to process.
   const canContinue = drawingsCount > 0;
@@ -583,6 +602,14 @@ export default function UploadDocuments({ store }) {
                             row.error
                           ) : row.state === "ready" ? (
                             "Uploaded"
+                          ) : row.state === "reading" ? (
+                            <>
+                              <Loader2 aria-hidden="true" size={14} className="spin" /> Reading…
+                            </>
+                          ) : row.state === "read" ? (
+                            <>
+                              <CheckCircle2 aria-hidden="true" size={14} className="ink-blue" /> Read
+                            </>
                           ) : (
                             row.message
                           )}

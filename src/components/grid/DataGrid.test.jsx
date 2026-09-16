@@ -249,3 +249,120 @@ describe("footer", () => {
     expect(screen.getByText("Total 1.5").closest("tfoot")).not.toBeNull();
   });
 });
+
+/* ============================================================
+   Fix round (task-6 review): four Important defects found in the
+   brief's own DataGrid.jsx. One focused test per defect, below.
+   ============================================================ */
+
+describe("fix round: caret position while typing", () => {
+  test("does not force the caret to the end on every keystroke", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    const input = screen.getByRole("textbox", { name: "Hours, One" });
+    // The open itself is allowed one caret placement; spy after that,
+    // so this only catches the effect re-firing on later keystrokes.
+    const spy = vi.spyOn(input, "setSelectionRange");
+    fireEvent.change(input, { target: { value: "9" } });
+    fireEvent.change(input, { target: { value: "9.5" } });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("fix round: commit ordering", () => {
+  test("a commit that reopens another cell's editor (from onCommit) is not clobbered by the trailing close", () => {
+    const ref = createRef();
+    const onCommit = vi.fn(() => ref.current.openEditor("r1", "note"));
+    render(
+      <DataGrid
+        ref={ref} columns={columns} rows={rows} rowKey={(r) => r.id} rowLabel={(r) => r.name}
+        onCommit={onCommit} caption="Test grid"
+      />,
+    );
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Hours, One" }), { target: { value: "9" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Hours, One" }), { key: "Enter" });
+    // The reentrant openEditor call wins: the Note editor is open, not
+    // clobbered by the Hours editor's own trailing closeEditor().
+    expect(screen.getByRole("textbox", { name: "Note, One" })).toHaveValue("");
+  });
+});
+
+describe("fix round: focusPending does not leak", () => {
+  // Both cases below check document.activeElement after a blur. The
+  // grid's own refocus-the-active-cell effect is a passive effect on
+  // [active, editing]; for a blur specifically it does not settle
+  // within the synchronous act() that fireEvent wraps around the
+  // event, so the assertion needs an explicit flush afterward or it
+  // reads stale state and passes regardless of whether the bug is
+  // fixed. `await act(async () => {})` flushes it.
+
+  test("an editor opened reentrantly from onCommit does not later yank focus back into the grid on its own blur", async () => {
+    const ref = createRef();
+    const onCommit = vi.fn(() => ref.current.openEditor("r1", "note"));
+    render(
+      <DataGrid
+        ref={ref} columns={columns} rows={rows} rowKey={(r) => r.id} rowLabel={(r) => r.name}
+        onCommit={onCommit} caption="Test grid"
+      />,
+    );
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Hours, One" }), { target: { value: "9" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Hours, One" }), { key: "Enter" });
+    const input = screen.getByRole("textbox", { name: "Note, One" });
+
+    // Its own later close (focus moving to something outside the grid)
+    // must not yank focus back to a grid cell -- that would mean the
+    // stale focusPending flag from the Hours editor's own close leaked
+    // through, since openEditor was called before that close resolved.
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    button.focus();
+    fireEvent.blur(input);
+    await act(async () => {});
+    expect(document.activeElement).toBe(button);
+    document.body.removeChild(button);
+  });
+
+  test("a select editor's blur does not steal focus back into the grid", async () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "End" });
+    fireEvent.keyDown(cell(0, BASIS), { key: " " });
+    const select = screen.getByRole("combobox", { name: "Basis, One" });
+    const button = document.createElement("button");
+    document.body.appendChild(button);
+    button.focus();
+    fireEvent.blur(select);
+    await act(async () => {});
+    expect(document.activeElement).toBe(button);
+    document.body.removeChild(button);
+  });
+});
+
+describe("fix round: invalid value on blur", () => {
+  test("cancels rather than stranding the editor and deadening the keyboard", () => {
+    const { onCancel } = setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "a" });
+    const input = screen.getByRole("textbox", { name: "Hours, One" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a number");
+    fireEvent.blur(input);
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(onCancel).toHaveBeenCalledWith(rows[0], "hours");
+    fireEvent.click(cell(1, NOTE));
+    expect(cell(1, NOTE)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(cell(1, NOTE), { key: "ArrowUp" });
+    expect(cell(0, NOTE)).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+describe("fix round: minor items", () => {
+  test("Infinity is rejected as not a number", () => {
+    const { onCommit } = setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Infinity" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a number");
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+});

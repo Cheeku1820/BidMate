@@ -29,7 +29,7 @@ const cellId = (row, col) => `${row}:${col}`;
 
 function parseNumber(raw, edit) {
   const n = Number(raw);
-  if (raw.trim() === "" || Number.isNaN(n)) return { error: "Enter a number" };
+  if (raw.trim() === "" || !Number.isFinite(n)) return { error: "Enter a number" };
   if (edit.min != null && n < edit.min) return { error: edit.minMessage || `Enter a number of at least ${edit.min}` };
   return { value: n };
 }
@@ -50,6 +50,16 @@ const DataGrid = forwardRef(function DataGrid(
   // Set right before an editor is closed by code, so the blur that
   // closing fires does not commit a second time.
   const closing = useRef(false);
+  // Set by startEdit and read right after firing a deferred commit, so
+  // Enter/Tab know whether the commit's onCommit reopened a different
+  // cell's editor (openEditor, called synchronously from onCommit).
+  // When it did, the automatic "move to the next cell" step must be
+  // skipped: it would otherwise both stomp the reopened editor's
+  // active cell and, via activate(), re-arm focusPending -- which
+  // would fire the next time that reopened editor's own close clears
+  // `editing`, yanking focus back into the grid out from under
+  // whatever the estimator does with it.
+  const reopenedDuringCommit = useRef(false);
 
   useEffect(() => {
     if (focusPending.current && active && !editing) {
@@ -59,6 +69,12 @@ const DataGrid = forwardRef(function DataGrid(
     }
   }, [active, editing]);
 
+  // Runs once per editor *open*, not on every keystroke: keying this on
+  // `editing` itself re-fired on every value/message change (a new
+  // object each time setEditing is called), which forced the caret to
+  // the end while the estimator was still typing or had arrowed into
+  // the middle of the value. Keying on the cell identity instead means
+  // it only runs when a different cell starts editing.
   useEffect(() => {
     const el = editorRef.current;
     if (!editing || !el) return;
@@ -68,7 +84,8 @@ const DataGrid = forwardRef(function DataGrid(
       const n = el.value.length;
       el.setSelectionRange(n, n);
     }
-  }, [editing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.row, editing?.col]);
 
   const columnByKey = (key) => columns.find((c) => c.key === key);
 
@@ -81,6 +98,14 @@ const DataGrid = forwardRef(function DataGrid(
   function startEdit(row, col, { value, caret, message } = {}) {
     const column = columnByKey(col);
     const current = column.edit.value(rows[row]);
+    // An editor is opening, so any earlier request to refocus the grid
+    // cell once editing clears no longer applies -- without this, a
+    // commit whose onCommit reopens a different cell's editor (the
+    // material screen's allowance reason does this) leaves the flag
+    // set, and that editor's own later close yanks focus back into the
+    // grid out from under whatever the estimator clicked next.
+    focusPending.current = false;
+    reopenedDuringCommit.current = true;
     setActive({ row, col });
     setEditing({ row, col, value: value ?? String(current ?? ""), caret, message: message || null });
   }
@@ -104,53 +129,86 @@ const DataGrid = forwardRef(function DataGrid(
     setEditing(null);
   }
 
+  // Closes without requesting a refocus of the grid cell. A blur means
+  // focus has already moved somewhere the estimator chose -- another
+  // cell, a control outside the grid -- and pulling it back into the
+  // grid a moment later, once this editor's own close finishes, would
+  // undo that. `closeEditor` above is for the paths that *do* want the
+  // active cell focused afterward: a key-driven move, or Escape landing
+  // back on the cell it was already on.
+  function closeEditorQuiet() {
+    closing.current = true;
+    setEditing(null);
+  }
+
   function clear(row, column) {
     const r = rows[row];
     if (column.edit.hasEntry && column.edit.hasEntry(r)) onCommit(r, column.key, null);
   }
 
-  /** Commits the open editor. Returns true when it may close: the value
-   *  was valid and (if changed) committed, or unchanged. False leaves
-   *  it open with a message. */
+  /** Validates the open editor without committing. Returns
+   *  `{ ok: true, commit? }` when the value may close the editor --
+   *  `commit`, when present, is a thunk that fires `onCommit` once.
+   *  It is deferred rather than called here so a caller can close the
+   *  editor's own state *before* running it: a screen's `onCommit` may
+   *  open a different cell's editor synchronously (`openEditor`), and
+   *  if that happened before this editor's close, the close would
+   *  overwrite it. Returns `{ ok: false }` and leaves a validation
+   *  message in state when the value cannot be committed. */
   function commitEditor() {
     const { row, col, value } = editing;
     const column = columnByKey(col);
     const edit = column.edit;
     const r = rows[row];
+    // Defensive: the row this editor was opened for no longer exists
+    // (e.g. deleted while the editor was open). Nothing to validate
+    // against and nothing to commit.
+    if (!r) return { ok: true };
     const current = edit.value(r);
     if (value.trim() === "") {
       if (edit.required && edit.required(r)) {
         setEditing({ ...editing, message: edit.requiredMessage || "This can't be empty" });
-        return false;
+        return { ok: false };
       }
-      if (edit.hasEntry && edit.hasEntry(r)) onCommit(r, col, null);
-      return true;
+      if (edit.hasEntry && edit.hasEntry(r)) return { ok: true, commit: () => onCommit(r, col, null) };
+      return { ok: true };
     }
     if (edit.kind === "number") {
       const parsed = parseNumber(value, edit);
       if (parsed.error) {
         setEditing({ ...editing, message: parsed.error });
-        return false;
+        return { ok: false };
       }
-      if (current == null || Number(current) !== parsed.value) onCommit(r, col, parsed.value);
-      return true;
+      if (current == null || Number(current) !== parsed.value) return { ok: true, commit: () => onCommit(r, col, parsed.value) };
+      return { ok: true };
     }
-    if (value !== String(current ?? "")) onCommit(r, col, value);
-    return true;
+    if (value !== String(current ?? "")) return { ok: true, commit: () => onCommit(r, col, value) };
+    return { ok: true };
   }
 
   function onEditorKeyDown(event) {
     if (event.key === "Enter") {
       event.preventDefault();
-      if (commitEditor()) {
+      const result = commitEditor();
+      if (result.ok) {
+        // Close, then report, then move -- in that order, so a screen
+        // that opens another cell's editor from inside `onCommit` has
+        // the last word on `editing`. And if it did reopen one, skip
+        // the move: it would stomp that editor's active cell and
+        // re-arm a focus request that fires on its later close.
         closeEditor();
-        activate(move("down"));
+        reopenedDuringCommit.current = false;
+        result.commit?.();
+        if (!reopenedDuringCommit.current) activate(move("down"));
       }
     } else if (event.key === "Tab") {
       event.preventDefault();
-      if (commitEditor()) {
+      const result = commitEditor();
+      if (result.ok) {
         closeEditor();
-        activate(move(event.shiftKey ? "prev" : "next") || active);
+        reopenedDuringCommit.current = false;
+        result.commit?.();
+        if (!reopenedDuringCommit.current) activate(move(event.shiftKey ? "prev" : "next") || active);
       }
     } else if (event.key === "Escape") {
       event.preventDefault();
@@ -162,10 +220,24 @@ const DataGrid = forwardRef(function DataGrid(
 
   function onEditorBlur() {
     if (closing.current || !editing) return;
-    if (commitEditor()) {
-      closing.current = true;
-      setEditing(null);
+    const result = commitEditor();
+    if (result.ok) {
+      closeEditorQuiet();
+      result.commit?.();
+      return;
     }
+    // The value is invalid (e.g. still showing "Enter a number") and
+    // focus has already left the input -- the estimator clicked
+    // something else. Leaving the editor open here strands it: its
+    // cell's `editing` no longer matches wherever `active` moves next,
+    // and onCellKeyDown drops every key while `editing` is set, so the
+    // grid goes dead under the estimator's next click. Treat it as a
+    // cancel instead, same as Escape, but without asking for the
+    // active cell to be refocused -- the estimator's click already
+    // chose where focus goes.
+    const { row, col } = editing;
+    closeEditorQuiet();
+    if (onCancel) onCancel(rows[row], col);
   }
 
   function onSelectChange(event) {
@@ -236,7 +308,11 @@ const DataGrid = forwardRef(function DataGrid(
             if (event.key === "Escape" || event.key === "Tab") onEditorKeyDown(event);
           }}
           onBlur={() => {
-            if (!closing.current) closeEditor();
+            // Quiet, not `closeEditor`: the select is losing focus
+            // because the estimator clicked elsewhere, and requesting
+            // a refocus of the grid cell here would pull focus back
+            // out from under that click once this close finishes.
+            if (!closing.current) closeEditorQuiet();
           }}
         >
           {column.edit.options.map((o) => (

@@ -65,7 +65,7 @@ export default function LaborWorkspace() {
     setRows((current) => current.map((r) => (r.itemId === itemId ? next : r)));
 
   // The grid reports one changed cell; this sends it, patches the row
-  // from the response, and restores the row on failure. A clear is a
+  // from the response, and restores the field on failure. A clear is a
   // null value on the wire for the numeric fields and "" for the
   // reason, which the API normalises the same way.
   const commit = async (row, key, value) => {
@@ -78,7 +78,10 @@ export default function LaborWorkspace() {
       replaceRow(row.itemId, updated);
       showToast(toastFor(key, value, row, updated));
     } catch (err) {
-      replaceRow(row.itemId, row);
+      // Only the edited field, on the row as it is now -- not the whole
+      // captured row, which would undo a later commit on the same row
+      // that has already landed.
+      setRows((cur) => cur.map((r) => (r.itemId === row.itemId ? { ...r, [key]: row[key] } : r)));
       setSaveError(err?.message || "That change couldn't be saved. Try again.");
     }
   };
@@ -166,7 +169,9 @@ export default function LaborWorkspace() {
           <button
             type="button"
             onClick={() => {
-              undo().then(load);
+              undo()
+                .then(load)
+                .catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
               dismissToast();
             }}
           >

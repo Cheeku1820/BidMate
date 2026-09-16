@@ -83,7 +83,8 @@ export const COLUMNS = [
 
 /** What each editable column sends on the wire, and what its toast says. */
 export const FIELDS = {
-  hoursPerUnit: { wire: "hoursOverride", noun: "hours", format: (v) => Number(v).toFixed(2).replace(/\.?0+$/, "") },
+  // Three places, matching the cell, so 0.125 toasts as "0.125".
+  hoursPerUnit: { wire: "hoursOverride", noun: "hours", format: (v) => Number(v).toFixed(3).replace(/\.?0+$/, "") },
   rate: { wire: "rateOverride", noun: "rate", format: (v) => money2(v) + "/hr" },
   adjustmentPercent: { wire: "adjustmentPercent", noun: "adjustment", format: (v) => percent(v) },
   adjustmentReason: { wire: "adjustmentReason", noun: "adjustment reason", format: null },

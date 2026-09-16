@@ -100,6 +100,15 @@ describe("moving the active cell", () => {
     expect(cell(1, NOTE)).toHaveAttribute("aria-selected", "true");
   });
 
+  test("Home from the last editable cell lands on the first", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "End" });
+    expect(cell(0, BASIS)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(cell(0, BASIS), { key: "Home" });
+    expect(cell(0, HOURS)).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(cell(0, HOURS));
+  });
+
   test("Tab wraps to the next row and Shift+Tab back", () => {
     setup();
     fireEvent.keyDown(cell(0, HOURS), { key: "End" });
@@ -145,6 +154,15 @@ describe("editing", () => {
     expect(onCommit).not.toHaveBeenCalled();
     expect(onCancel).toHaveBeenCalledWith(rows[0], "hours");
     expect(document.activeElement).toBe(cell(0, HOURS));
+  });
+
+  test("F2 opens the editor with the current value and the caret at the end", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "F2" });
+    const input = screen.getByRole("textbox", { name: "Hours, One" });
+    expect(input).toHaveValue("0.5");
+    expect(input.selectionStart).toBe(input.value.length);
+    expect(document.activeElement).toBe(input);
   });
 
   test("Tab commits and moves right; an unchanged value commits nothing", () => {
@@ -235,10 +253,13 @@ describe("clearing an entry", () => {
   test("the Clear button renders only on an active cell with an entry, and clears on click", () => {
     const { onCommit } = setup();
     const clear = within(cell(0, HOURS)).getByRole("button", { name: "Clear entry" });
+    expect(clear).toHaveAttribute("tabindex", "-1"); // Delete/Backspace are the keyboard path
+    expect(cell(0, HOURS)).toHaveAttribute("data-clearable"); // the padding for it lands only here
     fireEvent.click(clear);
     expect(onCommit).toHaveBeenCalledWith(rows[0], "hours", null);
     fireEvent.click(cell(1, HOURS));
     expect(within(cell(1, HOURS)).queryByRole("button", { name: "Clear entry" })).not.toBeInTheDocument();
+    expect(cell(1, HOURS)).not.toHaveAttribute("data-clearable");
     expect(within(cell(0, HOURS)).queryByRole("button", { name: "Clear entry" })).not.toBeInTheDocument();
   });
 });
@@ -298,14 +319,43 @@ describe("fix round: commit ordering", () => {
   });
 });
 
+describe("fix round: closing does not leak into a same-cell reopen", () => {
+  test("an editor reopened on the same cell from onCommit still commits on blur", async () => {
+    const ref = createRef();
+    const onCommit = vi.fn(() => ref.current.openEditor("r1", "hours", { message: "Try again" }));
+    render(
+      <DataGrid
+        ref={ref} columns={columns} rows={rows} rowKey={(r) => r.id} rowLabel={(r) => r.name}
+        onCommit={onCommit} caption="Test grid"
+      />,
+    );
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    fireEvent.change(screen.getByRole("textbox", { name: "Hours, One" }), { target: { value: "9" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Hours, One" }), { key: "Enter" });
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    // Reopened on the same cell, with the message.
+    const input = screen.getByRole("textbox", { name: "Hours, One" });
+    expect(screen.getByRole("alert")).toHaveTextContent("Try again");
+    // Same cell, so the open-effect keyed on cell identity did not
+    // re-run to reset `closing`; startEdit has to. Otherwise this
+    // reopened editor ignores its own blur and the second value is lost.
+    fireEvent.change(input, { target: { value: "11" } });
+    fireEvent.blur(input);
+    expect(onCommit).toHaveBeenCalledTimes(2);
+    expect(onCommit).toHaveBeenLastCalledWith(rows[0], "hours", 11);
+  });
+});
+
 describe("fix round: focusPending does not leak", () => {
-  // Both cases below check document.activeElement after a blur. The
-  // grid's own refocus-the-active-cell effect is a passive effect on
-  // [active, editing]; for a blur specifically it does not settle
-  // within the synchronous act() that fireEvent wraps around the
-  // event, so the assertion needs an explicit flush afterward or it
-  // reads stale state and passes regardless of whether the bug is
-  // fixed. `await act(async () => {})` flushes it.
+  // Both cases below check document.activeElement after a blur.
+  // `button.focus()` runs outside act, and jsdom fires `focusout` on
+  // the editor right then -- so React's onBlur has already run and
+  // scheduled the close outside act by the time the explicit
+  // `fireEvent.blur` fires, which is a second blur on a stale closure.
+  // The refocus effect from that first, un-acted close has not
+  // flushed, so without `await act(async () => {})` the assertion
+  // reads document.activeElement before the effect could have moved
+  // it, and passes regardless of whether the bug is fixed.
 
   test("an editor opened reentrantly from onCommit does not later yank focus back into the grid on its own blur", async () => {
     const ref = createRef();

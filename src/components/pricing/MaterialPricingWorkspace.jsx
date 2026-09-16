@@ -66,14 +66,25 @@ export default function MaterialPricingWorkspace() {
   const replaceRow = (itemId, next) =>
     setRows((current) => current.map((r) => (r.itemId === itemId ? next : r)));
 
-  const send = async (row, key, value, request) => {
+  // `restore` names the fields the optimistic update touched; on
+  // failure only those go back, on the row as it is now -- not the
+  // whole captured row, which would undo a later commit on the same
+  // row that has already landed.
+  const send = async (row, key, value, request, restore) => {
     setSaveError(null);
     try {
       const updated = await runMutation(request);
       replaceRow(row.itemId, updated);
       showToast(toastFor(key, value, row, updated));
     } catch (err) {
-      replaceRow(row.itemId, { ...row, pendingSource: undefined });
+      setRows((cur) =>
+        cur.map((r) => {
+          if (r.itemId !== row.itemId) return r;
+          const back = { ...r, pendingSource: undefined };
+          for (const k of restore) back[k] = row[k];
+          return back;
+        }),
+      );
       setSaveError(err?.message || "That change couldn't be saved. Try again.");
     }
   };
@@ -81,7 +92,7 @@ export default function MaterialPricingWorkspace() {
   const commit = (row, key, value) => {
     if (key === "unitPrice" && value === null) {
       replaceRow(row.itemId, { ...row, unitPrice: null });
-      return send(row, key, value, () => store.clearMaterialPrice(row.itemId));
+      return send(row, key, value, () => store.clearMaterialPrice(row.itemId), ["unitPrice"]);
     }
     const next = {
       priceOverride: key === "unitPrice" ? value : row.unitPrice,
@@ -103,7 +114,7 @@ export default function MaterialPricingWorkspace() {
     });
     const toastKey = row.pendingSource && key === "reason" ? "source" : key;
     const toastValue = toastKey === "source" ? next.source : value;
-    return send(row, toastKey, toastValue, () => store.setMaterialPrice(row.itemId, next));
+    return send(row, toastKey, toastValue, () => store.setMaterialPrice(row.itemId, next), ["unitPrice", "source", "reason"]);
   };
 
   const cancel = (row, key) => {
@@ -193,7 +204,9 @@ export default function MaterialPricingWorkspace() {
           <button
             type="button"
             onClick={() => {
-              undo().then(load);
+              undo()
+                .then(load)
+                .catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
               dismissToast();
             }}
           >

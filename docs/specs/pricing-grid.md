@@ -193,8 +193,9 @@ Three ways to clear, all the same commit:
   (the row's source label for that column is *Estimator entered*,
   *Project price*, or *Allowance*), a small `×` button renders at the
   cell's right edge, `aria-label="Clear entry"`. It is visible whenever
-  the cell is active, so it is reachable by keyboard and never a
-  hover-only control. Cells without an override have no button.
+  the cell is active — never a hover-only control; Delete and Backspace
+  are the keyboard path to the same commit. Cells without an override
+  have no button.
 
 The grid calls `onCommit(row, key, null)`. The screen sends the clear
 (below), and the row comes back resolved to whatever is next in the
@@ -232,6 +233,10 @@ synchronously, before any network round-trip.
 | Adjustment reason | text | `adjustmentReason` | the text, or `—` |
 | Adj. hours | — | | `12.50` |
 | Labor cost | — | | `$775` |
+
+A row is *Estimator approved* only once both hours and rate resolve; an
+entry that leaves either unresolved keeps the row at *Missing
+information* with the entry's tier tag showing.
 
 Each edit is its own PATCH with one field, as today. The two adjustment
 fields are independent on the wire (`LaborLineUpdateIn` already takes
@@ -404,7 +409,7 @@ All in `styles.css`, tokens only:
 - `.grid .grid-editor` — the in-place input: fills the cell, inherits
   alignment, no border of its own, `tabular`.
 - `.grid .grid-cell-error` — the one-line message under a cell, in
-  `--red` with the alert icon, matching existing inline field errors.
+  `--red`, matching `.formfield-error`.
 - `.grid tfoot tr` — `position: sticky; bottom: 0; background:
   var(--surface)`, top border in `--line-2`, bold totals.
 - `.grid td.is-pending` — the held-locally allowance state: a dashed

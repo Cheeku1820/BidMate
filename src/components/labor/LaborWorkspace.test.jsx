@@ -7,7 +7,7 @@
    ============================================================ */
 
 import { describe, expect, test, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import LaborWorkspace from "./LaborWorkspace.jsx";
 
@@ -125,6 +125,25 @@ describe("LaborWorkspace", () => {
     expect(review.showToast).toHaveBeenCalledWith("Set hours to 0.75 on 20A duplex receptacle");
   });
 
+  test("editing the rate sends rateOverride and toasts the rate", async () => {
+    const updated = { ...pricedRow, rate: 62, rateSourceLabel: "Estimator entered", laborCost: 310, status: "approved" };
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: "llm", pricingNote: "", rows: [pricedRow] }),
+      setLaborLine: vi.fn().mockResolvedValue(updated),
+    };
+    const review = renderLabor({ store });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    const rate = cellFor("20A duplex receptacle", "Rate");
+    fireEvent.click(rate); // not the first editable cell, so activate it first
+    fireEvent.keyDown(rate, { key: "Enter" });
+    const input = screen.getByRole("textbox", { name: "Rate, 20A duplex receptacle" });
+    fireEvent.change(input, { target: { value: "62" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(store.setLaborLine).toHaveBeenCalledWith("i1", { rateOverride: 62 }));
+    await waitFor(() => expect(screen.getByText("Estimator entered")).toBeInTheDocument());
+    expect(review.showToast).toHaveBeenCalledWith("Set rate to $62.00/hr on 20A duplex receptacle");
+  });
+
   test("editing the adjustment sends adjustmentPercent, and the reason sends adjustmentReason", async () => {
     const store = {
       getLaborRows: vi.fn().mockResolvedValue({ pricingSource: "llm", pricingNote: "", rows: [pricedRow] }),
@@ -166,6 +185,21 @@ describe("LaborWorkspace", () => {
     expect(review.showToast).toHaveBeenCalledWith("Cleared hours on 20A duplex receptacle — now Company standard");
   });
 
+  test("clearing hours with nothing behind them says so in the toast", async () => {
+    const entered = { ...baseRow, hoursPerUnit: 0.75, hoursSourceLabel: "Estimator entered" };
+    const fallenBack = { ...baseRow, hoursSourceLabel: null, hoursPerUnit: null, status: "missing" };
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [entered] }),
+      setLaborLine: vi.fn().mockResolvedValue(fallenBack),
+    };
+    const review = renderLabor({ store });
+    await waitFor(() => expect(screen.getByText("Estimator entered")).toBeInTheDocument());
+    fireEvent.keyDown(cellFor("20A duplex receptacle", "Hours/unit"), { key: "Delete" });
+    await waitFor(() => expect(store.setLaborLine).toHaveBeenCalledWith("i1", { hoursOverride: null }));
+    await waitFor(() => expect(screen.queryByText("Estimator entered")).not.toBeInTheDocument());
+    expect(review.showToast).toHaveBeenCalledWith("Cleared hours on 20A duplex receptacle — nothing else is set");
+  });
+
   test("a failed save restores the row and shows the error", async () => {
     const store = {
       getLaborRows: vi.fn().mockResolvedValue({ pricingSource: "llm", pricingNote: "", rows: [pricedRow] }),
@@ -178,6 +212,34 @@ describe("LaborWorkspace", () => {
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Network down"));
     expect(cellFor("20A duplex receptacle", "Hours/unit")).toHaveTextContent("0.500");
+  });
+
+  test("a failed save restores only the edited field, not a later commit on the same row", async () => {
+    let rejectHours;
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: "llm", pricingNote: "", rows: [pricedRow] }),
+      setLaborLine: vi.fn().mockImplementation((_id, changes) =>
+        changes.hoursOverride != null
+          ? new Promise((_, reject) => { rejectHours = reject; })
+          : Promise.resolve({ ...pricedRow, rate: 62, rateSourceLabel: "Estimator entered" }),
+      ),
+    };
+    renderLabor({ store });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    // Hours: sent, still in flight.
+    fireEvent.keyDown(cellFor("20A duplex receptacle", "Hours/unit"), { key: "9" });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Tab" });
+    // Rate: sent and landed while hours is still pending.
+    const rate = cellFor("20A duplex receptacle", "Rate");
+    fireEvent.keyDown(rate, { key: "6" });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "62" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await waitFor(() => expect(screen.getByText("Estimator entered")).toBeInTheDocument());
+    // Now hours fails: it goes back to 0.500, and the landed rate stays.
+    await act(async () => rejectHours(new Error("Network down")));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Network down"));
+    expect(cellFor("20A duplex receptacle", "Hours/unit")).toHaveTextContent("0.500");
+    expect(cellFor("20A duplex receptacle", "Rate")).toHaveTextContent("$62.00/hr");
   });
 
   test("the footer sums adjusted hours and labor cost over priced rows and names what is left out", async () => {
@@ -218,6 +280,23 @@ describe("LaborWorkspace", () => {
     expect(review.undo).toHaveBeenCalled();
     expect(review.dismissToast).toHaveBeenCalled();
     await waitFor(() => expect(store.getLaborRows).toHaveBeenCalledTimes(2)); // reloads after undo
+  });
+
+  test("a failed undo shows its message instead of failing silently", async () => {
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),
+      setLaborLine: vi.fn(),
+    };
+    renderLabor({
+      store,
+      extra: {
+        undo: vi.fn().mockRejectedValue(new Error("Nothing to undo")),
+        toast: { id: "t1", text: "Set hours to 0.75 on 20A duplex receptacle" },
+      },
+    });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Nothing to undo"));
   });
 
   test("shows the no-automatic-estimate copy when the project was not priced automatically", async () => {

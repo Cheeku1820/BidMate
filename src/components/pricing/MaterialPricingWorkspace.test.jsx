@@ -141,7 +141,7 @@ describe("MaterialPricingWorkspace", () => {
       getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [projectRow] }),
       setMaterialPrice: vi.fn().mockResolvedValue(allowanceRow),
     };
-    renderMaterial({ store });
+    const review = renderMaterial({ store });
     await loaded();
     const basis = cellFor("20A duplex receptacle", "Basis");
     fireEvent.click(basis);
@@ -158,6 +158,8 @@ describe("MaterialPricingWorkspace", () => {
       expect(store.setMaterialPrice).toHaveBeenCalledWith("i1", { priceOverride: 15.5, source: "allowance", reason: "No vendor quote yet" }),
     );
     await waitFor(() => expect(cellFor("20A duplex receptacle", "Basis")).not.toHaveClass("is-pending"));
+    // The toast names the held change that finally went, not the reason.
+    expect(review.showToast).toHaveBeenCalledWith("Marked 20A duplex receptacle as allowance");
   });
 
   test("Escape in the held Reason editor reverts Basis and sends nothing", async () => {
@@ -231,6 +233,20 @@ describe("MaterialPricingWorkspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(review.undo).toHaveBeenCalled();
     await waitFor(() => expect(store.getMaterialRows).toHaveBeenCalledTimes(2));
+  });
+
+  test("a failed undo shows its message instead of failing silently", async () => {
+    const store = { getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }) };
+    renderMaterial({
+      store,
+      extra: {
+        undo: vi.fn().mockRejectedValue(new Error("Nothing to undo")),
+        toast: { id: "t1", text: "Set price to $15.50 on 20A duplex receptacle" },
+      },
+    });
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Nothing to undo"));
   });
 
   test("shows the source label and basis note when a row resolves from Regional baseline", async () => {

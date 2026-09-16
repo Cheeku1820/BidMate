@@ -1717,7 +1717,10 @@ button {
   box-shadow: inset 0 0 0 2px var(--blue);
   outline: none;
 }
-.grid [aria-selected="true"][data-editable] { padding-right: 32px; }
+/* Room for the Clear button, only on a cell that renders one -- on
+   every active cell it jogged the digits as the estimator arrowed
+   across a row. */
+.grid [aria-selected="true"][data-clearable] { padding-right: 32px; }
 /* A change held locally until the estimator finishes it (an allowance
    waiting on its reason): dashed, the same channel unverified
    measurements use. */

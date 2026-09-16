@@ -105,6 +105,12 @@ const DataGrid = forwardRef(function DataGrid(
     // set, and that editor's own later close yanks focus back into the
     // grid out from under whatever the estimator clicked next.
     focusPending.current = false;
+    // And the close that just set `closing` is over: the open-effect
+    // below resets it too, but only when the cell identity changes, so
+    // a same-cell reopen from inside onCommit (openEditor on the cell
+    // that just committed) would otherwise leave the reopened editor
+    // ignoring its own blur.
+    closing.current = false;
     reopenedDuringCommit.current = true;
     setActive({ row, col });
     setEditing({ row, col, value: value ?? String(current ?? ""), caret, message: message || null });
@@ -366,6 +372,7 @@ const DataGrid = forwardRef(function DataGrid(
         tabIndex={isActive ? 0 : -1}
         aria-selected={isActive || undefined}
         data-editable={editable || undefined}
+        data-clearable={showClear || undefined}
         className={className}
         style={{ textAlign: column.align }}
         onClick={() => onCellClick(row, column)}
@@ -381,6 +388,7 @@ const DataGrid = forwardRef(function DataGrid(
                 type="button"
                 className="grid-clear"
                 aria-label="Clear entry"
+                tabIndex={-1}
                 onClick={(event) => {
                   event.stopPropagation();
                   clear(row, column);

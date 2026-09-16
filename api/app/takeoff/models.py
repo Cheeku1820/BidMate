@@ -279,7 +279,7 @@ class ScopeStatement(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
-    page_index: Mapped[int] = mapped_column(Integer, default=0)
+    page_index: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     kind: Mapped[str] = mapped_column(String(20))
     text: Mapped[str] = mapped_column(String(500))
     quote: Mapped[str] = mapped_column(Text)

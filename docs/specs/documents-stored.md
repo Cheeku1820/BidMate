@@ -74,7 +74,7 @@ Migration `0019_documents`, reversible. No `document_pages` yet — page count, 
 | `POST /api/projects/{id}/documents` | multipart; one file per request; streams to `BlobStore.put` with the SHA-256 computed in flight; records the row; returns `DocumentOut`. `409` duplicate, `415` unsupported. |
 | `GET /api/projects/{id}/documents` | the project's documents, oldest first |
 | `PATCH /api/documents/{id}` | `doc_type` only |
-| `DELETE /api/documents/{id}` | blob then row; `204` |
+| `DELETE /api/documents/{id}` | row first, committed, then blob — a failed storage delete logs a warning and leaves an orphan blob, never a row that points at nothing; `204` |
 | `GET /api/documents/{id}/content` | org-scoped streaming read; `Cache-Control: private, no-store` (the same policy `main.py` applies to evidence images — this is NDA'd content) |
 
 Upload goes **through the API**, not by presigned URL: one authenticated path, no CORS to MinIO, no presigned-hostname mismatch between the browser and a compose service, and the hash is computed where the row is written. Presigned direct-to-storage is the follow-up when sets outgrow streaming; `BlobStore` is what makes it a second `put` path rather than a redesign.
@@ -102,7 +102,7 @@ Every new estimator-facing string is sentence case, no "please" / "successfully"
 - **`BlobStore`**: `MemoryBlobStore` round-trip; `S3BlobStore` put/open/delete/exists against MinIO, skipped with a printed reason when `blob_endpoint` isn't reachable — CI gets a MinIO service container so it runs there.
 - **Upload**: stores bytes and a row with the right key shape, size and hash; a second identical upload to the same project → `409` naming the first; the same bytes to a *different* project → stored again with a different key (no cross-project dedup); `.docx` → `415`, nothing stored.
 - **Isolation**: org B's user requesting org A's document → `404`; listing org A's project → `404`.
-- **Delete**: blob gone, row gone, an action recorded with the label; the action is not on the undo stack.
+- **Delete**: row gone, blob gone, an action recorded with the label; the action is not on the undo stack. When the storage delete fails, the row is still gone and the action still recorded — an orphan blob, never a dangling row or a remove that quietly failed.
 - **Content**: streams the exact bytes back with `no-store`.
 - **Audit**: `document_add` recorded with filename and type in `after`, no bytes.
 - **Client**: screen C lists persisted documents on mount; progress renders from XHR events; duplicate and unsupported copy appear on the row; delete asks first; `uploadedFiles.js` is gone (`grep` finds no importer); processing fetches bytes from the API.

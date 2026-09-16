@@ -26,7 +26,7 @@ Copied from the spec and `CLAUDE.md`; every task inherits them.
 - **Model call:** `claude-opus-5`, `client.messages.stream`, `thinking={"type": "adaptive"}`, `output_config={"effort": "low"}`, `max_tokens=4000`, two cached `system` blocks (frozen prompt, then bundle), then the turns.
 - **Caps:** 400 items rendered in full; 12,000 characters of extracted text per document, cut at a paragraph.
 - **Commands.** Backend tests, from `api/`:
-  `DATABASE_URL=postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff TEST_DATABASE_URL=postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff_test ../.enginevenv/bin/python -m pytest <paths> -q`
+  `DATABASE_URL=postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff TEST_DATABASE_URL=postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff_test_cp ../.enginevenv/bin/python -m pytest <paths> -q`
   (the dev Postgres container must be up: `docker compose up -d postgres`). Client tests, from the repo root: `npm test -- <path>`. Before the final commit: `npm run build`.
 - **Commit messages** end with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 
@@ -2895,7 +2895,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```bash
 npm run build
 npm test
-cd api && DATABASE_URL=postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff TEST_DATABASE_URL=postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff_test ../.enginevenv/bin/python -m pytest -q
+cd api && DATABASE_URL=postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff TEST_DATABASE_URL=postgresql+psycopg://takeoff:takeoff@localhost:5432/takeoff_test_cp ../.enginevenv/bin/python -m pytest -q
 ```
 
 Expected: build succeeds; both suites pass in full.

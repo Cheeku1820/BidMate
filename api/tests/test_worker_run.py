@@ -3,7 +3,7 @@ Counting, classification and the per-sheet finish are stubbed so these
 tests assert what the worker does *around* the engine -- what it counts,
 how often it classifies, what it queues, what it writes -- and never how
 a drawing is read. The PDF is test_worker_read's two-page drawing."""
-import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -11,7 +11,9 @@ from sqlalchemy import select
 from app.engine import classification as cls_mod, counting, sheet as sheet_mod
 from app.engine.contracts import Classification, DeviceCluster, Placement, SheetResult
 from app.jobs import copy, queue
+from app.jobs.schemas import STALE_GRACE_SECONDS, timeout_for
 from app.takeoff.models import Action, Classification as ClassificationRow, Item, Job, Note, Sheet
+from app.worker import __main__ as worker, handlers
 from tests.test_worker_read import _pdf, _run_all, _stored, inline  # noqa: F401
 
 
@@ -108,6 +110,29 @@ def test_scope_statements_feed_context_unless_dismissed(db, project, dana, inlin
     assert "Site lighting excluded." in ctx and "Confirmed thing, edited." in ctx and "Dismissed thing." not in ctx
 
 
+def test_scope_statements_survive_a_specification_that_fills_the_context_cap(db, project, dana, inline, monkeypatch, fake_engine):
+    """One full-length specification is already the whole cap. The scope
+    block goes first, so it is the document text that gets cut, never
+    the statements a person confirmed."""
+    from app.engine.context import CONTEXT_CAP
+    from app.takeoff.models import Document, ScopeStatement
+    d = _seeded(db, project, dana, inline, monkeypatch)
+    spec = Document(project_id=project.id, filename="spec.pdf", doc_type="Specifications", content_type="application/pdf",
+                    size_bytes=1, sha256="a" * 64, storage_key="k/spec", uploaded_by=dana.id, status="processed",
+                    context_text="x" * CONTEXT_CAP)
+    db.add(spec)
+    db.add_all([
+        ScopeStatement(org_id=project.org_id, project_id=project.id, document_id=d.id, page_index=0, kind="excluded", text="Site lighting excluded.", quote="q", status="found", run_id=d.id),
+        ScopeStatement(org_id=project.org_id, project_id=project.id, document_id=d.id, page_index=0, kind="included", text="Confirmed thing.", quote="q", status="confirmed", edited_text="Confirmed thing, edited.", run_id=d.id),
+        ScopeStatement(org_id=project.org_id, project_id=project.id, document_id=d.id, page_index=0, kind="excluded", text="Dismissed thing.", quote="q", status="dismissed", run_id=d.id),
+    ]); db.flush()
+    queue.enqueue_classify(db, project, dana.id); _run_all(db)
+    ctx = fake_engine["classify"][0]["context"]
+    assert len(ctx) == CONTEXT_CAP
+    assert "Site lighting excluded." in ctx and "Confirmed thing, edited." in ctx and "Dismissed thing." not in ctx
+    assert ctx.index("[scope statements") < ctx.index("[spec.pdf]")
+
+
 def test_other_documents_context_text_reaches_the_classifier(db, project, dana, inline, monkeypatch, fake_engine):
     _seeded(db, project, dana, inline, monkeypatch)
     spec = _stored(db, project, dana, inline, _pdf("DIVISION 26 ELECTRICAL\nPanelboards shall be 42 circuit.\n"), doc_type="Specifications", name="spec.pdf")
@@ -180,7 +205,28 @@ def test_a_run_whose_last_sheet_job_fails_still_gets_its_pricing_basis(db, proje
     assert project.stage == "review" and project.pricing_source == "llm"
     assert "Branch wiring is estimated at" in project.pricing_note
     ingest = db.scalars(select(Action).where(Action.kind == "ingest")).one()
-    assert ingest.label == "Processed 2 sheet(s) into 1 item(s)"
+    assert ingest.label == "Processed 1 sheet(s) into 1 item(s)"   # the failed sheet was not processed
+
+
+def test_a_stale_exhausted_last_sheet_job_reclaimed_by_a_tick_still_finishes_the_run(db, project, dana, inline, monkeypatch, fake_engine):
+    """The worker that held the run's last sheet died with it, and the job
+    is out of attempts: the next tick's reclaim fails it and completes
+    the run, and the project writes are made from that tick."""
+    _seeded(db, project, dana, inline, monkeypatch)
+    queue.enqueue_classify(db, project, dana.id); db.commit()
+    assert worker.tick("t")                       # classify: two sheet jobs queued
+    assert worker.tick("t")                       # the first sheet, done
+    dead = queue.claim_next(db, "dead"); db.commit()
+    assert dead.kind == "sheet"
+    dead.attempts = dead.max_attempts
+    dead.started_at = datetime.now(timezone.utc) - timedelta(seconds=timeout_for("sheet") + STALE_GRACE_SECONDS + 1)
+    db.commit()
+    worker.tick("t")                              # nothing to claim; reclaim fails the stale job
+    db.refresh(dead)
+    assert dead.status == "failed" and dead.error == copy.SHEET_FAILED
+    db.refresh(project)
+    assert project.stage == "review" and project.pricing_source == "llm" and project.pricing_note.startswith("note")
+    assert db.scalars(select(Action).where(Action.kind == "ingest")).one().label == "Processed 1 sheet(s) into 1 item(s)"
 
 
 def test_the_basis_note_folds_every_sheets_assembly_and_unmatched_result(db, project, dana, inline, monkeypatch, fake_engine):
@@ -217,19 +263,23 @@ def test_the_deterministic_path_hands_each_sheet_the_tags_the_run_classified(db,
     assert {j.progress for j in db.scalars(select(Job).where(Job.kind == "sheet"))} == {""}
 
 
-def test_a_classify_job_run_twice_for_one_run_keeps_a_single_classification_and_sheet_set(db, project, dana, inline, monkeypatch, fake_engine):
-    """A reclaimed job can be re-run. The classifications row is unique
-    per run, so the second run finds it already there and carries on
-    with what exists rather than failing or queueing a second set."""
+def test_a_classify_job_run_twice_for_one_run_classifies_once_and_keeps_one_sheet_set(db, project, dana, inline, monkeypatch, fake_engine):
+    """A reclaimed job can be re-run after its first attempt committed
+    (the row and the sheet jobs land together). The second run finds the
+    row, spends no model call, queues nothing, and the run still
+    finishes."""
     _seeded(db, project, dana, inline, monkeypatch)
-    c = queue.enqueue_classify(db, project, dana.id)
-    db.add(ClassificationRow(project_id=project.id, run_id=c.run_id, specs_by_tag={"R": {"name": "Existing"}},
-                             labor_rate=90.0, material_factor=1.2, source="llm", location_note="first attempt"))
-    _run_all(db)
-    row = db.scalars(select(ClassificationRow).where(ClassificationRow.run_id == c.run_id)).one()
-    assert float(row.labor_rate) == 90.0 and row.location_note == "first attempt"
+    c = queue.enqueue_classify(db, project, dana.id); db.commit()
+    assert worker.tick("t")                       # first attempt: row + two sheet jobs committed
+    c.status, c.progress, c.locked_by = "running", "", "again"   # re-claimed, as after a reclaim
+    db.commit()
+    handlers.run("classify", str(c.id))
+    assert len(fake_engine["classify"]) == 1
+    assert len(list(db.scalars(select(ClassificationRow).where(ClassificationRow.run_id == c.run_id)))) == 1
     assert len(list(db.scalars(select(Job).where(Job.kind == "sheet", Job.run_id == c.run_id)))) == 2
-    db.refresh(project); assert project.stage == "review" and project.pricing_note.startswith("first attempt")
+    db.refresh(c); assert c.status == "done"
+    _run_all(db)
+    db.refresh(project); assert project.stage == "review" and project.pricing_source == "llm"
 
 
 def test_a_project_with_no_plan_sheets_completes_its_run_at_once(db, project, dana, inline, monkeypatch, fake_engine):

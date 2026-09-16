@@ -46,24 +46,25 @@ def apply_outcome(db, job: Job, outcome: sandbox.Outcome) -> None:
     else:  # terminal or timeout
         completed_run = queue.mark_failed(db, job, queue.terminal_copy(job, message))
     if completed_run:
-        _finish_run(db, job)
+        _finish_run(db, job.run_id)
 
 
-def _finish_run(db, sheet_job: Job) -> None:
+def _finish_run(db, run_id: uuid.UUID) -> None:
     """A failed sheet job was the last of its run to finish, so the run
     completed here rather than in a sheet handler -- and the project
     writes that handler would have made are owed here instead."""
     from app.takeoff.models import Project
     from app.worker.classify_job import _finish_project   # the queue cannot import the worker; this module can
 
-    classify = db.scalars(select(Job).where(Job.kind == "classify", Job.run_id == sheet_job.run_id)).one()
-    _finish_project(db, db.get(Project, sheet_job.project_id), classify)
+    classify = db.scalars(select(Job).where(Job.kind == "classify", Job.run_id == run_id)).one()
+    _finish_project(db, db.get(Project, classify.project_id), classify)
 
 
 def tick(worker_id: str) -> bool:
     """One poll. Returns whether a job ran."""
     with session_scope() as db:
-        queue.reclaim_stale(db)
+        for run_id in queue.reclaim_stale(db):   # a stale, exhausted last sheet ends its run here
+            _finish_run(db, run_id)
         job = queue.claim_next(db, worker_id)
         db.commit()
         if job is None:

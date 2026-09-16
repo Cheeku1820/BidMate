@@ -139,7 +139,11 @@ class Sheet(Base):
     # Engine ingest metadata. The canvas addresses a page image by
     # (takeoff_id, page_index), and normalizes marker coordinates against
     # the page's own point dimensions -- a sheet's markers land wrongly if
-    # normalized against another sheet's size.
+    # normalized against another sheet's size. `page_index` is the
+    # 1-based page number, the engine payload's `page` (`map_payload`
+    # stores it as is; existing rows, evidence crops and the read job's
+    # upsert key all depend on that). The engine itself opens pages
+    # 0-based; the worker converts once, in classify_job._detected.
     takeoff_id: Mapped[str] = mapped_column(String(100), default="", server_default="")
     page_index: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     width_pt: Mapped[int] = mapped_column(Integer, default=0, server_default="0")

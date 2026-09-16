@@ -109,23 +109,25 @@ def terminal_copy(job: Job, message: str) -> str:
     return message or copy.UNREADABLE
 
 
-def reclaim_stale(db: Session) -> int:
+def reclaim_stale(db: Session) -> list[uuid.UUID]:
     """A job still `running` past its timeout plus the grace period was
     claimed by a worker that died with it. Back onto the queue with its
     attempts intact -- or, if it had already used them all, failed with
-    the generic copy. Returns how many stale jobs were dealt with."""
-    n = 0
+    the generic copy. Returns the ids of the runs those failures
+    completed: a run that ends here still owes its project-level writes,
+    and they live on the worker's side."""
+    completed: list[uuid.UUID] = []
     for job in db.scalars(select(Job).where(Job.status == "running")):
         limit = timedelta(seconds=timeout_for(job.kind) + STALE_GRACE_SECONDS)
         if job.started_at is None or _now() - job.started_at <= limit:
             continue
         if job.attempts >= job.max_attempts:
-            mark_failed(db, job, terminal_copy(job, ""))
+            if mark_failed(db, job, terminal_copy(job, "")):
+                completed.append(job.run_id)
         else:
             job.status, job.locked_by = "queued", ""
-        n += 1
     db.flush()
-    return n
+    return completed
 
 
 def mark_done(db: Session, job: Job) -> None:

@@ -77,7 +77,7 @@ def test_stale_running_jobs_are_reclaimed(db, project, dana):
     j = queue.claim_next(db, "dead"); db.commit()
     j.started_at = datetime.now(timezone.utc) - _past_stale("read")
     db.commit()
-    assert queue.reclaim_stale(db) == 1
+    assert queue.reclaim_stale(db) == []
     db.refresh(j)
     assert j.status == "queued" and j.attempts == 1 and j.locked_by == ""
 
@@ -86,7 +86,7 @@ def test_a_running_job_within_its_timeout_is_left_alone(db, project, dana):
     queue.enqueue_read(db, _doc(db, project, dana))
     db.commit()
     j = queue.claim_next(db, "alive"); db.commit()
-    assert queue.reclaim_stale(db) == 0
+    assert queue.reclaim_stale(db) == []
     db.refresh(j)
     assert j.status == "running" and j.locked_by == "alive"
 
@@ -99,7 +99,7 @@ def test_a_stale_job_out_of_attempts_fails_instead_of_requeueing(db, project, da
     j.attempts = j.max_attempts
     j.started_at = datetime.now(timezone.utc) - _past_stale("read")
     db.commit()
-    assert queue.reclaim_stale(db) == 1
+    assert queue.reclaim_stale(db) == []      # a read is no run's last sheet
     db.refresh(j)
     assert j.status == "failed" and j.error == copy.UNREADABLE
     assert d.status == "failed" and d.error == copy.UNREADABLE
@@ -113,7 +113,7 @@ def test_a_stale_sheet_job_out_of_attempts_fails_with_the_sheet_copy(db, project
     sj.attempts = sj.max_attempts
     sj.started_at = datetime.now(timezone.utc) - _past_stale("sheet")
     db.commit()
-    assert queue.reclaim_stale(db) == 1
+    assert queue.reclaim_stale(db) == [c.run_id]   # the run's only sheet: failing it completed the run
     db.refresh(sj)
     assert sj.status == "failed" and sj.error == copy.SHEET_FAILED
 

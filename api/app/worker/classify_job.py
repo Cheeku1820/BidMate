@@ -5,11 +5,14 @@ alone. Also home to `_finish_project`, the project-level writes made
 once per run by whichever job turns out to be the last to finish."""
 from __future__ import annotations
 
+import logging
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.engine import classification, counting, documents
+from app.engine.context import CONTEXT_CAP
 from app.engine.estimate import _unmatched_note, _wiring_note
 from app.identity.models import User
 from app.jobs import copy, queue
@@ -21,7 +24,7 @@ from app.worker.blobs import blob_to_tempfile
 from app.worker.handlers import register
 from app.worker.sandbox import Terminal
 
-CONTEXT_CAP = 12000
+logger = logging.getLogger(__name__)
 
 
 def _detected(s: Sheet):
@@ -43,11 +46,15 @@ def _scope_block(db: Session, project_id) -> str:
     return "[scope statements from the project documents]\n" + "\n".join(lines) if lines else ""
 
 
+def _existing_row(db: Session, run_id) -> ClassificationRow | None:
+    return db.scalars(select(ClassificationRow).where(ClassificationRow.run_id == run_id)).first()
+
+
 def _classification_row(db: Session, project: Project, job: Job, cls) -> ClassificationRow:
-    """Insert the run's row, or -- a reclaimed job re-run after an earlier
-    attempt already committed one -- keep what exists. The unique index on
-    `run_id` is what decides; the savepoint keeps the failed insert from
-    poisoning the rest of the transaction."""
+    """Insert the run's row, or keep what exists. `run` checks for one
+    before it counts anything, so this only trips when two workers run
+    the same job at once; the unique index on `run_id` decides, and the
+    savepoint keeps the failed insert from poisoning the transaction."""
     row = ClassificationRow(project_id=project.id, run_id=job.run_id,
                             specs_by_tag=cls.specs_by_tag if cls.source == "llm" else {},
                             labor_rate=cls.labor_rate, material_factor=cls.material_factor, source=cls.source,
@@ -58,7 +65,7 @@ def _classification_row(db: Session, project: Project, job: Job, cls) -> Classif
             db.flush()
         return row
     except IntegrityError:   # the savepoint's rollback has already expunged `row`
-        return db.scalars(select(ClassificationRow).where(ClassificationRow.run_id == job.run_id)).one()
+        return _existing_row(db, job.run_id)
 
 
 @register("classify")
@@ -68,6 +75,13 @@ def run(db: Session, job: Job) -> None:
                                                        Document.status == "processed")))
     if not drawings:
         raise Terminal(copy.NO_DRAWINGS)
+    if _existing_row(db, job.run_id) is not None:
+        # A reclaimed job re-run after an earlier attempt already
+        # committed: the row and its sheet jobs landed together, so
+        # there is nothing to count or classify again -- and no model
+        # call to spend on an answer that would be discarded.
+        _complete(db, project, job)
+        return
     all_sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id).order_by(Sheet.sort_order)))
     by_doc: dict[str, list[Sheet]] = {}
     for s in all_sheets:
@@ -92,11 +106,11 @@ def run(db: Session, job: Job) -> None:
     schedule_text = "\n\n".join(s.schedule_text for s in all_sheets if s.schedule_text)
     others = db.scalars(select(Document).where(Document.project_id == project.id, Document.doc_type != "Drawings",
                                                 Document.status == "processed", Document.context_text != ""))
-    context_parts = [f"[{d.filename}]\n{d.context_text}" for d in others]
-    scope = _scope_block(db, project.id)
-    if scope:
-        context_parts.append(scope)
-    context = "\n\n".join(context_parts)[:CONTEXT_CAP]
+    # Scope first: it is the estimator-settled statement of what the work
+    # is, and one full-length specification already fills the cap, so
+    # whatever comes last is what gets cut.
+    context_parts = [_scope_block(db, project.id)] + [f"[{d.filename}]\n{d.context_text}" for d in others]
+    context = "\n\n".join(part for part in context_parts if part)[:CONTEXT_CAP]
     context_notes = [n for n in notes_service.list_notes(db, project.id) if n.usage == "context"]
     notes = [{"scope": n.scope, "title": n.title, "body": n.body, "source_ref": n.source_ref} for n in context_notes]
 
@@ -108,12 +122,17 @@ def run(db: Session, job: Job) -> None:
     notes_service.mark_applied(db, context_notes)
     project.stage = "processing"
     plan_sheets = [s for s in all_sheets if s.id in clusters_by_sheet]
-    already_queued = db.scalar(select(func.count()).select_from(Job).where(Job.run_id == job.run_id, Job.kind == "sheet"))
-    if not already_queued:   # a re-run of this job must not queue a second set
-        queue.enqueue_sheets(db, job, [(s, {"clusters": [{"tag": c.tag, "placements": [[p.x, p.y] for p in c.placements]}
-                                                         for c in clusters_by_sheet[s.id]]}) for s in plan_sheets])
+    queue.enqueue_sheets(db, job, [(s, {"clusters": [{"tag": c.tag, "placements": [[p.x, p.y] for p in c.placements]}
+                                                     for c in clusters_by_sheet[s.id]]}) for s in plan_sheets])
+    _complete(db, project, job)
+
+
+def _complete(db: Session, project: Project, job: Job) -> None:
+    """Done, then the completion check: True only when the run has no
+    sheet jobs left to wait for -- none at all, or a re-run whose sheets
+    already finished."""
     queue.mark_done(db, job)
-    if queue.complete_run_if_finished(db, job.run_id):   # only with no sheet jobs: the run is over already
+    if queue.complete_run_if_finished(db, job.run_id):
         _finish_project(db, project, job)
     db.flush()
 
@@ -138,8 +157,14 @@ def _finish_project(db: Session, project: Project, classify_job: Job) -> None:
         project.pricing_note = basis_note({"location_note": row.location_note, "wiring_note": row.wiring_note,
                                            "unmatched_note": row.unmatched_note})
     actor = db.get(User, classify_job.requested_by) if classify_job.requested_by else None
+    if actor is None:
+        # The action log needs a person; a run nobody is recorded as
+        # having started leaves no `ingest` entry rather than a made-up one.
+        logger.warning("run %s completed with no requested_by; no ingest action recorded", classify_job.run_id)
+        db.flush()
+        return
+    n_done = sum(1 for j in sheet_jobs if j.status == "done")
     n_items = db.scalar(select(func.count()).select_from(Item).where(Item.project_id == project.id))
-    if actor is not None:
-        actions.commit(db, actor=actor, project_id=project.id, kind="ingest",
-                       label=f"Processed {len(sheet_jobs)} sheet(s) into {n_items} item(s)", before={}, after={})
+    actions.commit(db, actor=actor, project_id=project.id, kind="ingest",
+                   label=f"Processed {n_done} sheet(s) into {n_items} item(s)", before={}, after={})
     db.flush()

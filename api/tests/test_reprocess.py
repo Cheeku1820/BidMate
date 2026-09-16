@@ -14,6 +14,7 @@ from app.takeoff.models import (
     ProjectLaborLine,
     ProjectMaterialPrice,
     ReviewStatus,
+    Sheet,
     Warning,
 )
 
@@ -566,3 +567,32 @@ def test_reprocess_without_a_source_keeps_the_one_the_project_already_had(client
                 json={"payload": _payload([_item("R", "20A duplex receptacle")])})  # no "source"
     db.refresh(project)
     assert project.pricing_source == "llm"
+
+
+def test_reprocess_merges_by_number_across_different_takeoff_ids(client, db, project, signed_in_user):
+    """estimate_service.py mints a fresh `uuid.uuid4().hex` takeoff_id on
+    every run, so two /reprocess posts for the same sheet number, one
+    note apply after another, never carry the same takeoff_id. If
+    upsert_sheet_rows let that takeoff_id drive the match here, every
+    note application would insert a brand-new sheet and a brand-new
+    item instead of merging onto the sheet and item the last run
+    produced -- duplicated sheets, doubled totals, and undo ids
+    re-orphaned every time. reprocess_takeoff strips takeoff_id before
+    calling merge_payload so this interim route matches by number
+    exactly as the whole-project merge always did."""
+    payload1 = _payload([_item("R", "20A duplex receptacle")])
+    payload1["sheets"] = [{**payload1["sheets"][0], "takeoff_id": "run-1"}]
+    client.post(f"/api/projects/{project.id}/reprocess", json={"payload": payload1})
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    item_id = item.id
+
+    payload2 = _payload([_item("R", "Isolated ground receptacle")])
+    payload2["sheets"] = [{**payload2["sheets"][0], "takeoff_id": "run-2"}]
+    client.post(f"/api/projects/{project.id}/reprocess", json={"payload": payload2})
+
+    db.expire_all()
+    assert len(list(db.scalars(select(Sheet).where(Sheet.project_id == project.id)))) == 1
+    items = list(db.scalars(select(Item).where(Item.project_id == project.id, Item.source_tag == "R")))
+    assert len(items) == 1
+    assert items[0].id == item_id
+    assert items[0].name == "Isolated ground receptacle"

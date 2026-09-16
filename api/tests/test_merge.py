@@ -79,3 +79,53 @@ def test_upsert_keeps_a_sheets_id_and_scale_across_reads(db, project):
     first.scale = "1/4\" = 1'"; db.flush()
     again = merge.upsert_sheet_rows(db, project, map_payload({"sheets": [{**SHEET, "title": "Renamed"}]}).sheets)["0"]
     assert again.id == first.id and again.title == "Renamed" and again.scale == "1/4\" = 1'"
+
+
+def test_two_takeoff_ids_with_the_same_number_are_two_distinct_sheets(db, project, dana):
+    """The worker's real path, once the read job lands: takeoff_id is
+    the document id, and two different documents can each contain a
+    sheet numbered E2.1. merge_payload (and upsert_sheet_rows beneath
+    it) must never fall back to matching by number when a row carries
+    a non-empty takeoff_id -- a number fallback lives only in the
+    interim /reprocess bridge (reprocess.py's _strip_takeoff_id), never
+    in merge.py itself, precisely because merge.py cannot tell two
+    documents' same-numbered sheets apart by number alone."""
+    payload1 = {"sheets": [{**SHEET, "takeoff_id": "doc-1"}], "items": [_row("R", "a")]}
+    payload2 = {"sheets": [{**SHEET, "takeoff_id": "doc-2"}], "items": [_row("R", "b")]}
+    merge.merge_payload(db, actor=dana, project=project, payload=payload1)
+    merge.merge_payload(db, actor=dana, project=project, payload=payload2)
+
+    sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id)))
+    assert len(sheets) == 2
+    assert {s.takeoff_id for s in sheets} == {"doc-1", "doc-2"}
+    assert len(list(db.scalars(select(Item).where(Item.project_id == project.id)))) == 2
+
+
+def test_a_deletion_on_a_different_sheet_sharing_a_number_is_not_consumed(db, project, dana):
+    """merge_sheet's deleted-key lookup is scoped to {sheet.id:
+    sheet.number} -- only this sheet's own id -- so a deletion recorded
+    against a different Sheet row is never consumed by this sheet's
+    merge, even when that other sheet happens to share the same number
+    (two sheets sharing a number is a known latent case until revisions
+    land, ROADMAP.md 2.2). Without this scoping, deleting an item on
+    one physical sheet could silently suppress the same tag
+    reappearing on a different sheet that happens to share its number.
+    """
+    from app.takeoff.review import delete_item
+
+    a = merge.upsert_sheet_rows(db, project, map_payload({"sheets": [SHEET]}).sheets)["0"]
+    b = Sheet(project_id=project.id, number=a.number, title="dup", discipline="Electrical", revision="",
+              scale="", scale_options=[], plan="", takeoff_id="doc-2", page_index=1)
+    db.add(b); db.flush()
+    victim = Item(project_id=project.id, sheet_id=b.id, symbol="s", name="on sheet b", system="Power",
+                  category="Devices", quantity=1, unit="ea", status=ReviewStatus.READY, x=1, y=1, source_tag="R")
+    db.add(victim); db.flush()
+    delete_item(db, dana, victim, victim.version)
+    db.flush()
+
+    counts = merge.merge_sheet(
+        db, project=project, sheet=a,
+        rows=map_payload({"sheets": [SHEET], "items": [_row("R", "a")]}).items,
+        ai_reading=None,
+    )
+    assert (counts.added, counts.skipped_deleted) == (1, 0)

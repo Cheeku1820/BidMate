@@ -270,6 +270,14 @@ def upsert_sheet_rows(db, project, mapped_sheets) -> dict[str, Sheet]:
     the engine's and are refreshed."""
     existing = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id)))
     by_page = {(s.takeoff_id, s.page_index): s for s in existing}
+    # `by_number`, with no ordering and no revision filter, means two
+    # sheets in a project sharing a number resolve to whichever this
+    # dict comprehension happened to keep -- arbitrarily. That is latent
+    # today because nothing writes `superseded_at`: a project holds one
+    # revision of each sheet and numbers are in fact unique. It becomes
+    # a real defect the moment revisions land (ROADMAP.md 2.2), so
+    # whoever builds them has to key this on (number, revision) or
+    # filter superseded sheets out here.
     by_number = {s.number: s for s in existing}
     out: dict[str, Sheet] = {}
     for row in mapped_sheets:
@@ -291,14 +299,19 @@ def upsert_sheet_rows(db, project, mapped_sheets) -> dict[str, Sheet]:
 
 
 def merge_sheet(db, *, project, sheet, rows, ai_reading) -> MergeCounts:
-    # Lock only this sheet's items, in ascending id order -- the
-    # convention actions.commit()'s docstring lays out for any caller
-    # that touches more than one row of the same table in one
-    # transaction (bulk.bulk_approve, scale.set_scale). Acquiring every
-    # lock in one canonical-order statement before this function updates,
-    # inserts, or deletes anything is what keeps a concurrent merge of
-    # another sheet, or a bulk approve on overlapping items, from
-    # deadlocking against this one.
+    # Lock only this sheet's items, in ascending id order -- sufficient
+    # on its own when this function runs once per transaction, which is
+    # the worker's design point (one sheet merged per transaction). A
+    # caller that merges more than one sheet in a single transaction
+    # (merge_payload, below) must pre-lock the whole project's items in
+    # ascending id order *before* calling this function for any sheet --
+    # the convention actions.commit()'s docstring lays out for any
+    # caller that touches more than one row of the same table in one
+    # transaction (bulk.bulk_approve, scale.set_scale). Without that
+    # pre-lock, issuing one lock statement per sheet in sheet order
+    # rather than one statement in id order can deadlock against
+    # bulk.bulk_approve's single ascending-id lock across the same
+    # items.
     existing = list(
         db.scalars(
             select(Item).where(Item.sheet_id == sheet.id).order_by(Item.id).with_for_update()
@@ -410,8 +423,26 @@ def merge_sheet(db, *, project, sheet, rows, ai_reading) -> MergeCounts:
 
 def merge_payload(db, *, actor, project, payload) -> dict:
     """Whole-payload merge for the CLI and tests: upsert every sheet,
-    merge each sheet's rows, set the pricing basis, one audit action."""
+    merge each sheet's rows, set the pricing basis, one audit action.
+
+    Locks every item in the project, in ascending id order, in one
+    statement before merging any sheet. `merge_sheet`'s own per-sheet
+    lock is sufficient when it runs alone (one sheet per transaction --
+    the worker's design point), but this function merges every sheet in
+    one transaction, and issuing one lock statement per sheet in sheet
+    order rather than one statement in id order can deadlock against
+    `bulk.bulk_approve`'s single ascending-id lock across the same
+    items. Taking the whole-project lock up front, in the canonical
+    order `actions.commit()`'s docstring requires of any caller that
+    locks more than one row of a table in one transaction, is what
+    keeps this function safe to call as a caller of `merge_sheet` even
+    though `merge_sheet` re-locks (a no-op within the same transaction)
+    the subset it needs.
+    """
     mapped = map_payload(payload)
+    db.scalars(
+        select(Item).where(Item.project_id == project.id).order_by(Item.id).with_for_update()
+    ).all()
     sheets = upsert_sheet_rows(db, project, mapped.sheets)
     total = MergeCounts()
     for key, sheet in sheets.items():

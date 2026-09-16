@@ -2,9 +2,9 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import PlanDrawing from "./PlanDrawing.jsx";
 import { SymbolGlyph } from "./Symbols.jsx";
 import { STATUS } from "../lib/vocabulary.js";
+import { SHEET_W, SHEET_H } from "../lib/sheetGeometry.js";
 
-export const SHEET_W = 1000;
-export const SHEET_H = 750;
+export { SHEET_W, SHEET_H } from "../lib/sheetGeometry.js";
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 6;

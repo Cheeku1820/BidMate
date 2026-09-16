@@ -226,6 +226,11 @@ TENANCY_TABLE = [
      lambda p, s, i: f"/api/projects/{p.id}/documents", None, None),
     ("GET", "/api/projects/{project_id}/scope",
      lambda p, s, i: f"/api/projects/{p.id}/scope", None, None),
+    ("GET", "/api/projects/{project_id}/conversation",
+     lambda p, s, i: f"/api/projects/{p.id}/conversation", None, None),
+    ("POST", "/api/projects/{project_id}/conversation/messages",
+     lambda p, s, i: f"/api/projects/{p.id}/conversation/messages",
+     lambda p, s, i: {"text": "test", "screen": {"name": "export"}}, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]

@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.assistant.router import router as conversation_router
 from app.auth.router import router as auth_router
 from app.collab.router import router as collab_router
 from app.db import get_db
@@ -115,6 +116,7 @@ app.include_router(processing_router)
 app.include_router(scope_router)
 app.include_router(collab_router)
 app.include_router(tiles_router)
+app.include_router(conversation_router)
 
 
 @app.get("/api/health")

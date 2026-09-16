@@ -563,3 +563,16 @@ def test_undo_restores_a_cleared_material_price(client, db, item, signed_in_user
     row = db.get(ProjectMaterialPrice, item.id)
     assert row is not None
     assert float(row.price_override) == 15.5 and row.source == "allowance" and row.reason == "no vendor quote yet"
+
+
+def test_patch_labor_adjustment_alone_leaves_the_row_missing(client, item, signed_in_user):
+    """Tab lands on Adjustment on a Missing information row, +10, Enter:
+    the row must not turn green beside "—" in Adj. hours and Labor cost.
+    An entry approves a row only once both hours and rate resolve."""
+    response = client.patch(f"/api/items/{item.id}/labor", json={"adjustmentPercent": 10})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "missing"
+    assert body["adjusted_hours"] is None
+    assert body["labor_cost"] is None
+    assert float(body["adjustment_percent"]) == 10.0

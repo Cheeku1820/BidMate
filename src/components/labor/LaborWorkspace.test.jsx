@@ -105,7 +105,8 @@ describe("LaborWorkspace", () => {
   });
 
   test("editing hours sends hoursOverride, patches the row from the response, and toasts", async () => {
-    const updated = { ...baseRow, hoursPerUnit: 0.75, hoursSourceLabel: "Estimator entered", status: "approved" };
+    // Still "missing": hours alone resolve no cost, so the API keeps the row at Missing information.
+    const updated = { ...baseRow, hoursPerUnit: 0.75, hoursSourceLabel: "Estimator entered", status: "missing" };
     const store = {
       getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),
       setLaborLine: vi.fn().mockResolvedValue(updated),

@@ -294,9 +294,13 @@ approved":
   `price_override` is always set when the row exists at all), or a
   `ProjectLaborLine` row exists with at least one of `hours_override`,
   a crew-mix count, `rate_override`, or `adjustment_percent` set — i.e.
-  the estimator directly entered or confirmed something on this row.
-  Creating a `ProjectLaborLine` with every field still null does not
-  happen through the UI, so existence alone is equivalent to this.
+  the estimator directly entered or confirmed something on this row —
+  **and both hours and rate resolve.** An entry that leaves either
+  unresolved (an adjustment alone, a rate with no hours source, hours
+  with no rate source) has no cost to approve, so the row stays
+  *Missing information* with the entry's tier tag showing. Creating a
+  `ProjectLaborLine` with every field still null does not happen
+  through the UI, so existence alone is equivalent to the first half.
 - **Ready to review** — resolved from a company or regional tier, no
   override yet.
 

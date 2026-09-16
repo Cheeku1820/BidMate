@@ -114,16 +114,22 @@ def resolve_labor(item, project, override, *, company_rates, company_hours) -> L
     """`override` is a ProjectLaborLine row or None. `company_rates` is
     the org's singleton CompanyLaborRate row or None. `company_hours` is
     a CompanyLaborHoursOverride row (already looked up by item.name) or
-    None."""
+    None.
+
+    An estimator entry makes a row "approved" only once both hours and
+    rate resolve. An override with only an adjustment, a rate but no
+    hours, or hours but no rate does not resolve to a cost, so the row
+    stays "missing" -- the tier tags still show what was entered, but a
+    green row beside no number is what the status vocabulary exists to
+    prevent."""
     hours_per_unit, hours_label = _resolve_hours(item, project, override, company_hours)
     rate, rate_label = _resolve_rate(item, project, override, company_rates)
 
     if hours_per_unit is None or rate is None:
-        status = "approved" if (override is not None and _labor_override_has_any_field(override)) else "missing"
         return LaborResolution(
             hours_per_unit=hours_per_unit, hours_source_label=hours_label,
             rate=rate, rate_source_label=rate_label,
-            adjusted_hours=None, labor_cost=None, status=status,
+            adjusted_hours=None, labor_cost=None, status="missing",
         )
 
     adjustment_percent = override.adjustment_percent if override is not None and override.adjustment_percent is not None else Decimal("0")

@@ -205,3 +205,46 @@ def test_labor_estimator_approved_status_when_row_has_any_override_field_set():
                                "adjustment_percent": None})()
     result = resolve_labor(item, project, override, company_rates=None, company_hours=None)
     assert result.status == "approved"
+
+
+# An estimator entry makes a row Estimator approved only once both hours
+# and rate resolve. An override with only an adjustment, a rate but no
+# hours, or hours but no rate does not resolve to a cost, and a green
+# row beside "—" in Adj. hours and Labor cost is what the status
+# vocabulary exists to prevent.
+
+def test_labor_adjustment_alone_with_nothing_to_adjust_is_missing():
+    item = FakeItem(labor_hours=None, labor_cost=None)
+    project = FakeProject(pricing_source="deterministic")
+    override = type("O", (), {"hours_override": None, "rate_override": None,
+                               "crew_journeyman": None, "crew_foreman": None, "crew_apprentice": None,
+                               "adjustment_percent": Decimal("10")})()
+    result = resolve_labor(item, project, override, company_rates=None, company_hours=None)
+    assert result.status == "missing"
+    assert result.adjusted_hours is None
+    assert result.labor_cost is None
+
+
+def test_labor_rate_entry_with_no_hours_source_is_missing():
+    item = FakeItem(labor_hours=None, labor_cost=None)
+    project = FakeProject(pricing_source="deterministic")
+    override = type("O", (), {"hours_override": None, "rate_override": Decimal("62"),
+                               "crew_journeyman": None, "crew_foreman": None, "crew_apprentice": None,
+                               "adjustment_percent": None})()
+    result = resolve_labor(item, project, override, company_rates=None, company_hours=None)
+    assert result.status == "missing"
+    assert result.rate == Decimal("62")
+    assert result.rate_source_label == "Estimator entered"  # the tier tag still shows the entry
+    assert result.hours_per_unit is None
+
+
+def test_labor_hours_and_rate_entries_together_are_approved_with_a_cost():
+    item = FakeItem(quantity=Decimal("10"), labor_hours=None, labor_cost=None)
+    project = FakeProject(pricing_source="deterministic")
+    override = type("O", (), {"hours_override": Decimal("0.5"), "rate_override": Decimal("62"),
+                               "crew_journeyman": None, "crew_foreman": None, "crew_apprentice": None,
+                               "adjustment_percent": None})()
+    result = resolve_labor(item, project, override, company_rates=None, company_hours=None)
+    assert result.status == "approved"
+    assert result.adjusted_hours == Decimal("5")
+    assert result.labor_cost == Decimal("310")

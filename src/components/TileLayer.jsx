@@ -13,7 +13,7 @@
    clipped (tiles.py does the same arithmetic on the engine side).
    ============================================================ */
 import { useEffect, useRef, useState } from "react";
-import { paperSize, SHEET_W } from "../lib/sheetGeometry.js";
+import { paperSize, SHEET_W, SHEET_H } from "../lib/sheetGeometry.js";
 
 const TILE = 512;
 

@@ -81,8 +81,18 @@ def history_for_model(db: DbSession, project_id: uuid.UUID) -> list[dict]:
     user/assistant pairs, plus the newest estimator turn on top of them
     (it was stored before this is called) -- HISTORY_TURNS + 1 messages
     at most. Product words stay on our side of the boundary; the SDK's
-    roles are the SDK's."""
+    roles are the SDK's.
+
+    The window can start mid-turn: a busy/interrupted answer stores its
+    estimator turn without a matching answer, so the thread is not
+    strictly estimator/answer-alternating, and a fixed-size tail can
+    begin with a leftover answer row. The Messages API 400s on a
+    non-user first message, so leading rows are dropped until the tail
+    starts with an estimator turn -- never empty, since the turn just
+    stored by `prepare()` is always last."""
     turns = list_messages(db, project_id)[-(HISTORY_TURNS + 1):]
+    while turns and turns[0].role != "estimator":
+        turns.pop(0)
     return [{"role": "user" if t.role == "estimator" else "assistant", "content": t.text} for t in turns]
 
 

@@ -91,6 +91,34 @@ def test_history_is_capped_at_twenty_turns(client, signed_in_user, project, mode
     assert len(model[-1]["messages"]) == service.HISTORY_TURNS + 1
 
 
+def test_a_non_alternating_thread_still_starts_the_model_on_a_user_turn(client, signed_in_user, project, dana, db, model):
+    """A busy/interrupted answer stores its estimator turn without a
+    matching answer (test_an_error_mid_stream_stores_no_answer), so a
+    real thread is not strictly estimator/answer-alternating. Seeds a
+    thread shaped e a e e a e a ... (21 rows -- one more than the
+    naive tail's drop point needs, with the doubled e a failed turn
+    early on) so that the fixed-size HISTORY_TURNS + 1 window, taken
+    naively from the end, would start on a leftover "answer" row once
+    the new post's own estimator turn pushes the thread past the cap.
+    The model must never see that row first: the Messages API 400s on
+    an assistant-first message list."""
+    roles = ["estimator", "answer", "estimator", "estimator"]
+    role = "answer"
+    for _ in range(17):
+        roles.append(role)
+        role = "estimator" if role == "answer" else "answer"
+    assert len(roles) == 21
+    for n, role in enumerate(roles):
+        db.add(ConversationMessage(project_id=project.id, role=role, text=f"m{n}", created_by=dana.id))
+    db.flush()
+
+    _post(client, project, text="Latest question")
+
+    messages = model[-1]["messages"]
+    assert len(messages) <= service.HISTORY_TURNS + 1
+    assert messages[0]["role"] == "user"
+
+
 def test_an_error_mid_stream_stores_no_answer(client, signed_in_user, project, model, monkeypatch, db):
     import anthropic
     import httpx2

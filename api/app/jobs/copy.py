@@ -11,3 +11,4 @@ SHEET_FAILED = "This sheet couldn't be processed. Start the takeoff again to ret
 SCHEDULES_UNCHECKED = "Schedules weren't checked on this sheet."
 NO_DRAWINGS = "No drawings have been read yet. Upload a drawing set, or wait for reading to finish."
 NON_PLAN = "Schedule or legend — no devices counted."
+PAGE_GONE = "This page is no longer in the uploaded file."

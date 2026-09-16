@@ -1,3 +1,4 @@
+import io
 import os
 import uuid
 
@@ -6,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from app.documents.blobstore import MemoryBlobStore
-from app.jobs import queue
+from app.jobs import copy, queue
 from app.takeoff.models import Document, Item, ReviewStatus, ScopeStatement, Sheet
 from app.worker import __main__ as worker, blobs
 
@@ -29,11 +30,22 @@ def _pdf(text="", pages=1, encrypt=False) -> bytes:
     return doc.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256, user_pw="u", owner_pw="o") if encrypt else doc.tobytes()
 
 
+def _pdf_pages(texts: list[str]) -> bytes:
+    """One page per string, each with its own title-block text -- unlike
+    `_pdf`, which repeats one string across every page -- so two
+    distinctly-numbered sheets are detected."""
+    doc = pymupdf.open()
+    for text in texts:
+        p = doc.new_page(width=1224, height=792)
+        p.insert_text((72, 72), text)
+        p.draw_rect(pymupdf.Rect(100, 100, 900, 700))
+    return doc.tobytes()
+
+
 def _stored(db, project, dana, store, data, doc_type="Drawings", name="E.pdf"):
     d = Document(project_id=project.id, filename=name, doc_type=doc_type, content_type="application/pdf",
                  size_bytes=len(data), sha256=uuid.uuid4().hex * 2, storage_key=f"k/{uuid.uuid4()}", uploaded_by=dana.id)
     db.add(d); db.flush()
-    import io
     store.put(d.storage_key, io.BytesIO(data), "application/pdf", len(data))
     return d
 
@@ -105,3 +117,56 @@ def test_a_missing_blob_is_terminal_with_the_unavailable_copy(db, project, dana,
     queue.enqueue_read(db, d); _run_all(db)
     db.refresh(d)
     assert d.status == "failed" and "isn't available any more" in d.error
+
+
+_TWO_PAGES = [
+    "E1.1 FIRST FLOOR POWER PLAN  SCALE: 1/8\" = 1'-0\"",
+    "E2.1 SECOND FLOOR POWER PLAN  SCALE: 1/8\" = 1'-0\"",
+]
+_ONE_PAGE = _TWO_PAGES[:1]
+
+
+def _replace_stored_bytes(store, d, data):
+    """Re-store the same document row under a new set of bytes -- what a
+    replaced upload looks like from the worker's side: same document id
+    and storage key, a fresh read job."""
+    store.put(d.storage_key, io.BytesIO(data), "application/pdf", len(data))
+
+
+def test_a_vanished_page_with_an_approved_item_keeps_the_sheet_and_marks_it_page_gone(db, project, dana, inline, monkeypatch):
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _stored(db, project, dana, inline, _pdf_pages(_TWO_PAGES))
+    queue.enqueue_read(db, d); _run_all(db)
+    sheet2 = db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id), Sheet.page_index == 2)).one()
+    approved = Item(project_id=project.id, sheet_id=sheet2.id, symbol="receptacle", name="20A duplex receptacle",
+                     system="Power", category="Devices", quantity=1, unit="EA", status=ReviewStatus.APPROVED,
+                     x=100, y=100)
+    unapproved = Item(project_id=project.id, sheet_id=sheet2.id, symbol="receptacle", name="Data outlet",
+                       system="Power", category="Devices", quantity=1, unit="EA", status=ReviewStatus.READY,
+                       x=200, y=200)
+    db.add(approved); db.add(unapproved); db.commit()
+
+    _replace_stored_bytes(inline, d, _pdf_pages(_ONE_PAGE))
+    queue.enqueue_read(db, d); _run_all(db)
+
+    still = db.get(Sheet, sheet2.id)
+    assert still is not None and still.unreadable_reason == copy.PAGE_GONE
+    remaining = list(db.scalars(select(Item).where(Item.sheet_id == sheet2.id)))
+    assert [i.id for i in remaining] == [approved.id]
+
+
+def test_a_vanished_page_with_no_approved_items_deletes_the_sheet(db, project, dana, inline, monkeypatch):
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _stored(db, project, dana, inline, _pdf_pages(_TWO_PAGES))
+    queue.enqueue_read(db, d); _run_all(db)
+    sheet2 = db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id), Sheet.page_index == 2)).one()
+    sheet2_id = sheet2.id
+    db.add(Item(project_id=project.id, sheet_id=sheet2.id, symbol="receptacle", name="Data outlet",
+                system="Power", category="Devices", quantity=1, unit="EA", status=ReviewStatus.READY,
+                x=100, y=100))
+    db.commit()
+
+    _replace_stored_bytes(inline, d, _pdf_pages(_ONE_PAGE))
+    queue.enqueue_read(db, d); _run_all(db)
+
+    assert db.get(Sheet, sheet2_id) is None

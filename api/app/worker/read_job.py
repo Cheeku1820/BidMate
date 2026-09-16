@@ -10,12 +10,12 @@ from app.engine import documents
 from app.jobs import copy
 from app.takeoff import merge
 from app.takeoff.ingest import map_payload
-from app.takeoff.models import Document, Item, ItemEvidenceImage, Job, Project, ScopeStatement, Sheet, Warning
+from app.takeoff.models import Document, Item, Job, Project, ReviewStatus, ScopeStatement, Sheet, Warning
 from app.worker.blobs import blob_to_tempfile
 from app.worker.handlers import register
 from app.worker.sandbox import Terminal
 
-CONTEXT_CAP = 12000
+CONTEXT_CAP = documents.SCOPE_MAX_CHARS
 
 
 @register("read")
@@ -51,15 +51,32 @@ def run(db: Session, job: Job) -> None:
 
 
 def _drop_vanished_sheets(db, doc, keep_ids):
+    """A sheet whose page this run no longer reports -- the file was
+    re-uploaded with fewer pages, or a page stopped reading as a plan.
+    Mirrors merge.py's own leftover sweep ("an un-approved leftover is
+    gone; an approved one stays"): the engine never discards a person's
+    judgment, re-read or not. Un-approved items on the vanished sheet are
+    deleted (their warnings explicitly, to match merge.py's own
+    convention; ItemEvidenceImage cascades -- ON DELETE CASCADE -- so it
+    isn't repeated here). If an approved item is among them, the sheet
+    row stays too, so the approved item keeps a sheet to belong to, and
+    is marked `PAGE_GONE` so the review queue explains why a re-read can
+    no longer update it. Only a sheet left holding nothing is deleted."""
     gone = [s for s in db.scalars(select(Sheet).where(Sheet.takeoff_id == str(doc.id))) if s.id not in keep_ids]
     for sheet in gone:
-        item_ids = list(db.scalars(select(Item.id).where(Item.sheet_id == sheet.id)))
-        if item_ids:
-            db.execute(delete(Warning).where(Warning.item_id.in_(item_ids)))
-            db.execute(delete(ItemEvidenceImage).where(ItemEvidenceImage.item_id.in_(item_ids)))
-            db.execute(delete(Item).where(Item.id.in_(item_ids)))
-        db.execute(delete(Warning).where(Warning.sheet_id == sheet.id))
-        db.delete(sheet)
+        items = list(db.scalars(select(Item).where(Item.sheet_id == sheet.id)))
+        any_approved = False
+        for item in items:
+            if item.status is ReviewStatus.APPROVED:
+                any_approved = True
+                continue
+            db.execute(delete(Warning).where(Warning.item_id == item.id))
+            db.delete(item)
+        if any_approved:
+            sheet.unreadable_reason = copy.PAGE_GONE
+        else:
+            db.execute(delete(Warning).where(Warning.sheet_id == sheet.id))
+            db.delete(sheet)
     db.flush()
 
 

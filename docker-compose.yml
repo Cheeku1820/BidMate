@@ -58,6 +58,27 @@ services:
       postgres: {condition: service_healthy}
       minio-init: {condition: service_completed_successfully}
 
+  # The only process that opens a PDF. Same image as the API, a different
+  # command, and the resource limits that make a hostile file a
+  # one-container problem.
+  worker:
+    build: ./api
+    command: python -m app.worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://takeoff:takeoff@postgres:5432/takeoff
+      BLOB_ENDPOINT: http://minio:9000
+      BLOB_ACCESS_KEY: bidmate
+      BLOB_SECRET_KEY: bidmate-dev-secret
+      BLOB_BUCKET: bidmate-documents
+      BLOB_REGION: us-east-1
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    mem_limit: 2g
+    pids_limit: 256
+    volumes: ["./api:/srv"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+
   # Port 5174 on the host, not 5173 — 5173 is usually already occupied by
   # an unrelated app on this machine (see README's "Run the full stack").
   # VITE_API_PROXY_TARGET points vite.config.js's dev proxy at the

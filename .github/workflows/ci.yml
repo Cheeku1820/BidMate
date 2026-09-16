@@ -75,6 +75,15 @@ jobs:
       - name: Run migrations
         working-directory: api
         run: alembic upgrade head
+      # Proves the worker loop boots against the CI database and polls
+      # until killed -- not a functional test (that's the pytest suite
+      # below), just that `python -m app.worker` starts cleanly in this
+      # environment. `timeout` sends TERM at 20s; the exit status is 124
+      # regardless of how main() handles it, so this doesn't depend on
+      # graceful shutdown.
+      - name: Smoke-test the worker loop
+        working-directory: api
+        run: timeout 20 python -m app.worker || [ $? -eq 124 ]
       # 0016 was renamed by hand after being applied, and 0017 is DDL-only
       # with a hand-written teardown -- this guards against either kind of
       # migration silently failing to reverse.

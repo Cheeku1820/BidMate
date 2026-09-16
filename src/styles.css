@@ -1879,8 +1879,54 @@ button {
   color: var(--blue);
 }
 
+/* Amber and red carry the same meaning here they carry on an item:
+   attention is an estimator's call, a document that couldn't be read
+   is missing evidence. The icon and the word beside it carry the state
+   on their own; the hue only reinforces. */
+.processing-stage.is-attention {
+  color: var(--amber);
+}
+
+.processing-stage.is-failed {
+  color: var(--red);
+}
+
+/* The server's own words beneath a row -- a sheet's reason or note, a
+   document's failure -- span from the sheet number to the row's end. */
+.processing-note {
+  grid-column: 2 / -1;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.processing-note--attention {
+  color: var(--amber);
+}
+
+.processing-note--failed {
+  color: var(--red);
+}
+
+.processing-count {
+  margin: 16px 0 0;
+  color: var(--ink-2);
+}
+
+.processing-count + .processing-list {
+  margin-top: 8px;
+}
+
 .ink-blue {
   color: var(--blue);
+}
+
+.ink-amber {
+  color: var(--amber);
+}
+
+.ink-red {
+  color: var(--red);
 }
 
 .spin {

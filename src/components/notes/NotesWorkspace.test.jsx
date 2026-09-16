@@ -12,8 +12,8 @@
    than reading notes off `snapshot`.
    ============================================================ */
 
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import NotesWorkspace from "./NotesWorkspace.jsx";
@@ -44,8 +44,26 @@ function makeStore({ notes = [] } = {}) {
     updateNote: vi.fn().mockResolvedValue(NOTE),
     deleteNote: vi.fn().mockResolvedValue(undefined),
     startTakeoff: vi.fn().mockResolvedValue({ runId: "r1" }),
+    getProcessing: vi.fn().mockResolvedValue(processing()),
   };
 }
+
+// What store.getProcessing reports once a re-run is going: the same
+// shape screen E reads, so the same list renders here.
+const processing = (over) => ({
+  documents: [{ id: "d", filename: "E.pdf", docType: "Drawings", state: "read", reason: "", sheetCount: 2 }],
+  run: {
+    state: "running",
+    reason: "",
+    completeCount: 1,
+    totalCount: 2,
+    sheets: [
+      { id: "s1", number: "E2.1", title: "Power plan", stage: "complete", reason: "", note: "", itemCount: 42 },
+      { id: "s2", number: "E2.2", title: "Lighting plan", stage: "finding", reason: "", note: "", itemCount: 0 },
+    ],
+  },
+  ...over,
+});
 
 let context;
 
@@ -211,16 +229,44 @@ describe("NotesWorkspace", () => {
   });
 
   describe("applying notes and re-running", () => {
-    // The engine now runs behind the API (B2) -- this screen just starts
-    // a run (store.startTakeoff) rather than fetching document bytes and
-    // driving the engine itself.
-    it("starts a run and shows that sheets keep processing", async () => {
+    // The re-run is the same queued run screen E watches: this screen
+    // starts it (store.startTakeoff) and then shows the same per-sheet
+    // list, polling store.getProcessing until the run finishes.
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("starts a run, says sheets keep processing, and shows the same sheet list as screen E", async () => {
       const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
       renderNotes({ store });
       await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
       expect(store.startTakeoff).toHaveBeenCalledWith("p1");
-      expect(await screen.findByText(/re-run started/i)).toBeInTheDocument();
-      expect(screen.getByText(/sheets keep processing and are reviewable as they finish/i)).toBeInTheDocument();
+      expect(
+        await screen.findByText("Re-run started. Sheets keep processing and are reviewable as they finish."),
+      ).toBeInTheDocument();
+      expect(await screen.findByText("Finding electrical items")).toBeInTheDocument();
+      expect(screen.getByText("Complete")).toBeInTheDocument();
+      expect(screen.getByText("1 of 2 sheets complete")).toBeInTheDocument();
+      expect(store.getProcessing).toHaveBeenCalledWith("p1");
+      // No reclassified count is claimed: the run is still going.
+      expect(screen.queryByText(/reclassified/i)).not.toBeInTheDocument();
+    });
+
+    it("polls every 3 seconds until the run finishes, then stops", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
+      store.getProcessing = vi
+        .fn()
+        .mockResolvedValueOnce(processing())
+        .mockResolvedValue(processing({ run: { ...processing().run, state: "complete", completeCount: 2 } }));
+      renderNotes({ store });
+      await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
+      expect(await screen.findByText("Finding electrical items")).toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(3100));
+      expect(screen.getByText("2 of 2 sheets complete")).toBeInTheDocument();
+      const calls = store.getProcessing.mock.calls.length;
+      await act(() => vi.advanceTimersByTimeAsync(6200));
+      expect(store.getProcessing).toHaveBeenCalledTimes(calls);
     });
 
     it("treats run_in_flight as success, not an error", async () => {
@@ -229,15 +275,18 @@ describe("NotesWorkspace", () => {
       renderNotes({ store });
       await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
       expect(await screen.findByText(/re-run started/i)).toBeInTheDocument();
+      expect(await screen.findByText("Finding electrical items")).toBeInTheDocument();
       expect(screen.queryByText(/run is already in progress/i)).not.toBeInTheDocument();
     });
 
-    it("reports a failed re-run with a recovery action", async () => {
+    it("reports a failed re-run with a recovery action, and shows no sheet list", async () => {
       const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
       store.startTakeoff = vi.fn().mockRejectedValue({ code: "no_readable_drawings", message: "None of the uploaded documents could be read." });
       renderNotes({ store });
       await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
       expect(await screen.findByText(/none of the uploaded documents could be read/i)).toBeInTheDocument();
+      expect(store.getProcessing).not.toHaveBeenCalled();
+      expect(screen.queryByText(/re-run started/i)).not.toBeInTheDocument();
     });
   });
 });

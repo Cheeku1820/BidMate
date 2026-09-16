@@ -16,23 +16,28 @@
    form, field, or menu. This screen has no conversation panel at all
    (deliberately out of scope for this slice); it is the form.
 
-   The apply banner ("Apply notes and re-run") starts a real re-run
-   behind the API (store.startTakeoff) -- the engine now lives there
-   (B2), so this screen no longer fetches document bytes or drives the
-   engine itself. A run already in flight (`run_in_flight`) is treated
-   as success rather than an error: whatever is already running will
-   pick up the standing notes the same way a fresh run would. Sheets
-   keep processing and are reviewable as they finish, exactly as
-   ProcessingStatus.jsx says -- this banner is a second entry point to
-   the same run, not a different mechanism.
+   The apply banner ("Apply notes and re-run") asks the API for a run
+   (store.startTakeoff), the same run screen D's "Start takeoff" asks
+   for; the worker reads the project's context notes from the database
+   itself, so nothing here builds or sends them. A run already in
+   flight (`run_in_flight`) is treated as success rather than an error:
+   whatever is already running reads the standing notes the same way a
+   fresh run would. Once started, this screen shows the same per-sheet
+   list screen E shows (SheetProgressList.jsx), polling
+   store.getProcessing every few seconds until the run finishes and
+   stopping the moment it does, or when the screen unmounts -- this
+   banner is a second view onto the same run, not a different
+   mechanism.
    ============================================================ */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BadgeCheck, Building2, Calculator, FileText, HelpCircle, Layers, Tag } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import Modal from "../Modal.jsx";
 import NoteForm from "./NoteForm.jsx";
 import ApplyNotesBanner from "./ApplyNotesBanner.jsx";
+import SheetProgressList from "../documents/SheetProgressList.jsx";
+import { isRunActive, RUN_POLL_MS } from "../documents/ProcessingStatus.jsx";
 import {
   CATEGORY_LABELS,
   calculationEffect,
@@ -125,6 +130,20 @@ export default function NotesWorkspace() {
   const [applyMessage, setApplyMessage] = useState(null);
   const [applyError, setApplyError] = useState(null);
   const [applyBusy, setApplyBusy] = useState(false);
+  // What store.getProcessing last reported for the re-run this screen
+  // started; null until one has. Same shape screen E reads.
+  const [rerun, setRerun] = useState(null);
+
+  // Sticks at false once the component unmounts, so a poll landing
+  // late is a no-op. Re-armed in the effect body, not only in its
+  // cleanup, for StrictMode's simulated remount.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   // The workspace's own sheets, for NoteForm's "which sheet" picker
   // (fix round 1, finding 3) -- read off the same shared snapshot
@@ -165,9 +184,8 @@ export default function NotesWorkspace() {
   const openRfiCount = (notes ?? []).filter((n) => n.rfiNeeded && n.status !== "confirmed").length;
   // `unapplied` drives the *banner* -- "is there anything new to apply?"
   // -- so it is the context notes no re-run has carried in yet. The
-  // re-run itself (handleApplyAndRerun, below) just starts the engine's
-  // run behind the API; the run reads the project's standing notes
-  // itself, so this screen no longer builds or sends that payload.
+  // re-run itself (handleApplyAndRerun, below) only asks for the run;
+  // the worker reads the project's standing notes from the database.
   const unapplied = unappliedContextNotes(notes ?? []);
 
   const summaryParts = notes
@@ -222,11 +240,13 @@ export default function NotesWorkspace() {
     }
   }
 
-  // Starts a re-run behind the API. `run_in_flight` is treated as
-  // success rather than an error -- a run is already going, and it
-  // reads the project's standing context notes the same way a freshly
-  // started one would, so there is nothing this screen needs to do
-  // differently.
+  // Asks for a re-run. `run_in_flight` is treated as success rather
+  // than an error -- a run is already going, and it reads the
+  // project's standing context notes the same way a freshly started
+  // one would, so there is nothing this screen needs to do
+  // differently. Either way the run is then fetched at once so its
+  // sheets show without waiting a full poll interval; a failure on
+  // that first fetch is the poll's to retry, not the start's.
   async function handleApplyAndRerun() {
     setApplyError(null);
     setApplyBusy(true);
@@ -236,19 +256,45 @@ export default function NotesWorkspace() {
       } catch (err) {
         if (err?.code !== "run_in_flight") throw err;
       }
-      const id = Date.now();
-      setApplyMessage({
-        id,
-        text: "Re-run started. Sheets keep processing and are reviewable as they finish.",
-      });
-      setTimeout(() => setApplyMessage((m) => (m && m.id === id ? null : m)), 5000);
+      if (!aliveRef.current) return;
+      setApplyMessage("Re-run started. Sheets keep processing and are reviewable as they finish.");
+      try {
+        const next = await store.getProcessing(projectId);
+        if (aliveRef.current) setRerun(next);
+      } catch {
+        if (aliveRef.current) setRerun((r) => r ?? { documents: [], run: null });
+      }
       await load();
     } catch (err) {
+      if (!aliveRef.current) return;
       setApplyError(err?.message || "The re-run couldn't be started. Try again.");
     } finally {
-      setApplyBusy(false);
+      if (aliveRef.current) setApplyBusy(false);
     }
   }
+
+  // While the re-run is going, ask again every few seconds -- the same
+  // cadence and stop rules as screen E -- and stop the moment the run
+  // reaches a terminal state or this screen unmounts. A poll that
+  // fails keeps the last state; the next tick tries again. When the
+  // run finishes the notes are re-read too, so the banner's "not yet
+  // carried in" count reflects the run that just carried them in.
+  const polling = rerun !== null && isRunActive(rerun.run);
+  useEffect(() => {
+    if (!polling) return undefined;
+    const tick = () => {
+      store
+        .getProcessing(projectId)
+        .then((next) => {
+          if (!aliveRef.current) return;
+          setRerun(next);
+          if (!isRunActive(next.run)) load();
+        })
+        .catch(() => {});
+    };
+    const interval = setInterval(tick, RUN_POLL_MS);
+    return () => clearInterval(interval);
+  }, [polling, store, projectId, load]);
 
   const addNoteButton = (
     <button type="button" className="btn btn--primary" onClick={() => setFormNote(null)}>
@@ -300,14 +346,24 @@ export default function NotesWorkspace() {
               }
             />
             {applyMessage ? (
-              <p className="notes-apply-banner-note tabular" role="status">
-                {applyMessage.text}
+              <p className="notes-apply-banner-note" role="status">
+                {applyMessage}
               </p>
             ) : null}
             {applyError ? (
               <div className="warncard warncard--missing" role="alert">
                 <p>{applyError}</p>
               </div>
+            ) : null}
+            {rerun ? (
+              <>
+                {rerun.run?.state === "complete_with_failures" && rerun.run.reason ? (
+                  <div className="warncard warncard--missing" role="alert">
+                    <p>{rerun.run.reason}</p>
+                  </div>
+                ) : null}
+                <SheetProgressList run={rerun.run} documents={rerun.documents} />
+              </>
             ) : null}
 
             <div className="filter-chips" role="group" aria-label="Filter notes">

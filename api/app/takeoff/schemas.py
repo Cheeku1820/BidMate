@@ -464,6 +464,11 @@ class LaborRowOut(BaseModel):
     rate_source_label: str | None = None
     adjusted_hours: Decimal | None = None
     labor_cost: Decimal | None = None
+    # The per-row adjustment the estimator typed (labor-material-pricing
+    # spec, "Final labor hours and cost"). Stored since that plan, returned
+    # since the pricing grid -- the grid edits them as cells.
+    adjustment_percent: Decimal | None = None
+    adjustment_reason: str = ""
     status: str
     basis_note: str = ""
 

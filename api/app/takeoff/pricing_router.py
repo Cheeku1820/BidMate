@@ -21,6 +21,7 @@ from app.takeoff.models import (
     CompanyLaborHoursOverride,
     CompanyLaborRate,
     CompanyMaterialPrice,
+    Project,
     ProjectLaborLine,
     ProjectMaterialPrice,
 )
@@ -82,7 +83,60 @@ def record_company_action(db: DbSession, *, actor: User, kind: str, label: str, 
     return action
 
 
-@router.patch("/items/{item_id}/labor")
+def _labor_row_out(item, resolution, line) -> LaborRowOut:
+    """One place a labor row is shaped, for the list route and the PATCH
+    route both -- the grid patches a single row from the PATCH response,
+    so the two must never drift."""
+    return LaborRowOut(
+        item_id=item.id, item_name=item.name, quantity=item.quantity,
+        hours_per_unit=resolution.hours_per_unit, hours_source_label=resolution.hours_source_label,
+        rate=resolution.rate, rate_source_label=resolution.rate_source_label,
+        adjusted_hours=resolution.adjusted_hours, labor_cost=resolution.labor_cost,
+        adjustment_percent=line.adjustment_percent if line is not None else None,
+        adjustment_reason=line.adjustment_reason if line is not None else "",
+        status=resolution.status, basis_note=resolution.basis_note,
+    )
+
+
+def labor_row_for(item, project, db: DbSession, user: User) -> LaborRowOut:
+    """The resolved labor row for one item, read fresh after a write."""
+    line = db.get(ProjectLaborLine, item.id)
+    company_rates = db.get(CompanyLaborRate, user.org_id)
+    company_hours = db.scalars(
+        select(CompanyLaborHoursOverride).where(
+            CompanyLaborHoursOverride.org_id == user.org_id,
+            CompanyLaborHoursOverride.item_name == item.name,
+        )
+    ).one_or_none()
+    resolution = resolve_labor(item, project, line, company_rates=company_rates, company_hours=company_hours)
+    return _labor_row_out(item, resolution, line)
+
+
+def _material_row_out(item, resolution, override) -> MaterialRowOut:
+    return MaterialRowOut(
+        item_id=item.id, item_name=item.name, quantity=item.quantity,
+        unit_price=resolution.unit_price,
+        source=override.source if override is not None else None,
+        source_label=resolution.source_label,
+        reason=override.reason if override is not None else "",
+        status=resolution.status, basis_note=resolution.basis_note,
+    )
+
+
+def material_row_for(item, project, db: DbSession, user: User) -> MaterialRowOut:
+    """The resolved material row for one item, read fresh after a write."""
+    override = db.get(ProjectMaterialPrice, item.id)
+    company_price = db.scalars(
+        select(CompanyMaterialPrice).where(
+            CompanyMaterialPrice.org_id == user.org_id,
+            CompanyMaterialPrice.item_name == item.name,
+        )
+    ).one_or_none()
+    resolution = resolve_material_price(item, project, override, company_price)
+    return _material_row_out(item, resolution, override)
+
+
+@router.patch("/items/{item_id}/labor", response_model=LaborRowOut)
 def patch_labor(
     item_id: uuid.UUID,
     body: LaborLineUpdateIn,
@@ -124,10 +178,11 @@ def patch_labor(
         before=before or {}, after=after,
     )
     db.commit()
-    return {"itemId": str(item_id)}
+    project = db.get(Project, item.project_id)
+    return labor_row_for(item, project, db, user)
 
 
-@router.patch("/items/{item_id}/material-price")
+@router.patch("/items/{item_id}/material-price", response_model=MaterialRowOut)
 def patch_material_price(
     item_id: uuid.UUID,
     body: MaterialPriceUpdateIn,
@@ -156,7 +211,8 @@ def patch_material_price(
         before=before or {}, after=after,
     )
     db.commit()
-    return {"itemId": str(item_id)}
+    project = db.get(Project, item.project_id)
+    return material_row_for(item, project, db, user)
 
 
 @router.get("/projects/{project_id}/labor", response_model=LaborListOut)
@@ -184,13 +240,7 @@ def get_labor(project_id: uuid.UUID, user: User = Depends(current_user), db: DbS
             item, project, lines.get(item.id),
             company_rates=company_rates, company_hours=company_hours.get(item.name),
         )
-        rows.append(LaborRowOut(
-            item_id=item.id, item_name=item.name, quantity=item.quantity,
-            hours_per_unit=resolution.hours_per_unit, hours_source_label=resolution.hours_source_label,
-            rate=resolution.rate, rate_source_label=resolution.rate_source_label,
-            adjusted_hours=resolution.adjusted_hours, labor_cost=resolution.labor_cost,
-            status=resolution.status, basis_note=resolution.basis_note,
-        ))
+        rows.append(_labor_row_out(item, resolution, lines.get(item.id)))
     return LaborListOut(pricing_source=project.pricing_source, pricing_note=project.pricing_note, rows=rows)
 
 
@@ -216,14 +266,7 @@ def get_material_pricing(project_id: uuid.UUID, user: User = Depends(current_use
     for item in items:
         override = overrides.get(item.id)
         resolution = resolve_material_price(item, project, override, company_prices.get(item.name))
-        rows.append(MaterialRowOut(
-            item_id=item.id, item_name=item.name, quantity=item.quantity,
-            unit_price=resolution.unit_price,
-            source=override.source if override is not None else None,
-            source_label=resolution.source_label,
-            reason=override.reason if override is not None else "",
-            status=resolution.status, basis_note=resolution.basis_note,
-        ))
+        rows.append(_material_row_out(item, resolution, override))
     return MaterialListOut(pricing_source=project.pricing_source, pricing_note=project.pricing_note, rows=rows)
 
 

@@ -431,3 +431,51 @@ def test_patch_material_price_records_the_persisted_precision_not_the_request_bo
         Action.kind == "material_price_edit", Action.item_id == item.id,
     )).one()
     assert action.after["price_override"] == "15.00"
+
+
+# --- pricing-grid: the PATCH routes return the resolved row ---
+
+
+def test_get_labor_returns_the_adjustment_fields(client, item, signed_in_user):
+    client.patch(f"/api/items/{item.id}/labor",
+                 json={"adjustmentPercent": 25, "adjustmentReason": "Mounting height above 16 ft"})
+    response = client.get(f"/api/projects/{item.project_id}/labor")
+    row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
+    assert float(row["adjustment_percent"]) == 25.0
+    assert row["adjustment_reason"] == "Mounting height above 16 ft"
+
+
+def test_get_labor_adjustment_fields_are_empty_with_no_line(client, item, signed_in_user):
+    response = client.get(f"/api/projects/{item.project_id}/labor")
+    row = next(r for r in response.json()["rows"] if r["item_id"] == str(item.id))
+    assert row["adjustment_percent"] is None
+    assert row["adjustment_reason"] == ""
+
+
+def test_patch_labor_returns_the_resolved_row(client, item, signed_in_user):
+    """The grid patches one row from the response instead of refetching
+    the list, so the PATCH body has to be the same row the list would
+    return after the write."""
+    response = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["item_id"] == str(item.id)
+    assert float(body["hours_per_unit"]) == 0.75
+    assert body["hours_source_label"] == "Estimator entered"
+    listed = next(r for r in client.get(f"/api/projects/{item.project_id}/labor").json()["rows"]
+                  if r["item_id"] == str(item.id))
+    assert listed == body
+
+
+def test_patch_material_price_returns_the_resolved_row(client, item, signed_in_user):
+    response = client.patch(f"/api/items/{item.id}/material-price",
+                            json={"priceOverride": 15.5, "source": "project_price"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["item_id"] == str(item.id)
+    assert float(body["unit_price"]) == 15.5
+    assert body["source"] == "project_price"
+    assert body["source_label"] == "Project price"
+    listed = next(r for r in client.get(f"/api/projects/{item.project_id}/material-pricing").json()["rows"]
+                  if r["item_id"] == str(item.id))
+    assert listed == body

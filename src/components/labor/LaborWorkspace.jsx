@@ -112,7 +112,7 @@ export default function LaborWorkspace() {
     <>
       <AppTopBar title="Labor" saveState={saveStateText(saved)} />
 
-      <div className="page">
+      <div className="page page--fill">
         <h1 className="page-heading">Labor</h1>
 
         {pricingSource !== "llm" ? (

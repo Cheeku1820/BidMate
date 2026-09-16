@@ -1365,6 +1365,12 @@ button {
 /* ---- Projects dashboard (spec §5.1) ---- */
 
 .page { padding: 20px; }
+/* A page whose grid scrolls inside it rather than scrolling the shell:
+   .app-shell-main is a column flexbox, so a flex child with min-height 0
+   takes the remaining height, and the grid's own scroll box (below,
+   .grid-scroll) gets a bound to scroll inside. Heading, notes, and
+   banners stay in normal flow above it. */
+.page--fill { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .page-heading { margin: 0 0 16px; }
 .muted { color: var(--ink-2); }
 
@@ -1693,6 +1699,13 @@ button {
    takeoff table: sticky header, same cell padding. Three things are
    added and none of them is a colour for a state -- the editable mark,
    the active ring, and the pinned footer. Status stays the Pill. */
+/* The grid's scroll container. Not .takeoff-table-scroll: overflow-x
+   alone makes a scroll container with no height bound, so the sticky
+   header and footer had nothing to pin to and moved with the content.
+   The chain that makes them pin: .app-shell-main (column flex,
+   overflow-y auto) -> .page--fill (flex child, min-height 0) ->
+   .grid-scroll (flex child, min-height 0, overflow auto) -> the table. */
+.grid-scroll { overflow: auto; min-height: 0; flex: 1 1 auto; }
 .grid td, .grid th { position: relative; }
 .grid td[data-editable], .grid th[data-editable] {
   box-shadow: inset -2px 0 0 var(--ink-3);

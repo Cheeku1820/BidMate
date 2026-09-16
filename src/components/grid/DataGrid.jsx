@@ -395,8 +395,13 @@ const DataGrid = forwardRef(function DataGrid(
     );
   }
 
+  // Its own scroll container, not .takeoff-table-scroll: that box is
+  // overflow-x only and has no height bound, so it never scrolls
+  // vertically and the sticky thead/tfoot pin to a box that never
+  // moves. .grid-scroll is overflow auto with min-height 0, and the
+  // pricing pages fill the shell (.page--fill) so it has a height.
   return (
-    <div className="takeoff-table-scroll">
+    <div className="grid-scroll">
       <table className="data-table takeoff-table grid" role="grid">
         <caption className="sr-only">{caption}</caption>
         <thead>

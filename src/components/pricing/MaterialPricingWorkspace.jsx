@@ -137,7 +137,7 @@ export default function MaterialPricingWorkspace() {
     <>
       <AppTopBar title="Material pricing" saveState={saveStateText(saved)} />
 
-      <div className="page">
+      <div className="page page--fill">
         <h1 className="page-heading">Material pricing</h1>
 
         {pricingSource !== "llm" ? (

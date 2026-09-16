@@ -58,6 +58,13 @@ describe("MaterialPricingWorkspace", () => {
     expect(screen.getByText(/missing information/i)).toBeInTheDocument();
   });
 
+  test("fills the shell so the grid scrolls inside the page and its header and footer pin", async () => {
+    const store = { getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }) };
+    renderMaterial({ store });
+    await loaded();
+    expect(screen.getByRole("grid").closest(".page")).toHaveClass("page--fill");
+  });
+
   test("Basis is read-only and shows the resolved tier until a price entry exists", async () => {
     const store = { getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [companyRow] }) };
     renderMaterial({ store });

@@ -76,6 +76,16 @@ describe("DataGrid markup", () => {
     expect(cell(0, 0)).not.toHaveAttribute("data-editable");
     expect(cell(1, BASIS)).not.toHaveAttribute("data-editable");
   });
+
+  test("wraps the table in its own scroll container, so the sticky header and footer have something to pin to", () => {
+    // jsdom has no layout: this only guards the wrapper class. The chain
+    // that makes sticky work is .app-shell-main (column flex, overflow-y
+    // auto) -> .page--fill (flex child, min-height 0) -> .grid-scroll
+    // (flex child, min-height 0, overflow auto) -> the table.
+    setup();
+    expect(screen.getByRole("grid").parentElement).toHaveClass("grid-scroll");
+    expect(screen.getByRole("grid").parentElement).not.toHaveClass("takeoff-table-scroll");
+  });
 });
 
 describe("moving the active cell", () => {

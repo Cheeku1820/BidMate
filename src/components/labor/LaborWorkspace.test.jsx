@@ -71,6 +71,16 @@ describe("LaborWorkspace", () => {
     expect(screen.getByText(/missing information/i)).toBeInTheDocument();
   });
 
+  test("fills the shell so the grid scrolls inside the page and its header and footer pin", async () => {
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),
+      setLaborLine: vi.fn(),
+    };
+    renderLabor({ store });
+    await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());
+    expect(screen.getByRole("grid").closest(".page")).toHaveClass("page--fill");
+  });
+
   test("shows both tier tags and the basis note when a row resolves from the estimated basis", async () => {
     const store = {
       getLaborRows: vi.fn().mockResolvedValue({ pricingSource: "llm", pricingNote: "x", rows: [pricedRow] }),

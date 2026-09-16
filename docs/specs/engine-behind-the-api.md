@@ -35,11 +35,13 @@ jobs
   requested_by    uuid null, fk users                        the person who pressed Start; classify carries it
   payload         jsonb null                                 a sheet job's clusters (tag, count, placements)
   status          str(20)   queued | running | done | failed ck_jobs_status
+  progress        str(20) default ''   a running sheet job reports 'checking' (vision); 'unchecked' when vision failed
   attempts        int default 0
   max_attempts    int default 3
   error           text default ''   estimator-facing reason when failed; never an exception name
   locked_by       str(100) default ''
   queued_at       timestamptz server default now()
+  not_before      timestamptz null   the retry backoff
   started_at      timestamptz null
   finished_at     timestamptz null
 ```
@@ -61,7 +63,11 @@ Index `(status, kind, queued_at)` for the poll. Partial unique index on `(docume
 
 ```
   schedule_text   text default ''       extracted by read so classify never re-opens the file
+  region          jsonb null            [x0, y0, x1, y1] in page points -- counting runs within it
+  legend          jsonb null            parsed LegendEntry rows -- the deterministic classifier reads them
 ```
+
+All three are written by `read` so `classify` and `sheet` never re-open a file for what the Documents agent already found.
 
 No `document_pages` table. The sheets the engine detects are the pages the product cares about; B3 adds a render key to `sheets` directly.
 
@@ -283,7 +289,7 @@ Scope decisions: `actions.commit` kind `scope_decide`, label `Confirmed: <text>`
 
 ## 8. Client
 
-**Deleted:** `src/lib/engineClient.js`, `src/components/estimate/EstimateDemo.jsx` and its `/estimate` route and nav entry, `store.fetchDocumentFile`, `store.attachEngineTakeoff`, `store.reprocess`, the replace-confirm dialog in `ProcessingStatus.jsx`, `detectDocType.js`'s content sniff (`classifyDoc`).
+**Deleted:** `src/lib/engineClient.js`, `src/components/estimate/EstimateDemo.jsx` and its `/estimate` route and nav entry, `store.fetchDocumentFile`, `store.attachEngineTakeoff`, `store.reprocess`, the replace-confirm dialog in `ProcessingStatus.jsx`, and screen C's content sniff (`classifyDoc`) — deleted without a server-side replacement; the estimator sets a file's type, and the filename guess stands until they do.
 
 **Added to the store:** `startTakeoff(projectId)`, `getProcessing(projectId)`, `listScope(projectId)`, `decideScope(id, {status} | {editedText})`.
 

@@ -564,3 +564,60 @@ describe("labor and material pricing cache invalidation", () => {
     expect(secondSnapshotCall[1].headers["If-None-Match"]).toBeUndefined();
   });
 });
+
+describe("pricing writes", () => {
+  // request()'s own JSON.stringify/parse (this file's setup above) means
+  // these hit item-scoped endpoints directly, no ensureProjectId lookup
+  // first -- same single-call shape as the cache-invalidation tests above.
+  const laborWire = {
+    item_id: "i1", item_name: "20A duplex receptacle", quantity: "10", hours_per_unit: "0.75",
+    hours_source_label: "Estimator entered", rate: null, rate_source_label: null, adjusted_hours: null,
+    labor_cost: null, adjustment_percent: null, adjustment_reason: "", status: "missing", basis_note: "",
+  };
+  const materialWire = {
+    item_id: "i1", item_name: "20A duplex receptacle", quantity: "10", unit_price: null, source: null,
+    source_label: null, reason: "", status: "missing", basis_note: "",
+  };
+
+  it("setLaborLine sends the change and returns the mapped row", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(laborWire));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const row = await store.setLaborLine("i1", { hoursOverride: 0.75 });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/items/i1/labor");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({ hoursOverride: 0.75 });
+    expect(row.hoursPerUnit).toBe(0.75);
+    expect(row.hoursSourceLabel).toBe("Estimator entered");
+  });
+
+  it("setMaterialPrice returns the mapped row", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ ...materialWire, unit_price: "15.50", source: "project_price", source_label: "Project price", status: "approved" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const row = await store.setMaterialPrice("i1", { priceOverride: 15.5, source: "project_price", reason: "" });
+
+    expect(row.unitPrice).toBe(15.5);
+    expect(row.sourceLabel).toBe("Project price");
+  });
+
+  it("clearMaterialPrice sends DELETE and returns the fallen-back row", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(materialWire));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const row = await store.clearMaterialPrice("i1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/items/i1/material-price");
+    expect(init.method).toBe("DELETE");
+    expect(row.unitPrice).toBeNull();
+    expect(row.status).toBe("missing");
+  });
+});

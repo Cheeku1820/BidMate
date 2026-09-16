@@ -221,6 +221,8 @@ export function mapLaborRow(r) {
     rateSourceLabel: r.rate_source_label ?? null,
     adjustedHours: r.adjusted_hours == null ? null : Number(r.adjusted_hours),
     laborCost: r.labor_cost == null ? null : Number(r.labor_cost),
+    adjustmentPercent: r.adjustment_percent == null ? null : Number(r.adjustment_percent),
+    adjustmentReason: r.adjustment_reason ?? "",
     status: r.status,
     basisNote: r.basis_note ?? "",
   };

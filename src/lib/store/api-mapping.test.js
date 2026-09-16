@@ -47,6 +47,23 @@ describe("mapLaborRow", () => {
     expect(() => mapLaborRow(row)).not.toThrow();
     expect(mapLaborRow(row).hoursPerUnit).toBeNull();
   });
+
+  test("carries the adjustment percent and reason, and defaults them when absent", () => {
+    const withAdjustment = mapLaborRow({
+      item_id: "abc", item_name: "x", quantity: "1", hours_per_unit: null, hours_source_label: null,
+      rate: null, rate_source_label: null, adjusted_hours: null, labor_cost: null, status: "missing",
+      basis_note: "", adjustment_percent: "25.00", adjustment_reason: "Mounting height above 16 ft",
+    });
+    expect(withAdjustment.adjustmentPercent).toBe(25);
+    expect(withAdjustment.adjustmentReason).toBe("Mounting height above 16 ft");
+
+    const without = mapLaborRow({
+      item_id: "abc", item_name: "x", quantity: "1", hours_per_unit: null, hours_source_label: null,
+      rate: null, rate_source_label: null, adjusted_hours: null, labor_cost: null, status: "missing", basis_note: "",
+    });
+    expect(without.adjustmentPercent).toBeNull();
+    expect(without.adjustmentReason).toBe("");
+  });
 });
 
 describe("mapMaterialRow", () => {

@@ -492,7 +492,9 @@ export function createApiStore() {
     // per invalidateCache()'s own comment above.
     const result = await request(`/api/items/${itemId}/labor`, { method: "PATCH", body: changes });
     invalidateCache();
-    return result;
+    // The route returns the resolved row (pricing-grid spec), so the
+    // screen replaces one row from this rather than refetching the list.
+    return mapLaborRow(result);
   }
 
   async function getMaterialRows(projectId) {
@@ -506,7 +508,15 @@ export function createApiStore() {
     // next poll with the pre-edit figures.
     const result = await request(`/api/items/${itemId}/material-price`, { method: "PATCH", body: changes });
     invalidateCache();
-    return result;
+    return mapMaterialRow(result);
+  }
+
+  async function clearMaterialPrice(itemId) {
+    // Removes the estimator's price entry; the row comes back resolved
+    // to whatever is next in the chain, which is what the toast names.
+    const result = await request(`/api/items/${itemId}/material-price`, { method: "DELETE" });
+    invalidateCache();
+    return mapMaterialRow(result);
   }
 
   async function getCompanyLaborRates() {
@@ -576,6 +586,7 @@ export function createApiStore() {
     setLaborLine,
     getMaterialRows,
     setMaterialPrice,
+    clearMaterialPrice,
     getCompanyLaborRates,
     setCompanyLaborRates,
     getCompanyMaterialPrices,

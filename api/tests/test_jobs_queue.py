@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.jobs import copy, queue
-from app.jobs.schemas import RETRY_BACKOFF_SECONDS
+from app.jobs.schemas import RETRY_BACKOFF_SECONDS, STALE_GRACE_SECONDS, timeout_for
 from app.takeoff.models import Document, Sheet
 from tests.conftest import TestSession
 
@@ -17,6 +17,11 @@ def _doc(db, project, dana, n="E.pdf"):
     d = Document(project_id=project.id, filename=n, doc_type="Drawings", content_type="application/pdf",
                  size_bytes=3, sha256=uuid.uuid4().hex * 2, storage_key="k", uploaded_by=dana.id)
     db.add(d); db.flush(); return d
+
+
+def _past_stale(kind: str) -> timedelta:
+    """One second past the point reclaim_stale gives up on a running job of `kind`."""
+    return timedelta(seconds=timeout_for(kind) + STALE_GRACE_SECONDS + 1)
 
 
 def _sheet(db, project, i=0):
@@ -70,7 +75,7 @@ def test_stale_running_jobs_are_reclaimed(db, project, dana):
     j = queue.enqueue_read(db, _doc(db, project, dana))
     db.commit()
     j = queue.claim_next(db, "dead"); db.commit()
-    j.started_at = datetime.now(timezone.utc) - timedelta(seconds=120 + 61)
+    j.started_at = datetime.now(timezone.utc) - _past_stale("read")
     db.commit()
     assert queue.reclaim_stale(db) == 1
     db.refresh(j)
@@ -92,7 +97,7 @@ def test_a_stale_job_out_of_attempts_fails_instead_of_requeueing(db, project, da
     db.commit()
     j = queue.claim_next(db, "dead"); db.commit()
     j.attempts = j.max_attempts
-    j.started_at = datetime.now(timezone.utc) - timedelta(seconds=120 + 61)
+    j.started_at = datetime.now(timezone.utc) - _past_stale("read")
     db.commit()
     assert queue.reclaim_stale(db) == 1
     db.refresh(j)
@@ -106,7 +111,7 @@ def test_a_stale_sheet_job_out_of_attempts_fails_with_the_sheet_copy(db, project
     queue.mark_done(db, c); db.commit()
     sj = queue.claim_next(db, "dead"); db.commit()
     sj.attempts = sj.max_attempts
-    sj.started_at = datetime.now(timezone.utc) - timedelta(seconds=180 + 61)
+    sj.started_at = datetime.now(timezone.utc) - _past_stale("sheet")
     db.commit()
     assert queue.reclaim_stale(db) == 1
     db.refresh(sj)

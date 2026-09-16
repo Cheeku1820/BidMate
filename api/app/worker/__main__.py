@@ -63,13 +63,29 @@ def tick(worker_id: str) -> bool:
     return True
 
 
+def run_forever(worker_id: str, *, max_ticks: int | None = None) -> None:
+    """The loop. A tick that raises -- the database restarting under
+    reclaim_stale, a child that could not be spawned -- is logged and
+    the worker polls again, the way a job that fails is recorded and
+    the worker moves on. `max_ticks` exists so a test can run a bounded
+    number of iterations."""
+    ticks = 0
+    while max_ticks is None or ticks < max_ticks:
+        ticks += 1
+        try:
+            ran = tick(worker_id)
+        except Exception:  # noqa: BLE001 -- the worker outlives any one tick
+            logger.exception("tick failed; polling again in %ss", POLL_SECONDS)
+            ran = False
+        if not ran:
+            time.sleep(POLL_SECONDS)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     worker_id = f"{socket.gethostname()}:{os.getpid()}"
     logger.info("worker %s polling", worker_id)
-    while True:
-        if not tick(worker_id):
-            time.sleep(POLL_SECONDS)
+    run_forever(worker_id)
 
 
 if __name__ == "__main__":

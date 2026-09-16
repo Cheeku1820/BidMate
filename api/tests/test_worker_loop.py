@@ -123,3 +123,28 @@ def test_run_ignores_a_job_that_is_not_running(db, project, dana, inline, handle
     handlers.run("read", str(j.id))            # still queued: not ours to run
     assert handler["calls"] == []
     assert handlers.run("read", str(uuid.uuid4())) is None
+
+
+def test_the_loop_survives_a_tick_that_raises(db, project, dana, inline, handler, monkeypatch):
+    """A database blip under claim_next must not take the worker down:
+    the tick is logged, the loop polls again, and the next tick runs
+    the job."""
+    from sqlalchemy.exc import OperationalError
+
+    j = queue.enqueue_read(db, _doc(db, project, dana)); db.commit()
+    real_claim = queue.claim_next
+    failures = {"left": 1}
+
+    def flaky_claim(session, worker_id):
+        if failures["left"]:
+            failures["left"] -= 1
+            raise OperationalError("SELECT 1", {}, ConnectionResetError("connection reset by peer"))
+        return real_claim(session, worker_id)
+
+    slept = []
+    monkeypatch.setattr(queue, "claim_next", flaky_claim)
+    monkeypatch.setattr(worker.time, "sleep", slept.append)
+    worker.run_forever("t", max_ticks=2)
+    db.refresh(j)
+    assert j.status == "done" and handler["calls"] == [j.id]
+    assert slept == [worker.POLL_SECONDS]   # the failed tick backed off; the successful one did not

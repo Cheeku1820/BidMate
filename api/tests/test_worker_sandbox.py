@@ -25,3 +25,9 @@ def test_a_hung_child_is_killed():
 
 def test_the_generic_terminal_copy_is_the_shared_unreadable_string():
     assert sandbox.GENERIC_TERMINAL == copy.UNREADABLE
+
+
+def test_a_child_that_reports_then_lingers_keeps_its_outcome():
+    """The body finished and said so; a process that will not exit
+    afterwards is disposed of, not mistaken for a hung job."""
+    assert sandbox.run_in_child("app.worker.sandbox._probe", ("linger",), timeout=10) == ("ok", "")

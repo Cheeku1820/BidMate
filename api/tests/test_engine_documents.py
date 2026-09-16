@@ -3,6 +3,7 @@
 import pymupdf
 
 from app.engine import documents
+from app.engine.contracts import DetectedSheet
 
 
 def _sheet(tmp_path, own_number, refs=(), title_lines=(), rotation=0, drawings=600, scale=True, tags=()):
@@ -396,3 +397,84 @@ def test_evidence_crop_returns_none_with_unmeasured_page_dims(tmp_path):
     not crash the takeoff by dividing by zero when computing zoom."""
     path = _one_page_pdf(tmp_path)
     assert documents.render_evidence_crop(path, 0, 0, 0, [(500, 400)]) is None
+
+
+# --- _drawing_scope_pages ----------------------------------------------
+#
+# Driven directly against hand-built DetectedSheets rather than through
+# detect_sheets end-to-end: detect_sheets decides kind and schedule_text
+# from a real title block and SCHEDULE_KEYWORDS match, which is already
+# covered by the tests above and by test_corpus_sheets.py. What matters
+# here is _drawing_scope_pages' own contract given a sheet list -- schedule
+# text vs. the lazy page-text fallback, the plan filter, and the shared
+# character budget -- so it is faster and clearer to construct the sheets
+# directly than to engineer a synthetic PDF that would make detect_sheets
+# produce them.
+
+def _drawing_sheet(page_index, kind="other", schedule_text="", **kw):
+    defaults = dict(
+        number="", title="", discipline="Electrical", scale="",
+        width_pt=1000.0, height_pt=800.0, region=(0.0, 0.0, 1000.0, 800.0),
+    )
+    defaults.update(kw)
+    return DetectedSheet(page_index=page_index, kind=kind, schedule_text=schedule_text, **defaults)
+
+
+def test_drawing_scope_pages_uses_schedule_text_when_present():
+    """A schedule/legend sheet already carries its text from detect_sheets
+    -- no need to reopen the file for it, and its page_index rides along
+    unchanged."""
+    sheet = _drawing_sheet(page_index=5, kind="schedule", schedule_text="EXCLUSIONS\n- Site lighting and pole bases.\n")
+    pages = documents._drawing_scope_pages("unused.pdf", [sheet])
+    assert pages == [(5, "EXCLUSIONS\n- Site lighting and pole bases.\n")]
+
+
+def test_drawing_scope_pages_falls_back_to_the_page_text_when_schedule_text_is_empty(tmp_path):
+    """A general-notes sheet (kind != plan, but its text didn't match
+    SCHEDULE_KEYWORDS so detect_sheets left schedule_text "") is read
+    fresh here, from the real page."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    page.insert_text((72, 72), "BY OTHERS")
+    page.insert_text((72, 96), "- Temporary power during construction.")
+    path = tmp_path / "notes.pdf"
+    doc.save(path)
+
+    sheet = _drawing_sheet(page_index=0, kind="other", schedule_text="")
+    pages = documents._drawing_scope_pages(str(path), [sheet])
+
+    assert len(pages) == 1
+    page_index, text = pages[0]
+    assert page_index == 0
+    assert "BY OTHERS" in text
+    assert "Temporary power during construction." in text
+
+
+def test_drawing_scope_pages_skips_plan_sheets():
+    sheets = [
+        _drawing_sheet(page_index=0, kind="plan", schedule_text="EXCLUSIONS\n- A plan sheet must never contribute scope text.\n"),
+        _drawing_sheet(page_index=1, kind="schedule", schedule_text="EXCLUSIONS\n- Site lighting and pole bases.\n"),
+    ]
+    pages = documents._drawing_scope_pages("unused.pdf", sheets)
+    assert [page_index for page_index, _ in pages] == [1]
+
+
+def test_drawing_scope_pages_returns_nothing_when_every_sheet_is_a_plan():
+    sheets = [_drawing_sheet(page_index=0, kind="plan", schedule_text="EXCLUSIONS\n- Ignored.\n")]
+    assert documents._drawing_scope_pages("unused.pdf", sheets) == []
+
+
+def test_drawing_scope_pages_caps_the_shared_budget_across_several_sheets():
+    """Three non-plan sheets whose combined text exceeds SCOPE_MAX_CHARS:
+    the first two are kept whole, the third is truncated to what's left
+    of the shared budget, not dropped or read past the cap."""
+    sheets = [
+        _drawing_sheet(page_index=0, kind="schedule", schedule_text="A" * 5000),
+        _drawing_sheet(page_index=1, kind="schedule", schedule_text="B" * 5000),
+        _drawing_sheet(page_index=2, kind="schedule", schedule_text="C" * 5000),
+    ]
+    pages = documents._drawing_scope_pages("unused.pdf", sheets)
+    assert [page_index for page_index, _ in pages] == [0, 1, 2]
+    assert len(pages[0][1]) == 5000
+    assert len(pages[1][1]) == 5000
+    assert len(pages[2][1]) == documents.SCOPE_MAX_CHARS - 10000

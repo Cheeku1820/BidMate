@@ -346,9 +346,12 @@ def context_pages(pdf_bytes: bytes, max_chars: int = 6000) -> list[tuple[int, st
     for i, page in enumerate(doc):
         text = page.get_text("text")
         if any(k in text.upper() for k in _CONTEXT_KEYWORDS):
-            chunk = text.strip()
-            pages.append((i, chunk))
-            total += len(chunk)
+            # Accumulate on the unstripped length -- the cap `extract_context`
+            # always used -- even though the stored chunk is stripped; the
+            # two must agree byte-for-byte with the pre-split behaviour, or
+            # the page selected right at the boundary can change.
+            pages.append((i, text.strip()))
+            total += len(text)
             if total > max_chars:
                 break
     return pages

@@ -79,6 +79,19 @@ def test_empty_pages_extract_to_nothing():
     assert scope.extract_deterministic([]) == []
 
 
+def test_a_long_caps_line_inside_an_open_block_is_a_statement_not_a_break():
+    """A caps *sentence* under an open heading (a shouted general note,
+    not a new section) must stay inside the block -- only a short caps
+    line (at most four words) reads as a heading and ends one."""
+    found = scope.extract_deterministic([
+        (0, "EXCLUSIONS\nPROVIDE TEMPORARY POWER BY OTHERS TRADE\n- Site lighting and pole bases.\n"),
+    ])
+    assert [(s.kind, s.text) for s in found] == [
+        ("excluded", "PROVIDE TEMPORARY POWER BY OTHERS TRADE"),
+        ("excluded", "Site lighting and pole bases."),
+    ]
+
+
 def test_a_statement_is_a_scope_statement_record():
     (s,) = scope.extract_deterministic([(0, "EXCLUSIONS\n- Site lighting and pole bases.")])
     assert isinstance(s, ScopeStatement)

@@ -21,7 +21,7 @@ _HEADINGS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"^\s*ALTERNATES?\b", re.I), "alternate"),
     (re.compile(r"^\s*(?:SECTION\s+26\s?\d\d\s?\d\d\b.*|INCLUSIONS?|SCOPE(?: OF WORK)?)\b", re.I), "included"),
 ]
-_OTHER_HEADING = re.compile(r"^\s*[A-Z][A-Z &/-]{3,}\s*$")  # an all-caps line ends a block
+_ALL_CAPS_WORD = re.compile(r"^[A-Z][A-Z&/-]*$")
 _BULLET = re.compile(r"^\s*(?:[-•*]|\d+[.)]|[a-z][.)])\s+(.*)$", re.I)
 
 
@@ -30,6 +30,17 @@ def _kind_of(line: str) -> str | None:
         if pattern.match(line):
             return kind
     return None
+
+
+def _is_section_break(line: str) -> bool:
+    """A *short* all-caps line -- at most four words, no digits or
+    trailing punctuation -- reads as a heading (e.g. "GENERAL NOTES")
+    and ends whatever block is open. A longer all-caps line under an
+    open heading is a shouted sentence (e.g. "PROVIDE TEMPORARY POWER
+    BY OTHERS TRADE"), not a new section, and must stay inside the
+    block it appears in rather than silently discarding it."""
+    words = line.split()
+    return 1 <= len(words) <= 4 and all(_ALL_CAPS_WORD.match(w) for w in words)
 
 
 def extract_deterministic(pages: list[tuple[int, str]]) -> list[ScopeStatement]:
@@ -44,7 +55,7 @@ def extract_deterministic(pages: list[tuple[int, str]]) -> list[ScopeStatement]:
             if k:
                 kind = k
                 continue
-            if _OTHER_HEADING.match(line):
+            if _is_section_break(line):
                 kind = None
                 continue
             if kind is None:

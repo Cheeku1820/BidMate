@@ -5,6 +5,7 @@ label, and `render_key` never reaches the wire."""
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.jobs import copy
 from app.jobs.schemas import JOB_KINDS, RENDER_STATUSES, timeout_for
 from app.takeoff.models import Job, Sheet
 
@@ -12,6 +13,10 @@ from app.takeoff.models import Job, Sheet
 def test_render_is_a_job_kind_with_its_own_timeout():
     assert "render" in JOB_KINDS
     assert timeout_for("render") == 300
+
+
+def test_render_failed_copy_is_the_spec_string():
+    assert copy.RENDER_FAILED == "Couldn't draw this sheet. The takeoff still counts it."
 
 
 def test_render_status_defaults_to_pending_and_is_closed(db, project, sheet):

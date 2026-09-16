@@ -117,6 +117,9 @@ No new status label. Sentence case; no "please", "successfully", "!".
 
 ## 9. Not built in B3
 
+**Accurate symbol marking is the next sub-project, B3b, before B4.** Counting today is tag-based: markers sit at the device's text tag, and untagged glyphs are not counted at all. B3b anchors every placement on the symbol's bounding box, adds vector symbol instancing (form XObject reuse and path-signature clustering) so untagged devices are counted exactly, and adds *find every one like this* — the estimator boxes one symbol and the worker template-matches on B3's rendered tiles, returning every match as *Ready to review*. B3 is the substrate: a box needs a page to sit on, and matching needs the raster.
+
+
 - Tile pre-warming, or rendering ahead of the sheet the estimator is looking at beyond the one-tile margin.
 - Retention or cleanup of superseded tile prefixes — the reaper (ROADMAP §2.2).
 - Rotation controls on the canvas (the page is rendered in its visual orientation; that is the one the title block reads in).

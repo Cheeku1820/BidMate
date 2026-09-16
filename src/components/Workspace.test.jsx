@@ -13,8 +13,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import Workspace from "./Workspace.jsx";
+import { ConversationScreenProvider, useConversationScreenContext } from "./conversation/screenContext.jsx";
 
 // jsdom has no ResizeObserver -- BlueprintCanvas.jsx uses one to track its
 // viewport size, which is real behaviour worth having in this render
@@ -102,6 +104,51 @@ function renderWorkspace({ notes = [] } = {}) {
   return { ...result, listNotes };
 }
 
+/** Renders what the conversation screen context has for the current view. */
+function ViewProbe() {
+  const { view } = useConversationScreenContext();
+  return <p data-testid="view">{JSON.stringify(view)}</p>;
+}
+
+function renderWorkspaceInPanel({ panelOpen = true } = {}) {
+  const listNotes = vi.fn().mockResolvedValue([]);
+  context = {
+    snapshot: baseSnapshot,
+    loading: false,
+    loadError: null,
+    saved: { state: "saved", at: Date.now() },
+    toast: null,
+    dismissToast: vi.fn(),
+    itemError: null,
+    clearItemError: vi.fn(),
+    setPresenceTarget: vi.fn(),
+    refresh: vi.fn(),
+    approveItem: vi.fn(),
+    rejectItem: vi.fn(),
+    deleteItem: vi.fn(),
+    editItem: vi.fn(),
+    setScale: vi.fn(),
+    undo: vi.fn(),
+    redo: vi.fn(),
+    me: { id: "u1", name: "Dana Whitfield", color: "#2563eb" },
+    sheetId: "s1",
+    setSheetId: vi.fn(),
+    selectedItemId: null,
+    selectItem: vi.fn(),
+    project: { id: "p1", name: "Riverside", location: "Riverside, CA" },
+    projectId: "p1",
+    store: { listNotes },
+  };
+  return render(
+    <ConversationScreenProvider panelOpen={panelOpen}>
+      <ViewProbe />
+      <MemoryRouter>
+        <Workspace />
+      </MemoryRouter>
+    </ConversationScreenProvider>,
+  );
+}
+
 describe("Workspace — apply notes banner", () => {
   it("appears when an unapplied context note exists on the project", async () => {
     renderWorkspace({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
@@ -132,4 +179,34 @@ it("the canvas never requests a sheet image from the engine", () => {
   // <img>, so this also guards against a stray raster element inside
   // the SVG tree specifically).
   expect(document.querySelector("image")).toBeNull();
+});
+
+describe("Workspace — conversation panel", () => {
+  it("collapses the sheets rail when the conversation panel opens under 1440px", async () => {
+    // Restore only innerWidth afterward -- vi.unstubAllGlobals() would
+    // also strip this file's own top-of-file ResizeObserver stub.
+    const originalInnerWidth = window.innerWidth;
+    vi.stubGlobal("innerWidth", 1280);
+    try {
+      renderWorkspaceInPanel({ panelOpen: true });
+      // Same assertion shell.test.jsx's rail-collapse test makes for the
+      // company nav's own toggle: the button's accessible name flips to
+      // "Expand ..." once the rail is collapsed.
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: /expand sheet list/i })).toBeTruthy();
+      });
+    } finally {
+      vi.stubGlobal("innerWidth", originalInnerWidth);
+    }
+  });
+
+  it("reports the find-on-sheet text as the view's search", async () => {
+    renderWorkspaceInPanel({ panelOpen: false });
+    await userEvent.click(screen.getByRole("button", { name: /find on sheet/i }));
+    await userEvent.type(screen.getByLabelText(/find on this sheet/i), "LP-2");
+
+    await waitFor(() => {
+      expect(JSON.parse(screen.getByTestId("view").textContent)).toEqual({ filter: null, search: "LP-2" });
+    });
+  });
 });

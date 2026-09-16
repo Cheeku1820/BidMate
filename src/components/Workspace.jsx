@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { SYSTEMS } from "../lib/vocabulary.js";
 import { Link, useNavigate } from "react-router-dom";
 import { useWorkspaceContext } from "./project/useWorkspaceContext.js";
+import { useConversationView, useConversationScreenContext } from "./conversation/screenContext.jsx";
 import TopBar from "./TopBar.jsx";
 import SheetsRail from "./SheetsRail.jsx";
 import CanvasPane, { canvasCmd } from "./CanvasPane.jsx";
@@ -64,6 +65,17 @@ export default function Workspace() {
   const [modal, setModal] = useState(null);
   const [edit, setEdit] = useState(null);
   const [ack, setAck] = useState(false);
+
+  useConversationView({ filter: null, search: canvasQuery });
+
+  // Spec §12: the blueprint stays the largest element. Under 1440px the
+  // open panel would leave the canvas narrower than the two side panels,
+  // so opening it collapses the sheets rail; the estimator can reopen
+  // the rail, and the choice is theirs from then on.
+  const { panelOpen } = useConversationScreenContext();
+  useEffect(() => {
+    if (panelOpen && window.innerWidth < 1440) setRailOpen(false);
+  }, [panelOpen]);
 
   const sheets = snapshot?.sheets ?? [];
   const items = snapshot?.items ?? [];

@@ -4,12 +4,14 @@
    subscription for the whole project, and a selection both children
    read. */
 
+import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ProjectWorkspaceLayout from "./ProjectWorkspaceLayout.jsx";
 import { useWorkspaceContext } from "./useWorkspaceContext.js";
+import { ConversationScreenProvider, useConversationScreenContext } from "../conversation/screenContext.jsx";
 
 const snapshot = {
   sheets: [
@@ -25,10 +27,10 @@ const snapshot = {
   presence: [],
 };
 
-function makeStore() {
+function makeStore(snap = snapshot) {
   return {
     useProject: vi.fn(),
-    getSnapshot: vi.fn().mockResolvedValue(snapshot),
+    getSnapshot: vi.fn().mockResolvedValue(snap),
     subscribe: vi.fn().mockReturnValue(() => {}),
     setPresence: vi.fn().mockResolvedValue(undefined),
     me: vi.fn().mockResolvedValue({ id: "u1", name: "Dana Whitfield" }),
@@ -50,6 +52,24 @@ function Probe() {
       </button>
     </div>
   );
+}
+
+/** Renders what the conversation screen context has for the current selection. */
+function SelectionProbe() {
+  const { selection } = useConversationScreenContext();
+  return <p data-testid="selection">{JSON.stringify(selection)}</p>;
+}
+
+/** A route element that selects an item once the snapshot has loaded, then
+ *  renders the usual Probe. Waiting for the snapshot matters: selectItem
+ *  reads the (still-empty) items list while loading, and calling it before
+ *  then never settles on a selection. */
+function SelectAndProbe({ itemId }) {
+  const { snapshot: snap, selectItem } = useWorkspaceContext();
+  useEffect(() => {
+    if (snap) selectItem(itemId);
+  }, [snap, selectItem, itemId]);
+  return <Probe />;
 }
 
 const renderLayout = (store) =>
@@ -104,5 +124,46 @@ describe("ProjectWorkspaceLayout", () => {
 
     expect(screen.getByTestId("selected")).toHaveTextContent("i2");
     expect(screen.getByTestId("sheet")).toHaveTextContent("s2");
+  });
+
+  it("reports the current sheet and selected item, with labels, to the conversation context", async () => {
+    // Sheet and item names deliberately don't pair the way the shared
+    // `snapshot` above does -- this proves sheetLabel and itemLabel come
+    // from two different lookups, not one coincidentally-matching one.
+    const crossSheetSnapshot = {
+      sheets: [
+        { id: "s1", number: "E1.1", title: "Level 1 power", scale: '1/8"', superseded: false },
+        { id: "s2", number: "E2.1", title: "Warehouse power", scale: '1/8"', superseded: false },
+      ],
+      items: [
+        { id: "i1", sheetId: "s2", name: "20A duplex receptacle", status: "ready", quantity: 4, unit: "ea", rejected: false, warnings: [], version: 1 },
+      ],
+      totals: { bySystem: {}, approvedCount: 0, remainingCount: 1, attentionCount: 0, missingCount: 0, approvedUnits: 0 },
+      undo: { canUndo: false, canRedo: false, label: null, undoBy: null },
+      presence: [],
+    };
+    const store = makeStore(crossSheetSnapshot);
+
+    render(
+      <ConversationScreenProvider>
+        <SelectionProbe />
+        <MemoryRouter initialEntries={["/projects/p1/takeoff"]}>
+          <Routes>
+            <Route
+              path="/projects/:projectId"
+              element={<ProjectWorkspaceLayout store={store} me={{ id: "u1" }} onSignedOut={() => {}} />}
+            >
+              <Route path="takeoff" element={<SelectAndProbe itemId="i1" />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </ConversationScreenProvider>,
+    );
+
+    await waitFor(() => {
+      const selection = JSON.parse(screen.getByTestId("selection").textContent);
+      expect(selection.sheetLabel).toBe("E2.1");
+      expect(selection.itemLabel).toBe("20A duplex receptacle");
+    });
   });
 });

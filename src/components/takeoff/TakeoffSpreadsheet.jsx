@@ -36,6 +36,7 @@ import { countsTowardTotals } from "../../lib/rules.js";
 import { saveStateText } from "../../lib/format.js";
 import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
+import { useConversationView } from "../conversation/screenContext.jsx";
 
 /* The four review labels, in the order CLAUDE.md's status table lists
    them. `rejected` is a boolean flag folded into display by
@@ -65,6 +66,8 @@ export default function TakeoffSpreadsheet() {
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(null);
+  useConversationView({ filter: statusFilter, search });
+
   const [sort, setSort] = useState({ key: null, dir: "asc" });
   const [visible, setVisible] = useState(() => new Set(DEFAULT_VISIBLE));
   const [columnsOpen, setColumnsOpen] = useState(false);

@@ -29,6 +29,19 @@
 
 import { AlertTriangle, CheckCircle2, FileText, Loader2 } from "lucide-react";
 
+// How often a screen watching a run asks again. Matches screens C and
+// D; nothing here needs to be faster than the worker. Lives with the
+// list so both screens that watch a run share the cadence and the
+// stop rule below, rather than one screen importing from another.
+export const RUN_POLL_MS = 3000;
+
+/** Whether a run still needs watching: no run yet (one was just asked
+ *  for), or one the queue is still working. Terminal states are
+ *  `complete` and `complete_with_failures`. */
+export function isRunActive(run) {
+  return run == null || run.state === "queued" || run.state === "running";
+}
+
 export const STAGE_WORDS = {
   waiting: "Waiting",
   finding: "Finding electrical items",

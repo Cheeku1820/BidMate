@@ -38,3 +38,18 @@ def test_the_shared_queue_imports_neither_side():
         "or m.startswith('app.engine') or m == 'pymupdf'))"
     )
     assert _modules_after(code) == "[]"
+
+
+def test_the_worker_process_can_resolve_every_foreign_key_on_its_own():
+    """`python -m app.worker` never imports the API, so nothing there
+    registers the identity models unless the takeoff models do it
+    themselves. Sorting the metadata resolves every ForeignKey the way
+    the unit of work does at claim_next's flush -- no database needed
+    -- and used to raise NoReferencedTableError on jobs.requested_by ->
+    users.id in the real worker while every in-process test, which
+    imports app.main first, passed."""
+    code = (
+        "import app.worker.handlers; import app.worker.__main__; "
+        "from app.db import Base; print(len(Base.metadata.sorted_tables) > 0)"
+    )
+    assert _modules_after(code) == "True"

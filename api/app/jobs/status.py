@@ -30,14 +30,20 @@ def _sheet_stage(sheet: Sheet, job: Job | None) -> tuple[str, str, str]:
     return "complete", "", (copy.SCHEDULES_UNCHECKED if job.progress == "unchecked" else "")
 
 
-def _run_state(classify: Job, sheet_jobs: list[Job]) -> str:
+def _run_state(classify: Job, sheet_jobs: list[Job], rows: list[dict]) -> str:
+    """A finished run is `complete` only when no listed sheet needs
+    attention. A sheet unreadable at read time never gets a sheet job,
+    so judging by jobs alone called a run of nothing but such sheets
+    complete -- every row `attention`, none complete -- and "complete"
+    over that list is silence reading as completeness."""
     if classify.status == "queued":
         return "queued"
     if classify.status == "failed":
         return "complete_with_failures"
     if classify.status == "running" or any(j.status not in _TERMINAL for j in sheet_jobs):
         return "running"
-    return "complete_with_failures" if any(j.status == "failed" for j in sheet_jobs) else "complete"
+    failed = any(j.status == "failed" for j in sheet_jobs) or any(r["stage"] == "attention" for r in rows)
+    return "complete_with_failures" if failed else "complete"
 
 
 def build_processing(db, project: Project) -> dict:
@@ -72,7 +78,7 @@ def build_processing(db, project: Project) -> dict:
         rows.append({"id": str(s.id), "number": s.number, "title": s.title, "stage": stage, "reason": reason,
                      "note": note, "item_count": int(item_counts.get(s.id, 0))})
     return {"documents": documents,
-            "run": {"state": _run_state(classify, sheet_jobs),
+            "run": {"state": _run_state(classify, sheet_jobs, rows),
                     "reason": classify.error if classify.status == "failed" else "",
                     "sheets": rows,
                     "complete_count": sum(1 for r in rows if r["stage"] == "complete"),

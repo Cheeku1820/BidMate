@@ -35,17 +35,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import SheetProgressList from "./SheetProgressList.jsx";
-
-// How often to ask again while the run is going. Matches screens C
-// and D; nothing here needs to be faster than the worker.
-export const RUN_POLL_MS = 3000;
+import SheetProgressList, { isRunActive, RUN_POLL_MS } from "./SheetProgressList.jsx";
 
 const LEAVE_COPY = "You can leave this page. Sheets keep processing and are reviewable as they finish.";
-
-export function isRunActive(run) {
-  return run == null || run.state === "queued" || run.state === "running";
-}
 
 function attentionCount(run) {
   return run.sheets.filter((s) => s.stage === "attention").length;
@@ -92,6 +84,9 @@ export default function ProcessingStatus({ store }) {
     };
   }, []);
 
+  // StrictMode runs this effect twice in development; a second
+  // startTakeoff is absorbed by the server's run_in_flight, which is
+  // treated as success below.
   useEffect(() => {
     (async () => {
       try {

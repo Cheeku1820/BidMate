@@ -264,6 +264,8 @@ describe("NotesWorkspace", () => {
       expect(await screen.findByText("Finding electrical items")).toBeInTheDocument();
       await act(() => vi.advanceTimersByTimeAsync(3100));
       expect(screen.getByText("2 of 2 sheets complete")).toBeInTheDocument();
+      // Finished: the "started" line gives way to the list's final state.
+      expect(screen.queryByText(/re-run started/i)).not.toBeInTheDocument();
       const calls = store.getProcessing.mock.calls.length;
       await act(() => vi.advanceTimersByTimeAsync(6200));
       expect(store.getProcessing).toHaveBeenCalledTimes(calls);

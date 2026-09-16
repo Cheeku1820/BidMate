@@ -11,6 +11,12 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
+# Several tables below hold foreign keys to users.id and orgs.id. Those
+# targets must be registered on Base.metadata wherever these models are
+# -- a process that imports only this module (the worker, alembic, a
+# script) otherwise raises NoReferencedTableError on its first flush.
+# A model module, not a router, so no import boundary moves.
+import app.identity.models  # noqa: E402, F401
 # The wire shape's closed set, reused as the column's check constraint --
 # one definition, enforced in both places. app.documents.schemas imports
 # nothing from app, so this direction adds no cycle.

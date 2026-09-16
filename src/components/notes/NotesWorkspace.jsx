@@ -36,8 +36,7 @@ import AppTopBar from "../shell/AppTopBar.jsx";
 import Modal from "../Modal.jsx";
 import NoteForm from "./NoteForm.jsx";
 import ApplyNotesBanner from "./ApplyNotesBanner.jsx";
-import SheetProgressList from "../documents/SheetProgressList.jsx";
-import { isRunActive, RUN_POLL_MS } from "../documents/ProcessingStatus.jsx";
+import SheetProgressList, { isRunActive, RUN_POLL_MS } from "../documents/SheetProgressList.jsx";
 import {
   CATEGORY_LABELS,
   calculationEffect,
@@ -278,7 +277,8 @@ export default function NotesWorkspace() {
   // reaches a terminal state or this screen unmounts. A poll that
   // fails keeps the last state; the next tick tries again. When the
   // run finishes the notes are re-read too, so the banner's "not yet
-  // carried in" count reflects the run that just carried them in.
+  // carried in" count reflects the run that just carried them in, and
+  // the "Re-run started" line gives way to the list's own final state.
   const polling = rerun !== null && isRunActive(rerun.run);
   useEffect(() => {
     if (!polling) return undefined;
@@ -345,7 +345,7 @@ export default function NotesWorkspace() {
                 </button>
               }
             />
-            {applyMessage ? (
+            {applyMessage && (rerun === null || isRunActive(rerun.run)) ? (
               <p className="notes-apply-banner-note" role="status">
                 {applyMessage}
               </p>

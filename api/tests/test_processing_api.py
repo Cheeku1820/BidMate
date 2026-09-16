@@ -121,6 +121,22 @@ def test_processing_reports_a_failed_run_and_an_unreadable_sheet(client, db, pro
     assert row["stage"] == "attention" and row["reason"] == "This sheet couldn't be read."
 
 
+def test_a_finished_run_of_only_unreadable_sheets_is_not_complete(client, db, project, dana, signed_in_user):
+    """Seen live on a scanned set: every sheet unreadable at read time,
+    so no sheet job at all, and the run reported `complete` with every
+    row needing attention and none complete."""
+    _processed_drawing(db, project, dana)
+    for sheet in db.scalars(select(Sheet)).all():
+        sheet.unreadable_reason = "The sheet is a scanned image with no readable drawing content."
+    client.post(f"/api/projects/{project.id}/takeoff")
+    c = db.scalars(select(Job).where(Job.kind == "classify")).one()
+    queue.mark_done(db, c)
+    run = client.get(f"/api/projects/{project.id}/processing").json()["run"]
+    assert run["state"] == "complete_with_failures" and run["reason"] == ""
+    assert run["complete_count"] == 0 and run["total_count"] == 2
+    assert all(s["stage"] == "attention" for s in run["sheets"])
+
+
 def test_processing_never_leaks_internals(client, db, project, dana, signed_in_user):
     _processed_drawing(db, project, dana)
     client.post(f"/api/projects/{project.id}/takeoff")

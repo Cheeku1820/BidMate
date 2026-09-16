@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from app.jobs import copy, queue
-from app.takeoff.models import Document, Job, Sheet
+from app.takeoff.models import Document, Sheet
 from app.worker import __main__ as worker
 from app.worker import handlers, sandbox
 

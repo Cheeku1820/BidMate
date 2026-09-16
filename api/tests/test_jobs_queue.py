@@ -9,7 +9,7 @@ import pytest
 
 from app.jobs import copy, queue
 from app.jobs.schemas import RETRY_BACKOFF_SECONDS
-from app.takeoff.models import Document, Job, Project, Sheet
+from app.takeoff.models import Document, Sheet
 from tests.conftest import TestSession
 
 

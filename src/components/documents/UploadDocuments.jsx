@@ -237,10 +237,16 @@ export default function UploadDocuments({ store }) {
             prev.map((r) => {
               const match = processing.documents.find((d) => d.id === r.key);
               if (!match) return r;
+              // `error` carries a failed retype or a failed remove on an
+              // otherwise-good row (see setDocType and confirmRemove) --
+              // a fresh read from the worker is newer information than
+              // that stale local failure, so it clears it. Before polling
+              // existed, only a full reload could self-heal a stuck
+              // error; this is that same self-heal, now automatic.
               if (match.state === "failed") {
-                return { ...r, state: "failed", message: match.reason || FAILED_FALLBACK, sheetCount: match.sheetCount };
+                return { ...r, error: undefined, state: "failed", message: match.reason || FAILED_FALLBACK, sheetCount: match.sheetCount };
               }
-              return { ...r, state: match.state, sheetCount: match.sheetCount };
+              return { ...r, error: undefined, state: match.state, sheetCount: match.sheetCount };
             }),
           );
         })
@@ -409,13 +415,17 @@ export default function UploadDocuments({ store }) {
   const readyCount = rows.filter((r) => r.state === "ready").length;
   const uploadingCount = rows.filter((r) => r.state === "uploading").length;
   const blockedRows = rows.filter((r) => BLOCKED_STATES.includes(r.state));
-  // A row counts toward the drawing-set gate once it's a real, non-
-  // rejected document that isn't still in flight -- "ready" (dead now
-  // that rowFromDocument never writes it, kept for an in-flight upload
-  // that just finished), "reading", or "read" all qualify. Not "failed",
-  // "duplicate", or "unsupported" (never became a usable document), and
-  // not "uploading" (isn't one yet).
-  const drawingsCount = rows.filter((r) => !BLOCKED_STATES.includes(r.state) && r.state !== "uploading" && r.docType === "Drawings").length;
+  // A row counts toward the drawing-set gate once the worker has
+  // actually finished reading it -- "read", or "ready" (dead now that
+  // rowFromDocument never writes it, kept for an in-flight upload that
+  // just finished uploading before this screen's next poll runs). A
+  // document that's still "reading" hasn't produced sheets yet: the
+  // server's own read_drawings set (api/app/jobs/status.py) only counts
+  // a document once its status is "processed", and this gate mirrors
+  // that rather than the client's optimistic guess. Not "failed", "duplicate",
+  // or "unsupported" (never became a usable document), and not
+  // "uploading" or "reading" (isn't done yet).
+  const drawingsCount = rows.filter((r) => (r.state === "ready" || r.state === "read") && r.docType === "Drawings").length;
   // The takeoff runs on the drawing set, so at least one file has to be
   // typed Drawings before there's anything to process.
   const canContinue = drawingsCount > 0;

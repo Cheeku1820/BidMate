@@ -80,9 +80,10 @@ describe("UploadDocuments", () => {
     expect(screen.getByText("Read")).toBeInTheDocument();
     expect(screen.getByText("Couldn't read this file.")).toBeInTheDocument();
     expect(screen.queryAllByText(/couldn't be read/i)).toHaveLength(0);
-    // b.pdf (processed, Drawings) satisfies the drawing-set gate on its
-    // own -- neither a and b's non-failed states nor c's failure should
-    // block continuing.
+    // b.pdf (processed -> read, Drawings) is what actually opens the
+    // drawing-set gate here -- a.pdf's "reading" state doesn't block it,
+    // but doesn't count toward it either, since the worker hasn't
+    // produced its sheets yet.
     screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
   });
 
@@ -154,14 +155,18 @@ describe("UploadDocuments", () => {
   });
 
   it("continues to confirm when a Drawings document exists", async () => {
-    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]) });
+    // "processed" -- not merely uploaded -- so the row is "read" and the
+    // gate is legitimately open: a document still being read hasn't
+    // produced sheets yet (see the "resolves a drop to reading" test
+    // below), so clicking this control would do nothing if it were.
+    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc({ status: "processed" })]) });
     renderUpload(store);
     await screen.findByText("E-set.pdf");
     fireEvent.click(screen.getAllByRole("button", { name: /review detected drawings/i })[0]);
     expect(await screen.findByText("confirm screen")).toBeInTheDocument();
   });
 
-  it("resolves a drop to reading, swapping the row's key to the server id and enabling the primary action", async () => {
+  it("resolves a drop to reading, swapping the row's key to the server id, without yet enabling the primary action", async () => {
     const store = makeStore({
       uploadDocument: vi.fn().mockResolvedValue(doc()),
     });
@@ -169,9 +174,12 @@ describe("UploadDocuments", () => {
     screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeDisabled());
     drop([pdf("E-set.pdf")]);
     await waitFor(() => expect(screen.getByText("Reading…")).toBeInTheDocument());
-    // A row that's reading, not failed and not still uploading, already
-    // satisfies the drawing-set gate.
-    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
+    // A row that's still being read hasn't produced sheets yet -- the
+    // server's own read_drawings query only counts a document once it's
+    // processed, and the gate mirrors that rather than the client's
+    // optimistic guess. Reading isn't blocked (it isn't in
+    // BLOCKED_STATES), it just doesn't count yet either.
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeDisabled());
     // The row now carries the server's id -- removing it asks first,
     // same as a row that arrived from the initial list.
     fireEvent.click(screen.getByRole("button", { name: /remove E-set.pdf/i }));
@@ -217,25 +225,34 @@ describe("UploadDocuments", () => {
       .fn()
       .mockRejectedValueOnce({ code: "request_failed", message: "Couldn't change the type. Try again." })
       .mockResolvedValueOnce(doc({ docType: "Addendum" }));
-    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc()]), setDocumentType });
+    // "processed" -- read, not merely reading -- so the gate starts open
+    // and the assertion below actually exercises "a failed retype must
+    // not close it", rather than a gate that was never open to begin
+    // with.
+    const store = makeStore({ listDocuments: vi.fn().mockResolvedValue([doc({ status: "processed" })]), setDocumentType });
     renderUpload(store);
     await screen.findByText("E-set.pdf");
 
     fireEvent.change(screen.getByLabelText(/type for E-set.pdf/i), { target: { value: "Addendum" } });
     expect(await screen.findByText("Couldn't change the type. Try again.")).toBeInTheDocument();
     expect(screen.getByLabelText(/type for E-set.pdf/i)).toHaveValue("Drawings");
-    // The document still counts as ready -- one failed retype must not
-    // un-count an already-uploaded document or close the drawing-set gate.
+    // The document still counts as read -- one failed retype must not
+    // un-count an already-read document or close the drawing-set gate.
     screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeEnabled());
 
     fireEvent.change(screen.getByLabelText(/type for E-set.pdf/i), { target: { value: "Addendum" } });
     await waitFor(() => expect(screen.queryByText("Couldn't change the type. Try again.")).not.toBeInTheDocument());
-    expect(screen.getByText("Reading…")).toBeInTheDocument();
+    expect(screen.getByLabelText(/type for E-set.pdf/i)).toHaveValue("Addendum");
+    // A retype doesn't touch read state -- the row was already read and
+    // stays read.
+    expect(screen.getByText("Read")).toBeInTheDocument();
   });
 
   it("keeps the row and surfaces the server's message when a delete fails, without disabling continuing", async () => {
+    // "processed" so the gate starts open -- this test's point is that a
+    // failed delete doesn't close it, which needs it open beforehand.
     const store = makeStore({
-      listDocuments: vi.fn().mockResolvedValue([doc()]),
+      listDocuments: vi.fn().mockResolvedValue([doc({ status: "processed" })]),
       deleteDocument: vi.fn().mockRejectedValue({ code: "request_failed", message: "Couldn't remove this document. Try again." }),
     });
     renderUpload(store);
@@ -354,6 +371,58 @@ describe("UploadDocuments", () => {
     expect(screen.getByText("Read · 14 sheets")).toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(3100));
     expect(getProcessing).toHaveBeenCalledTimes(2); // polling stops once nothing is reading
+  });
+
+  it("clears a stale row error once a later poll reports the document read", async () => {
+    // Before polling existed, only a full reload could self-heal a row
+    // still showing a failed retype's message -- the poll merge has to
+    // do the same self-heal, or a fixed document would go on looking
+    // broken forever.
+    vi.useFakeTimers();
+    const getProcessing = vi
+      .fn()
+      .mockResolvedValueOnce({ documents: [{ id: "d1", filename: "a.pdf", docType: "Drawings", state: "reading", reason: "", sheetCount: 0 }], run: null })
+      .mockResolvedValue({ documents: [{ id: "d1", filename: "a.pdf", docType: "Drawings", state: "read", reason: "", sheetCount: 3 }], run: null });
+    const setDocumentType = vi.fn().mockRejectedValue({ code: "request_failed", message: "Couldn't change the type. Try again." });
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([doc({ id: "d1", filename: "a.pdf", status: "processing" })]),
+      setDocumentType,
+      getProcessing,
+    });
+    renderUpload(store);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Reading…")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/type for a\.pdf/i), { target: { value: "Addendum" } });
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Couldn't change the type. Try again.")).toBeInTheDocument();
+
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    expect(screen.getByText("Read · 3 sheets")).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't change the type. Try again.")).not.toBeInTheDocument();
+  });
+
+  it("moves a reading row to failed when a later poll reports the worker couldn't read it", async () => {
+    vi.useFakeTimers();
+    const getProcessing = vi
+      .fn()
+      .mockResolvedValueOnce({ documents: [{ id: "d1", filename: "a.pdf", docType: "Drawings", state: "reading", reason: "", sheetCount: 0 }], run: null })
+      .mockResolvedValue({
+        documents: [{ id: "d1", filename: "a.pdf", docType: "Drawings", state: "failed", reason: "The file is password protected. Upload an unlocked copy.", sheetCount: 0 }],
+        run: null,
+      });
+    const store = makeStore({
+      listDocuments: vi.fn().mockResolvedValue([doc({ id: "d1", filename: "a.pdf", status: "processing" })]),
+      getProcessing,
+    });
+    renderUpload(store);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(screen.getByText("Reading…")).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    expect(screen.getByText("The file is password protected. Upload an unlocked copy.")).toBeInTheDocument();
+    // Failed is a blocked state -- once the poll reports it, the gate
+    // must close the same as any other failed document.
+    screen.getAllByRole("button", { name: /review detected drawings/i }).forEach((b) => expect(b).toBeDisabled());
   });
 
   it("shows a failed read's reason and keeps the row removable", async () => {

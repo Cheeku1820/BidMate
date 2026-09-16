@@ -183,6 +183,17 @@ describe("ConfirmDrawings", () => {
     expect(screen.queryByText(/still being read/)).toBeNull();
   });
 
+  it("keeps Start enabled while a specification is still being read, and disables it only for drawings", async () => {
+    const store = makeStore([
+      docFrom(pdf("E.pdf"), "Drawings", { state: "read", sheetCount: 3 }),
+      docFrom(pdf("spec.pdf"), "Specifications", { state: "reading", sheetCount: 0 }),
+    ]);
+    renderConfirm(store);
+    await screen.findByText("E.pdf");
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+    expect(screen.queryByText(/still being read/)).toBeNull();
+  });
+
   it("stays and shows the server's message when a start is refused because a set is still being read", async () => {
     const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
     store.startTakeoff.mockRejectedValue({

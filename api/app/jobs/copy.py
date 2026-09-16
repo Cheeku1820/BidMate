@@ -15,5 +15,6 @@ NO_DRAWINGS = "No drawings have been read yet. Upload a drawing set, or wait for
 DRAWINGS_READING = "A drawing set is still being read. Wait for it to finish before starting the takeoff."
 RUN_IN_FLIGHT = "This project's takeoff is already running. Wait for it to finish before starting another."
 REMOVE_DURING_RUN = "Wait for the takeoff to finish before removing a document."
+RETYPE_DURING_RUN = "Wait for the takeoff to finish before changing a document's type."
 NON_PLAN = "Schedule or legend — no devices counted."
 PAGE_GONE = "This page is no longer in the uploaded file."

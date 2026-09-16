@@ -26,10 +26,13 @@
    four review labels: a sheet's readability is not an item's evidence.
 
    "Start takeoff" asks the server to start a run (store.startTakeoff)
-   and then goes to processing. It is disabled while any document is
-   still being read -- a set the worker has not finished with would be
-   left out of the run silently, and the server refuses the same case
-   (`drawings_still_reading`), shown inline if it ever lands. A run
+   and then goes to processing. It is disabled while a drawing set is
+   still being read -- its sheets would be left out of the run silently,
+   and the server refuses the same case (`drawings_still_reading`),
+   shown inline if it ever lands. A specification, addendum, or scope
+   document still reading does not hold Start back: it is context the
+   takeoff doesn't read sheets from, so making the estimator wait on it
+   would be waiting on nothing the run needs. A run
    already in flight is treated as already started -- the estimator
    lands on the same processing screen either way. A set with nothing
    readable is a message to show here, inline, next to the documents
@@ -243,7 +246,12 @@ export default function ConfirmDrawings({ store }) {
   // interval restarts only when reading starts or stops, not on every
   // unrelated row change. A poll that fails is left alone: the rows
   // keep their last known state and the next tick tries again.
-  const anyReading = rows.some((r) => r.state === "reading");
+  // Only a drawing set still reading holds Start back -- its sheets are
+  // what the run would leave out. A specification, addendum, or scope
+  // document still reading is context the worker hasn't finished with
+  // yet, not something the run itself needs; gating Start on it would
+  // make the estimator wait on a document the takeoff doesn't read.
+  const anyReading = rows.some((r) => r.state === "reading" && r.docType === "Drawings");
   useEffect(() => {
     if (!anyReading) return undefined;
     const tick = () => {

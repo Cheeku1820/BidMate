@@ -48,6 +48,17 @@ def test_retyping_a_document_queues_a_read(client, db, project, dana, signed_in_
     assert db.scalars(select(Job).where(Job.kind == "read")).one().document_id == d.id
 
 
+def test_retyping_a_document_is_refused_while_a_run_is_in_flight(client, db, project, dana, signed_in_user):
+    d = _processed_drawing(db, project, dana)
+    client.post(f"/api/projects/{project.id}/takeoff")
+    res = client.patch(f"/api/documents/{d.id}", json={"doc_type": "Specifications"})
+    assert res.status_code == 409
+    assert res.json()["detail"]["code"] == "run_in_flight"
+    assert res.json()["detail"]["message"] == "Wait for the takeoff to finish before changing a document's type."
+    db.refresh(d)
+    assert d.doc_type == "Drawings"
+
+
 def test_start_takeoff_queues_a_run_and_audits(client, db, project, dana, signed_in_user):
     _processed_drawing(db, project, dana)
     res = client.post(f"/api/projects/{project.id}/takeoff")

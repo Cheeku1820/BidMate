@@ -135,6 +135,12 @@ class SheetOut(BaseModel):
     # plan | schedule | legend | diagram | other. A sheet property on its
     # own axis; the rail labels non-plans with it.
     kind: str = "plan"
+    # B3: the rendered page behind the markers. render_status is a sheet
+    # property on its own axis, like `kind` -- never a review label, and
+    # render_key (the storage path) never reaches the wire.
+    render_status: str = "pending"
+    render_error: str = ""
+    max_zoom: int | None = None
 
     model_config = MODEL_CONFIG
 

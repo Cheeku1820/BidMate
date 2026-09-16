@@ -23,7 +23,7 @@ function kindBadge(s) {
 /** Left panel: documents and sheets (spec §5, screen F). Filters and
  *  search operate on sheets; each row's thumbnail dots and warning
  *  count are drawn straight from that sheet's items. */
-export default function SheetsRail({ sheets, items, sheetId, onSelectSheet, filter, onFilter, query, onQuery, open, onToggleOpen }) {
+export default function SheetsRail({ sheets, items, sheetId, onSelectSheet, filter, onFilter, query, onQuery, open = true, onToggleOpen }) {
   const sheetsShown = sheets.filter((s) => {
     if (query && !(s.number + " " + s.title).toLowerCase().includes(query.toLowerCase())) return false;
     const its = items.filter((i) => i.sheetId === s.id);
@@ -56,12 +56,16 @@ export default function SheetsRail({ sheets, items, sheetId, onSelectSheet, filt
               return (
                 <button key={s.id} className="sheetrow" aria-current={s.id === sheetId} onClick={() => onSelectSheet(s.id)}>
                   <span className="sheetrow__thumb">
-                    <svg viewBox="0 0 1000 750" width="100%" height="100%">
-                      <rect x="80" y="80" width="840" height="520" fill="none" stroke="#c2beb4" strokeWidth="26" />
-                      {its.slice(0, 6).map((i) => (
-                        <circle key={i.id} cx={i.path ? i.path[0][0] : i.x} cy={i.path ? i.path[0][1] : i.y} r="34" fill={STATUS[displayStatus(i)].color} />
-                      ))}
-                    </svg>
+                    {s.renderStatus === "rendered" ? (
+                      <img className="sheetrow__img" alt="" src={`/api/sheets/${s.id}/thumb.png`} />
+                    ) : (
+                      <svg viewBox="0 0 1000 750" width="100%" height="100%">
+                        <rect x="80" y="80" width="840" height="520" fill="none" stroke="#c2beb4" strokeWidth="26" />
+                        {its.slice(0, 6).map((i) => (
+                          <circle key={i.id} cx={i.path ? i.path[0][0] : i.x} cy={i.path ? i.path[0][1] : i.y} r="34" fill={STATUS[displayStatus(i)].color} />
+                        ))}
+                      </svg>
+                    )}
                   </span>
                   <span className="sheetrow__meta">
                     <strong>{s.number}</strong>

@@ -271,14 +271,16 @@ describe("NotesWorkspace", () => {
       expect(store.getProcessing).toHaveBeenCalledTimes(calls);
     });
 
-    it("treats run_in_flight as success, not an error", async () => {
+    it("says a takeoff is already running when the re-run is refused, and does not claim a start", async () => {
       const store = makeStore({ notes: [{ ...NOTE, usage: "context", appliedAt: null }] });
-      store.startTakeoff = vi.fn().mockRejectedValue({ code: "run_in_flight", message: "A run is already in progress." });
+      store.startTakeoff = vi.fn().mockRejectedValue({ code: "run_in_flight", message: "already running" });
       renderNotes({ store });
       await userEvent.click(await screen.findByRole("button", { name: /apply notes and re-run/i }));
-      expect(await screen.findByText(/re-run started/i)).toBeInTheDocument();
-      expect(await screen.findByText("Finding electrical items")).toBeInTheDocument();
-      expect(screen.queryByText(/run is already in progress/i)).not.toBeInTheDocument();
+      expect(
+        await screen.findByText("A takeoff is already running. Apply the notes again once it finishes."),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/re-run started/i)).not.toBeInTheDocument();
+      expect(store.getProcessing).not.toHaveBeenCalled();
     });
 
     it("reports a failed re-run with a recovery action, and shows no sheet list", async () => {

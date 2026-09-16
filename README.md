@@ -93,7 +93,9 @@ Everything in the interface resolves to tokens defined at the top of [`src/style
 
 ## What's in the drawing
 
-Every sheet comes from an uploaded document, so the canvas shows the honest surface for that: blank paper carrying just the sheet number and title, because there is no drawn geometry that could stand in for a page nobody in this codebase has seen. What grounds each item in the real drawing is its evidence — a crop of the source page around where it was counted, available from the item detail panel's "View evidence" control.
+Every sheet comes from an uploaded document, and the canvas now shows the real page: the worker renders each sheet into a tile pyramid at ingest, and the canvas draws those tiles at the page's true paper aspect, with markers rescaled at draw time to land on the real geometry. A sheet still awaiting its render, or one that failed to render, falls back to blank paper carrying the sheet's number, title, and render state — the takeoff still counts it either way.
+
+The rendered page and the item's evidence crop are two witnesses to the same drawing, not one standing in for the other: the page shows where an item sits in context, the evidence — a crop of the source page around where it was counted, from the item detail panel's "View evidence" control — shows exactly what was read to count it.
 
 Takeoff items are drawn as **standard electrical symbols** — a circle with a bisecting line for a receptacle, a circle with an S for a switch, a crossed rectangle for a panel, a crossed circle for a high bay, a triangle for a data outlet — rather than generic pins. The symbol carries the item type, the ring color carries the review status, and the badge carries the warning. Three independent channels, no overloading.
 
@@ -111,6 +113,7 @@ src/
     vocabulary.js              the status vocabulary: four review labels, never a fifth
     rules.js                   approval/totals/scale-release rules, mirrored from the API
     format.js                  time and initials formatting
+    sheetGeometry.js           sheet space vs. the page's true paper aspect; the tile-to-marker math
     useReviewStore.js          the snapshot hook: store subscription, poll, saves, mutations
     store/
       index.js                 the single data source: the api store
@@ -121,7 +124,7 @@ src/
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx
     Modal.jsx, FinishReviewModal.jsx, MiscModals.jsx, Pill.jsx
     BlueprintCanvas.jsx        pan/zoom viewport, markers, measurements, minimap
-    PlanDrawing.jsx            honest blank-paper base layer under markers
+    TileLayer.jsx              the rendered page as tiles under the markers, at its true aspect
     Symbols.jsx                electrical symbol glyphs
     notes/                     notes & assumptions — what the drawings don't say
       NotesWorkspace.jsx       the screen: list, filters, apply-and-re-run
@@ -156,9 +159,14 @@ api/app/jobs/
   status.py                    the stage words screen E polls; never a job id, an attempt count, or a source
 api/app/scope/
   service.py                   scope statement CRUD, audited through commit(), not undoable
+api/app/tiles/
+  router.py                    the one read path for rendered bytes: per-tile and thumbnail routes, cached
 api/app/worker/
   __main__.py                  the poll loop — the only process that opens a PDF
+  render_job.py                the render job: one sheet's tile pyramid into the blob store, queued by the read
   sandbox.py                   runs every job body in a child process with a per-kind wall-clock timeout
+api/app/engine/
+  tiles.py                     cuts a sheet into the 512 px tile pyramid, in the visual frame, to ≥150 dpi
 ```
 
 Uploaded files are stored in MinIO (S3 in deployment) under a key built from the owning org and project, with one row per upload in the `documents` table carrying its hash and storage key. The API streams and hashes a file; it never opens one — that's the worker's job, inside the sandbox above. Design in [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md) and [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md).
@@ -182,7 +190,6 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 ## Known limitations
 
 - **Sync is a poll, not a push channel.** The client polls the API every few seconds for changes from other reviewers, rather than receiving them immediately over a WebSocket. Undo is also still a single shared linear stack, so one reviewer can undo another's action from underneath them — shared undo needs conflict resolution, either operational transforms or per-user undo stacks with a merge policy, and that decision is still open.
-- **The blueprint is drawn geometry, not a rendered PDF.** A production build would layer markers over `pdf.js` output.
 - **Export produces a CSV, not yet a real Excel workbook.**
 - **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. Labor and Material pricing are now built and routed, each carrying a pricing basis note. See [`ROADMAP.md`](ROADMAP.md).
 - **The pricing grid edits one cell at a time.** Labor and Material pricing behave like a spreadsheet at the cell level — click or type to edit, Tab/Enter/arrows to move, Delete to clear an entry — but there is no range selection, fill-down, or paste yet. Crew mix and per-line notes are stored by the API and not shown; a project default crew mix in project settings is the intended next step.
@@ -191,7 +198,6 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 - **Nothing reaps stored files.** Deleting a document removes its file, but there is no retention policy or sweep: a file whose row was lost, or every file under an archived project, stays in storage indefinitely. See [`ROADMAP.md`](ROADMAP.md) §2.2.
 - **Screen D confirms, but doesn't yet correct.** Include/exclude, discipline, revision, and scale corrections have no control on the confirm screen — every listed document runs through the takeoff, and sheet-level detail is whatever the worker's last read reported. See [`docs/roadmap/full-webapp-plan.md`](docs/roadmap/full-webapp-plan.md) Phase B4.
 - **The queue has no priority, per-tenant cap, or dead-letter handling.** Jobs are claimed oldest-first regardless of whose bid is due sooner, nothing limits how many of one project's jobs a worker pool can be occupied by, and a job that exhausts its three retries just sits `failed` — the recovery is starting the takeoff again, not a separate retry queue. See [`ROADMAP.md`](ROADMAP.md) §2.5.
-- **No page rendering yet.** The worker reads sheets, scale, legends, and schedules, but doesn't render page images — the canvas still shows blank paper under the markers, not the source drawing. See [`ROADMAP.md`](ROADMAP.md) §2.1 and the "What's in the drawing" section above.
 
 ---
 

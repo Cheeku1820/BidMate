@@ -85,11 +85,12 @@ def load_item(item_id: uuid.UUID, db: DbSession, user: User) -> Item:
 
 
 def load_sheet(sheet_id: uuid.UUID, db: DbSession, user: User) -> Sheet:
-    """The tenancy gate for the one sheet-scoped route (`POST
-    /sheets/{id}/scale`). Same shape as `load_item` above, for the same
-    reason: resolve the row, then defer to `load_project` for the org
-    check, so there remains exactly one function that decides whether a
-    project belongs to the caller.
+    """The tenancy gate for every sheet-scoped route: `POST
+    /sheets/{id}/scale` and the tile routes in `app/tiles/router.py`
+    (`GET .../tiles/{z}/{x}/{y}.png`, `GET .../thumb.png`). Same shape as
+    `load_item` above, for the same reason: resolve the row, then defer
+    to `load_project` for the org check, so there remains exactly one
+    function that decides whether a project belongs to the caller.
     """
     sheet = db.get(Sheet, sheet_id)
     if sheet is None:

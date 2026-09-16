@@ -59,7 +59,7 @@ Nothing in this track exists. It is the majority of the engineering.
 The single largest omission from the previous version of this document. The README lists "no takeoff is actually computed" as a limitation, which undersells it: this is the product. Everything else is chrome around it.
 
 - **PDF ingestion** — vector-native drawings and scanned raster drawings behave completely differently and need separate paths. Assume both, in the same set. Sets arrive in three tiers, and the tier decides the method: vector with reusable symbol definitions, vector with exploded geometry, and raster. See [`docs/product/mvp-approach.md`](docs/product/mvp-approach.md) §1.
-- **Page rendering and tiling** so the client never fetches a 300 MB file
+- **Page rendering and tiling — built** (B3, [`docs/specs/drawing-behind-the-markers.md`](docs/specs/drawing-behind-the-markers.md)): the worker cuts every detected sheet into a 512 px tile pyramid, in the visual frame, to at least 150 dpi, queued by the same read that detects the sheet. The client fetches only the tiles its viewport needs, at its true paper aspect, rather than a 300 MB file.
 - **Sheet classification and title-block parsing** — sheet number, title, discipline, revision, date, scale
 - **Legend and schedule extraction** — the conflict flow in the prototype depends on an E0.1 luminaire schedule existing as structured data, not as a picture
 - **Scale detection**, including sheets with two scale labels (the E2.1 case) and sheets with none (the E1.1 case)
@@ -294,7 +294,7 @@ These are the rules that break silently when a new service is added by someone w
 |---|---|
 | `identity()` random name and color | `identity` service with roles and approval authority |
 | `hist.undo` array capped at 60 | append-only action log, undo as compensating actions |
-| Drawn SVG in `PlanDrawing.jsx` | rendered tiles from `documents`, markers layered over `pdf.js` |
+| Blank paper under the markers | rendered tiles from the source PDF, markers layered over the real page — **built** (B3): `TileLayer.jsx` draws a tile pyramid rendered by the worker at ingest, at the page's true paper aspect |
 | Client-side status filtering | same client code, server-authoritative rules underneath |
 
 The client-side interaction model does not change. That is the point of having built it first.

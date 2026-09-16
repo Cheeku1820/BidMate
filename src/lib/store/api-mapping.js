@@ -97,6 +97,13 @@ export function mapSheet(s) {
     // non-plan with it. A sheet property on its own axis -- never one of
     // the four review labels, never rendered with a status component.
     kind: s.kind ?? "plan",
+    // B3: the rendered page behind the markers. A sheet property on its
+    // own axis, like `kind` -- never rendered with a status component.
+    // The server never sends render_key (the storage path), so there is
+    // nothing to map here for it.
+    renderStatus: s.render_status ?? "pending",
+    renderError: s.render_error ?? "",
+    maxZoom: s.max_zoom ?? null,
   };
 }
 

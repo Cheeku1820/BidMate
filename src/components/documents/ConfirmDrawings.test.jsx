@@ -183,6 +183,39 @@ describe("ConfirmDrawings", () => {
     expect(screen.queryByText(/still being read/)).toBeNull();
   });
 
+  it("keeps Start enabled while a specification is still being read, and disables it only for drawings", async () => {
+    const store = makeStore([
+      docFrom(pdf("E.pdf"), "Drawings", { state: "read", sheetCount: 3 }),
+      docFrom(pdf("spec.pdf"), "Specifications", { state: "reading", sheetCount: 0 }),
+    ]);
+    renderConfirm(store);
+    await screen.findByText("E.pdf");
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+    expect(screen.queryByText(/still being read/)).toBeNull();
+  });
+
+  it("keeps polling while only a specification is still being read, so its row updates without a reload", async () => {
+    vi.useFakeTimers();
+    const reading = docFrom(pdf("spec.pdf"), "Specifications", { state: "reading", sheetCount: 0 });
+    const store = makeStore([docFrom(pdf("E.pdf"), "Drawings"), reading]);
+    store.getProcessing
+      .mockResolvedValueOnce({ documents: [docFrom(pdf("E.pdf"), "Drawings"), reading], run: null })
+      .mockResolvedValue({ documents: [docFrom(pdf("E.pdf"), "Drawings"), { ...reading, state: "read", sheetCount: 0 }], run: null });
+    renderConfirm(store);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+
+    expect(screen.getByText("Reading…")).toBeInTheDocument();
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+
+    // Nothing but a specification is reading, so Start stayed enabled the
+    // whole time -- but the row still needs to hear back once the worker
+    // finishes with it, which only happens if the poll kept running.
+    await act(() => vi.advanceTimersByTimeAsync(3100));
+    expect(screen.queryByText("Reading…")).toBeNull();
+    expect(screen.getByText("Read")).toBeInTheDocument();
+    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+  });
+
   it("stays and shows the server's message when a start is refused because a set is still being read", async () => {
     const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
     store.startTakeoff.mockRejectedValue({

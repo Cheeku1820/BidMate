@@ -64,13 +64,14 @@ src/
     vocabulary.js            the status vocabulary: four review labels, never a fifth
     rules.js                 approval/totals/scale-release rules, mirrored from the API
     useReviewStore.js        the snapshot hook: store subscription, poll, saves, mutations
+    sheetGeometry.js         sheet space vs. the page's true paper aspect; the tile-to-marker math
     store/                   the store interface — a single api store (fetch)
   components/
     Workspace.jsx            the review workspace: selection, filters, modals, shortcuts
     Login.jsx                sign-in screen
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx, modals
     BlueprintCanvas.jsx      pan/zoom viewport, markers, measurements, minimap
-    PlanDrawing.jsx          honest blank-paper base layer under markers
+    TileLayer.jsx            the rendered page as tiles under the markers, at its true aspect
     Symbols.jsx              electrical symbol glyphs
     notes/                   notes & assumptions: what the drawings don't say
       NotesWorkspace.jsx     the screen — list, filters, apply-and-re-run
@@ -105,13 +106,16 @@ api/app/jobs/
 api/app/scope/
   service.py                 scope statement CRUD, audited through commit(), not undoable
   router.py                  GET .../scope, PATCH /scope/{id}
+api/app/tiles/
+  router.py                  the one read path for rendered bytes: per-tile and thumbnail routes, cached
 api/app/worker/
   __main__.py                the poll loop — the only process that opens a PDF
   sandbox.py                 every job body runs in a child process with a per-kind wall-clock timeout
-  handlers.py, read_job.py, classify_job.py, sheet_job.py   the three job kinds
+  handlers.py, read_job.py, classify_job.py, sheet_job.py, render_job.py   the four job kinds
 api/app/engine/
   sheet.py                   finishes one sheet: rows, evidence crops, the vision pass
   scope.py                   scope extraction — LLM with verbatim-quote validation, or a deterministic fallback
+  tiles.py                   cuts a sheet into the 512 px tile pyramid, in the visual frame, to ≥150 dpi
 ```
 
 Uploaded files live in object storage (MinIO locally, S3 in deployment), under a key built from the owning org and project — never from anything the client sent. The `documents` table (migration 0019; `status` constrained to its four values by 0020) holds one row per upload with its hash and storage key. The API streams and hashes an upload; it never opens one — that is `app/worker`'s job, run inside `sandbox.py`'s child process with a wall-clock timeout, because a PDF parser is a remote-code-execution surface and the API is not where untrusted bytes get parsed. **The process boundary is enforced, not just described**: `app.worker` is the only package that imports `app.engine` or a PDF parser, `app.main` never imports the engine, and `app.worker` never imports a router — all three subprocess-tested, plus a test proving the worker process can resolve every foreign key on its own. Specs: [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md) (B1), [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md) (B2).
@@ -160,6 +164,6 @@ Rules that are easy to break here:
 
 ## Known scope limits
 
-The blueprint is drawn SVG geometry, not a rendered PDF — production would layer markers over `pdf.js`. Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note. Notes & assumptions is built and routed. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
+Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note. Notes & assumptions is built and routed. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
 
 Within notes, several things the design spec describes are not built: the `applied_action_id` column, the footer strip, sheet-scoped narrowing of a re-run, and item-scoped notes resolving to a cluster tag. See the *Not built in this slice* section of [`docs/specs/notes-and-assumptions.md`](docs/specs/notes-and-assumptions.md).

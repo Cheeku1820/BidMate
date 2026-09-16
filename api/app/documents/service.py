@@ -148,6 +148,11 @@ def load_document(document_id: uuid.UUID, db: DbSession, user: User) -> Document
 
 
 def set_doc_type(db: DbSession, *, actor: User, document: Document, doc_type: str) -> Document:
+    # A run in flight may be about to merge onto this document's sheets;
+    # retyping away from Drawings mid-run would drop them out from under
+    # it (see delete_document's identical gate, just below).
+    if queue.in_flight_run(db, document.project_id) is not None:
+        raise DomainError("run_in_flight", copy.RETYPE_DURING_RUN, status=409)
     if doc_type not in DOC_TYPES:
         raise DomainError("invalid_doc_type", f"Document type must be one of {', '.join(DOC_TYPES)}.", status=422)
     before = _row_fields(document)
@@ -204,7 +209,18 @@ def delete_document(db: DbSession, *, actor: User, document: Document) -> str:
     # applies to a vanished page -- `merge.drop_sheets` keeps any sheet
     # an approved item lives on. Scope statements cascade from the row.
     db.execute(delete(Job).where(Job.document_id == document.id))
-    merge.drop_sheets(db, db.scalars(select(Sheet.id).where(Sheet.takeoff_id == str(document.id))).all())
+    # A render is keyed by its sheet, not its document, and a sheet an
+    # approved item keeps alive would otherwise keep its queued render
+    # too -- for a page that is no longer in any file. `in_flight_run`
+    # above already refused this delete while any sheet job could be
+    # queued or running, so `render` is the only kind this can still
+    # find here -- named explicitly rather than left implicit, so a
+    # future job kind keyed by sheet_id doesn't get swept up by
+    # accident the day someone adds one.
+    sheet_ids = db.scalars(select(Sheet.id).where(Sheet.takeoff_id == str(document.id))).all()
+    db.execute(delete(Job).where(
+        Job.sheet_id.in_(sheet_ids), Job.kind == "render", Job.status.in_(("queued", "running"))))
+    merge.drop_sheets(db, sheet_ids)
     db.delete(document)
     db.flush()
     actions.commit(

@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import PlanDrawing from "./PlanDrawing.jsx";
+import TileLayer from "./TileLayer.jsx";
 import { SymbolGlyph } from "./Symbols.jsx";
 import { STATUS } from "../lib/vocabulary.js";
+import { paperSize, toPaper, pointToPaper, paperDistanceToPoints } from "../lib/sheetGeometry.js";
 
-export const SHEET_W = 1000;
-export const SHEET_H = 750;
+export { SHEET_W, SHEET_H } from "../lib/sheetGeometry.js";
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 6;
@@ -55,13 +55,19 @@ export default function BlueprintCanvas({
 
   /* --- fit ------------------------------------------------------ */
 
+  /* Every coordinate this component draws is in PAPER units: the page's
+     real aspect at 1000 wide (sheetGeometry.paperSize). Items are stored
+     in 1000 x 750 sheet space and converted at each draw site, so the
+     numbers in the store never move. */
+  const paper = paperSize(sheet);
+
   const fit = useCallback(
     (w = size.w, h = size.h) => {
       const pad = 48;
-      const scale = Math.min((w - pad * 2) / SHEET_W, (h - pad * 2) / SHEET_H);
-      setView({ scale, tx: (w - SHEET_W * scale) / 2, ty: (h - SHEET_H * scale) / 2 });
+      const scale = Math.min((w - pad * 2) / paper.w, (h - pad * 2) / paper.h);
+      setView({ scale, tx: (w - paper.w * scale) / 2, ty: (h - paper.h * scale) / 2 });
     },
-    [size.w, size.h]
+    [size.w, size.h, paper.w, paper.h]
   );
 
   useEffect(() => {
@@ -82,6 +88,16 @@ export default function BlueprintCanvas({
       fit(size.w, size.h);
     }
   }, [size, fit]);
+
+  // Pages differ in aspect now, so a sheet whose paper is a different
+  // shape from the last one gets fitted again; same-shaped sheets keep
+  // the estimator's zoom, as before.
+  const paperRef = useRef(`${paper.w}x${paper.h}`);
+  useEffect(() => {
+    const key = `${paper.w}x${paper.h}`;
+    if (bootRef.current && paperRef.current !== key) fit();
+    paperRef.current = key;
+  }, [paper.w, paper.h, fit]);
 
   useEffect(() => {
     setCalibPoints([]);
@@ -110,7 +126,8 @@ export default function BlueprintCanvas({
 
   /* --- pointer --------------------------------------------------- */
 
-  function toSheet(clientX, clientY) {
+  /** A screen position as a point on the paper (paper units). */
+  function toPaperPoint(clientX, clientY) {
     const rect = viewportRef.current.getBoundingClientRect();
     return {
       x: (clientX - rect.left - view.tx) / view.scale,
@@ -147,10 +164,14 @@ export default function BlueprintCanvas({
 
   function onClick(e) {
     if (tool !== "calibrate") return;
-    const p = toSheet(e.clientX, e.clientY);
+    const p = toPaperPoint(e.clientX, e.clientY);
     const next = [...calibPoints, [p.x, p.y]];
     if (next.length === 2) {
-      onCalibrate(pathLength(next));
+      // The two clicks are paper points; what goes up is the distance
+      // between them in the page's own points, so a calibrated scale
+      // is expressed against the real page rather than the 1000-wide
+      // paper the canvas happens to draw.
+      onCalibrate(paperDistanceToPoints(pathLength(next), sheet));
       setCalibPoints([]);
     } else {
       setCalibPoints(next);
@@ -192,17 +213,13 @@ export default function BlueprintCanvas({
         className="stage"
         style={{ transform: `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})` }}
       >
-        <div className="sheetpaper" style={{ width: SHEET_W, height: SHEET_H }}>
-          <svg width={SHEET_W} height={SHEET_H} viewBox={`0 0 ${SHEET_W} ${SHEET_H}`}>
-            {/* The base layer under every marker. Markers were normalized
-                to this same 1000x750 sheet space at ingest, so they land
-                correctly on it regardless of what PlanDrawing renders. For
-                every sheet from an uploaded document, PlanDrawing renders
-                nothing but the sheet number on blank paper -- there is no
-                drawn geometry that could honestly stand in for a page
-                nobody in this codebase has seen. */}
-            <PlanDrawing sheet={sheet} />
-
+        <div className="sheetpaper" style={{ width: paper.w, height: paper.h }}>
+          {/* The real page, as tiles, under every marker. It shares this
+              transformed paper with the SVG, so a marker at (x, y) sits
+              on the pixel the engine counted. Before the render lands it
+              is blank paper carrying the sheet's number. */}
+          <TileLayer sheet={sheet} view={view} size={size} />
+          <svg className="sheetpaper__markers" width={paper.w} height={paper.h} viewBox={`0 0 ${paper.w} ${paper.h}`}>
             {/* measured runs */}
             {layers.measurements &&
               visible
@@ -210,11 +227,12 @@ export default function BlueprintCanvas({
                 .map((it) => {
                   const meta = STATUS[it.status];
                   const sel = it.id === selectedId;
-                  const mid = it.path[Math.floor(it.path.length / 2)];
+                  const path = it.path.map((p) => pointToPaper(p, sheet));
+                  const mid = path[Math.floor(path.length / 2)];
                   return (
                     <g key={it.id + "-path"} opacity={dimmed(it) ? 0.18 : 1}>
                       <polyline
-                        points={it.path.map((p) => p.join(",")).join(" ")}
+                        points={path.map((p) => p.join(",")).join(" ")}
                         fill="none"
                         stroke={meta.color}
                         strokeWidth={sel ? 4.5 : 3}
@@ -223,7 +241,7 @@ export default function BlueprintCanvas({
                         strokeDasharray={it.status === "missing" ? "9 6" : undefined}
                         opacity={sel ? 1 : 0.85}
                       />
-                      {it.path.map((p, i) => (
+                      {path.map((p, i) => (
                         <circle key={i} cx={p[0]} cy={p[1]} r="3.4" fill="#fff" stroke={meta.color} strokeWidth="2" />
                       ))}
                       <g transform={`translate(${mid[0] + 10} ${mid[1] - 10})`}>
@@ -249,9 +267,10 @@ export default function BlueprintCanvas({
               const meta = STATUS[selItem.status];
               return (
                 <g pointerEvents="none" aria-hidden="true">
-                  {spots.map((p, i) => (
-                    <circle key={i} cx={p[0]} cy={p[1]} r="5" fill="none" stroke={meta.color} strokeWidth="1.6" opacity="0.75" />
-                  ))}
+                  {spots.map((p, i) => {
+                    const [cx, cy] = pointToPaper(p, sheet);
+                    return <circle key={i} cx={cx} cy={cy} r="5" fill="none" stroke={meta.color} strokeWidth="1.6" opacity="0.75" />;
+                  })}
                 </g>
               );
             })()}
@@ -263,10 +282,11 @@ export default function BlueprintCanvas({
                 const meta = STATUS[it.status];
                 const sel = it.id === selectedId;
                 const remote = remoteSelections.find((r) => r.itemId === it.id);
+                const at = toPaper({ x: it.x, y: it.y }, sheet);
                 return (
                   <g
                     key={it.id}
-                    transform={`translate(${it.x} ${it.y})`}
+                    transform={`translate(${at.x} ${at.y})`}
                     opacity={dimmed(it) ? 0.18 : 1}
                     style={{ cursor: "pointer" }}
                     onPointerDown={(e) => e.stopPropagation()}
@@ -317,8 +337,9 @@ export default function BlueprintCanvas({
           const it = items.find((i) => i.id === hover);
           if (!it || it.path) return null;
           const meta = STATUS[it.status];
+          const at = toPaper({ x: it.x, y: it.y }, sheet);
           return (
-            <div className="tooltip" style={{ left: view.tx + it.x * view.scale, top: view.ty + it.y * view.scale - 22 }}>
+            <div className="tooltip" style={{ left: view.tx + at.x * view.scale, top: view.ty + at.y * view.scale - 22 }}>
               {it.name}
               <span>
                 {it.quantity} {it.unit} · {meta.label}
@@ -414,17 +435,16 @@ export default function BlueprintCanvas({
 
       {/* minimap */}
       <div className="overlay minimap" style={{ right: 14, bottom: 14 }}>
-        <div className="minimap__frame" style={{ width: 136, height: 136 * (SHEET_H / SHEET_W) }}>
+        <div className="minimap__frame" style={{ width: 136, height: 136 * (paper.h / paper.w) }}>
           {visible.map((it) => {
-            const px = it.path ? it.path[0][0] : it.x;
-            const py = it.path ? it.path[0][1] : it.y;
+            const [px, py] = it.path ? pointToPaper(it.path[0], sheet) : pointToPaper([it.x, it.y], sheet);
             return (
               <span
                 key={it.id}
                 className="minimap__dot"
                 style={{
-                  left: (px / SHEET_W) * 100 + "%",
-                  top: (py / SHEET_H) * 100 + "%",
+                  left: (px / paper.w) * 100 + "%",
+                  top: (py / paper.h) * 100 + "%",
                   background: STATUS[it.status].color,
                 }}
               />
@@ -433,10 +453,10 @@ export default function BlueprintCanvas({
           <div
             className="minimap__view"
             style={{
-              left: clamp((-view.tx / view.scale / SHEET_W) * 100, 0, 100) + "%",
-              top: clamp((-view.ty / view.scale / SHEET_H) * 100, 0, 100) + "%",
-              width: clamp((size.w / view.scale / SHEET_W) * 100, 0, 100) + "%",
-              height: clamp((size.h / view.scale / SHEET_H) * 100, 0, 100) + "%",
+              left: clamp((-view.tx / view.scale / paper.w) * 100, 0, 100) + "%",
+              top: clamp((-view.ty / view.scale / paper.h) * 100, 0, 100) + "%",
+              width: clamp((size.w / view.scale / paper.w) * 100, 0, 100) + "%",
+              height: clamp((size.h / view.scale / paper.h) * 100, 0, 100) + "%",
             }}
           />
         </div>

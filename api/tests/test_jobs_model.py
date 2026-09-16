@@ -17,7 +17,10 @@ def _doc(db, project, dana):
 
 
 def test_job_kind_is_a_closed_set(db, project):
-    db.add(Job(org_id=project.org_id, project_id=project.id, kind="render", status="queued"))
+    # "render" joined the closed set in B3 (test_render_model.py) -- this
+    # picks a kind that stays invalid so this test keeps testing the
+    # constraint rather than the membership of one particular value.
+    db.add(Job(org_id=project.org_id, project_id=project.id, kind="bogus", status="queued"))
     with pytest.raises(IntegrityError):
         db.flush()
     db.rollback()

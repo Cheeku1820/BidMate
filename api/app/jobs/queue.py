@@ -90,6 +90,30 @@ def enqueue_sheets(db: Session, classify_job: Job, sheets: list[tuple[Sheet, dic
     return jobs
 
 
+def render_prefix(project: Project, sheet: Sheet, sha256: str) -> str:
+    """Where a sheet's tiles live: content-addressed by the document's
+    hash, so a re-upload with new bytes renders under a fresh prefix and
+    a re-read of the same bytes finds its tiles already there."""
+    return f"orgs/{project.org_id}/projects/{project.id}/sheets/{sheet.id}/{sha256[:16]}/"
+
+
+def enqueue_render(db: Session, sheet: Sheet, prefix: str) -> Job | None:
+    """One render per sheet per document version. Nothing to do when the
+    sheet already carries this prefix, or a render is already queued."""
+    if sheet.render_key == prefix and sheet.render_status == "rendered":
+        return None
+    if db.scalars(select(Job).where(
+            Job.kind == "render", Job.sheet_id == sheet.id, Job.status.in_(_IN_FLIGHT))).first():
+        return None
+    project = db.get(Project, sheet.project_id)
+    sheet.render_status, sheet.render_error = "pending", ""
+    job = Job(org_id=project.org_id, project_id=project.id, kind="render", sheet_id=sheet.id,
+              payload={"prefix": prefix}, max_attempts=MAX_ATTEMPTS)
+    db.add(job)
+    db.flush()
+    return job
+
+
 _READY = text(
     "status = 'queued' AND (not_before IS NULL OR not_before <= now()) AND "
     "(kind <> 'sheet' OR run_id IN (SELECT run_id FROM jobs WHERE kind = 'classify' AND status = 'done'))"
@@ -113,14 +137,16 @@ def claim_next(db: Session, worker_id: str) -> Job | None:
 
 def terminal_copy(job: Job, message: str) -> str:
     """The estimator copy a terminal failure lands with. A body that gave
-    no reason of its own gets the generic one -- and on a sheet or a
-    classify job that generic ("re-save the file") would be wrong,
-    because the file was read fine; what failed was the takeoff, and
-    the recovery is to start it again."""
+    no reason of its own gets the generic one -- and on a sheet, classify
+    or render job that generic ("re-save the file") would be wrong,
+    because the file was read fine; what failed was the takeoff (start
+    it again) or the drawing behind it (the takeoff still counts it)."""
     if job.kind == "sheet" and message in ("", copy.UNREADABLE):
         return copy.SHEET_FAILED
     if job.kind == "classify" and message in ("", copy.UNREADABLE):
         return copy.RUN_FAILED
+    if job.kind == "render" and message in ("", copy.UNREADABLE):
+        return copy.RENDER_FAILED
     return message or copy.UNREADABLE
 
 
@@ -152,8 +178,9 @@ def mark_done(db: Session, job: Job) -> None:
 
 def mark_failed(db: Session, job: Job, error: str) -> bool:
     """Terminal. A read's failure is the document's failure, in the same
-    words; a sheet's failure may be the last thing its run was waiting
-    on, so the run gets its chance to complete. Returns whether this
+    words, and a render's failure is its sheet's; a sheet's failure may
+    be the last thing its run was waiting on, so the run gets its chance
+    to complete. Returns whether this
     failure completed a run -- the caller then owes the run its
     project-level writes, which live on the worker's side."""
     job.status, job.finished_at, job.error = "failed", _now(), error
@@ -161,6 +188,10 @@ def mark_failed(db: Session, job: Job, error: str) -> bool:
         doc = db.get(Document, job.document_id)
         if doc is not None:
             doc.status, doc.error = "failed", error
+    if job.kind == "render" and job.sheet_id:
+        sheet = db.get(Sheet, job.sheet_id)
+        if sheet is not None:
+            sheet.render_status, sheet.render_error = "failed", error
     db.flush()
     if job.kind == "sheet" and job.run_id:
         return complete_run_if_finished(db, job.run_id)

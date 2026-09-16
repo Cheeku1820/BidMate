@@ -506,6 +506,13 @@ button {
   overflow: hidden;
 }
 
+.sheetrow__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
 .sheetrow__meta {
   min-width: 0;
   flex: 1;
@@ -650,6 +657,44 @@ button {
   position: relative;
   background: var(--sheet);
   box-shadow: 0 2px 10px rgba(27, 26, 24, 0.16);
+}
+
+/* the real page, as tiles, under the marker svg */
+
+.tilelayer {
+  position: absolute;
+  inset: 0;
+  background: var(--sheet);
+  overflow: hidden;
+}
+
+/* No rendered page yet (pending or failed) -- the same dashed language
+   an unverified measurement uses, so the estimator reads "not yet
+   confirmed" rather than mistaking blank paper for an empty sheet. */
+.tilelayer--blank {
+  border: 2px dashed var(--line-2);
+}
+
+.tile {
+  position: absolute;
+  image-rendering: auto;
+  pointer-events: none;
+  user-select: none;
+}
+
+.tilelayer__note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.sheetpaper__markers {
+  position: absolute;
+  inset: 0;
 }
 
 /* floating canvas chrome */

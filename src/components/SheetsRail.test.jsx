@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import SheetsRail from "./SheetsRail.jsx";
 
@@ -39,4 +39,15 @@ describe("SheetsRail sheet kind", () => {
     const badge = screen.getByText("Legend", { selector: ".badge" });
     expect(badge.className).not.toMatch(/pill|status|attention|approved|missing|ready/);
   });
+});
+
+it("shows the thumbnail once a sheet is rendered, and the dots before", () => {
+  const sheets = [
+    { id: "a", number: "E1", title: "t", renderStatus: "rendered", kind: "plan" },
+    { id: "b", number: "E2", title: "t", renderStatus: "pending", kind: "plan" },
+  ];
+  const { container } = render(<SheetsRail sheets={sheets} items={[]} sheetId="a" onSelectSheet={() => {}} />);
+  const img = container.querySelector('img[src="/api/sheets/a/thumb.png"]');
+  expect(img).toBeTruthy(); expect(img.getAttribute("alt")).toBe("");
+  expect(container.querySelectorAll(".sheetrow__thumb svg")).toHaveLength(1);
 });

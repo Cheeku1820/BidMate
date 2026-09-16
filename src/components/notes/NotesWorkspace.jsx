@@ -20,14 +20,15 @@
    (store.startTakeoff), the same run screen D's "Start takeoff" asks
    for; the worker reads the project's context notes from the database
    itself, so nothing here builds or sends them. A run already in
-   flight (`run_in_flight`) is treated as success rather than an error:
-   whatever is already running reads the standing notes the same way a
-   fresh run would. Once started, this screen shows the same per-sheet
-   list screen E shows (SheetProgressList.jsx), polling
-   store.getProcessing every few seconds until the run finishes and
-   stopping the moment it does, or when the screen unmounts -- this
-   banner is a second view onto the same run, not a different
-   mechanism.
+   flight (`run_in_flight`) says so honestly rather than claiming a
+   start that didn't happen -- this apply did not kick anything off, so
+   it shows no sheet list and starts no poll; the estimator applies
+   again once the run that's already going finishes. Once a run is
+   actually started here, this screen shows the same per-sheet list
+   screen E shows (SheetProgressList.jsx), polling store.getProcessing
+   every few seconds until the run finishes and stopping the moment it
+   does, or when the screen unmounts -- this banner is a second view
+   onto the same run, not a different mechanism.
    ============================================================ */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -239,13 +240,12 @@ export default function NotesWorkspace() {
     }
   }
 
-  // Asks for a re-run. `run_in_flight` is treated as success rather
-  // than an error -- a run is already going, and it reads the
-  // project's standing context notes the same way a freshly started
-  // one would, so there is nothing this screen needs to do
-  // differently. Either way the run is then fetched at once so its
-  // sheets show without waiting a full poll interval; a failure on
-  // that first fetch is the poll's to retry, not the start's.
+  // Asks for a re-run. A run already in flight is not this screen's to
+  // start a second time -- it says so honestly, rather than claiming a
+  // start that didn't happen, and leaves the sheet list alone: showing
+  // screen E's progress list here would suggest this apply just kicked
+  // it off. Once the run that's already going finishes, applying again
+  // starts a fresh one that reads the standing notes.
   async function handleApplyAndRerun() {
     setApplyError(null);
     setApplyBusy(true);
@@ -253,7 +253,11 @@ export default function NotesWorkspace() {
       try {
         await store.startTakeoff(projectId);
       } catch (err) {
-        if (err?.code !== "run_in_flight") throw err;
+        if (err?.code === "run_in_flight") {
+          if (aliveRef.current) setApplyMessage("A takeoff is already running. Apply the notes again once it finishes.");
+          return;
+        }
+        throw err;
       }
       if (!aliveRef.current) return;
       setApplyMessage("Re-run started. Sheets keep processing and are reviewable as they finish.");

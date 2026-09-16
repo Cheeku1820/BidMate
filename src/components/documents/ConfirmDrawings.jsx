@@ -26,10 +26,13 @@
    four review labels: a sheet's readability is not an item's evidence.
 
    "Start takeoff" asks the server to start a run (store.startTakeoff)
-   and then goes to processing. It is disabled while any document is
-   still being read -- a set the worker has not finished with would be
-   left out of the run silently, and the server refuses the same case
-   (`drawings_still_reading`), shown inline if it ever lands. A run
+   and then goes to processing. It is disabled while a drawing set is
+   still being read -- its sheets would be left out of the run silently,
+   and the server refuses the same case (`drawings_still_reading`),
+   shown inline if it ever lands. A specification, addendum, or scope
+   document still reading does not hold Start back: it is context the
+   takeoff doesn't read sheets from, so making the estimator wait on it
+   would be waiting on nothing the run needs. A run
    already in flight is treated as already started -- the estimator
    lands on the same processing screen either way. A set with nothing
    readable is a message to show here, inline, next to the documents
@@ -242,7 +245,12 @@ export default function ConfirmDrawings({ store }) {
   // -- and stop the moment nothing is. Keyed on the boolean so the
   // interval restarts only when reading starts or stops, not on every
   // unrelated row change. A poll that fails is left alone: the rows
-  // keep their last known state and the next tick tries again.
+  // keep their last known state and the next tick tries again. This is
+  // deliberately broader than drawingsReading below: a specification,
+  // addendum, or scope document still reading doesn't hold Start back,
+  // but its row still needs to hear back from the worker -- polling
+  // only while a drawing set reads would leave its "Reading…" row
+  // stuck until a manual reload.
   const anyReading = rows.some((r) => r.state === "reading");
   useEffect(() => {
     if (!anyReading) return undefined;
@@ -259,6 +267,13 @@ export default function ConfirmDrawings({ store }) {
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyReading, store, projectId]);
+
+  // Only a drawing set still reading holds Start back -- its sheets are
+  // what the run would leave out. A specification, addendum, or scope
+  // document still reading is context the worker hasn't finished with
+  // yet, not something the run itself needs; gating Start on it would
+  // make the estimator wait on a document the takeoff doesn't read.
+  const drawingsReading = rows.some((r) => r.state === "reading" && r.docType === "Drawings");
 
   // The select follows the server. It shows the new type at once, but a
   // write the server refuses reverts it and puts the server's own words
@@ -290,10 +305,10 @@ export default function ConfirmDrawings({ store }) {
   const hasDrawings = drawings.length > 0;
 
   const sheetsRead = rows.reduce((n, r) => n + (r.sheetCount || 0), 0);
-  // Start waits for every read to land. A document the worker has not
-  // finished with would be left out of the run, and its sheets would
-  // then sit at "Waiting" under a run that has finished.
-  const canStart = hasDrawings && !anyReading && !starting;
+  // Start waits for every drawing set's read to land. A drawing set the
+  // worker has not finished with would be left out of the run, and its
+  // sheets would then sit at "Waiting" under a run that has finished.
+  const canStart = hasDrawings && !drawingsReading && !starting;
 
   // The server decides whether a run can start. A run already in flight
   // is the outcome the estimator wanted -- processing is where they were
@@ -429,7 +444,7 @@ export default function ConfirmDrawings({ store }) {
             type="button"
             className="btn btn--primary"
             disabled={!canStart}
-            aria-describedby={anyReading ? "start-takeoff-help" : undefined}
+            aria-describedby={drawingsReading ? "start-takeoff-help" : undefined}
             onClick={start}
           >
             Start takeoff
@@ -599,7 +614,7 @@ export default function ConfirmDrawings({ store }) {
               type="button"
               className="btn btn--primary"
               disabled={!canStart}
-              aria-describedby={anyReading ? "start-takeoff-help" : undefined}
+              aria-describedby={drawingsReading ? "start-takeoff-help" : undefined}
               onClick={start}
             >
               Start takeoff
@@ -607,7 +622,7 @@ export default function ConfirmDrawings({ store }) {
             {/* Always in the tree so the id resolves the moment a read
                 starts; empty when nothing is reading. */}
             <p id="start-takeoff-help" className="footer-help">
-              {anyReading ? READING_HELP : null}
+              {drawingsReading ? READING_HELP : null}
             </p>
           </div>
         </div>

@@ -1286,7 +1286,9 @@ button {
    stay fixed while the middle scrolls, and a flex child can only resolve
    `flex: 1; min-height: 0` against a definite height. Long pages scroll
    inside .app-shell-main (or inside .workspace-body where a screen has
-   one) rather than scrolling the window. */
+   one) rather than scrolling the window. The third column is the
+   conversation panel, auto so its closed strip costs 44px and its open
+   column 340px. */
 .app-shell {
   display: grid;
   /* minmax(0, 1fr), not 1fr: a 1fr track's automatic minimum is its
@@ -1295,7 +1297,7 @@ button {
      truncated to a single letter at 1280px. minmax(0, …) lets column 2
      shrink and scroll instead, which is what .app-shell-main's
      min-width: 0 already assumes. */
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   height: 100vh;
 }
 

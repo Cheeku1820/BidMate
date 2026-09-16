@@ -24,9 +24,9 @@ Five documents at the repository root are the entry points: `README.md` (how to 
 | Grounded classification warnings | `specs/grounded-classification-warnings.md` | `plans/done/grounded-classification-warnings.md` | merged |
 | Five agents, basic | `product/agent-architecture.md` | `plans/done/five-agents-basic.md` | merged |
 | Close the known gaps | — | `plans/done/close-the-known-gaps.md` | merged |
-| Engine sheet fidelity | `specs/engine-sheet-fidelity.md` | `plans/engine-sheet-fidelity.md` | branch `fix/engine-sheet-fidelity`, under review |
-| B1 — documents stored | `specs/documents-stored.md` | `plans/documents-stored.md` | branch `feat/document-pipeline` |
-| B2 — the engine behind the API | `specs/engine-behind-the-api.md` | `plans/engine-behind-the-api.md` | branch `feat/engine-behind-api` |
+| Engine sheet fidelity | `specs/engine-sheet-fidelity.md` | `plans/done/engine-sheet-fidelity.md` | merged |
+| B1 — documents stored | `specs/documents-stored.md` | `plans/done/documents-stored.md` | merged |
+| B2 — the engine behind the API | `specs/engine-behind-the-api.md` | `plans/done/engine-behind-the-api.md` | merged |
 | Firm price book | `specs/firm-price-book.md` (branch `feat/corpus-price-book`) | — | designed, parked behind Phase B |
 
 ## Adding a document

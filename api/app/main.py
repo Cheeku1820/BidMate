@@ -18,6 +18,7 @@ from app.takeoff.mutations import router as takeoff_mutations_router
 from app.takeoff.pricing_router import router as pricing_router
 from app.takeoff.router import PROJECT_NOT_FOUND_CODE, PROJECT_NOT_FOUND_MESSAGE
 from app.takeoff.router import router as takeoff_router
+from app.tiles.router import router as tiles_router
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +88,20 @@ async def no_shared_caching(request: Request, call_next):
     per-route: there is no public, safely-shared content anywhere in this
     API to carve an exception for, so a route that forgets to opt in is
     not a risk here the way it would be on a mixed public/private surface.
+
+    One carve-out: app/tiles/router.py's tile and thumbnail routes set
+    their own Cache-Control (tiles.router.CACHE) before this middleware
+    runs, and this function leaves an already-set header alone rather
+    than overwriting it. Those responses are still `private` -- never a
+    shared cache -- but a long max-age is safe for them specifically
+    because the URL itself carries the rendered content's hash (through
+    render_key): the bytes at a given tile URL never change, so a
+    browser holding onto them is exactly right. Every other route in
+    this API remains no-store.
     """
     response = await call_next(request)
-    response.headers["Cache-Control"] = "private, no-store"
+    if "cache-control" not in response.headers:
+        response.headers["Cache-Control"] = "private, no-store"
     response.headers["Vary"] = "Cookie"
     return response
 
@@ -102,6 +114,7 @@ app.include_router(documents_router)
 app.include_router(processing_router)
 app.include_router(scope_router)
 app.include_router(collab_router)
+app.include_router(tiles_router)
 
 
 @app.get("/api/health")

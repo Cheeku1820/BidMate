@@ -52,6 +52,9 @@ services:
       BLOB_SECRET_KEY: bidmate-dev-secret
       BLOB_BUCKET: bidmate-documents
       BLOB_REGION: us-east-1
+      # The API needs this for the conversation panel; without it the panel
+      # says it isn't set up and nothing else is affected.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes: ["./api:/srv"]
     ports: ["8000:8000"]
     depends_on:

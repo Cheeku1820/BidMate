@@ -21,7 +21,7 @@ docker compose run --rm api alembic upgrade head
 
 Uploaded documents are stored in MinIO, not on the API container's own disk, so an upload survives a reload or a container restart. `minio-init` creates the bucket the API writes to on first start; the dev credentials it uses are in [`docker-compose.yml`](docker-compose.yml), and the MinIO console is at http://localhost:9001 if you want to browse what got stored.
 
-The `worker` container is the only process that opens a PDF. It polls a `jobs` table for documents to read and takeoffs to run, does the work — the same takeoff engine the prototype always had, just no longer reached by the browser directly — and writes sheets, items, and warnings back into the database the API also reads. It runs the same image as `api` with a different command, capped at 2 GB of memory and 256 processes so a hostile or malformed file is a one-container problem, and every job body runs inside a further sandboxed child process with a wall-clock timeout. Set `ANTHROPIC_API_KEY` in the environment before bringing the stack up for language-model classification and scope extraction; without a key the worker falls back to its deterministic paths.
+The `worker` container is the only process that opens a PDF. It polls a `jobs` table for documents to read and takeoffs to run, does the work — the same takeoff engine the prototype always had, just no longer reached by the browser directly — and writes sheets, items, and warnings back into the database the API also reads. It runs the same image as `api` with a different command, capped at 2 GB of memory and 256 processes so a hostile or malformed file is a one-container problem, and every job body runs inside a further sandboxed child process with a wall-clock timeout. Set `ANTHROPIC_API_KEY` in the environment before bringing the stack up for language-model classification and scope extraction; without a key the worker falls back to its deterministic paths. The same key powers the conversation panel on the right of every project screen — export it before `docker compose up` so both `api` and `worker` receive it.
 
 Create the first account. There is no default password — choose your own:
 
@@ -141,6 +141,9 @@ src/
       ScopeSection.jsx         screen D's scope list — found/confirmed/dismissed, not the four review labels
       ProcessingStatus.jsx     screen E: polls per-sheet progress from the worker's queue
       SheetProgressList.jsx    the per-sheet stage list screen E and the notes re-run both render
+    conversation/              the panel — read-only in this slice
+      ConversationPanel.jsx    the column: header, thread, composer, collapsed strip
+      screenContext.jsx        the closed set of screen names (mirrored by api/app/assistant/schemas.py); selection and view reporting
 ```
 
 The API modules behind those screens:
@@ -167,6 +170,10 @@ api/app/worker/
   sandbox.py                   runs every job body in a child process with a per-kind wall-clock timeout
 api/app/engine/
   tiles.py                     cuts a sheet into the 512 px tile pyramid, in the visual frame, to ≥150 dpi
+api/app/assistant/
+  context.py                   what each screen puts in view, through the API's existing read paths
+  prompt.py                    the frozen prompt; extracted text rendered as data, never instruction
+  service.py, router.py        one thread per project; the answer streams over server-sent events
 ```
 
 Uploaded files are stored in MinIO (S3 in deployment) under a key built from the owning org and project, with one row per upload in the `documents` table carrying its hash and storage key. The API streams and hashes a file; it never opens one — that's the worker's job, inside the sandbox above. Design in [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md) and [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md).
@@ -192,6 +199,7 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 - **Sync is a poll, not a push channel.** The client polls the API every few seconds for changes from other reviewers, rather than receiving them immediately over a WebSocket. Undo is also still a single shared linear stack, so one reviewer can undo another's action from underneath them — shared undo needs conflict resolution, either operational transforms or per-user undo stacks with a merge policy, and that decision is still open.
 - **Export produces a CSV, not yet a real Excel workbook.**
 - **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. Labor and Material pricing are now built and routed, each carrying a pricing basis note. See [`ROADMAP.md`](ROADMAP.md).
+- **The conversation panel is read-only.** It answers questions about the screen in view and says where a change is made; it does not propose or apply changes yet. It needs `ANTHROPIC_API_KEY` on the API container; without one the panel says so and nothing else is affected.
 - **The pricing grid edits one cell at a time.** Labor and Material pricing behave like a spreadsheet at the cell level — click or type to edit, Tab/Enter/arrows to move, Delete to clear an entry — but there is no range selection, fill-down, or paste yet. Crew mix and per-line notes are stored by the API and not shown; a project default crew mix in project settings is the intended next step.
 - **Applying a note is audited but not undoable.** The re-run lands as one attributable entry in the action log; there is no single press that puts the takeoff back. Undo still covers approve, reject, edit, delete, bulk approve, and scale, across a re-run.
 - **An upload cancelled after its body was sent may still land.** Removing a row mid-upload aborts the request, but once the last byte has left the browser the server may finish storing the document before the abort reaches it. If that happens the document appears on the next load, "Uploaded", and can be removed like any other.

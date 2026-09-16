@@ -209,7 +209,12 @@ def delete_document(db: DbSession, *, actor: User, document: Document) -> str:
     # applies to a vanished page -- `merge.drop_sheets` keeps any sheet
     # an approved item lives on. Scope statements cascade from the row.
     db.execute(delete(Job).where(Job.document_id == document.id))
-    merge.drop_sheets(db, db.scalars(select(Sheet.id).where(Sheet.takeoff_id == str(document.id))).all())
+    # A render is keyed by its sheet, not its document, and a sheet an
+    # approved item keeps alive would otherwise keep its queued render
+    # too -- for a page that is no longer in any file.
+    sheet_ids = db.scalars(select(Sheet.id).where(Sheet.takeoff_id == str(document.id))).all()
+    db.execute(delete(Job).where(Job.sheet_id.in_(sheet_ids), Job.status.in_(("queued", "running"))))
+    merge.drop_sheets(db, sheet_ids)
     db.delete(document)
     db.flush()
     actions.commit(

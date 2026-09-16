@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.engine import documents
-from app.jobs import copy
+from app.jobs import copy, queue
 from app.takeoff import merge
 from app.takeoff.ingest import map_payload
 from app.takeoff.models import Document, Job, Project, ScopeStatement, Sheet
@@ -40,6 +40,11 @@ def run(db: Session, job: Job) -> None:
             sheet.schedule_text = detected.schedule_text
             sheet.region = list(detected.region)
             sheet.legend = [vars(e) for e in detected.legend]
+        # The drawing behind the markers, cut and stored by its own job
+        # so the read never waits on it. Keyed by the file's hash: the
+        # same bytes read again queue nothing.
+        for sheet in kept.values():
+            queue.enqueue_render(db, sheet, queue.render_prefix(project, sheet, doc.sha256))
         _drop_vanished_sheets(db, doc, {s.id for s in kept.values()})
     else:
         doc.context_text = reading.context_text[:CONTEXT_CAP]

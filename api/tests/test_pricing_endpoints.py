@@ -479,3 +479,87 @@ def test_patch_material_price_returns_the_resolved_row(client, item, signed_in_u
     listed = next(r for r in client.get(f"/api/projects/{item.project_id}/material-pricing").json()["rows"]
                   if r["item_id"] == str(item.id))
     assert listed == body
+
+
+# --- pricing-grid: clearing an entry ---
+
+
+def test_patch_labor_with_null_hours_clears_the_override(client, db, item, signed_in_user):
+    """An explicit null is 'go back to whatever is next' -- with no company
+    standard and no engine baseline, that is Missing information, which is
+    the honest state for 'I don't want a number here'."""
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    response = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": None})
+    assert response.status_code == 200, response.text
+    assert db.get(ProjectLaborLine, item.id).hours_override is None
+    body = response.json()
+    assert body["hours_per_unit"] is None
+    assert body["hours_source_label"] is None
+    assert body["status"] == "missing"
+
+
+def test_clearing_hours_falls_back_to_the_company_standard(client, db, org, item, signed_in_user):
+    from decimal import Decimal
+
+    from app.takeoff.models import CompanyLaborHoursOverride
+
+    db.add(CompanyLaborHoursOverride(org_id=org.id, item_name=item.name, hours_per_unit=Decimal("0.4")))
+    db.commit()
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    body = client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": None}).json()
+    assert body["hours_source_label"] == "Company standard"
+    assert float(body["hours_per_unit"]) == 0.4
+
+
+def test_clearing_hours_records_null_in_after_and_undo_restores_it(client, db, item, signed_in_user):
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": 0.75})
+    client.patch(f"/api/items/{item.id}/labor", json={"hoursOverride": None})
+    latest = db.scalars(
+        select(Action).where(Action.kind == "labor_edit", Action.item_id == item.id).order_by(Action.seq.desc())
+    ).first()
+    assert latest.after["hours_override"] is None
+    client.post(f"/api/projects/{item.project_id}/undo")
+    db.expire_all()
+    assert float(db.get(ProjectLaborLine, item.id).hours_override) == 0.75
+
+
+def test_delete_material_price_removes_the_override_and_returns_the_row(client, db, item, signed_in_user):
+    client.patch(f"/api/items/{item.id}/material-price",
+                 json={"priceOverride": 15.5, "source": "allowance", "reason": "no vendor quote yet"})
+    response = client.delete(f"/api/items/{item.id}/material-price")
+    assert response.status_code == 200, response.text
+    assert db.get(ProjectMaterialPrice, item.id) is None
+    body = response.json()
+    assert body["item_id"] == str(item.id)
+    assert body["unit_price"] is None
+    assert body["source"] is None
+    assert body["reason"] == ""
+    assert body["status"] == "missing"
+
+
+def test_delete_material_price_is_recorded_with_an_empty_after(client, db, item, signed_in_user):
+    client.patch(f"/api/items/{item.id}/material-price", json={"priceOverride": 15.5, "source": "project_price"})
+    client.delete(f"/api/items/{item.id}/material-price")
+    latest = db.scalars(
+        select(Action).where(Action.kind == "material_price_edit", Action.item_id == item.id).order_by(Action.seq.desc())
+    ).first()
+    assert latest.after == {}
+    assert float(latest.before["price_override"]) == 15.5
+    assert latest.label == "Cleared material price for 20A duplex receptacle"
+
+
+def test_delete_material_price_404s_when_there_is_nothing_to_clear(client, item, signed_in_user):
+    response = client.delete(f"/api/items/{item.id}/material-price")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "no_material_price_to_clear"
+
+
+def test_undo_restores_a_cleared_material_price(client, db, item, signed_in_user):
+    client.patch(f"/api/items/{item.id}/material-price",
+                 json={"priceOverride": 15.5, "source": "allowance", "reason": "no vendor quote yet"})
+    client.delete(f"/api/items/{item.id}/material-price")
+    client.post(f"/api/projects/{item.project_id}/undo")
+    db.expire_all()
+    row = db.get(ProjectMaterialPrice, item.id)
+    assert row is not None
+    assert float(row.price_override) == 15.5 and row.source == "allowance" and row.reason == "no vendor quote yet"

@@ -215,6 +215,37 @@ def patch_material_price(
     return material_row_for(item, project, db, user)
 
 
+@router.delete("/items/{item_id}/material-price", response_model=MaterialRowOut)
+def delete_material_price(
+    item_id: uuid.UUID,
+    user: User = Depends(current_user),
+    db: DbSession = Depends(get_db),
+):
+    """Clear the estimator's price entry so the row falls back to the
+    company price, the regional baseline, or Missing information.
+
+    Returns the fallen-back row rather than 204: the grid renders it and
+    words the toast from its new source label. Recorded as
+    material_price_edit with an empty `after` -- undo_apply's
+    _apply_sparse_pricing_row already reads an empty state as "this row
+    should not exist", so undo and redo of a clear need nothing new."""
+    item = load_item(item_id, db, user)
+    row = db.get(ProjectMaterialPrice, item_id)
+    if row is None:
+        raise DomainError("no_material_price_to_clear", "This item has no price entry to clear.", status=404)
+    before = _snapshot(ProjectMaterialPrice, item_id, db)
+    db.delete(row)
+    db.flush()
+    actions.commit(
+        db, actor=user, project_id=item.project_id, kind="material_price_edit",
+        label=f"Cleared material price for {item.name}", item_id=item_id,
+        before=before, after={},
+    )
+    db.commit()
+    project = db.get(Project, item.project_id)
+    return material_row_for(item, project, db, user)
+
+
 @router.get("/projects/{project_id}/labor", response_model=LaborListOut)
 def get_labor(project_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
     project = load_project(project_id, db, user)

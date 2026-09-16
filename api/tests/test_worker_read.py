@@ -170,3 +170,26 @@ def test_a_vanished_page_with_no_approved_items_deletes_the_sheet(db, project, d
     queue.enqueue_read(db, d); _run_all(db)
 
     assert db.get(Sheet, sheet2_id) is None
+
+
+def test_retyping_a_drawing_set_away_from_drawings_drops_its_sheets(db, project, dana, inline, monkeypatch):
+    """`set_doc_type` re-queues a read; the non-Drawings branch treats
+    every page the file once reported as vanished, so the sheets (and
+    their un-approved items) leave screen F rather than lingering under
+    a document that no longer claims to be a drawing set."""
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _stored(db, project, dana, inline, _pdf_pages(_TWO_PAGES))
+    queue.enqueue_read(db, d); _run_all(db)
+    sheets = list(db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))))
+    assert len(sheets) == 2
+    db.add(Item(project_id=project.id, sheet_id=sheets[0].id, symbol="receptacle", name="Data outlet",
+                system="Power", category="Devices", quantity=1, unit="EA", status=ReviewStatus.READY, x=100, y=100))
+    db.commit()
+
+    d.doc_type = "Specifications"
+    queue.enqueue_read(db, d); _run_all(db)
+
+    db.refresh(d)
+    assert d.status == "processed"
+    assert db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))).all() == []
+    assert db.scalars(select(Item).where(Item.project_id == project.id)).all() == []

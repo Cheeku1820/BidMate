@@ -43,6 +43,9 @@ def run(db: Session, job: Job) -> None:
         _drop_vanished_sheets(db, doc, {s.id for s in kept.values()})
     else:
         doc.context_text = reading.context_text[:CONTEXT_CAP]
+        # A file retyped away from Drawings stops contributing sheets:
+        # every page it once reported is a vanished page now.
+        _drop_vanished_sheets(db, doc, set())
 
     _replace_found_scope(db, doc, project, reading.scope, run_id=job.id)
     doc.page_count = reading.page_count

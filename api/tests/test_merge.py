@@ -502,3 +502,14 @@ def test_a_rerun_without_a_source_keeps_the_one_the_project_already_had(db, proj
     _rerun(db, dana, project, [_row("R", "20A duplex receptacle")])   # no "source"
     db.refresh(project)
     assert project.pricing_source == "llm"
+
+
+def test_a_rerun_records_one_action_attributed_to_the_actor(db, project, dana):
+    """The `note_apply` entry is `merge_payload`'s own, not the old
+    route's: one per whole-payload merge, with the actor's name on it."""
+    from app.takeoff.models import Action
+
+    _seed(db, dana, project, [_row("R", "receptacle")])
+    _rerun(db, dana, project, [_row("R", "x")])
+    rows = list(db.scalars(select(Action).where(Action.project_id == project.id, Action.kind == "note_apply")))
+    assert len(rows) == 2 and {r.actor_user_id for r in rows} == {dana.id}

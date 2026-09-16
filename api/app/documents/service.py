@@ -152,15 +152,18 @@ def set_doc_type(db: DbSession, *, actor: User, document: Document, doc_type: st
         raise DomainError("invalid_doc_type", f"Document type must be one of {', '.join(DOC_TYPES)}.", status=422)
     before = _row_fields(document)
     document.doc_type = doc_type
+    # A retyped file is read again: Other -> Specifications now
+    # contributes context; Drawings -> Other drops its sheets (the read
+    # job's non-Drawings branch treats every page as vanished).
+    # Idempotent while a read is already in flight, and queued before
+    # the audit row so `after` records the document as `processing`,
+    # exactly as `store_upload`'s does.
+    queue.enqueue_read(db, document)
     db.flush()
     actions.commit(
         db, actor=actor, project_id=document.project_id, kind="document_type",
         label=f"Changed {document.filename} to {doc_type}", before=before, after=_row_fields(document),
     )
-    # A retyped file is read again: Other -> Specifications now
-    # contributes context, Drawings -> Other stops contributing sheets.
-    # Idempotent while a read is already in flight.
-    queue.enqueue_read(db, document)
     return document
 
 
@@ -182,9 +185,14 @@ def delete_document(db: DbSession, *, actor: User, document: Document) -> str:
     before = _row_fields(document)
     project_id, filename, key = document.project_id, document.filename, document.storage_key
     # A queued read of a document that is about to be gone would only
-    # fail; a running one finds no document to write to and its result
-    # is dropped by the worker (which re-reads the job row before
-    # applying an outcome). Its sheets go under the same rule a re-read
+    # fail. A read already running cannot write back either: its
+    # document-row UPDATE matches zero rows once this commits (the ORM
+    # raises StaleDataError and its transaction rolls back), and its
+    # scope statements have no document to reference. If the two
+    # overlap -- this delete flushed but not yet committed while the
+    # read's transaction holds the row -- Postgres resolves it as a
+    # deadlock, which surfaces here as a retryable 500 and never as
+    # orphaned sheets. The sheets go under the same rule a re-read
     # applies to a vanished page -- `merge.drop_sheets` keeps any sheet
     # an approved item lives on. Scope statements cascade from the row.
     db.execute(delete(Job).where(Job.document_id == document.id))

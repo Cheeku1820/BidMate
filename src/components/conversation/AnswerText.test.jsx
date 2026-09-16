@@ -22,4 +22,17 @@ describe("AnswerText", () => {
     const { container } = render(<AnswerText text={"- first\n- sec"} />);
     expect(container.querySelectorAll("li")).toHaveLength(2);
   });
+
+  it("renders a block mixing a lead-in line with list items as a paragraph followed by a list", () => {
+    const { container } = render(<AnswerText text={"Two items block export.\n- E2.1 duplex\n- E3.1 fixture"} />);
+    expect(container.querySelectorAll("p")).toHaveLength(1);
+    expect(container.querySelectorAll("ul > li")).toHaveLength(2);
+    expect(container.querySelector("p").textContent).toBe("Two items block export.");
+  });
+
+  it("does not italicize asterisks in multiplication expressions", () => {
+    const { container } = render(<AnswerText text={"Room is 2*3 and hall is 4*6"} />);
+    expect(container.querySelector("em")).toBeNull();
+    expect(container.textContent).toBe("Room is 2*3 and hall is 4*6");
+  });
 });

@@ -8,14 +8,16 @@
    innerHTML.
    ============================================================ */
 
-const INLINE = /(\*\*[^*]+\*\*|\*[^*]+\*)/g;
+const INLINE = /((?<!\w)\*\*(?!\s)[^*\n]+?(?<!\s)\*\*(?!\w)|(?<!\w)\*(?!\s)[^*\n]+?(?<!\s)\*(?!\w))/g;
 
 function inline(text, keyBase) {
-  return text.split(INLINE).map((part, n) => {
-    const key = `${keyBase}-${n}`;
-    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) return <strong key={key}>{part.slice(2, -2)}</strong>;
-    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) return <em key={key}>{part.slice(1, -1)}</em>;
-    return part;
+  const parts = text.split(INLINE).filter(Boolean);
+  if (parts.length === 0) return null;
+  if (parts.length === 1 && typeof parts[0] === "string") return parts[0];
+  return parts.map((part, n) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) return <strong key={`${keyBase}-${n}`}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) return <em key={`${keyBase}-${n}`}>{part.slice(1, -1)}</em>;
+    return <span key={`${keyBase}-${n}`}>{part}</span>;
   });
 }
 
@@ -25,14 +27,40 @@ export default function AnswerText({ text }) {
     <>
       {blocks.map((block, b) => {
         const lines = block.split("\n");
-        if (lines.every((l) => l.startsWith("- "))) {
-          return (
-            <ul key={b}>
-              {lines.map((l, n) => <li key={n}>{inline(l.slice(2), `${b}-${n}`)}</li>)}
-            </ul>
-          );
+        const elements = [];
+        let i = 0;
+        let elemKey = 0;
+
+        while (i < lines.length) {
+          if (lines[i].startsWith("- ")) {
+            // Collect consecutive list lines
+            const listLines = [];
+            while (i < lines.length && lines[i].startsWith("- ")) {
+              listLines.push(lines[i]);
+              i++;
+            }
+            elements.push(
+              <ul key={`${b}-${elemKey}`}>
+                {listLines.map((l, n) => <li key={`${b}-${elemKey}-${n}`}>{inline(l.slice(2), `${b}-${elemKey}-${n}`)}</li>)}
+              </ul>
+            );
+            elemKey++;
+          } else {
+            // Collect consecutive non-list lines
+            const paraLines = [];
+            while (i < lines.length && !lines[i].startsWith("- ")) {
+              paraLines.push(lines[i]);
+              i++;
+            }
+            const paraText = paraLines.join(" ");
+            if (paraText.trim()) {
+              elements.push(<p key={`${b}-${elemKey}`}>{inline(paraText, `${b}-${elemKey}`)}</p>);
+              elemKey++;
+            }
+          }
         }
-        return <p key={b}>{inline(block, `${b}`)}</p>;
+
+        return <div key={b} style={{ display: "contents" }}>{elements}</div>;
       })}
     </>
   );

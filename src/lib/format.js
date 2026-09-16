@@ -87,3 +87,16 @@ export function bidDueChip(iso) {
   if (days === 1) return { tone: "urgent", label: "Due in 1 day" };
   return { tone: days <= 7 ? "urgent" : "normal", label: `Due in ${days} days` };
 }
+
+/** The three-state autosave copy every workspace top bar shows
+ *  (DESIGN.md, "Autosave and save status"): Saving… while a write is
+ *  in flight, Saved <time> once it lands, and the retrying copy on a
+ *  technical failure. One copy here, read by the takeoff table and
+ *  both pricing screens -- the blueprint's TopBar.jsx renders the same
+ *  states from the same `saved` object. */
+export function saveStateText(saved) {
+  if (!saved) return null;
+  if (saved.state === "saving") return "Saving…";
+  if (saved.state === "error") return "Couldn't save — retrying";
+  return "Saved " + timeOf(saved.at);
+}

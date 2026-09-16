@@ -255,6 +255,13 @@ export function useReviewStore(store, { onSignedOut } = {}) {
     saved,
     toast,
     dismissToast,
+    // For screens whose rows live outside the polled snapshot (labor,
+    // material pricing): the same Saving…/Saved tracker and the same
+    // five-second toast every item mutation above uses, so those
+    // screens report a save the way this one does rather than growing
+    // a second copy of either.
+    runMutation,
+    showToast,
     itemError,
     clearItemError,
     setPresenceTarget,

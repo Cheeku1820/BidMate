@@ -33,22 +33,9 @@ import Pill, { displayStatus } from "../Pill.jsx";
 import BulkApproveBar from "./BulkApproveBar.jsx";
 import { STATUS } from "../../lib/vocabulary.js";
 import { countsTowardTotals } from "../../lib/rules.js";
-import { timeOf } from "../../lib/format.js";
+import { saveStateText } from "../../lib/format.js";
 import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
-
-/* Same three-state save copy the blueprint's TopBar renders
-   (TopBar.jsx), read off the same `saved` object from the one shared
-   store subscription -- a bulk approve here is a mutation like any
-   other, so this screen owes the estimator the same "did it save"
-   signal every other screen shows (DESIGN.md, "Autosave and save
-   status"). */
-function saveStateText(saved) {
-  if (!saved) return null;
-  if (saved.state === "saving") return "Saving…";
-  if (saved.state === "error") return "Couldn't save — retrying";
-  return "Saved " + timeOf(saved.at);
-}
 
 /* The four review labels, in the order CLAUDE.md's status table lists
    them. `rejected` is a boolean flag folded into display by

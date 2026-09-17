@@ -52,9 +52,15 @@ services:
       BLOB_SECRET_KEY: bidmate-dev-secret
       BLOB_BUCKET: bidmate-documents
       BLOB_REGION: us-east-1
-      # The API needs this for the conversation panel; without it the panel
-      # says it isn't set up and nothing else is affected.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    # ANTHROPIC_API_KEY comes from api/.env (copy api/.env.example), the
+    # same file the host-run API reads. The API needs it for the
+    # conversation panel; without it the panel says it isn't set up and
+    # nothing else is affected. Deliberately not listed under
+    # `environment:` -- an entry there, even an empty `${...:-}`, wins over
+    # the file and blanks the key.
+    env_file:
+      - path: ./api/.env
+        required: false
     volumes: ["./api:/srv"]
     ports: ["8000:8000"]
     depends_on:
@@ -74,7 +80,10 @@ services:
       BLOB_SECRET_KEY: bidmate-dev-secret
       BLOB_BUCKET: bidmate-documents
       BLOB_REGION: us-east-1
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    # Same key source as `api`: api/.env.
+    env_file:
+      - path: ./api/.env
+        required: false
     mem_limit: 2g
     pids_limit: 256
     volumes: ["./api:/srv"]

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, render } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import BlueprintCanvas from "./BlueprintCanvas.jsx";
 
 // jsdom has no ResizeObserver; the canvas uses one to track its viewport.
@@ -9,6 +9,21 @@ class StubResizeObserver {
   disconnect() {}
 }
 vi.stubGlobal("ResizeObserver", StubResizeObserver);
+
+// jsdom (still, as of v25) has no PointerEvent constructor.
+// @testing-library/dom's fireEvent.pointerDown/Move/Up construct one via
+// `window.PointerEvent`, and when that's missing it silently falls back
+// to a bare `Event`, which drops clientX/clientY/pointerId entirely --
+// the drag handlers under test read exactly those. MouseEvent is fully
+// implemented in jsdom and carries clientX/clientY natively, so a thin
+// PointerEvent stand-in built on it gives the handlers real coordinates.
+class StubPointerEvent extends MouseEvent {
+  constructor(type, init = {}) {
+    super(type, init);
+    this.pointerId = init.pointerId ?? 0;
+  }
+}
+vi.stubGlobal("PointerEvent", StubPointerEvent);
 
 const LAYERS = { detected: true, approved: true, rejected: true, measurements: true, warnings: true, legend: false };
 
@@ -122,5 +137,72 @@ describe("BlueprintCanvas brings the selected marker into view", () => {
       <BlueprintCanvas sheet={THREE_TWO} items={[mid, far]} selectedId="i1" onSelect={() => {}} layers={LAYERS} tool="pan" onCalibrate={() => {}} remoteSelections={[]} searchTerm="" />,
     );
     expect(stageTransform(container)).toEqual(before);
+  });
+});
+
+describe("boxed placements and symbol matches", () => {
+  const SHEET = { ...THREE_TWO };
+
+  it("outlines a selected item's boxed placements and rings its point placements", () => {
+    const items = [{ id: "i1", sheetId: "s1", x: 100, y: 100, status: "ready", symbol: "receptacle", name: "r", quantity: 2, unit: "ea",
+                     placements: [[100, 100, 20, 10], [300, 100]] }];
+    const { container } = canvas(SHEET, items, { selectedId: "i1" });
+    const box = container.querySelector("rect.placement-box");
+    expect(box).not.toBeNull();
+    expect(box.getAttribute("width")).toBe("20");
+    expect(Number(box.getAttribute("height"))).toBeCloseTo(10 * (667 / 750), 1);
+    expect(container.querySelectorAll("circle.placement-ring").length).toBe(1);
+  });
+
+  it("draws result boxes in blueprint blue regardless of layers", () => {
+    const match = { status: "found", box: [100, 100, 20, 10], matches: [[100, 100, 20, 10], [300, 100, 20, 10]] };
+    const { container } = canvas(SHEET, [], { match, layers: { ...LAYERS, detected: false, approved: false } });
+    const boxes = container.querySelectorAll("rect.matchbox");
+    expect(boxes.length).toBe(2);
+    expect(boxes[0].getAttribute("stroke")).toBe("var(--blue)");
+    expect(boxes[0].getAttribute("fill")).toBe("none");
+  });
+
+  // The canvas's initial view is whatever fit() computed against the
+  // jsdom-default 900x600 viewport (the ResizeObserver stub never fires),
+  // not the identity transform -- so the expected sheet-unit box is
+  // derived from the same view + fromPaper mapping the component itself
+  // uses, read back through stageTransform, rather than a hand-computed
+  // number that would silently drift if fit()'s math ever changed.
+  it("hands a dragged box up in sheet units", () => {
+    const onDrawBox = vi.fn();
+    const { container } = canvas(SHEET, [], { tool: "match", onDrawBox });
+    const vp = container.querySelector(".viewport");
+    vp.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 667 });
+    act(() => { fireEvent.pointerDown(vp, { clientX: 100, clientY: 100, pointerId: 1 }); });
+    act(() => { fireEvent.pointerMove(vp, { clientX: 140, clientY: 120, pointerId: 1 }); });
+    act(() => { fireEvent.pointerUp(vp, { clientX: 140, clientY: 120, pointerId: 1 }); });
+    expect(onDrawBox).toHaveBeenCalledTimes(1);
+
+    const { tx, ty, scale } = stageTransform(container);
+    const ky = 667 / 750;
+    const px0 = (100 - tx) / scale, px1 = (140 - tx) / scale;
+    const py0 = (100 - ty) / scale, py1 = (120 - ty) / scale;
+    const expected = {
+      x: Math.round((px0 + px1) / 2),
+      y: Math.round(((py0 + py1) / 2) / ky),
+      w: Math.round(px1 - px0),
+      h: Math.round((py1 - py0) / ky),
+    };
+    expect(onDrawBox.mock.calls[0][0]).toEqual(expected);
+  });
+
+  it("clears an in-progress drag on Escape without calling onDrawBox", () => {
+    const onDrawBox = vi.fn();
+    const { container } = canvas(SHEET, [], { tool: "match", onDrawBox });
+    const vp = container.querySelector(".viewport");
+    vp.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1000, height: 667 });
+    act(() => { fireEvent.pointerDown(vp, { clientX: 100, clientY: 100, pointerId: 1 }); });
+    act(() => { fireEvent.pointerMove(vp, { clientX: 140, clientY: 120, pointerId: 1 }); });
+    expect(container.querySelector("rect.matchbox")).not.toBeNull();
+    act(() => { fireEvent.keyDown(window, { key: "Escape" }); });
+    expect(container.querySelector("rect.matchbox")).toBeNull();
+    act(() => { fireEvent.pointerUp(vp, { clientX: 140, clientY: 120, pointerId: 1 }); });
+    expect(onDrawBox).not.toHaveBeenCalled();
   });
 });

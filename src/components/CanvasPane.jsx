@@ -1,4 +1,4 @@
-import { FileText, Hand, Ruler, ZoomOut, ZoomIn, Maximize2, Search, Layers } from "lucide-react";
+import { FileText, Hand, Ruler, ScanSearch, ZoomOut, ZoomIn, Maximize2, Search, Layers } from "lucide-react";
 import BlueprintCanvas from "./BlueprintCanvas.jsx";
 import { displayStatus } from "./Pill.jsx";
 
@@ -22,7 +22,7 @@ export const canvasCmd = (type) => window.dispatchEvent(new CustomEvent("canvas-
 export default function CanvasPane({
   sheet, items, selId, onSelect, layers, onLayersChange, tool, onToolChange,
   canvasQuery, onCanvasQuery, showFind, onToggleFind, menu, onToggleMenu,
-  remoteSelections, onCalibrate,
+  remoteSelections, onCalibrate, match, onDrawBox,
 }) {
   const canvasItems = items.map((i) => ({ ...i, status: displayStatus(i) }));
 
@@ -36,6 +36,7 @@ export default function CanvasPane({
         <div className="toolgroup">
           <button className="iconbtn" aria-pressed={tool === "pan"} onClick={() => onToolChange("pan")} title="Pan"><Hand size={15} /></button>
           <button className="iconbtn" aria-pressed={tool === "calibrate"} onClick={() => onToolChange(tool === "calibrate" ? "pan" : "calibrate")} title="Calibrate scale"><Ruler size={15} /></button>
+          <button className="iconbtn" aria-pressed={tool === "match"} onClick={() => onToolChange(tool === "match" ? "pan" : "match")} title="Find like this"><ScanSearch size={15} /></button>
         </div>
         <div className="toolbar__rule" />
         <button className="iconbtn" onClick={() => canvasCmd("out")} title="Zoom out"><ZoomOut size={15} /></button>
@@ -76,6 +77,8 @@ export default function CanvasPane({
         searchTerm={canvasQuery}
         remoteSelections={remoteSelections}
         onCalibrate={onCalibrate}
+        match={match}
+        onDrawBox={onDrawBox}
       />
     </main>
   );

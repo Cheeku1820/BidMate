@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import TileLayer from "./TileLayer.jsx";
 import { SymbolGlyph } from "./Symbols.jsx";
 import { STATUS } from "../lib/vocabulary.js";
-import { paperSize, toPaper, pointToPaper, paperDistanceToPoints } from "../lib/sheetGeometry.js";
+import { paperSize, toPaper, fromPaper, pointToPaper, paperDistanceToPoints, SHEET_H } from "../lib/sheetGeometry.js";
+import { DRAW_PROMPT, SEARCHING } from "../lib/matchCopy.js";
 
 export { SHEET_W, SHEET_H } from "../lib/sheetGeometry.js";
 
@@ -44,6 +45,8 @@ export default function BlueprintCanvas({
   onCalibrate,
   remoteSelections,
   searchTerm,
+  match = null,
+  onDrawBox = () => {},
 }) {
   const viewportRef = useRef(null);
   const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
@@ -51,6 +54,7 @@ export default function BlueprintCanvas({
   const [panning, setPanning] = useState(false);
   const [hover, setHover] = useState(null);
   const [calibPoints, setCalibPoints] = useState([]);
+  const [boxDrag, setBoxDrag] = useState(null);
   const dragRef = useRef(null);
 
   /* --- fit ------------------------------------------------------ */
@@ -102,6 +106,17 @@ export default function BlueprintCanvas({
   useEffect(() => {
     setCalibPoints([]);
   }, [tool, sheet.id]);
+
+  // Escape backs out of an in-progress "find like this" drag without
+  // handing anything up to onDrawBox -- the estimator started the box in
+  // the wrong place and wants to bail, not search on a partial box.
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key === "Escape") setBoxDrag(null);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   /* Bring the selected marker into view (DESIGN.md, "Blueprint and table
      synchronization"). A selection can arrive from the table, from "Open
@@ -172,6 +187,12 @@ export default function BlueprintCanvas({
   }
 
   function onPointerDown(e) {
+    if (tool === "match") {
+      const p = toPaperPoint(e.clientX, e.clientY);
+      setBoxDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      return;
+    }
     if (tool === "calibrate") return;
     dragRef.current = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
     setPanning(true);
@@ -179,12 +200,29 @@ export default function BlueprintCanvas({
   }
 
   function onPointerMove(e) {
+    if (boxDrag) {
+      const p = toPaperPoint(e.clientX, e.clientY);
+      setBoxDrag((b) => ({ ...b, x1: p.x, y1: p.y }));
+      return;
+    }
     if (!dragRef.current) return;
     const d = dragRef.current;
     setView((v) => ({ ...v, tx: d.tx + (e.clientX - d.x), ty: d.ty + (e.clientY - d.y) }));
   }
 
   function onPointerUp(e) {
+    if (boxDrag) {
+      const x0 = Math.min(boxDrag.x0, boxDrag.x1), x1 = Math.max(boxDrag.x0, boxDrag.x1);
+      const y0 = Math.min(boxDrag.y0, boxDrag.y1), y1 = Math.max(boxDrag.y0, boxDrag.y1);
+      setBoxDrag(null);
+      if (x1 - x0 >= 4 && y1 - y0 >= 4) {
+        const c = fromPaper({ x: (x0 + x1) / 2, y: (y0 + y1) / 2 }, sheet);
+        const e2 = fromPaper({ x: x1 - x0, y: y1 - y0 }, sheet);
+        onDrawBox({ x: Math.round(c.x), y: Math.round(c.y), w: Math.round(e2.x), h: Math.round(e2.y) });
+      }
+      if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+      return;
+    }
     dragRef.current = null;
     setPanning(false);
     if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
@@ -224,10 +262,22 @@ export default function BlueprintCanvas({
 
   const scaleUnknown = sheet.scale === "none" || sheet.scale === "mixed";
 
+  // Boxed placements and symbol-match boxes are stored as [x, y, w, h] in
+  // the same 1000 x 750 sheet space as everything else; only y (and
+  // therefore h) is rescaled to the page's true aspect, matching
+  // sheetGeometry's own toPaper/pointToPaper convention -- x and w never
+  // move.
+  const ky = paper.h / SHEET_H;
+
   return (
     <div
       ref={viewportRef}
-      className={"viewport" + (panning ? " viewport--panning" : "") + (tool === "calibrate" ? " viewport--measuring" : "")}
+      className={
+        "viewport" +
+        (panning ? " viewport--panning" : "") +
+        (tool === "calibrate" ? " viewport--measuring" : "") +
+        (tool === "match" ? " viewport--boxing" : "")
+      }
       onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -287,17 +337,42 @@ export default function BlueprintCanvas({
                 for forty-seven of them tells the estimator nothing about
                 where they are. Drawn for the selected item only, so the
                 sheet stays readable. Never interactive: the marker is the
-                item, these are its evidence. */}
+                item, these are its evidence. A placement with a box extent
+                ([x, y, w, h], from Counting's geometry) draws the box it
+                was actually found at; a bare point ([x, y]) still gets the
+                ring, for clusters Counting only has a centre for. A single
+                boxed placement is still shown -- the box carries extent
+                the point marker alone does not. */}
             {(() => {
               const selItem = visible.find((it) => it.id === selectedId && !it.path);
               const spots = selItem?.placements;
-              if (!spots?.length || spots.length < 2) return null;
+              if (!spots?.length) return null;
+              const hasBox = spots.some((p) => p.length >= 4);
+              if (spots.length < 2 && !hasBox) return null;
               const meta = STATUS[selItem.status];
               return (
                 <g pointerEvents="none" aria-hidden="true">
                   {spots.map((p, i) => {
                     const [cx, cy] = pointToPaper(p, sheet);
-                    return <circle key={i} cx={cx} cy={cy} r="5" fill="none" stroke={meta.color} strokeWidth="1.6" opacity="0.75" />;
+                    if (p.length >= 4) {
+                      const w = p[2];
+                      const h = p[3] * ky;
+                      return (
+                        <rect
+                          key={i}
+                          className="placement-box"
+                          x={cx - w / 2}
+                          y={cy - h / 2}
+                          width={w}
+                          height={h}
+                          fill="none"
+                          stroke={meta.color}
+                          strokeWidth="1.6"
+                          opacity="0.75"
+                        />
+                      );
+                    }
+                    return <circle key={i} className="placement-ring" cx={cx} cy={cy} r="5" fill="none" stroke={meta.color} strokeWidth="1.6" opacity="0.75" />;
                   })}
                 </g>
               );
@@ -355,6 +430,82 @@ export default function BlueprintCanvas({
             {calibPoints.length === 1 && (
               <circle cx={calibPoints[0][0]} cy={calibPoints[0][1]} r="5" fill="none" stroke="#23528f" strokeWidth="2" />
             )}
+
+            {/* "Find like this" results: never status-coloured (this is
+                the estimator's own search, not a detected item's
+                status), and drawn regardless of layer toggles -- hiding
+                a layer must not hide the box the estimator just asked
+                for. Once results arrive they replace the searched-for
+                box; while still searching, the searched-for box itself
+                is shown, dashed. */}
+            {match &&
+              (match.matches?.length > 0 || (match.status === "pending" && match.box)) && (
+                <g pointerEvents="none" aria-hidden="true">
+                  {match.matches?.map((m, i) => {
+                    const [cx, cy] = pointToPaper(m, sheet);
+                    const w = m[2];
+                    const h = m[3] * ky;
+                    return (
+                      <rect
+                        key={"match-" + i}
+                        className="matchbox"
+                        x={cx - w / 2}
+                        y={cy - h / 2}
+                        width={w}
+                        height={h}
+                        fill="none"
+                        stroke="var(--blue)"
+                        strokeWidth="1.6"
+                      />
+                    );
+                  })}
+                  {match.status === "pending" &&
+                    match.box &&
+                    (() => {
+                      const [cx, cy] = pointToPaper(match.box, sheet);
+                      const w = match.box[2];
+                      const h = match.box[3] * ky;
+                      return (
+                        <rect
+                          className="matchbox"
+                          x={cx - w / 2}
+                          y={cy - h / 2}
+                          width={w}
+                          height={h}
+                          fill="none"
+                          stroke="var(--blue)"
+                          strokeWidth="1.6"
+                          strokeDasharray="4 3"
+                        />
+                      );
+                    })()}
+                </g>
+              )}
+
+            {/* the box the estimator is dragging right now, before it is
+                handed up to onDrawBox */}
+            {boxDrag &&
+              (() => {
+                const x0 = Math.min(boxDrag.x0, boxDrag.x1);
+                const x1 = Math.max(boxDrag.x0, boxDrag.x1);
+                const y0 = Math.min(boxDrag.y0, boxDrag.y1);
+                const y1 = Math.max(boxDrag.y0, boxDrag.y1);
+                return (
+                  <rect
+                    className="matchbox"
+                    x={x0}
+                    y={y0}
+                    width={x1 - x0}
+                    height={y1 - y0}
+                    fill="none"
+                    stroke="var(--blue)"
+                    strokeWidth="1.6"
+                    strokeDasharray="4 3"
+                    pointerEvents="none"
+                    aria-hidden="true"
+                  />
+                );
+              })()}
           </svg>
         </div>
       </div>
@@ -427,6 +578,17 @@ export default function BlueprintCanvas({
                   ? "Click the first end of a dimension you know."
                   : "Now click the other end."}
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tool === "match" && (
+        <div className="overlay" style={{ top: 14, left: "50%", transform: "translateX(-50%)" }}>
+          <div className="banner" style={{ borderColor: "var(--blue-line)", borderLeft: "3px solid var(--blue)", borderRadius: "0 6px 6px 0" }}>
+            <div>
+              <strong>Find like this</strong>
+              <p>{match?.status === "pending" ? SEARCHING : DRAW_PROMPT}</p>
             </div>
           </div>
         </div>

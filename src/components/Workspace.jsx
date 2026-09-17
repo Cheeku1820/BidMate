@@ -24,7 +24,7 @@ export default function Workspace() {
     itemError, clearItemError, setPresenceTarget, refresh,
     approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
     me, sheetId, setSheetId, selectedItemId, selectItem, project, projectId,
-    store,
+    store, match, startMatch,
   } = useWorkspaceContext();
   const navigate = useNavigate();
 
@@ -270,6 +270,11 @@ export default function Workspace() {
           onToggleMenu={setMenu}
           remoteSelections={remoteSelections}
           onCalibrate={() => setModal({ kind: "scale" })}
+          match={match?.sheetId === sheet.id ? match : null}
+          onDrawBox={(box) => {
+            startMatch(sheet.id, box);
+            setTool("pan");
+          }}
         />
 
         <ItemDetailPanel

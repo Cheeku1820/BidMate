@@ -645,6 +645,10 @@ button {
   cursor: crosshair;
 }
 
+.viewport--boxing {
+  cursor: crosshair;
+}
+
 .stage {
   position: absolute;
   top: 0;

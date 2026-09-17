@@ -100,18 +100,17 @@ def test_a_transient_storage_error_on_upload_requeues_rather_than_failing(db, pr
 
 def test_a_transient_storage_error_on_upload_fails_terminally_once_attempts_are_exhausted(db, project, dana, inline, monkeypatch):
     """Repeated retries eventually exhaust `max_attempts` and the sheet
-    lands `failed`. The copy it fails with is the honest transient
-    reason (`copy.UNAVAILABLE`), not `copy.RENDER_FAILED` -- because
-    `queue.requeue`'s attempts-exhausted path hands its message straight
-    to `mark_failed` without going through `terminal_copy` (unlike
-    `reclaim_stale`'s), and `tests/test_jobs_queue.py::
-    test_requeue_backs_off_then_fails_after_max_attempts` already pins
-    that as deliberate: a job that kept failing for a known reason keeps
-    that reason through to its terminal state instead of losing it to a
-    generic label. This test is the render-kind instance of the same
-    rule, not a gap in this fix -- what matters here is that the sheet
-    reaches a genuinely terminal `failed` state at all, rather than
-    retrying forever."""
+    lands `failed`. The copy it fails with is `copy.RENDER_FAILED`, not
+    the generic `copy.UNAVAILABLE` -- B3b's queue.py change routes
+    `requeue`'s attempts-exhausted path through `_exhausted_copy`, the
+    same kind-specific substitution `terminal_copy` already made for a
+    message-less terminal failure. A generic transient reason
+    ("couldn't open this file right now") is right for a read, whose
+    file genuinely could not be reached, and wrong for a render, whose
+    file was read fine and whose sheet the takeoff still counts. What
+    matters here is that the sheet reaches a genuinely terminal `failed`
+    state at all, rather than retrying forever -- and that it does so
+    with the render-specific copy, not the read-shaped one."""
     monkeypatch.setattr("app.db.SessionLocal", lambda: db)
     d = _stored(db, project, dana, inline, _pdf("E2.1 POWER PLAN", pages=1))
     queue.enqueue_read(db, d); db.commit()
@@ -134,9 +133,9 @@ def test_a_transient_storage_error_on_upload_fails_terminally_once_attempts_are_
         db.commit()
 
     assert render_job.status == "failed" and render_job.attempts == render_job.max_attempts
-    assert render_job.error == copy.UNAVAILABLE
+    assert render_job.error == copy.RENDER_FAILED
     sheet = db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))).one()
-    assert sheet.render_status == "failed" and sheet.render_error == copy.UNAVAILABLE
+    assert sheet.render_status == "failed" and sheet.render_error == copy.RENDER_FAILED
 
 
 def test_deleting_a_document_cancels_its_queued_renders(client, db, project, dana, inline, monkeypatch, signed_in_user):

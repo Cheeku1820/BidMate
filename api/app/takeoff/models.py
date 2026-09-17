@@ -21,7 +21,7 @@ import app.identity.models  # noqa: E402, F401
 # one definition, enforced in both places. app.documents.schemas imports
 # nothing from app, so this direction adds no cycle.
 from app.documents.schemas import DOC_STATUSES
-from app.jobs.schemas import JOB_KINDS, JOB_STATUSES, RENDER_STATUSES
+from app.jobs.schemas import JOB_KINDS, JOB_STATUSES, MATCH_STATUSES, RENDER_STATUSES
 from app.scope.schemas import SCOPE_KINDS, SCOPE_STATUSES
 
 
@@ -246,6 +246,7 @@ class Job(Base):
     document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=True)
     sheet_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sheets.id", ondelete="CASCADE"), nullable=True)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True, index=True)
+    symbol_match_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("symbol_matches.id", ondelete="CASCADE"), nullable=True)
     requested_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
@@ -309,6 +310,30 @@ class ScopeStatement(Base):
     decided_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SymbolMatch(Base):
+    """One 'find every one like this' request (B3b spec §2): the box an
+    estimator drew, and what the worker found. `status` is the match's
+    own axis -- pending, found, failed -- never one of the four review
+    labels; nothing is counted until a person names the result."""
+
+    __tablename__ = "symbol_matches"
+    __table_args__ = (
+        CheckConstraint("status in ('" + "', '".join(MATCH_STATUSES) + "')", name="ck_symbol_matches_status"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    sheet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sheets.id", ondelete="CASCADE"), index=True)
+    box: Mapped[list] = mapped_column(JSONB)                      # [x, y, w, h] sheet units, as drawn
+    status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
+    matches: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Item(Base):

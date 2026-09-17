@@ -4,6 +4,7 @@ import uuid
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.jobs.schemas import JOB_KINDS, timeout_for
 from app.takeoff.models import Classification, Document, Job, ScopeStatement
 
 
@@ -73,6 +74,11 @@ def test_scope_kind_and_status_are_closed_sets(db, project, dana):
             db.add(ScopeStatement(org_id=project.org_id, project_id=project.id, document_id=d.id, page_index=0,
                                   kind="excluded", text="x", quote="x", status="maybe", run_id=uuid.uuid4()))
             db.flush()
+
+
+def test_match_is_a_job_kind_with_its_own_timeout():
+    assert "match" in JOB_KINDS
+    assert timeout_for("match") == 60
 
 
 def test_one_classification_per_run(db, project):

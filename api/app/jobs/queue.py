@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.errors import DomainError
 from app.jobs import copy
 from app.jobs.schemas import MAX_ATTEMPTS, RETRY_BACKOFF_SECONDS, STALE_GRACE_SECONDS, timeout_for
-from app.takeoff.models import Document, Job, Project, Sheet
+from app.takeoff.models import Document, Job, Project, Sheet, SymbolMatch
 
 _IN_FLIGHT = ("queued", "running")
 _RUN_IN_FLIGHT = copy.RUN_IN_FLIGHT
@@ -114,6 +114,15 @@ def enqueue_render(db: Session, sheet: Sheet, prefix: str) -> Job | None:
     return job
 
 
+def enqueue_match(db: Session, match: SymbolMatch) -> Job:
+    """One job per drawn box, attributed to the person who drew it."""
+    job = Job(org_id=match.org_id, project_id=match.project_id, kind="match", sheet_id=match.sheet_id,
+              symbol_match_id=match.id, requested_by=match.created_by, max_attempts=MAX_ATTEMPTS)
+    db.add(job)
+    db.flush()
+    return job
+
+
 _READY = text(
     "status = 'queued' AND (not_before IS NULL OR not_before <= now()) AND "
     "(kind <> 'sheet' OR run_id IN (SELECT run_id FROM jobs WHERE kind = 'classify' AND status = 'done'))"
@@ -158,6 +167,8 @@ def terminal_copy(job: Job, message: str) -> str:
         return copy.RUN_FAILED
     if job.kind == "render" and message in ("", copy.UNREADABLE):
         return copy.RENDER_FAILED
+    if job.kind == "match" and message in ("", copy.UNREADABLE):
+        return copy.MATCH_FAILED
     return message or copy.UNREADABLE
 
 
@@ -203,19 +214,35 @@ def mark_failed(db: Session, job: Job, error: str) -> bool:
         sheet = db.get(Sheet, job.sheet_id)
         if sheet is not None:
             sheet.render_status, sheet.render_error = "failed", error
+    if job.kind == "match" and job.symbol_match_id:
+        match = db.get(SymbolMatch, job.symbol_match_id)
+        if match is not None:
+            match.status, match.error = "failed", error
     db.flush()
     if job.kind == "sheet" and job.run_id:
         return complete_run_if_finished(db, job.run_id)
     return False
 
 
+def _exhausted_copy(job: Job, error: str) -> str:
+    """Retries ran out on a transient reason. The generic 'couldn't open
+    this file' is right for a read and wrong for every other kind."""
+    if error != copy.UNAVAILABLE:
+        return error
+    return {"sheet": copy.SHEET_FAILED, "classify": copy.RUN_FAILED, "render": copy.RENDER_FAILED,
+            "match": copy.MATCH_UNAVAILABLE}.get(job.kind, error)
+
+
 def requeue(db: Session, job: Job, error: str) -> bool:
     """A transient failure: try again after the backoff, until the
     attempts run out, at which point the last transient reason is the
-    terminal one. Returns whether that terminal failure completed a run,
-    as `mark_failed` does."""
+    terminal one -- except that a generic transient reason on a sheet,
+    classify, render, or match job is routed through its own copy first
+    (`_exhausted_copy`), the same substitution `terminal_copy` already
+    makes for a message-less terminal failure. Returns whether that
+    terminal failure completed a run, as `mark_failed` does."""
     if job.attempts >= job.max_attempts:
-        return mark_failed(db, job, error)
+        return mark_failed(db, job, _exhausted_copy(job, error))
     job.status, job.locked_by, job.error = "queued", "", error
     job.not_before = _now() + timedelta(seconds=RETRY_BACKOFF_SECONDS)
     db.flush()

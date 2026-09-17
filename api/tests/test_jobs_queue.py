@@ -218,6 +218,33 @@ def test_terminal_copy_substitutes_the_run_copy_for_a_classify_job_only_when_it_
     assert queue.terminal_copy(c, copy.NO_DRAWINGS) == copy.NO_DRAWINGS
 
 
+def test_enqueue_match_queues_one_job_with_the_match_id(db, project, sheet, dana):
+    from app.takeoff.models import SymbolMatch
+    m = SymbolMatch(org_id=project.org_id, project_id=project.id, sheet_id=sheet.id, box=[500, 375, 10, 10], created_by=dana.id)
+    db.add(m); db.flush()
+    job = queue.enqueue_match(db, m)
+    assert job.kind == "match" and job.symbol_match_id == m.id and job.status == "queued" and job.max_attempts == 3
+
+
+def test_a_failed_match_job_marks_its_row(db, project, sheet, dana):
+    from app.takeoff.models import SymbolMatch
+    m = SymbolMatch(org_id=project.org_id, project_id=project.id, sheet_id=sheet.id, box=[500, 375, 10, 10], created_by=dana.id)
+    db.add(m); db.flush()
+    job = queue.enqueue_match(db, m)
+    queue.mark_failed(db, job, queue.terminal_copy(job, ""))
+    assert m.status == "failed" and m.error == copy.MATCH_FAILED
+
+
+def test_exhausted_retries_land_on_kind_specific_copy(db, project, sheet, dana):
+    from app.takeoff.models import SymbolMatch
+    m = SymbolMatch(org_id=project.org_id, project_id=project.id, sheet_id=sheet.id, box=[500, 375, 10, 10], created_by=dana.id)
+    db.add(m); db.flush()
+    job = queue.enqueue_match(db, m)
+    job.attempts = job.max_attempts
+    queue.requeue(db, job, copy.UNAVAILABLE)
+    assert job.status == "failed" and m.error == copy.MATCH_UNAVAILABLE
+
+
 def test_a_takeoff_run_is_claimed_ahead_of_older_render_jobs(db, project, dana):
     """Renders are queued by the read, before the estimator has pressed
     Start takeoff, so oldest-first alone parks every takeoff behind the

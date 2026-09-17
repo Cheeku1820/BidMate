@@ -20,7 +20,7 @@ How you speak
 
 What you can and cannot do
 - You can read this project's records and explain them, compare them, and advise on what to check next.
-- You cannot change anything. When asked to change something, say in one sentence where in the product that is done, then help with the reasoning if useful. For example: reject or approve an item from the item panel on the blueprint or the spreadsheet; set a sheet's scale from the blueprint's scale control; confirm or dismiss a scope statement on Confirm drawings; add a note on Notes and assumptions.
+- You cannot change anything. When asked to change something, say in one sentence where in the product that is done, then help with the reasoning if useful. For example: reject or approve an item from the item panel on the blueprint or the spreadsheet; set a sheet's scale from the blueprint's scale control; confirm or dismiss a scope statement on Confirm drawings; add a note on Notes and assumptions; approve several Ready to review items at once from the Spreadsheet's bulk approve, which never covers Needs attention or Missing information.
 - You never approve an item and never recommend approving a specific item. You can say what its evidence is and what is blocking it.
 - Markup, overhead, profit, bond, and tax are the estimator's own layer; do not propose numbers for them.
 
@@ -57,11 +57,23 @@ def _counts(counts: dict) -> str:
     return ", ".join(f"{n} {_label(k)}" for k, n in sorted(counts.items()))
 
 
+def _item_counts(counts: dict) -> str:
+    """Render the top-level approved/remaining/attention/missing dict.
+    `remaining` is not a status -- it's the count of countable items not
+    yet approved -- so it is never printed as a bare label; it is spelled
+    out as "not yet approved" and broken into the three real statuses
+    that make it up (ready to review = remaining - attention - missing)."""
+    approved, remaining = counts["approved"], counts["remaining"]
+    attention, missing = counts["attention"], counts["missing"]
+    ready = remaining - attention - missing
+    return (f"{approved} {_label('approved')}; {remaining} not yet approved "
+            f"({ready} {_label('ready')}, {attention} {_label('attention')}, {missing} {_label('missing')})")
+
+
 def _project(p: dict) -> str:
     lines = [f"name: {esc(p['name'])}", f"stage: {esc(p['stage'])}", f"revision set: {esc(p['revision_set_label'])}"]
     for key, label in (("number", "project number"), ("customer", "customer"), ("location", "location"),
-                       ("bid_due_date", "bid due"), ("pricing_source", "pricing source"),
-                       ("pricing_note", "pricing note")):
+                       ("bid_due_date", "bid due"), ("pricing_note", "pricing note")):
         if p.get(key):
             lines.append(f"{label}: {esc(p[key])}")
     return "\n".join(lines)
@@ -154,7 +166,7 @@ def _totals(t: dict) -> str:
     by_system = ", ".join(f"{esc(k)} {v}" for k, v in t["approved_by_system"].items()) or "none yet"
     return (f"approved units by system: {by_system}\n"
             f"approved units total: {t['approved_units']}\n"
-            f"item counts: {_counts(t['counts'])}")
+            f"item counts: {_item_counts(t['counts'])}")
 
 
 def _processing(p: dict) -> str:
@@ -177,7 +189,7 @@ def _processing(p: dict) -> str:
 
 
 def _pricing(p: dict) -> str:
-    lines = [f"pricing source: {esc(p['pricing_source']) or 'not set'}"]
+    lines = []
     if p.get("pricing_note"):
         lines.append(f"pricing note: {esc(p['pricing_note'])}")
     if p.get("labor_rate"):
@@ -206,7 +218,7 @@ def render(bundle: ContextBundle) -> str:
         parts.append(_section("view", bundle.view_note))
     parts.append(_section("project", _project(bundle.project)))
     if bundle.counts is not None:
-        parts.append(_section("item_counts", _counts(bundle.counts)))
+        parts.append(_section("item_counts", _item_counts(bundle.counts)))
     if bundle.documents is not None:
         parts.append(_section("documents", _documents(bundle.documents)))
     if bundle.processing is not None:

@@ -63,3 +63,52 @@ def test_view_note_and_scope_quotes_render():
 def test_esc():
     assert esc("a < b & c") == "a &lt; b &amp; c"
     assert esc(None) == ""
+
+
+def test_item_counts_render_as_not_yet_approved_breakdown():
+    counts = {"approved": 5, "remaining": 203, "attention": 155, "missing": 0}
+    text = render(_bundle(name="overview", counts=counts))
+    assert ("5 Estimator approved; 203 not yet approved "
+            "(48 Ready to review, 155 Needs attention, 0 Missing information)") in text
+    assert "no status" not in text and "unstatused" not in text
+    assert "remaining" not in text
+
+
+def test_totals_item_counts_use_same_breakdown():
+    totals = {"approved_by_system": {}, "approved_units": "0",
+              "counts": {"approved": 5, "remaining": 203, "attention": 155, "missing": 0}}
+    text = render(_bundle(name="takeoff", items=[], totals=totals))
+    assert ("item counts: 5 Estimator approved; 203 not yet approved "
+            "(48 Ready to review, 155 Needs attention, 0 Missing information)") in text
+
+
+def test_per_sheet_counts_still_keyed_by_status():
+    # Overflow and other-sheet breakdowns are unaffected by the top-level
+    # counts change -- they are already keyed by status, not remaining.
+    item = {"id": "1", "name": "20A duplex receptacle", "description": "", "system": "Power",
+            "category": "Devices", "quantity": "14", "unit": "EA", "status": "Needs attention",
+            "rejected": False, "sheet": "E2.1", "notes": "", "selected": True, "warnings": []}
+    text = render(_bundle(name="takeoff", items=[item],
+                          item_overflow={"omitted": 3, "per_sheet": {"E3.1": {"ready": 3}}}))
+    assert "E3.1: 3 Ready to review" in text
+
+
+def test_pricing_source_never_appears_in_render():
+    for source in ("deterministic", "llm"):
+        project = {"name": "Meridian", "number": "", "customer": "", "location": "Stockton, CA",
+                   "bid_due_date": None, "stage": "review", "revision_set_label": "Rev 3",
+                   "pricing_source": source, "pricing_note": "Rounded to nearest $5"}
+        pricing = {"pricing_source": source, "pricing_note": "Rounded to nearest $5",
+                   "labor_rate": "65", "material_factor": "1.1", "location_note": "Bay Area"}
+        bundle = ContextBundle(screen=ScreenIn(name="pricing"), project=project, scope=[], notes=[],
+                               pricing=pricing, items=[])
+        text = render(bundle)
+        assert "deterministic" not in text
+        assert "llm" not in text
+        assert "pricing note: Rounded to nearest $5" in text
+        assert "labor rate: $65/h" in text
+
+
+def test_system_prompt_names_bulk_approve():
+    assert ("approve several Ready to review items at once from the Spreadsheet's bulk approve, "
+            "which never covers Needs attention or Missing information") in SYSTEM_PROMPT

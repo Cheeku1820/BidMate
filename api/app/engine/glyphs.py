@@ -64,7 +64,10 @@ Form = list[tuple[bool, bool, bool, list[tuple[float, float]]]]
 class Glyph:
     rect: tuple[float, float, float, float]
     forms: list[Form]     # the eight dihedral forms; forms[0] is the identity
-    key: tuple            # coarse bucket: (paths, point counts, long side, short side)
+    key: tuple            # coarse bucket: (paths, point counts) -- extents are left
+                           # to same_shape's point matching, which already tolerates
+                           # TOL_PT; a rounded-size bucket edge would be tighter than
+                           # that tolerance and split matching shapes apart
 
 
 @dataclass
@@ -145,8 +148,12 @@ def _candidates(paths: list[Path]) -> list[list[Path]]:
     grid: dict[tuple[int, int], list[int]] = defaultdict(list)
     for i, p in enumerate(paths):
         x0, y0, x1, y1 = p.rect
-        for gx in range(int(x0 // GRID_PT), int(x1 // GRID_PT) + 1):
-            for gy in range(int(y0 // GRID_PT), int(y1 // GRID_PT) + 1):
+        # Pad by TOUCH_PT so a pair within touching distance across a grid
+        # boundary still shares a cell (paths right at the line would
+        # otherwise never be compared and a symbol straddling it would
+        # split into two candidates).
+        for gx in range(int((x0 - TOUCH_PT) // GRID_PT), int((x1 + TOUCH_PT) // GRID_PT) + 1):
+            for gy in range(int((y0 - TOUCH_PT) // GRID_PT), int((y1 + TOUCH_PT) // GRID_PT) + 1):
                 grid[(gx, gy)].append(i)
     for cell in grid.values():
         for a in range(len(cell)):
@@ -199,9 +206,12 @@ def _forms(group: list[Path]) -> list[Form]:
 
 
 def _key(group: list[Path]) -> tuple:
-    x0, y0, x1, y1 = _bbox(group)
-    long_, short = max(x1 - x0, y1 - y0), min(x1 - x0, y1 - y0)
-    return (len(group), tuple(sorted(len(p.pts) for p in group)), round(long_), round(short))
+    """Coarse bucket: path count and point-count multiset. Extents are
+    deliberately excluded -- rounding them to a bucket has no tolerance,
+    while same_shape's point matching already tolerates TOL_PT, so a size
+    right at a rounding edge (9.49 vs 9.51 pt) would split matching shapes
+    into different buckets and they would never be compared."""
+    return (len(group), tuple(sorted(len(p.pts) for p in group)))
 
 
 def _glyph(group: list[Path]) -> Glyph:

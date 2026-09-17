@@ -17,7 +17,7 @@ from app.jobs import queue
 from app.takeoff.models import Job
 from app.worker.sandbox import Terminal
 
-HANDLERS: dict[str, Callable[[Session, Job], None]] = {}   # filled by read_job / classify_job / sheet_job / render_job
+HANDLERS: dict[str, Callable[[Session, Job], None]] = {}   # filled by read_job / classify_job / sheet_job / render_job / match_job
 
 
 def register(kind: str):
@@ -28,8 +28,8 @@ def register(kind: str):
 
 
 def _load_handlers() -> None:
-    # The four handler modules register themselves on import.
-    for name in ("read_job", "classify_job", "sheet_job", "render_job"):
+    # The five handler modules register themselves on import.
+    for name in ("read_job", "classify_job", "sheet_job", "render_job", "match_job"):
         __import__(f"app.worker.{name}")
 
 

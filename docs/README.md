@@ -28,7 +28,7 @@ Five documents at the repository root are the entry points: `README.md` (how to 
 | B1 — documents stored | `specs/documents-stored.md` | `plans/done/documents-stored.md` | merged |
 | B2 — the engine behind the API | `specs/engine-behind-the-api.md` | `plans/done/engine-behind-the-api.md` | merged |
 | B3 — the drawing behind the markers | `specs/drawing-behind-the-markers.md` | `plans/done/drawing-behind-the-markers.md` | merged |
-| B3b — accurate symbol marking | `specs/accurate-symbol-marking.md` | `plans/accurate-symbol-marking.md` | in progress |
+| B3b — accurate symbol marking | `specs/accurate-symbol-marking.md` | `plans/accurate-symbol-marking.md` | built |
 | Firm price book | `specs/firm-price-book.md` (branch `feat/corpus-price-book`) | — | designed, parked behind Phase B |
 
 ## Adding a document

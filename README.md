@@ -97,9 +97,9 @@ Every sheet comes from an uploaded document, and the canvas now shows the real p
 
 The rendered page and the item's evidence crop are two witnesses to the same drawing, not one standing in for the other: the page shows where an item sits in context, the evidence — a crop of the source page around where it was counted, from the item detail panel's "View evidence" control — shows exactly what was read to count it.
 
-Takeoff items are drawn as **standard electrical symbols** — a circle with a bisecting line for a receptacle, a circle with an S for a switch, a crossed rectangle for a panel, a crossed circle for a high bay, a triangle for a data outlet — rather than generic pins. The symbol carries the item type, the ring color carries the review status, and the badge carries the warning. Three independent channels, no overloading.
+Takeoff items are drawn as **standard electrical symbols** — a circle with a bisecting line for a receptacle, a circle with an S for a switch, a crossed rectangle for a panel, a crossed circle for a high bay, a triangle for a data outlet — rather than generic pins. The symbol carries the item type, the ring color carries the review status, and the badge carries the warning. Three independent channels, no overloading. A marker's ring sits on the symbol's own drawn box, not on its text tag — most vector sets carry no reusable symbol definitions at all, so the engine now recognizes a repeated glyph by its shape and counts a device even when a drafter never labeled it.
 
-Canvas controls: drag to pan, scroll to zoom toward the cursor, fit-to-page, a live minimap showing item positions and the current viewport, layer toggles, find-on-sheet dimming, hover tooltips, and a two-click calibration tool.
+Canvas controls: drag to pan, scroll to zoom toward the cursor, fit-to-page, a live minimap showing item positions and the current viewport, layer toggles, find-on-sheet dimming, hover tooltips, a two-click calibration tool, and **Find like this** — draw a box around one symbol and every copy of it on the sheet is found and offered as a group; the estimator names it, or says not sure, before anything is added to the takeoff.
 
 ---
 
@@ -198,6 +198,7 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 - **Nothing reaps stored files.** Deleting a document removes its file, but there is no retention policy or sweep: a file whose row was lost, or every file under an archived project, stays in storage indefinitely. See [`ROADMAP.md`](ROADMAP.md) §2.2.
 - **Screen D confirms, but doesn't yet correct.** Include/exclude, discipline, revision, and scale corrections have no control on the confirm screen — every listed document runs through the takeoff, and sheet-level detail is whatever the worker's last read reported. See [`docs/roadmap/full-webapp-plan.md`](docs/roadmap/full-webapp-plan.md) Phase B4.
 - **The queue has no bid-date priority, per-tenant cap, or dead-letter handling.** Takeoff work is claimed ahead of thumbnail renders, but across projects jobs are claimed oldest-first regardless of whose bid is due sooner, nothing limits how many of one project's jobs a worker pool can be occupied by, and a job that exhausts its three retries just sits `failed` — the recovery is starting the takeoff again, not a separate retry queue. See [`ROADMAP.md`](ROADMAP.md) §2.5.
+- **"Find every one like this" searches one sheet per request**, not the whole set, and there is no firm symbol library yet — a symbol named on one project doesn't default on the next. See [`docs/specs/accurate-symbol-marking.md`](docs/specs/accurate-symbol-marking.md).
 
 ---
 

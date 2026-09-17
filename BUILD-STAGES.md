@@ -149,7 +149,7 @@ The column-by-column view. Most rows are the same capability getting progressive
 |---|---|---|---|---|
 | **Takeoff engine** | Broad coverage, uneven quality, gaps surfaced as questions | Floor raised where telemetry says it is lowest | Tuned per customer's drafting conventions | Divisions 27 and 28 |
 | **Agent evaluation** | Frozen eval set per agent; Counting tested, not trained | Correction telemetry aggregated across customers | Fine-tuning on consented sets only | Published methodology |
-| **Counting method** | Geometry on vector sheets; classification by language | Clustering for exploded vector; better raster | Trained detectors for scanned sets | Unchanged |
+| **Counting method** | Geometry on vector sheets; classification by language | Clustering for exploded vector — built (B3b); better raster | Trained detectors for scanned sets | Unchanged |
 | **Measured runs** | Where geometry supports it; elsewhere the firm's own rule, confirmed | Firm rules learned from history | Routing inference where drawings allow | Unchanged |
 | **Documents accepted** | Any commercial Division 26 set, vector or scanned | Same breadth, better results | Large sets, odd conventions, mixed disciplines | Any construction document |
 | **Coverage honesty** | Per-item status, per-sheet unreadable outcome | Coverage shown before review starts | Predicted at upload, before processing spends | Published methodology |

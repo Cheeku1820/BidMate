@@ -70,6 +70,7 @@ src/
     Workspace.jsx            the review workspace: selection, filters, modals, shortcuts
     Login.jsx                sign-in screen
     TopBar.jsx, SheetsRail.jsx, CanvasPane.jsx, ItemDetailPanel.jsx, SummaryDrawer.jsx, modals
+    MatchResultCard.jsx      the item panel's result card for a drawn "find every one like this" search
     BlueprintCanvas.jsx      pan/zoom viewport, markers, measurements, minimap
     TileLayer.jsx            the rendered page as tiles under the markers, at its true aspect
     Symbols.jsx              electrical symbol glyphs
@@ -108,14 +109,18 @@ api/app/scope/
   router.py                  GET .../scope, PATCH /scope/{id}
 api/app/tiles/
   router.py                  the one read path for rendered bytes: per-tile and thumbnail routes, cached
+api/app/matches/
+  router.py, service.py, schemas.py   symbol matches: draw a box, poll, name it or say not sure, discard
 api/app/worker/
   __main__.py                the poll loop — the only process that opens a PDF
   sandbox.py                 every job body runs in a child process with a per-kind wall-clock timeout
-  handlers.py, read_job.py, classify_job.py, sheet_job.py, render_job.py   the four job kinds
+  handlers.py, read_job.py, classify_job.py, sheet_job.py, render_job.py, match_job.py   the five job kinds
 api/app/engine/
   sheet.py                   finishes one sheet: rows, evidence crops, the vision pass
   scope.py                   scope extraction — LLM with verbatim-quote validation, or a deterministic fallback
   tiles.py                   cuts a sheet into the 512 px tile pyramid, in the visual frame, to ≥150 dpi
+  glyphs.py                  glyph candidates and tolerant shape clusters on exploded vector geometry
+  raster_match.py            template matching on a render, for a box the vector path can't resolve
 ```
 
 Uploaded files live in object storage (MinIO locally, S3 in deployment), under a key built from the owning org and project — never from anything the client sent. The `documents` table (migration 0019; `status` constrained to its four values by 0020) holds one row per upload with its hash and storage key. The API streams and hashes an upload; it never opens one — that is `app/worker`'s job, run inside `sandbox.py`'s child process with a wall-clock timeout, because a PDF parser is a remote-code-execution surface and the API is not where untrusted bytes get parsed. **The process boundary is enforced, not just described**: `app.worker` is the only package that imports `app.engine` or a PDF parser, `app.main` never imports the engine, and `app.worker` never imports a router — all three subprocess-tested, plus a test proving the worker process can resolve every foreign key on its own. Specs: [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md) (B1), [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md) (B2).
@@ -126,7 +131,7 @@ Marker rendering keeps three channels independent: **glyph** = item type, **ring
 
 ## The engine is five agents
 
-Documents, Counting, Classification, and Pricing now run, behind the API: `api/app/engine/` holds them, `api/app/worker/` is what calls them, on every upload (`read`) and every **Start takeoff** (`classify` and `sheet`). Pricing's basis — labor rate and material factor — comes from the one classification call with a key, or the regional table without one (`classify_run`). Per-row assembly expansion (box, plate, ring, wire, conduit, per `engine/assemblies.py`) is wired into both classification paths through `engine/rows.py` (`resolve_assembly_parent` for the model-classified path, `pricing.price_item` for the deterministic one), called from the sheet job — not just the CLI. Conversation is designed but unbuilt: `engine/conversation.py` routes an utterance to a typed proposal, and nothing in `src/` calls it or renders a panel. Full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
+Documents, Counting, Classification, and Pricing now run, behind the API: `api/app/engine/` holds them, `api/app/worker/` is what calls them, on every upload (`read`) and every **Start takeoff** (`classify` and `sheet`). Pricing's basis — labor rate and material factor — comes from the one classification call with a key, or the regional table without one (`classify_run`). Per-row assembly expansion (box, plate, ring, wire, conduit, per `engine/assemblies.py`) is wired into both classification paths through `engine/rows.py` (`resolve_assembly_parent` for the model-classified path, `pricing.price_item` for the deterministic one), called from the sheet job — not just the CLI. Counting now clusters exploded vector geometry by matching shape (`engine/glyphs.py`) beside its tag-based reading, and links the clusters it finds to the tags that label them (`engine/counting.py`), so a device drawn with no legible tag is still counted. **"Find every one like this" is built**: the estimator draws a box around one symbol on the canvas and a `match` job (`api/app/worker/match_job.py`, `api/app/matches/`) finds every instance on that sheet — by shape signature on a vector sheet, by template match on B3's render otherwise — before anything is counted. One sheet per request, project-scoped; no firm-wide symbol library yet. Design in [`docs/specs/accurate-symbol-marking.md`](docs/specs/accurate-symbol-marking.md). Conversation is designed but unbuilt: `engine/conversation.py` routes an utterance to a typed proposal, and nothing in `src/` calls it or renders a panel. Full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
 
 | Agent | Nature | Produces |
 |---|---|---|

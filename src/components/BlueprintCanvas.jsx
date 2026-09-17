@@ -10,6 +10,13 @@ export { SHEET_W, SHEET_H } from "../lib/sheetGeometry.js";
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 6;
 
+// A point marker's ring/box never covers the symbol underneath it any
+// more (Task 14) -- it outlines the glyph's own drawn box, in paper
+// units, with a faint status-coloured tint inside. A box this small
+// would otherwise be a sliver too thin to click or to read as a status
+// ring, so every side is floored at MIN_MARKER, centred on the item.
+const MIN_MARKER = 12;
+
 function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
@@ -378,7 +385,12 @@ export default function BlueprintCanvas({
               );
             })()}
 
-            {/* point markers */}
+            {/* point markers -- the status colour is the outline of the
+                glyph's own drawn box (plus a faint interior tint), never a
+                disc on top of it: the real symbol under the tiles is what
+                the estimator is looking at, so nothing here may cover it.
+                The item's type has moved off the sheet, into the hover
+                tooltip and the detail panel. */}
             {visible
               .filter((it) => !it.path)
               .map((it) => {
@@ -386,6 +398,11 @@ export default function BlueprintCanvas({
                 const sel = it.id === selectedId;
                 const remote = remoteSelections.find((r) => r.itemId === it.id);
                 const at = toPaper({ x: it.x, y: it.y }, sheet);
+                const box0 = it.placements?.[0];
+                const hasBox = Array.isArray(box0) && box0.length >= 4;
+                const w = hasBox ? Math.max(MIN_MARKER, box0[2]) : 0;
+                const h = hasBox ? Math.max(MIN_MARKER, box0[3] * ky) : 0;
+                const badgeAt = hasBox ? `translate(${w / 2} ${-h / 2})` : "translate(10 -10)";
                 return (
                   <g
                     key={it.id}
@@ -409,13 +426,51 @@ export default function BlueprintCanvas({
                       }
                     }}
                   >
-                    <circle r="19" fill={sel ? meta.color : "transparent"} opacity={sel ? 0.14 : 0} />
-                    {sel && <circle r="17" fill="none" stroke={meta.color} strokeWidth="2" />}
-                    {remote && !sel && <circle r="17" fill="none" stroke={remote.color} strokeWidth="2" strokeDasharray="4 3" />}
-                    <circle r="13" fill="#fff" opacity="0.85" />
-                    <SymbolGlyph kind={it.symbol} color={meta.color} />
+                    {hasBox ? (
+                      <>
+                        {remote && !sel && (
+                          <rect
+                            x={-w / 2 - 3}
+                            y={-h / 2 - 3}
+                            width={w + 6}
+                            height={h + 6}
+                            rx="4"
+                            fill="none"
+                            stroke={remote.color}
+                            strokeWidth="2"
+                            strokeDasharray="4 3"
+                          />
+                        )}
+                        <rect
+                          className="marker-box"
+                          x={-w / 2}
+                          y={-h / 2}
+                          width={w}
+                          height={h}
+                          rx="3"
+                          fill={meta.color}
+                          fillOpacity={sel ? 0.18 : 0.1}
+                          stroke={meta.color}
+                          strokeWidth={sel ? 2.6 : 1.8}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        {remote && !sel && (
+                          <circle r="20" fill="none" stroke={remote.color} strokeWidth="2" strokeDasharray="4 3" />
+                        )}
+                        <circle
+                          className="marker-ring"
+                          r="17"
+                          fill={meta.color}
+                          fillOpacity={sel ? 0.18 : 0.1}
+                          stroke={meta.color}
+                          strokeWidth={sel ? 2.6 : 1.8}
+                        />
+                      </>
+                    )}
                     {it.warnings?.length > 0 && layers.warnings && (
-                      <g transform="translate(9 -9)">
+                      <g transform={badgeAt}>
                         <circle r="6" fill={STATUS[it.status].color} stroke="#fff" strokeWidth="1.6" />
                         <text y="0.5" fill="#fff" fontSize="9" fontWeight="700" textAnchor="middle" dominantBaseline="central">
                           !
@@ -518,8 +573,13 @@ export default function BlueprintCanvas({
           const meta = STATUS[it.status];
           const at = toPaper({ x: it.x, y: it.y }, sheet);
           return (
-            <div className="tooltip" style={{ left: view.tx + at.x * view.scale, top: view.ty + at.y * view.scale - 22 }}>
-              {it.name}
+            <div className="tooltip marker-tip" style={{ left: view.tx + at.x * view.scale, top: view.ty + at.y * view.scale - 22 }}>
+              <span className="tooltip__head">
+                <svg width="18" height="18" viewBox="-13 -13 26 26" aria-hidden="true">
+                  <SymbolGlyph kind={it.symbol} color="#fff" size={18} />
+                </svg>
+                {it.name}
+              </span>
               <span>
                 {it.quantity} {it.unit} · {meta.label}
               </span>
@@ -600,7 +660,7 @@ export default function BlueprintCanvas({
           <h4>Review status</h4>
           {["missing", "attention", "ready", "approved"].map((k) => (
             <div className="legend__row" key={k}>
-              <span className="swatch" style={{ background: STATUS[k].color, color: STATUS[k].color }} />
+              <span className="swatch" style={{ background: STATUS[k].tint, borderColor: STATUS[k].color }} />
               {STATUS[k].label}
             </div>
           ))}

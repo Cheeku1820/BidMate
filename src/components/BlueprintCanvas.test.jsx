@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render } from "@testing-library/react";
 import BlueprintCanvas from "./BlueprintCanvas.jsx";
+import { STATUS } from "../lib/vocabulary.js";
 
 // jsdom has no ResizeObserver; the canvas uses one to track its viewport.
 class StubResizeObserver {
@@ -204,5 +205,68 @@ describe("boxed placements and symbol matches", () => {
     expect(container.querySelector("rect.matchbox")).toBeNull();
     act(() => { fireEvent.pointerUp(vp, { clientX: 140, clientY: 120, pointerId: 1 }); });
     expect(onDrawBox).not.toHaveBeenCalled();
+  });
+});
+
+/* Task 14: the marker no longer covers the symbol it sits on -- the
+   status colour becomes the outline of the glyph's own box (plus a
+   faint interior tint) rather than a white disc with the app's glyph
+   drawn on top. The 20 x 20 sheet-unit box used below scales to well
+   over MIN_MARKER on THREE_TWO's 667/750 ky, so these assert the real
+   scaled numbers rather than colliding with the minimum-size floor
+   exercised separately below. */
+describe("point markers outline the glyph's box instead of covering it", () => {
+  const KY = 667 / 750;
+
+  it("renders a marker-box sized to the placement, with no white disc and no glyph inside it", () => {
+    const items = [{ id: "i1", sheetId: "s1", x: 500, y: 375, status: "ready", symbol: "receptacle", name: "r", quantity: 1, unit: "ea", placements: [[500, 375, 20, 20]] }];
+    const { container } = canvas(THREE_TWO, items);
+    const g = container.querySelector('g[transform^="translate"]');
+    const box = g.querySelector("rect.marker-box");
+    expect(box).not.toBeNull();
+    expect(box.getAttribute("width")).toBe("20");
+    expect(Number(box.getAttribute("height"))).toBeCloseTo(20 * KY, 1);
+    expect(box.getAttribute("stroke")).toBe(STATUS.ready.color);
+    expect(box.getAttribute("fill-opacity")).toBe("0.1");
+    // no white disc, and no SymbolGlyph (a receptacle draws two <line>s)
+    // on the sheet -- the type channel now lives in the tooltip only.
+    expect(g.querySelector('circle[fill="#fff"]')).toBeNull();
+    expect(g.querySelector("line")).toBeNull();
+  });
+
+  it("renders a marker-ring, not a marker-box, for a placement with no extent", () => {
+    const items = [{ id: "i1", sheetId: "s1", x: 500, y: 375, status: "ready", symbol: "switch", name: "s", quantity: 1, unit: "ea", placements: [[500, 375]] }];
+    const { container } = canvas(THREE_TWO, items);
+    const g = container.querySelector('g[transform^="translate"]');
+    expect(g.querySelector("circle.marker-ring")).not.toBeNull();
+    expect(g.querySelector("rect.marker-box")).toBeNull();
+  });
+
+  it("floors a tiny box at MIN_MARKER (12) on each side, centred", () => {
+    const items = [{ id: "i1", sheetId: "s1", x: 500, y: 375, status: "attention", symbol: "receptacle", name: "r", quantity: 1, unit: "ea", placements: [[500, 375, 4, 3]] }];
+    const { container } = canvas(THREE_TWO, items);
+    const box = container.querySelector("rect.marker-box");
+    expect(Number(box.getAttribute("width"))).toBeGreaterThanOrEqual(12);
+    expect(Number(box.getAttribute("height"))).toBeGreaterThanOrEqual(12);
+    expect(box.getAttribute("x")).toBe(String(-Number(box.getAttribute("width")) / 2));
+    expect(box.getAttribute("y")).toBe(String(-Number(box.getAttribute("height")) / 2));
+  });
+
+  it("gives the selected item's marker-box the selected fill-opacity", () => {
+    const items = [{ id: "i1", sheetId: "s1", x: 500, y: 375, status: "ready", symbol: "receptacle", name: "r", quantity: 1, unit: "ea", placements: [[500, 375, 20, 20]] }];
+    const { container } = canvas(THREE_TWO, items, { selectedId: "i1" });
+    const box = container.querySelector("rect.marker-box");
+    expect(box.getAttribute("fill-opacity")).toBe("0.18");
+  });
+
+  it("shows the item name and status label in the hover tooltip", () => {
+    const items = [{ id: "i1", sheetId: "s1", x: 500, y: 375, status: "attention", symbol: "receptacle", name: "20A duplex receptacle", quantity: 1, unit: "ea", placements: [[500, 375, 20, 20]] }];
+    const { container } = canvas(THREE_TWO, items);
+    const g = container.querySelector('g[transform^="translate"]');
+    fireEvent.mouseEnter(g);
+    const tip = container.querySelector(".tooltip");
+    expect(tip).not.toBeNull();
+    expect(tip.textContent).toContain("20A duplex receptacle");
+    expect(tip.textContent).toContain(STATUS.attention.label);
   });
 });

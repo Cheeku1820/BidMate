@@ -2802,4 +2802,5 @@ button {
   width: 100%; resize: none; font: inherit; font-size: 13.5px; padding: 8px 10px;
   border: 1px solid var(--line-2); border-radius: var(--r-md); background: var(--surface); color: var(--ink-1);
 }
-.conversation__composer textarea:disabled { background: var(--paper-1); color: var(--ink-3); }
+.conversation__composer textarea:disabled,
+.conversation__composer textarea:read-only { background: var(--paper-1); color: var(--ink-3); }

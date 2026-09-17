@@ -57,7 +57,8 @@ services:
     # conversation panel; without it the panel says it isn't set up and
     # nothing else is affected. Deliberately not listed under
     # `environment:` -- an entry there, even an empty `${...:-}`, wins over
-    # the file and blanks the key.
+    # the file and blanks the key. The `path:`/`required:` long syntax
+    # needs Compose 2.24 or newer.
     env_file:
       - path: ./api/.env
         required: false

@@ -23,7 +23,10 @@ const NOT_CONFIGURED = "not_configured";
 
 function contextLine(name, selection, view) {
   const parts = [SCREEN_LABELS[name] ?? "This project"];
-  if (selection.sheetLabel) parts.push(selection.sheetLabel);
+  // The spreadsheet is project-wide; its sheet is only where the
+  // estimator last came from, so naming it would promise a narrower
+  // answer than the server gives.
+  if (selection.sheetLabel && name !== "spreadsheet") parts.push(selection.sheetLabel);
   if (selection.itemLabel) parts.push(`${selection.itemLabel} selected`);
   if (view.filter && STATUS[view.filter]) parts.push(`filtered to ${STATUS[view.filter].label}`);
   return parts.join(" · ");
@@ -93,7 +96,10 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
         setPending(null);
         return;
       }
-      setPending((p) => ({ state: "error", text: p?.text ?? "", message: err?.message ?? "Answer interrupted — ask again", retry: err?.code === "busy" }));
+      // Only a typed error's message is ours; a bare TypeError("Failed to
+      // fetch") is the browser's and would not name a recovery.
+      const message = err?.code ? err.message : "Answer interrupted — ask again";
+      setPending((p) => ({ state: "error", text: p?.text ?? "", message, retry: err?.code === "busy" }));
     }
   }, [store, projectId, name, selection, view, pending, messages]);
 
@@ -109,7 +115,9 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
   };
 
   const onKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // isComposing: Enter inside an IME commits the composition, not the
+    // question.
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       send(draft);
     }
@@ -159,6 +167,10 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
 
       <form className="conversation__composer" onSubmit={(e) => { e.preventDefault(); send(draft); }}>
         <label htmlFor="conversation-draft" className="conversation__label">Ask a question</label>
+        {/* Read-only, not disabled, while streaming: a disabled textarea
+            drops focus to <body>, where the blueprint's single-key
+            shortcuts (a approve, r reject, e, j, k) would fire on the
+            estimator's next keystroke. send() refuses while streaming. */}
         <textarea
           id="conversation-draft"
           value={draft}
@@ -166,7 +178,9 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
           onKeyDown={onKeyDown}
           rows={2}
           maxLength={4000}
-          disabled={streaming || loading || Boolean(unavailable)}
+          readOnly={streaming}
+          aria-busy={streaming || undefined}
+          disabled={loading || Boolean(unavailable)}
         />
         <button type="submit" className="btn btn--primary" disabled={streaming || loading || Boolean(unavailable) || !draft.trim()} aria-label="Send">
           <Send size={16} />

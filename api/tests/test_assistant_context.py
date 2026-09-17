@@ -1,6 +1,6 @@
 """app/assistant/context.py -- what each screen puts in view. The
 screen name is a closed set mirrored by src/components/conversation/
-screenContext.js; a name outside it is a validation error, never a
+screenContext.jsx; a name outside it is a validation error, never a
 guess."""
 import uuid
 
@@ -77,6 +77,23 @@ def test_takeoff_screen_narrows_items_to_the_sheet_and_summarizes_the_rest(db, p
     bundle = build(db, dana, project, _screen("takeoff", sheet_id=sheet.id))
     assert [i["name"] for i in bundle.items] == ["20A duplex receptacle"]
     assert bundle.other_sheets == [{"number": "E3.1", "counts": {"attention": 1}}]
+    assert bundle.sheet_text["number"] == "E2.1"
+
+
+def test_spreadsheet_is_project_wide_even_with_a_current_sheet(db, project, dana, sheet, item):
+    """The spreadsheet lists every sheet's items; its sheet_id is only
+    the row the estimator last came from. Narrowing there would answer
+    "what's on the spreadsheet" with one sheet."""
+    other = Sheet(project_id=project.id, number="E3.1", title="Lighting plan", discipline="Electrical",
+                  revision="Rev 2", scale="1/8", scale_options=[], plan="warehouse", sort_order=2)
+    db.add(other)
+    db.flush()
+    db.add(Item(project_id=project.id, sheet_id=other.id, symbol="fixture", name="Type F luminaire",
+                system="Lighting", category="Fixtures", quantity=3, unit="EA", status=ReviewStatus.ATTENTION))
+    db.flush()
+    bundle = build(db, dana, project, _screen("spreadsheet", sheet_id=sheet.id))
+    assert sorted(i["name"] for i in bundle.items) == ["20A duplex receptacle", "Type F luminaire"]
+    assert bundle.other_sheets is None
     assert bundle.sheet_text["number"] == "E2.1"
 
 

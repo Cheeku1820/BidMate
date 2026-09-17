@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import uuid
 from collections.abc import Iterator
 
@@ -27,13 +28,19 @@ from app.assistant.prompt import SYSTEM_PROMPT, render
 from app.assistant.schemas import ScreenIn
 from app.db import SessionLocal
 from app.identity.models import User
+from app.observability import request_id_var
 from app.takeoff.models import Project
+
+logger = logging.getLogger(__name__)
 
 HISTORY_TURNS = 20
 THREAD_CAP = 200
 
 BUSY = ("busy", "Busy right now — ask again in a moment")
 INTERRUPTED = ("interrupted", "Answer interrupted — ask again")
+# A key that is present but rejected (401/403) is the same problem as
+# no key: a setup one, not one a retry fixes. Same words as the 503.
+NOT_CONFIGURED = ("not_configured", "The conversation panel isn't set up on this server")
 
 
 @contextlib.contextmanager
@@ -109,6 +116,16 @@ def _event(name: str, payload: dict) -> str:
     return f"event: {name}\ndata: {json.dumps(payload)}\n\n"
 
 
+def _failed(outcome: tuple[str, str]) -> str:
+    """Log the exception being handled, with the request id so the log
+    line and the panel's X-Request-Id meet, and render the error event.
+    The exception's text never reaches the wire: the panel shows only
+    the recovery copy."""
+    code, message = outcome
+    logger.warning("conversation answer failed (%s) request_id=%s", code, request_id_var.get(), exc_info=True)
+    return _event("error", {"code": code, "message": message})
+
+
 def answer_events(*, project_id: uuid.UUID, actor_id: uuid.UUID, bundle_text: str, messages: list[dict]) -> Iterator[str]:
     """The SSE body. Yields delta events as text arrives, then done with
     the stored answer's id; on failure an error event and nothing stored."""
@@ -123,20 +140,29 @@ def answer_events(*, project_id: uuid.UUID, actor_id: uuid.UUID, bundle_text: st
         for chunk in llm.stream(system_blocks, messages):
             chunks.append(chunk)
             yield _event("delta", {"text": chunk})
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError):
+        yield _failed(NOT_CONFIGURED)
+        return
     except anthropic.RateLimitError:
-        yield _event("error", {"code": BUSY[0], "message": BUSY[1]})
+        yield _failed(BUSY)
         return
     except anthropic.APIStatusError as exc:
-        code, message = BUSY if exc.status_code == 529 else INTERRUPTED
-        yield _event("error", {"code": code, "message": message})
+        yield _failed(BUSY if exc.status_code == 529 else INTERRUPTED)
         return
     except Exception:  # noqa: BLE001 -- connection drops and anything else: the panel says "ask again"
-        yield _event("error", {"code": INTERRUPTED[0], "message": INTERRUPTED[1]})
+        yield _failed(INTERRUPTED)
         return
 
-    with answer_session() as db:
-        row = ConversationMessage(project_id=project_id, role="answer", text="".join(chunks), created_by=actor_id)
-        db.add(row)
-        db.commit()
-        answer_id = str(row.id)
+    # The deltas are already on the wire; a failed store must still end
+    # the body with an event the panel can render, not a dropped
+    # connection. Nothing is stored, so the thread reloads without it.
+    try:
+        with answer_session() as db:
+            row = ConversationMessage(project_id=project_id, role="answer", text="".join(chunks), created_by=actor_id)
+            db.add(row)
+            db.commit()
+            answer_id = str(row.id)
+    except Exception:  # noqa: BLE001
+        yield _failed(INTERRUPTED)
+        return
     yield _event("done", {"id": answer_id})

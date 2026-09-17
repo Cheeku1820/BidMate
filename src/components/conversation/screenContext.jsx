@@ -1,5 +1,5 @@
 /* ============================================================
-   screenContext.js — how the conversation panel knows what is on
+   screenContext.jsx — how the conversation panel knows what is on
    screen.
 
    The panel mounts in AppShell, above ProjectWorkspaceLayout, so it

@@ -150,6 +150,58 @@ def test_rate_limit_is_busy(client, signed_in_user, project, model, monkeypatch)
     assert events == [("error", {"code": "busy", "message": "Busy right now — ask again in a moment"})]
 
 
+def test_a_rejected_key_is_not_configured_not_interrupted(client, signed_in_user, project, model, monkeypatch, caplog):
+    """A key that is present but wrong (401/403) is a setup problem, not
+    a transient one: the panel must say so rather than invite a retry."""
+    import logging
+
+    import anthropic
+    import httpx2
+
+    def rejected(system_blocks, messages):
+        raise anthropic.AuthenticationError(
+            "invalid x-api-key", response=httpx2.Response(401, request=httpx2.Request("POST", "http://x")), body=None)
+        yield  # noqa: unreachable -- makes this a generator
+
+    monkeypatch.setattr(service.llm, "stream", rejected)
+    with caplog.at_level(logging.WARNING, logger="app.assistant.service"):
+        res = _post(client, project)
+    assert _events(res.text) == [("error", {"code": "not_configured",
+                                            "message": "The conversation panel isn't set up on this server"})]
+    assert "invalid x-api-key" not in res.text
+    record = next(r for r in caplog.records if r.exc_info)
+    assert record.exc_info[0] is anthropic.AuthenticationError
+    assert "not_configured" in record.getMessage() and "request_id=" in record.getMessage()
+
+
+def test_a_failure_storing_the_answer_is_an_interrupted_event_not_a_dropped_connection(
+        client, signed_in_user, project, model, monkeypatch, caplog):
+    """The stream has already sent the deltas when the store fails; the
+    body must still end in an error event the client can render, and the
+    exception must reach the log with the request id, never the wire."""
+    import logging
+
+    class Boom(RuntimeError):
+        pass
+
+    class Failing:
+        def add(self, row):
+            pass
+
+        def commit(self):
+            raise Boom("disk full")
+
+    monkeypatch.setattr(service, "answer_session", lambda: contextlib.nullcontext(Failing()))
+    with caplog.at_level(logging.WARNING, logger="app.assistant.service"):
+        res = _post(client, project)
+    events = _events(res.text)
+    assert events[-1] == ("error", {"code": "interrupted", "message": "Answer interrupted — ask again"})
+    assert "disk full" not in res.text
+    record = next(r for r in caplog.records if r.exc_info)
+    assert record.exc_info[0] is Boom
+    assert "interrupted" in record.getMessage() and "request_id=" in record.getMessage()
+
+
 def test_without_a_key_the_route_says_so_before_streaming(client, signed_in_user, project, monkeypatch):
     monkeypatch.setattr(service.llm, "available", lambda: False)
     res = _post(client, project)

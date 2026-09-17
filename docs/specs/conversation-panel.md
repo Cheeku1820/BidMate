@@ -56,7 +56,7 @@ A toggle at the top of a 44px collapsed strip (a `MessageSquare` icon, same trea
 
 - **Header.** Title "Ask about this project". Under it, a context line naming what is in view — "Confirm drawings · 14 sheets, 3 scope statements", "E2.1 · 20A duplex receptacle selected" — so the estimator sees what an answer will be about before asking. This is the client's rendering of the same descriptor it sends.
 - **Thread.** Oldest at top. Estimator turns right-aligned on `--surface-2`; answers left-aligned, plain. Answers render light markdown only: paragraphs, `- ` lists, bold, italic. No headings, tables, or code. A streaming answer grows in place. Autoscroll only while the estimator is already at the bottom.
-- **Composer.** A labelled textarea ("Ask a question"), Enter sends, Shift+Enter newlines, a send button. Disabled while an answer is streaming. Single-key shortcuts are already suppressed in text fields.
+- **Composer.** A labelled textarea ("Ask a question"), Enter sends (not while an input method is composing), Shift+Enter newlines, a send button. While an answer is streaming the textarea is read-only and the send button disabled — read-only rather than disabled so focus stays in the textarea: a disabled field drops focus to the page, where the blueprint's single-key shortcuts (a, r, e, j, k) would fire on the next keystroke. Single-key shortcuts are already suppressed in text fields.
 
 ### Empty state
 
@@ -82,7 +82,7 @@ Sentence case, plain construction terms, short answers. No exclamation marks, no
 
 ## What each screen puts in view
 
-The client sends `screen: { name, sheetId?, itemId?, view? }`. `name` is a closed set defined once in `src/components/conversation/screenContext.js` and mirrored in `api/app/assistant/context.py`:
+The client sends `screen: { name, sheetId?, itemId?, view? }`. `name` is a closed set defined once in `src/components/conversation/screenContext.jsx` and mirrored in `api/app/assistant/schemas.py`:
 
 | `name` | Route | Context loaded |
 |---|---|---|
@@ -90,7 +90,8 @@ The client sends `screen: { name, sheetId?, itemId?, view? }`. `name` is a close
 | `documents` | `…/documents` | Documents: filename, type, status, page count, error |
 | `confirm` | `…/documents/confirm` | Documents; sheets (number, title, discipline, revision, scale, kind, unreadable reason); scope statements with quotes; `Document.context_text` of scope and specification documents |
 | `processing` | `…/processing` | The processing status the screen polls (`build_processing`) |
-| `takeoff`, `spreadsheet` | `…/takeoff`, `…/spreadsheet` | Sheets; items with warnings; totals. With `sheetId`, that sheet's items in full and other sheets as counts by status. With `itemId`, that item first with its evidence description. The current sheet's `schedule_text` and `legend`. |
+| `takeoff` | `…/takeoff` | Sheets; items with warnings; totals. With `sheetId`, that sheet's items in full and other sheets as counts by status. With `itemId`, that item first with its evidence description. The current sheet's `schedule_text` and `legend`. |
+| `spreadsheet` | `…/spreadsheet` | Sheets; every sheet's items with warnings (the cap still applies); totals. Project-wide: the spreadsheet lists every sheet, so its `sheetId` is only the row the estimator last came from and never narrows the items. With `itemId`, that item first. The current sheet's `schedule_text` and `legend`. *(Amended after the final review: the first cut narrowed both screens by `sheetId`, which answered "what's on the spreadsheet" with one sheet.)* |
 | `notes` | `…/notes` | Notes; sheets summary |
 | `labor`, `pricing` | `…/labor`, `…/pricing` | Pricing basis (source, note, rate, factor); items with cost fields; totals by system |
 | `export` | `…/export` | Totals by system; blocking items; acknowledged allowances |
@@ -153,7 +154,7 @@ Both org-scoped through `load_project`, so a cross-org probe gets the same 404 a
 - `POST /api/projects/{id}/conversation/messages` with `{ text, screen }` → `text/event-stream`:
   - `event: delta` — `{ "text": "…" }`, one per chunk
   - `event: done` — `{ "id": "<stored answer id>" }`
-  - `event: error` — `{ "code": "busy" | "interrupted", "message": "<recovery copy>" }`; nothing is stored for the answer
+  - `event: error` — `{ "code": "busy" | "interrupted" | "not_configured", "message": "<recovery copy>" }`; nothing is stored for the answer. `not_configured` mid-stream is a key the model rejected (401/403), the same words as the 503 below. A failure storing the answer after the deltas is an `interrupted` event, never a dropped connection. Every failure is logged with the request id; the exception's text never reaches the wire.
   - Without a key on the server: HTTP 503 `{ code: "not_configured", message: "The conversation panel isn't set up on this server" }` before any stream starts.
 
 `text` is required, at most 4,000 characters. `screen.name` must be in the closed set or the request is a 422.
@@ -180,7 +181,7 @@ client.messages.stream(
 
 Order matters for the cache: the frozen prompt first, the bundle second, the conversation last. Repeat questions from the same screen hit both cached blocks; changing screens re-caches only the second. `SYSTEM_PROMPT` contains nothing that varies per request — no timestamp, no project name.
 
-Errors map to the SSE `error` event: `RateLimitError` and `APIStatusError` with status 529 → `busy`; `APIConnectionError` and anything raised mid-stream → `interrupted`. Handled most-specific first.
+Errors map to the SSE `error` event: `AuthenticationError` and `PermissionDeniedError` → `not_configured`; `RateLimitError` and `APIStatusError` with status 529 → `busy`; `APIConnectionError` and anything raised mid-stream → `interrupted`. Handled most-specific first.
 
 ### The prompt
 
@@ -205,7 +206,7 @@ src/components/conversation/
   ConversationPanel.jsx     the column: header, thread, composer, collapsed strip
   ConversationThread.jsx    message list, autoscroll, the streaming bubble
   AnswerText.jsx            paragraphs, "- " lists, bold, italic — no dependency
-  screenContext.js          ConversationScreenContext, SCREEN_NAMES, useConversationScreen(descriptor)
+  screenContext.jsx         ConversationScreenContext, SCREEN_NAMES, useConversationSelection, useConversationView
   exampleQuestions.js       the starter questions per screen name
 src/lib/store/api.js        + listConversation(projectId), sendMessage(projectId, { text, screen }, onDelta, signal)
 ```
@@ -226,7 +227,7 @@ useConversationScreen({ name: "spreadsheet", sheetId, itemId: selectedItemId, vi
 
 ### Interaction
 
-Sending appends the estimator's turn immediately and an empty answer bubble showing three dots until the first delta lands; the bubble grows in place. The composer is disabled while streaming. The thread autoscrolls only while the estimator is already at the bottom.
+Sending appends the estimator's turn immediately and an empty answer bubble showing three dots until the first delta lands; the bubble grows in place. The composer is read-only while streaming (see Anatomy). The thread autoscrolls only while the estimator is already at the bottom. One visually hidden status region outside the list announces "Waiting for an answer" and "Answer complete"; the list itself is not live, and an error's text sits in its bubble without a second live region.
 
 ---
 
@@ -260,7 +261,7 @@ Every error names a recovery action. No toasts — an error lives in the bubble 
 
 - The shell renders the panel column on project routes and not elsewhere.
 - Header context line per descriptor; example questions per screen.
-- Send: optimistic turn; deltas from a mocked reader render incrementally; composer disabled meanwhile.
+- Send: optimistic turn; deltas from a mocked reader render incrementally; composer read-only and still focused meanwhile.
 - Each error state's copy.
 - The collapse toggle persists through remount.
 - `useConversationScreen` updates the context and the request body.
@@ -288,3 +289,5 @@ Proposals and edits of any kind; canvas anchors and point-and-tell; questions ge
 - **Answer quality on filtered views.** The context states the filter rather than applying it. If answers are wrong about "what's here", applying the filter server-side through the shared rules is the fix, and the descriptor already carries what is needed.
 - **Latency.** Opus at low effort with a cached bundle should answer in a few seconds; the first question on a new screen pays the cache write. If it is felt, effort stays low and the bundle gets smaller before the model changes.
 - **Copy drift into AI register.** The prompt forbids it, and a test asserts the forbidden words do not appear in the rendered system prompt itself; answer text is model output and is checked by reading it during the pilot, not by a test.
+- **One threadpool worker per in-flight answer.** The SSE body is a sync generator, so Starlette runs it through `iterate_in_threadpool` and each streaming answer holds one of the sync threadpool's workers for the whole stream (default pool of 40). Fine for the pilot's handful of estimators; the follow-up, if it is felt, is `AsyncAnthropic` with an async generator.
+- **A retry stores a second estimator turn.** "Ask again" after a busy or interrupted answer posts the question again, and the server stores the estimator turn before it streams, so the thread keeps both copies of the question with only the second answered. Accepted in this slice: the thread reads honestly (the estimator did ask twice) and `history_for_model` already tolerates non-alternating turns.

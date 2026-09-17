@@ -36,13 +36,33 @@ The context
 _STATUS_KEYS = tuple(STATUS_LABELS)
 
 
+# The screen names the client sends, in the words the product uses for
+# them (screenContext.jsx SCREEN_LABELS). The prompt's "where things
+# live" list uses the same words, so the model names screens the way
+# the estimator sees them.
+SCREEN_LABELS = {
+    "overview": "Project overview",
+    "documents": "Documents",
+    "confirm": "Confirm drawings",
+    "processing": "Processing",
+    "takeoff": "Blueprint",
+    "spreadsheet": "Spreadsheet",
+    "notes": "Notes and assumptions",
+    "labor": "Labor",
+    "pricing": "Material pricing",
+    "export": "Export",
+    "settings": "Project settings",
+}
+
+
 def esc(value) -> str:
-    """Escape the characters that could open or close a tag. Applied to
-    every record string, not only document text: an item name is also
-    something a drawing put there."""
+    """Escape the characters that could open or close a tag, or close an
+    attribute. Applied to every record string, not only document text:
+    an item name is also something a drawing put there."""
     if value is None:
         return ""
-    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return (str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
 
 
 def _section(name: str, body: str) -> str:
@@ -151,7 +171,9 @@ def _items(bundle: ContextBundle) -> str:
             out.append(f"    warning: {esc(w['title'])} — found: {esc(w['found'])} — why: {esc(w['why'])} "
                        f"— check: {esc(w['fix'])} — where: {esc(w['where'])}")
     if not out:
-        out.append("No items on this sheet." if bundle.screen.sheet_id else "No items have been counted yet.")
+        # Only the blueprint's items are narrowed to a sheet (context._items).
+        on_one_sheet = bundle.screen.sheet_id and bundle.screen.name == "takeoff"
+        out.append("No items on this sheet." if on_one_sheet else "No items have been counted yet.")
     if bundle.item_overflow:
         o = bundle.item_overflow
         per = "; ".join(f"{esc(n)}: {_counts(c)}" for n, c in sorted(o["per_sheet"].items()))
@@ -213,9 +235,10 @@ def _sheet_text(s: dict) -> str:
 
 
 def render(bundle: ContextBundle) -> str:
-    parts = [_section("screen", f"The estimator is on: {bundle.screen.name}")]
+    parts = [_section("screen", f"The estimator is on: {SCREEN_LABELS[bundle.screen.name]}")]
     if bundle.view_note:
-        parts.append(_section("view", bundle.view_note))
+        # The note carries the estimator's search string verbatim.
+        parts.append(_section("view", esc(bundle.view_note)))
     parts.append(_section("project", _project(bundle.project)))
     if bundle.counts is not None:
         parts.append(_section("item_counts", _item_counts(bundle.counts)))

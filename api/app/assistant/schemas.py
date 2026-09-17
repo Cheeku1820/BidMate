@@ -1,7 +1,7 @@
 """The wire shapes of the conversation panel.
 
 `SCREEN_NAMES` is mirrored, verbatim, by src/components/conversation/
-screenContext.js. The server never parses a URL: the client names the
+screenContext.jsx. The server never parses a URL: the client names the
 screen from its own route table and the server refuses anything outside
 this set. Nothing here names a model, a confidence, or an assistant."""
 

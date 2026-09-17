@@ -38,7 +38,7 @@ STATUS_LABELS = {
 
 # Which sections each screen gets on top of the base three (project,
 # scope statements, notes). Adding a screen is one row here and one in
-# screenContext.js.
+# screenContext.jsx.
 _SECTIONS = {
     "overview": ("counts", "documents"),
     "documents": ("documents",),
@@ -238,7 +238,11 @@ def build(db: DbSession, actor: User, project: Project, screen: ScreenIn) -> Con
 def _items(bundle: ContextBundle, snap, sheet_numbers: dict) -> None:
     screen = bundle.screen
     live = [i for i in snap.items if not i.rejected]
-    if screen.sheet_id is not None:
+    # Only the blueprint shows one sheet. The spreadsheet lists every
+    # sheet's items, and its sheet_id is just the row the estimator last
+    # came from -- narrowing there would answer "what's on the
+    # spreadsheet" with one sheet. (The cap still applies.)
+    if screen.sheet_id is not None and screen.name == "takeoff":
         on_sheet = [i for i in live if i.sheet_id == screen.sheet_id]
         elsewhere = [i for i in live if i.sheet_id != screen.sheet_id]
         bundle.other_sheets = _per_sheet_counts(elsewhere, sheet_numbers)

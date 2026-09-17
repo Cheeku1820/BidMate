@@ -280,10 +280,32 @@ def add_item(db: DbSession, actor: User, *, project, sheet, name: str, symbol: s
     'not sure'). The mirror of `delete_item`: `before` is empty and
     `after` is the same full snapshot a delete records, so undo removes
     the row and redo restores it, warning included. Never approved here
-    -- approval is its own act."""
+    -- approval is its own act, so only Ready to review or Needs
+    attention are accepted; a caller cannot hand an item Estimator
+    approved status with nobody's name on it.
+
+    A Needs attention item without a warning would sit in the review
+    queue with no explanation of what to check -- the four-field warning
+    is the only thing that makes that status legible, so it's required.
+    Symmetrically, a Ready to review item is not carrying an open
+    question, so a warning attached to one would be evidence with
+    nothing to point at; refused for the same reason.
+    """
+    if sheet.project_id != project.id:
+        raise DomainError("sheet_not_in_project", "This sheet belongs to a different project.", status=404)
+    if status not in ("ready", "attention"):
+        raise DomainError(
+            "invalid_status", "An added item starts as Ready to review or Needs attention.", status=422,
+        )
+    if status == "attention" and not warning:
+        raise DomainError("warning_required", "An item that needs attention must say why.", status=422)
+    if status == "ready" and warning:
+        raise DomainError("warning_not_allowed", "A Ready to review item carries no warning.", status=422)
+
     item = Item(
         id=uuid.uuid4(), project_id=project.id, sheet_id=sheet.id, symbol=symbol, name=name, description="",
-        system=system, category="Devices" if status == "ready" else "Unclassified", quantity=quantity, unit="ea",
+        system=system, category="Devices" if status == "ready" else "Unclassified",
+        quantity=Decimal(str(quantity)), unit="ea",
         status=ReviewStatus(status), x=x, y=y, placements=placements, source_tag=source_tag,
     )
     db.add(item)

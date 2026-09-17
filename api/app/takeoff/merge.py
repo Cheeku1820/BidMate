@@ -444,14 +444,14 @@ def drop_sheets(db: DbSession, sheet_ids) -> None:
     if not ids:
         return
     for sheet in db.scalars(select(Sheet).where(Sheet.id.in_(ids))):
-        any_approved = False
+        keep_sheet = False
         for item in db.scalars(select(Item).where(Item.sheet_id == sheet.id)):
             if item.status is ReviewStatus.APPROVED or item.source_tag.startswith("match:"):
-                any_approved = True
+                keep_sheet = True
                 continue
             db.execute(delete(Warning).where(Warning.item_id == item.id))
             db.delete(item)
-        if any_approved:
+        if keep_sheet:
             sheet.unreadable_reason = copy.PAGE_GONE
         else:
             db.execute(delete(Warning).where(Warning.sheet_id == sheet.id))

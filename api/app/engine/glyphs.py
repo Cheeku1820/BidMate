@@ -276,11 +276,15 @@ def _centre_in(rect, x, y) -> bool:
     return rect[0] <= x <= rect[2] and rect[1] <= y <= rect[3]
 
 
-def glyphs_on(page, region, words: list[Word]) -> list[Glyph]:
+def glyphs_on(page, region, words: list[Word], paths: list[Path] | None = None) -> list[Glyph]:
     """Every glyph candidate inside `region` (page points, visual frame),
     in page order. A candidate whose box contains a word's centre is
-    text, not a symbol."""
-    paths = [p for p in paths_on(page) if _small(p)]
+    text, not a symbol. `paths` is `paths_on(page)` already parsed, for a
+    caller that needs the page's paths more than once -- parsing is the
+    expensive half of a dense sheet."""
+    if paths is None:
+        paths = paths_on(page)
+    paths = [p for p in paths if _small(p)]
     out: list[Glyph] = []
     centres = [(w.cx, w.cy) for w in words]
     for group in _candidates(paths):
@@ -361,12 +365,14 @@ def matches_of(glyph: Glyph, glyphs: list[Glyph]) -> list[Glyph]:
     return [g for g in glyphs if same_shape(glyph, g)]
 
 
-def glyph_in(page, rect, words: list[Word]) -> Glyph | None:
+def glyph_in(page, rect, words: list[Word], paths: list[Path] | None = None) -> Glyph | None:
     """The one candidate whose paths all lie inside `rect` (page points,
     visual frame). None when the box holds no full-tone glyph -- the
-    caller falls back to raster matching."""
+    caller falls back to raster matching. `paths` as for glyphs_on."""
     x0, y0, x1, y1 = rect
-    paths = [p for p in paths_on(page) if _small(p)
+    if paths is None:
+        paths = paths_on(page)
+    paths = [p for p in paths if _small(p)
              and p.rect[0] >= x0 and p.rect[1] >= y0 and p.rect[2] <= x1 and p.rect[3] <= y1]
     groups = [g for g in _candidates(paths) if _is_glyph(g)]
     if not groups:

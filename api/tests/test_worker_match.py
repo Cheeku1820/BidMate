@@ -82,6 +82,19 @@ def test_a_boxed_glyph_outside_the_counting_region_is_still_a_match(db, project,
     assert m.status == "found" and len(m.matches) == 1
 
 
+def test_find_matches_parses_the_page_once(monkeypatch, tmp_path):
+    """Parsing the page's drawings is the expensive half of a dense sheet;
+    the box lookup and the region search share one parse."""
+    from app.engine import documents, glyphs
+    from app.worker import match_job
+    path = tmp_path / "e.pdf"; path.write_bytes(_vector_pdf())
+    sheet = documents.detect_sheets(str(path))[0]
+    real, calls = glyphs.paths_on, []
+    monkeypatch.setattr(glyphs, "paths_on", lambda page: calls.append(1) or real(page))
+    rects = match_job.find_matches(str(path), 0, sheet, (90, 390, 112, 410))
+    assert len(rects) == 3 and len(calls) == 1
+
+
 def test_a_failing_match_marks_its_row(db, project, dana, inline, monkeypatch):
     from app.worker import match_job
     sheet = _read(db, project, dana, inline, monkeypatch, _vector_pdf())

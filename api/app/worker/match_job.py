@@ -31,13 +31,17 @@ def find_matches(path: str, page_index: int, sheet: DetectedSheet, rect) -> list
     estimator drew is not bound by it: a real glyph in the strip is
     still the thing they boxed, so it is prepended when the region-bound
     search does not already carry it. One function, two methods: the
-    glyph in the box decides."""
+    glyph in the box decides. The page's paths are parsed once and
+    handed to both lookups: parsing is most of the job's time on a dense
+    sheet (Pulte E-210: two parses ran ≈59 s against the 60 s match
+    timeout), and the box and the region read the same paths."""
     doc = pymupdf.open(path)
     page = doc[page_index]
     words = visual_words(page)
-    glyph = glyphs.glyph_in(page, rect, words)
+    paths = glyphs.paths_on(page)
+    glyph = glyphs.glyph_in(page, rect, words, paths=paths)
     if glyph is not None:
-        matches = [g.rect for g in glyphs.matches_of(glyph, glyphs.glyphs_on(page, sheet.region, words))]
+        matches = [g.rect for g in glyphs.matches_of(glyph, glyphs.glyphs_on(page, sheet.region, words, paths=paths))]
         if not any(_rect_close(glyph.rect, r) for r in matches):
             matches = [glyph.rect] + matches
         return matches

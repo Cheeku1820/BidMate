@@ -117,6 +117,21 @@ def test_glyph_in_and_matches_of(page):
     assert glyphs.glyph_in(page, (600, 600, 640, 640), words) is None
 
 
+def test_pre_parsed_paths_give_the_same_glyphs(page):
+    """glyphs_on and glyph_in accept paths_on(page) already parsed, so a
+    caller that needs both reads the page once; the answer is the same."""
+    for x in (100, 200, 300):
+        _receptacle(page, x, 100)
+    words = visual_words(page)
+    paths = glyphs.paths_on(page)
+    once = glyphs.glyphs_on(page, _region(), words, paths=paths)
+    twice = glyphs.glyphs_on(page, _region(), words)
+    assert [g.rect for g in once] == [g.rect for g in twice] and len(once) == 3
+    a = glyphs.glyph_in(page, (90, 90, 112, 110), words, paths=paths)
+    b = glyphs.glyph_in(page, (90, 90, 112, 110), words)
+    assert a is not None and a.rect == b.rect and a.key == b.key
+
+
 def test_signature_is_stable_and_orientation_free(page):
     _receptacle(page, 100, 100)
     _receptacle(page, 200, 100, rot=90)

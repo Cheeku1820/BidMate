@@ -622,6 +622,88 @@ describe("pricing writes", () => {
   });
 });
 
+describe("symbol matches", () => {
+  // "Find every one like this" (Task 9's server contract): createMatch
+  // and getMatch are sheet/match-scoped and never call ensureProjectId,
+  // so each test here stubs a single response the way "pricing writes"
+  // above does, rather than bootstrapping /api/projects first.
+  const ITEM_WIRE = {
+    id: "it-01", sheet_id: "s1", symbol: "panel", name: "Panel LP-1", description: "desc",
+    system: "Distribution", category: "Panels", quantity: "184.55", unit: "LF", status: "ready",
+    version: 3, approved_by: null, rejected: false, x: 10, y: 20, path: null, notes: "",
+    evidence: null, warnings: [],
+  };
+
+  it("createMatch posts the box and maps the result", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ id: "m1", sheet_id: "s1", box: [500, 375, 12, 12], status: "pending", count: 0, matches: [], error: "" }, { status: 201 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const m = await store.createMatch("s1", { x: 500, y: 375, w: 12, h: 12 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/sheets/s1/matches");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ x: 500, y: 375, w: 12, h: 12 });
+    expect(m).toEqual({ id: "m1", sheetId: "s1", box: [500, 375, 12, 12], status: "pending", count: 0, matches: [], error: "" });
+  });
+
+  it("getMatch maps the polled result", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ id: "m1", sheet_id: "s1", box: [500, 375, 12, 12], status: "found", count: 2, matches: [{ x: 500, y: 375 }, { x: 600, y: 400 }], error: "" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const m = await store.getMatch("m1");
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/symbol-matches/m1");
+    expect(m.status).toBe("found");
+    expect(m.count).toBe(2);
+    expect(m.matches).toHaveLength(2);
+  });
+
+  it("acceptMatch sends not_sure or the name and invalidates the cache", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ label: "Added 3 unclassified symbols from a drawn symbol", version: 2, item: ITEM_WIRE }, { status: 201 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const r = await store.acceptMatch("m1", { notSure: true });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ not_sure: true });
+    expect(r.label).toMatch(/^Added 3/);
+    expect(r.item.id).toBe("it-01");
+  });
+
+  it("acceptMatch sends the name, symbol, and system when not filing as not sure", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({ label: "Added 3 20A duplex receptacles", version: 2, item: ITEM_WIRE }, { status: 201 })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    await store.acceptMatch("m1", { name: "20A duplex receptacle", symbol: "receptacle", system: "Power" });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/symbol-matches/m1/items");
+    expect(JSON.parse(init.body)).toEqual({ name: "20A duplex receptacle", symbol: "receptacle", system: "Power" });
+  });
+
+  it("discardMatch sends DELETE", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    await store.discardMatch("m1");
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/symbol-matches/m1");
+    expect(init.method).toBe("DELETE");
+  });
+});
+
 describe("the route's project wins over ensureProjectId's fallback", () => {
   /* React runs a child's effects before its parent's, so a screen inside
      ProjectWorkspaceLayout (the presence beat, a notes fetch) can reach

@@ -130,12 +130,20 @@ export function useReviewStore(store, { onSignedOut } = {}) {
     setSnapshot((snap) => (snap ? { ...snap, version, items: snap.items.filter((i) => i.id !== id) } : snap));
   }
 
-  // Shared tail for the five single-item mutations: run it, patch (or
-  // remove) the one item the response describes, toast the label, and
-  // clear any earlier refusal banner for this item — or, on refusal,
-  // leave state untouched and surface it as `itemError` rather than an
-  // unhandled rejection, so a caller never needs its own try/catch to
-  // stay on-screen after a refusal.
+  // Companion to patchItem/removeItemLocal for acceptMatch (B3b): the
+  // response describes a new item rather than one already in the
+  // snapshot, so it is appended rather than replaced or filtered out.
+  function addItemLocal(item, version) {
+    setSnapshot((snap) => (snap ? { ...snap, version, items: [...snap.items, item] } : snap));
+  }
+
+  // Shared tail for the five single-item mutations (plus acceptMatch,
+  // which adds rather than patches or removes): run it, patch/remove/add
+  // the one item the response describes, toast the label, and clear any
+  // earlier refusal banner for this item — or, on refusal, leave state
+  // untouched and surface it as `itemError` rather than an unhandled
+  // rejection, so a caller never needs its own try/catch to stay
+  // on-screen after a refusal.
   //
   // The response only describes the one item it touched — totals and
   // the undo head moved too (an approval changes approvedUnits; any
@@ -150,10 +158,11 @@ export function useReviewStore(store, { onSignedOut } = {}) {
   // this the drawer would show stale totals indefinitely after a
   // single-tab mutation.
   const runItemMutation = useCallback(
-    async (id, fn, { removes = false } = {}) => {
+    async (id, fn, { removes = false, adds = false } = {}) => {
       try {
         const res = await runMutation(fn);
         if (removes) removeItemLocal(id, res.version);
+        else if (adds) addItemLocal(res.item, res.version);
         else patchItem(res.item, res.version);
         showToast(res.label);
         setItemError(null);
@@ -161,6 +170,11 @@ export function useReviewStore(store, { onSignedOut } = {}) {
         return res;
       } catch (err) {
         if (handleSignedOut(err)) return null;
+        // acceptMatch passes id: null (the response names a new item,
+        // not one already selected) -- itemError.itemId stays null and
+        // ItemDetailPanel's banner renders unconditionally on itemError
+        // being set, never filtered by id, so a null id surfaces the
+        // same generic refusal rather than silently failing to render.
         setItemError({ itemId: id, code: err?.code ?? "request_failed", message: err?.message || "This action could not be completed." });
         return null;
       }
@@ -173,6 +187,56 @@ export function useReviewStore(store, { onSignedOut } = {}) {
   const unrejectItem = useCallback((id, version) => runItemMutation(id, () => store.unrejectItem(id, version)), [store, runItemMutation]);
   const editItem = useCallback((id, changes, version) => runItemMutation(id, () => store.editItem(id, changes, version)), [store, runItemMutation]);
   const deleteItem = useCallback((id, version) => runItemMutation(id, () => store.deleteItem(id, version), { removes: true }), [store, runItemMutation]);
+
+  // "Find every one like this" (B3b): the one search in flight on the
+  // sheet in view. Polled while pending; the result boxes it carries are
+  // not items and no layer toggle or total ever sees them.
+  const [match, setMatch] = useState(null);
+  const startMatch = useCallback(
+    async (sheetId, box) => {
+      try {
+        const m = await store.createMatch(sheetId, box);
+        setMatch(m);
+        return m;
+      } catch (err) {
+        if (handleSignedOut(err)) return null;
+        setMatch({ id: null, sheetId, box: [box.x, box.y, box.w, box.h], status: "failed", count: 0, matches: [], error: err?.message || "" });
+        return null;
+      }
+    },
+    [store, handleSignedOut]
+  );
+  useEffect(() => {
+    if (!match?.id || match.status !== "pending") return undefined;
+    const t = setInterval(async () => {
+      try {
+        setMatch(await store.getMatch(match.id));
+      } catch (err) {
+        handleSignedOut(err);
+      }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [store, match?.id, match?.status, handleSignedOut]);
+  const acceptMatch = useCallback(
+    async (fields) => {
+      if (!match?.id) return null;
+      const res = await runItemMutation(null, () => store.acceptMatch(match.id, fields), { adds: true });
+      if (res) setMatch(null);
+      return res;
+    },
+    [store, match, runItemMutation]
+  );
+  const discardMatch = useCallback(async () => {
+    if (match?.id) {
+      try {
+        await store.discardMatch(match.id);
+      } catch (err) {
+        handleSignedOut(err);
+      }
+    }
+    setMatch(null);
+  }, [store, match, handleSignedOut]);
+  const clearMatch = useCallback(() => setMatch(null), []);
 
   // The three compound actions each return a full, authoritative
   // snapshot rather than one item — the whole point of a scale
@@ -275,5 +339,10 @@ export function useReviewStore(store, { onSignedOut } = {}) {
     bulkApprove,
     undo,
     redo,
+    match,
+    startMatch,
+    acceptMatch,
+    discardMatch,
+    clearMatch,
   };
 }

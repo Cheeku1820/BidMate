@@ -251,6 +251,15 @@ export function mapMaterialRow(r) {
   };
 }
 
+/** Wire SymbolMatchOut ("find every one like this", B3b Task 9) ->
+ *  store shape. `box` and each entry of `matches` stay the arrays the
+ *  wire sends -- sheet-space coordinates, the same space markers
+ *  already live in -- and never become items or count toward any
+ *  total on their own; only acceptMatch()'s result does that. */
+export function mapMatch(m) {
+  return { id: m.id, sheetId: m.sheet_id, box: m.box, status: m.status, count: m.count, matches: m.matches ?? [], error: m.error ?? "" };
+}
+
 export function mapUser(u) {
   return { id: u.id, name: u.name, email: u.email, color: u.color };
 }

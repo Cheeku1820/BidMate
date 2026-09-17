@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProcessing, mapProject, mapScopeStatement, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
+import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapMatch, mapNote, mapProcessing, mapProject, mapScopeStatement, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -281,6 +281,34 @@ export function createApiStore() {
     // repopulate the cache directly instead of invalidating it.
     cacheSnapshot(mapped.snapshot);
     return mapped;
+  }
+
+  // "Find every one like this" (B3b Task 9's server contract). A match
+  // is not an item and its box/matches never touch a total or a layer
+  // toggle -- only acceptMatch()'s result, which is an ordinary
+  // single-item mutation, does. Both createMatch and getMatch are
+  // sheet/match-scoped and never call ensureProjectId.
+  async function createMatch(sheetId, { x, y, w, h }) {
+    return mapMatch(await request(`/api/sheets/${sheetId}/matches`, { method: "POST", body: { x, y, w, h } }));
+  }
+
+  async function getMatch(id) {
+    return mapMatch(await request(`/api/symbol-matches/${id}`));
+  }
+
+  /** Names the result (one item, Ready to review) or files it as "not
+   *  sure" (Needs attention). Either way one undoable action -- the
+   *  server's `add` -- so the cache is invalidated exactly as a
+   *  single-item mutation's is. */
+  async function acceptMatch(id, fields) {
+    const body = fields.notSure ? { not_sure: true } : { name: fields.name, symbol: fields.symbol, system: fields.system };
+    const raw = await request(`/api/symbol-matches/${id}/items`, { method: "POST", body });
+    invalidateCache();
+    return { label: raw.label, version: raw.version, item: mapItem(raw.item) };
+  }
+
+  async function discardMatch(id) {
+    await request(`/api/symbol-matches/${id}`, { method: "DELETE" });
   }
 
   async function undoOrRedo(segment) {
@@ -576,6 +604,10 @@ export function createApiStore() {
     bulkApprove,
     undo,
     redo,
+    createMatch,
+    getMatch,
+    acceptMatch,
+    discardMatch,
     listProjects,
     createProject,
     startTakeoff,

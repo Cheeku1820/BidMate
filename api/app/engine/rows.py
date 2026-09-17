@@ -32,11 +32,19 @@ def _unconfirmed_type_warning(tag: str, count: int, sheet_no: str) -> dict:
     Deliberately duplicated as ingest.py's fallback_warning() across the
     engine/API module boundary -- the two must stay word for word
     identical, which test_ingest_mapping.py asserts, since nothing in the
-    import graph ties them together."""
+    import graph ties them together.
+
+    A `shape:` tag is a processing internal (a geometry signature, B3b
+    spec §3) and never reaches copy: a cluster found by shape says "a
+    symbol" where a text tag says "Type F2"."""
+    if tag.startswith("shape:"):
+        found = f"A symbol appears {count} times on {sheet_no} but its type couldn't be confirmed."
+    else:
+        found = f"Type {tag} appears {count} time(s) on {sheet_no}, but its description could not be matched to a schedule."
     return {
         "reason": "legend",
         "title": "Item type needs confirmation",
-        "found": f"Type {tag} appears {count} time(s) on {sheet_no}, but its description could not be matched to a schedule.",
+        "found": found,
         "why": "The exact item and its price can't be confirmed until the type is matched to the schedule.",
         "fix": "Confirm the item type against the schedule, then approve.",
         "where": f"{sheet_no} and the project schedules.",

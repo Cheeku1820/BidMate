@@ -359,6 +359,19 @@ def test_fallback_warning_text_matches_the_deterministic_engine_template():
     assert fallback_warning("F2", 3, "E2.1") == _unconfirmed_type_warning("F2", 3, "E2.1")
 
 
+def test_fallback_warning_never_quotes_a_shape_signature():
+    """`shape:<sig>` is a processing internal; the groundedness fallback
+    for a shape cluster says "a symbol", and stays word for word the
+    engine's own template."""
+    from app.engine.estimate import _unconfirmed_type_warning
+    from app.takeoff.ingest import fallback_warning
+
+    warning = fallback_warning("shape:0a1b2c3d", 12, "E2.1")
+    assert "shape:" not in warning["found"] and "0a1b2c3d" not in warning["found"]
+    assert warning["found"] == "A symbol appears 12 times on E2.1 but its type couldn't be confirmed."
+    assert warning == _unconfirmed_type_warning("shape:0a1b2c3d", 12, "E2.1")
+
+
 def test_fallback_warning_is_always_grounded():
     from app.takeoff.ingest import fallback_warning, is_warning_grounded
 

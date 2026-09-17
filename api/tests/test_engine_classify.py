@@ -132,6 +132,24 @@ def test_row_from_spec_falls_back_when_the_model_omits_a_warning():
     assert row["warning"]["fix"] == "Confirm the item type against the schedule, then approve."
 
 
+def test_a_shape_tag_never_reaches_the_model_path_warning_copy():
+    """A cluster found by shape carries `shape:<sig>` as its tag -- a
+    processing internal. When the model names it but hedges (attention
+    with its own warning, or none), the synthesized `found` says "a
+    symbol", never the signature."""
+    cluster = _FakeCluster(); cluster.tag = "shape:0a1b2c3d"; cluster.count = 12
+    spec = {"name": "Type F luminaire", "system": "Lighting", "category": "Fixtures",
+            "unit": "ea", "confidence": "low", "material_cost": 120, "labor_hours": 0.5,
+            "warning": {"title": "Fixture type needs confirmation", "why": "Which fixture this is depends on the schedule.",
+                        "fix": "Check the luminaire schedule."}}
+    for s_ in (spec, {k: v for k, v in spec.items() if k != "warning"}):
+        row = estimate_mod._row_from_spec(s_, cluster, [], 78.0, 1.0)
+        assert "shape:" not in row["warning"]["found"] and "0a1b2c3d" not in row["warning"]["found"]
+        assert row["warning"]["found"].startswith("A symbol appears 12 times on")
+    assert estimate_mod._unconfirmed_type_warning("shape:0a1b2c3d", 12, "E2.1")["found"] == \
+        "A symbol appears 12 times on E2.1 but its type couldn't be confirmed."
+
+
 def test_row_from_spec_falls_back_when_the_models_warning_is_missing_a_field():
     spec = {"name": "Type F luminaire", "system": "Lighting", "category": "Fixtures",
             "unit": "ea", "confidence": "low", "material_cost": 120, "labor_hours": 0.5,

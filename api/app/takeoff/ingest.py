@@ -115,10 +115,16 @@ def fallback_warning(tag: str, count, sheet_number: str, reason: str = "legend")
     reclassify what kind of evidence gap this is."""
     tag = tag or "?"
     sheet_number = sheet_number or "the sheet"
+    # A `shape:` tag is a geometry signature, never copy -- same rule as
+    # the engine template.
+    if tag.startswith("shape:"):
+        found = f"A symbol appears {count} times on {sheet_number} but its type couldn't be confirmed."
+    else:
+        found = f"Type {tag} appears {count} time(s) on {sheet_number}, but its description could not be matched to a schedule."
     return {
         "reason": reason,
         "title": "Item type needs confirmation",
-        "found": f"Type {tag} appears {count} time(s) on {sheet_number}, but its description could not be matched to a schedule.",
+        "found": found,
         "why": "The exact item and its price can't be confirmed until the type is matched to the schedule.",
         "fix": "Confirm the item type against the schedule, then approve.",
         "where": f"{sheet_number} and the project schedules.",

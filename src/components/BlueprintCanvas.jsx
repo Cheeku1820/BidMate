@@ -103,6 +103,34 @@ export default function BlueprintCanvas({
     setCalibPoints([]);
   }, [tool, sheet.id]);
 
+  /* Bring the selected marker into view (DESIGN.md, "Blueprint and table
+     synchronization"). A selection can arrive from the table, from "Open
+     next issue", or from J/K, with the marker anywhere on the page --
+     and with nothing reading selectedId here, it used to land clipped
+     at the edge or off screen entirely. When the marker is outside the
+     viewport, pan so it sits at the centre, keeping the estimator's
+     zoom. When it is already visible -- a click on the marker itself --
+     leave the view alone: a canvas that jumps on every click is one you
+     stop clicking. Declared after the boot effect above so a selection
+     present on mount (a deep link) is applied to the fitted view. */
+  useEffect(() => {
+    if (!selectedId || !bootRef.current) return;
+    const it = items.find((i) => i.id === selectedId && !i.path);
+    if (!it) return;
+    const at = toPaper({ x: it.x, y: it.y }, sheet);
+    setView((v) => {
+      const sx = v.tx + at.x * v.scale;
+      const sy = v.ty + at.y * v.scale;
+      const margin = 24;
+      if (sx >= margin && sx <= size.w - margin && sy >= margin && sy <= size.h - margin) return v;
+      return { ...v, tx: size.w / 2 - at.x * v.scale, ty: size.h / 2 - at.y * v.scale };
+    });
+    // Only a change of selection (or of sheet) moves the view; a pan or
+    // zoom the estimator makes afterwards must not be undone by a
+    // re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, sheet.id]);
+
   /* --- imperative zoom API through window events ----------------- */
 
   const zoomAt = useCallback((factor, cx, cy) => {

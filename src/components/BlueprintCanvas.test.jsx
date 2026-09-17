@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import BlueprintCanvas from "./BlueprintCanvas.jsx";
 
 // jsdom has no ResizeObserver; the canvas uses one to track its viewport.
@@ -74,5 +74,53 @@ describe("BlueprintCanvas on real paper", () => {
   it("still names the sheet on blank paper while the drawing is pending", () => {
     const { getByText } = canvas(THREE_TWO, []);
     expect(getByText(/E2\.1/)).toBeInTheDocument();
+  });
+});
+
+/* Selection can arrive from the table, from "Open next issue", or from
+   J/K, with the marker anywhere on the page (DESIGN.md, "Blueprint and
+   table synchronization": selecting a row centers the blueprint on that
+   marker). The viewport is jsdom's default 900 x 600; zooming in four
+   steps through the same window event the toolbar uses pushes the far
+   corner of the page off screen. */
+function stageTransform(container) {
+  const m = container.querySelector(".stage").style.transform.match(/translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([-\d.]+)\)/);
+  return { tx: Number(m[1]), ty: Number(m[2]), scale: Number(m[3]) };
+}
+function zoomIn(times) {
+  for (let i = 0; i < times; i += 1) {
+    act(() => {
+      window.dispatchEvent(new CustomEvent("canvas-cmd", { detail: { type: "in" } }));
+    });
+  }
+}
+
+describe("BlueprintCanvas brings the selected marker into view", () => {
+  const far = { id: "i2", sheetId: "s1", x: 950, y: 700, status: "attention", symbol: "receptacle", name: "far", quantity: 1, unit: "ea", placements: [[950, 700]] };
+  const mid = { id: "i1", sheetId: "s1", x: 500, y: 375, status: "ready", symbol: "receptacle", name: "mid", quantity: 1, unit: "ea", placements: [[500, 375]] };
+
+  it("pans so an off-screen selection sits at the centre, keeping the zoom", () => {
+    const { container, rerender } = canvas(THREE_TWO, [mid, far]);
+    zoomIn(4);
+    const before = stageTransform(container);
+    // far corner of a 3:2 page: paper (950, 622.6); off screen at this zoom
+    expect(before.tx + 950 * before.scale).toBeGreaterThan(900);
+    rerender(
+      <BlueprintCanvas sheet={THREE_TWO} items={[mid, far]} selectedId="i2" onSelect={() => {}} layers={LAYERS} tool="pan" onCalibrate={() => {}} remoteSelections={[]} searchTerm="" />,
+    );
+    const after = stageTransform(container);
+    expect(after.scale).toBe(before.scale);
+    expect(after.tx + 950 * after.scale).toBeCloseTo(450, 0);
+    expect(after.ty + (700 * (667 / 750)) * after.scale).toBeCloseTo(300, 0);
+  });
+
+  it("leaves the view alone when the selected marker is already visible", () => {
+    const { container, rerender } = canvas(THREE_TWO, [mid, far]);
+    zoomIn(2);
+    const before = stageTransform(container);
+    rerender(
+      <BlueprintCanvas sheet={THREE_TWO} items={[mid, far]} selectedId="i1" onSelect={() => {}} layers={LAYERS} tool="pan" onCalibrate={() => {}} remoteSelections={[]} searchTerm="" />,
+    );
+    expect(stageTransform(container)).toEqual(before);
   });
 });

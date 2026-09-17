@@ -19,15 +19,28 @@ from app.worker.classify_job import _detected
 from app.worker.handlers import register
 
 
+def _rect_close(a, b, tol: float = 0.01) -> bool:
+    return all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
 def find_matches(path: str, page_index: int, sheet: DetectedSheet, rect) -> list[tuple[float, float, float, float]]:
     """Page-point rects of every copy of what is inside `rect`, the boxed
-    one included. One function, two methods: the glyph in the box decides."""
+    one included -- even when it sits outside the sheet's counting
+    region. `glyphs_on(page, sheet.region, words)` only looks inside that
+    region (the title-block strip is carved out of it), but the box the
+    estimator drew is not bound by it: a real glyph in the strip is
+    still the thing they boxed, so it is prepended when the region-bound
+    search does not already carry it. One function, two methods: the
+    glyph in the box decides."""
     doc = pymupdf.open(path)
     page = doc[page_index]
     words = visual_words(page)
     glyph = glyphs.glyph_in(page, rect, words)
     if glyph is not None:
-        return [g.rect for g in glyphs.matches_of(glyph, glyphs.glyphs_on(page, sheet.region, words))]
+        matches = [g.rect for g in glyphs.matches_of(glyph, glyphs.glyphs_on(page, sheet.region, words))]
+        if not any(_rect_close(glyph.rect, r) for r in matches):
+            matches = [glyph.rect] + matches
+        return matches
     return raster_match.find_on_render(path, page_index, rect)
 
 

@@ -1,7 +1,5 @@
 """The match job: one drawn box in, every copy on the sheet out, in
 sheet units; vector by shape, raster by render (B3b spec §6)."""
-import io
-
 import pymupdf
 from sqlalchemy import select
 
@@ -30,6 +28,20 @@ def _raster_pdf():
     p.insert_image(p.rect, stream=pix.tobytes("png"))
     p.insert_text((72, 72), "E2.1 POWER PLAN")
     p.draw_rect(pymupdf.Rect(30, 30, 800, 760), color=(0, 0, 0))
+    return doc.tobytes()
+
+
+def _title_block_glyph_pdf():
+    """A vector sheet whose only receptacle sits inside the title-block
+    strip on the right edge -- outside the sheet's counting region,
+    which the read job carves the located strip out of
+    (documents._region). Every word is placed inside that same strip
+    (x >= width * (1 - title_block.STRIP), i.e. the right ~18% of the
+    page) so it is the strip `locate` finds."""
+    doc = pymupdf.open()
+    p = doc.new_page(width=1000, height=800)
+    p.insert_text((850, 700), "E2.1 POWER PLAN")
+    _receptacle(p, 850, 400)
     return doc.tobytes()
 
 
@@ -62,6 +74,12 @@ def test_a_raster_sheet_matches_by_render(db, project, dana, inline, monkeypatch
     sheet = _read(db, project, dana, inline, monkeypatch, _raster_pdf())
     m = _match(db, project, dana, sheet, [100, 375, 16, 15])
     assert m.status == "found" and len(m.matches) == 3
+
+
+def test_a_boxed_glyph_outside_the_counting_region_is_still_a_match(db, project, dana, inline, monkeypatch):
+    sheet = _read(db, project, dana, inline, monkeypatch, _title_block_glyph_pdf())
+    m = _match(db, project, dana, sheet, [850, 375, 16, 15])
+    assert m.status == "found" and len(m.matches) == 1
 
 
 def test_a_failing_match_marks_its_row(db, project, dana, inline, monkeypatch):

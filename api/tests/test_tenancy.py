@@ -34,7 +34,7 @@ from sqlalchemy import text
 from app.auth.passwords import hash_password
 from app.identity.models import Org, User
 from app.main import app
-from app.takeoff.models import Document, Note, ScopeStatement
+from app.takeoff.models import Document, Note, ScopeStatement, SymbolMatch
 
 PDF = b"%PDF-1.4\n%tenancy\n"
 
@@ -84,6 +84,24 @@ def scope_statement(db, project, document, dana):
     db.add(s)
     db.flush()
     return s
+
+
+@pytest.fixture
+def symbol_match(db, project, sheet, dana):
+    """A resolved-nothing symbol match under the existing `project` and
+    `sheet` fixtures -- same reason `note`/`document`/`scope_statement`
+    above each get their own fixture: the `GET|POST|DELETE
+    /api/symbol-matches/{id}` routes are keyed by match id, not project
+    id, so the main table's (p, s, i) lambdas were never written to
+    accept one. Status `found` with one match, per task-9-brief.md's
+    tenancy instructions -- not `pending`, so a probe that reached past
+    the tenancy gate (it never should) wouldn't also be exercising the
+    job-queue path."""
+    m = SymbolMatch(org_id=project.org_id, project_id=project.id, sheet_id=sheet.id, box=[500, 375, 12, 12],
+                     status="found", matches=[[500, 375, 12, 12]], created_by=dana.id)
+    db.add(m)
+    db.flush()
+    return m
 
 
 @pytest.fixture
@@ -226,6 +244,8 @@ TENANCY_TABLE = [
      lambda p, s, i: f"/api/projects/{p.id}/documents", None, None),
     ("GET", "/api/projects/{project_id}/scope",
      lambda p, s, i: f"/api/projects/{p.id}/scope", None, None),
+    ("POST", "/api/sheets/{sheet_id}/matches",
+     lambda p, s, i: f"/api/sheets/{s.id}/matches", lambda p, s, i: {"x": 500, "y": 375, "w": 12, "h": 12}, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]
@@ -274,6 +294,22 @@ SCOPE_TENANCY_TABLE = [
 ]
 
 SCOPE_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in SCOPE_TENANCY_TABLE]
+
+# The three symbol-match routes keyed by match_id rather than project_id,
+# same shape and same reasoning as SCOPE_TENANCY_TABLE above: they need
+# the `symbol_match` fixture, which the main table's (p, s, i) lambdas
+# were never written to accept. `POST /api/sheets/{sheet_id}/matches` IS
+# sheet-keyed like every row in TENANCY_TABLE and lives there instead.
+MATCH_TENANCY_TABLE = [
+    ("GET", "/api/symbol-matches/{match_id}",
+     lambda m: f"/api/symbol-matches/{m.id}", None, None),
+    ("POST", "/api/symbol-matches/{match_id}/items",
+     lambda m: f"/api/symbol-matches/{m.id}/items", lambda m: {"not_sure": True}, None),
+    ("DELETE", "/api/symbol-matches/{match_id}",
+     lambda m: f"/api/symbol-matches/{m.id}", None, None),
+]
+
+MATCH_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in MATCH_TENANCY_TABLE]
 
 # POST /api/projects/{project_id}/documents is project-scoped like every
 # row in TENANCY_TABLE, but it cannot be probed from that table: both
@@ -487,6 +523,39 @@ def test_an_unauthenticated_caller_gets_401_on_every_scope_route(
     assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
 
 
+# --- The symbol-match routes, keyed by match_id rather than project_id ---
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", MATCH_TENANCY_TABLE, ids=MATCH_TENANCY_IDS)
+def test_a_rival_org_gets_404_on_every_match_route(
+    client, dana, rival, symbol_match, method, path_template, path_fn, body_fn, headers_fn
+):
+    _sign_in_as(client, "rival@example.com", "hunter2")
+    path = path_fn(symbol_match)
+    body = body_fn(symbol_match) if body_fn else None
+    headers = headers_fn(symbol_match) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 404, (
+        f"{method} {path} leaked status {response.status_code} to a rival org, expected 404"
+    )
+    assert response.json()["detail"]["code"] == "project_not_found"
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", MATCH_TENANCY_TABLE, ids=MATCH_TENANCY_IDS)
+def test_an_unauthenticated_caller_gets_401_on_every_match_route(
+    client, symbol_match, method, path_template, path_fn, body_fn, headers_fn
+):
+    path = path_fn(symbol_match)
+    body = body_fn(symbol_match) if body_fn else None
+    headers = headers_fn(symbol_match) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
+
+
 # --- The upload route, probed with a real multipart body ---
 
 
@@ -575,6 +644,7 @@ def test_every_project_scoped_route_is_covered_by_the_tenancy_table():
         | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in SCOPE_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in MATCH_TENANCY_TABLE}
         | {(method, template) for method, template, _, _ in MULTIPART_TENANCY_TABLE}
         | NON_PROJECT_SCOPED_ROUTES
     )
@@ -596,6 +666,7 @@ def test_the_tenancy_table_does_not_list_a_route_that_no_longer_exists():
         | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in SCOPE_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in MATCH_TENANCY_TABLE}
         | {(method, template) for method, template, _, _ in MULTIPART_TENANCY_TABLE}
     ) - live
 

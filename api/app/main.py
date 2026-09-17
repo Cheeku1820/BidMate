@@ -11,6 +11,7 @@ from app.db import get_db
 from app.documents.router import router as documents_router
 from app.errors import DomainError, domain_error_handler
 from app.jobs.router import router as processing_router
+from app.matches.router import router as matches_router
 from app.observability import RequestIdMiddleware, configure_logging, request_id_var
 from app.scope.router import router as scope_router
 from app.takeoff.actions import CrossOrgActionError
@@ -113,6 +114,7 @@ app.include_router(pricing_router)
 app.include_router(documents_router)
 app.include_router(processing_router)
 app.include_router(scope_router)
+app.include_router(matches_router)
 app.include_router(collab_router)
 app.include_router(tiles_router)
 

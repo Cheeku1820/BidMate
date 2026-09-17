@@ -136,12 +136,16 @@ _READY = text(
 # the read, the run, and its sheets; nobody is sitting on a thumbnail,
 # and the canvas falls back to blank paper until it lands. Within a
 # priority, oldest first, as before.
-_CLAIM_PRIORITY = case((Job.kind == "render", 1), else_=0)
+#
+# A match goes ahead of everything: it is one sheet, and an estimator is
+# watching the result card for it -- "Searching this sheet…" behind a
+# colleague's forty-sheet run is a box that never seems to come back.
+_CLAIM_PRIORITY = case((Job.kind == "match", -1), (Job.kind == "render", 1), else_=0)
 
 
 def claim_next(db: Session, worker_id: str) -> Job | None:
-    """The next ready job -- takeoff work ahead of renders, oldest first
-    within that -- locked for this transaction. SKIP LOCKED is the whole
+    """The next ready job -- a match first, then takeoff work, then
+    renders, oldest first within each -- locked for this transaction. SKIP LOCKED is the whole
     coordinator: a second worker claiming at the same moment steps past
     the row this one holds. The caller commits to release it."""
     job = db.scalars(

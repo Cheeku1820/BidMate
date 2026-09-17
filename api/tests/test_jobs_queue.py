@@ -266,3 +266,28 @@ def test_a_takeoff_run_is_claimed_ahead_of_older_render_jobs(db, project, dana):
     queue.mark_done(db, second); db.commit()
     third = queue.claim_next(db, "w1"); db.commit()
     assert third.id == renders[0].id, "renders still go oldest-first among themselves"
+
+
+def test_a_match_is_claimed_ahead_of_older_takeoff_work(db, project, dana):
+    """One estimator's drawn box must not wait behind a colleague's
+    forty-sheet run: a match is one sheet with a person watching the
+    result card, so it is claimed before any older sheet job."""
+    from app.takeoff.models import SymbolMatch
+    sheet = _sheet(db, project, 0)
+    c = queue.enqueue_classify(db, project, dana.id)
+    db.commit()
+    first = queue.claim_next(db, "w1"); db.commit()
+    assert first.id == c.id
+    queue.mark_done(db, first); db.commit()
+    [sj] = queue.enqueue_sheets(db, first, [(sheet, {"clusters": []})])
+    db.commit()
+    m = SymbolMatch(org_id=project.org_id, project_id=project.id, sheet_id=sheet.id, box=[500, 375, 10, 10], created_by=dana.id)
+    db.add(m); db.flush()
+    mj = queue.enqueue_match(db, m)
+    db.commit()
+    assert mj.queued_at >= sj.queued_at
+    second = queue.claim_next(db, "w1"); db.commit()
+    assert second.id == mj.id, "the match should be claimed before the older sheet job"
+    queue.mark_done(db, second); db.commit()
+    third = queue.claim_next(db, "w1"); db.commit()
+    assert third.id == sj.id

@@ -1,6 +1,6 @@
 """Template matching on a page render (B3b spec §6, raster path)."""
+import numpy as np
 import pymupdf
-import pytest
 
 from app.engine import raster_match
 from tests.test_engine_glyphs import _receptacle
@@ -55,6 +55,22 @@ def test_a_different_symbol_is_not_a_match(tmp_path):
     path = tmp_path / "diff.pdf"; out.save(path)
     found = raster_match.find_on_render(str(path), 0, (92, 92, 108, 108))
     assert len(found) == 1
+
+
+def test_a_box_on_blank_paper_finds_nothing(tmp_path):
+    """A near-uniform template (blank paper, an empty legend cell) must
+    short-circuit on MIN_TEMPLATE_STD rather than search at all -- and
+    must return promptly rather than hang the worker's sandboxed timeout."""
+    path = _raster_pdf(tmp_path, [(100, 100)])
+    found = raster_match.find_on_render(path, 0, (600, 600, 616, 616))
+    assert found == []
+
+
+def test_peaks_are_bounded(monkeypatch):
+    monkeypatch.setattr(raster_match, "MAX_PEAKS", 10)
+    score = np.ones((200, 200), dtype=np.float32)
+    found = raster_match._peaks(score, tw=8, th=8)
+    assert len(found) <= 10
 
 
 def test_the_api_never_imports_opencv():

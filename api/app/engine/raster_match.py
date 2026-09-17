@@ -18,6 +18,8 @@ import pymupdf
 MATCH_DPI = 200
 MATCH_THRESHOLD = 0.80
 MAX_PIXELS = 40_000_000
+MIN_TEMPLATE_STD = 8.0   # grey levels; below this the box has nothing distinctive to search for
+MAX_PEAKS = 5000         # bounds NMS to O(MAX_PEAKS * k) against a pathological template
 _ROTATIONS = (None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
 
@@ -33,8 +35,15 @@ def _render(page) -> tuple[np.ndarray, float]:
 
 def _peaks(score: np.ndarray, tw: int, th: int) -> list[tuple[int, int, float]]:
     """Every location at or above the threshold, strongest first, with
-    non-maximum suppression at half the template's size."""
+    non-maximum suppression at half the template's size. Bounded to the
+    MAX_PEAKS highest-scoring threshold-passing pixels before NMS runs,
+    via argpartition rather than a full sort, so a pathological (e.g.
+    near-uniform) template can't turn NMS into an O(n*k) hang."""
     ys, xs = np.where(score >= MATCH_THRESHOLD)
+    if len(ys) > MAX_PEAKS:
+        vals = score[ys, xs]
+        top = np.argpartition(-vals, MAX_PEAKS - 1)[:MAX_PEAKS]
+        ys, xs = ys[top], xs[top]
     cands = sorted(((float(score[y, x]), int(x), int(y)) for y, x in zip(ys, xs)), reverse=True)
     kept: list[tuple[int, int, float]] = []
     for s, x, y in cands:
@@ -56,6 +65,11 @@ def find_on_render(path: str, page_index: int, rect) -> list[tuple[float, float,
     template = img[y0:y1, x0:x1]
     if template.size == 0 or min(template.shape) < 4:
         return []
+    if template.std() < MIN_TEMPLATE_STD:
+        # Blank paper, an empty legend cell: nothing distinctive to search
+        # for, and TM_CCOEFF_NORMED is ill-conditioned on a near-uniform
+        # template. Zero matches, not a guess.
+        return []
     hits: list[tuple[int, int, int, int, float]] = []   # x, y, w, h, score
     for rot in _ROTATIONS:
         t = template if rot is None else cv2.rotate(template, rot)
@@ -63,6 +77,7 @@ def find_on_render(path: str, page_index: int, rect) -> list[tuple[float, float,
         if th > img.shape[0] or tw > img.shape[1]:
             continue
         score = cv2.matchTemplate(img, t, cv2.TM_CCOEFF_NORMED)
+        score = np.nan_to_num(score, nan=0.0)
         hits += [(x, y, tw, th, s) for x, y, s in _peaks(score, tw, th)]
     hits.sort(key=lambda h: -h[4])
     kept: list[tuple[int, int, int, int, float]] = []

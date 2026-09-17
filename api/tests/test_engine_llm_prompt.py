@@ -62,3 +62,11 @@ def test_crops_travel_as_image_blocks_labelled_by_tag(monkeypatch):
     assert any(b.get("type") == "image" and b["source"]["media_type"] == "image/png" for b in content)
     labels = [b["text"] for b in content if b.get("type") == "text"]
     assert any("shape:abcd1234" in t for t in labels)
+
+
+def test_prompt_only_claims_an_image_for_shape_tags_that_actually_got_one():
+    """crops only ever covers the largest MAX_CROPS_PER_SHEET shape
+    clusters on a sheet (classify_job's cap), or a crop that failed to
+    render -- so the prompt must not promise every shape: tag an image."""
+    text = _prompt([{"tag": "shape:abcd1234", "count": 4}], "", "")
+    assert "a shape tag with no attached image" in text

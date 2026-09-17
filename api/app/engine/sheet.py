@@ -37,6 +37,20 @@ def rows_for(
             spec = classification.specs_by_tag.get(c.tag)
             if not spec:
                 continue
+            if c.tag.startswith("shape:") and str(spec.get("catalog_id") or "").strip().casefold() in ("", "none"):
+                # The model was only ever shown an image for the largest
+                # MAX_CROPS_PER_SHEET shape clusters on a sheet (classify_job's
+                # cap), and even a cluster it did see may resolve to nothing on
+                # the catalog list. Either way there is no classification to
+                # price: land it exactly as the deterministic path lands an
+                # unrecognized shape -- classify_cluster runs the same shape:
+                # branch classify() does -- regardless of whatever confidence or
+                # cost the model attached to a name it could not tie to a
+                # catalog item. Routed through _row_from_catalog, the same
+                # builder the deterministic path uses, so the two never drift.
+                item = classification_mod.classify_cluster(c, sheets)
+                rows.append(_row_from_catalog(item, c, sheets, classification.labor_rate, classification.material_factor))
+                continue
             parent = resolve_assembly_parent(spec)
             if parent and assemblies.expand(parent, 1).lines:
                 applied = True

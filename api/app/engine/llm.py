@@ -112,7 +112,7 @@ These device tags were counted on the electrical drawings (deterministically, fr
 Tags counted:
 {tag_lines}
 
-A tag of the form shape:xxxxxxxx is a symbol counted by its drawn shape, with no text tag; an image of it follows this text. Classify it from the image and the legend, or answer catalog_id "none".
+A tag of the form shape:xxxxxxxx is a symbol counted by its drawn shape, with no text tag. Where an image of it is attached below, classify it from the image and the legend; a shape tag with no attached image, or one you cannot match to the legend or a catalog item, gets catalog_id "none", material_cost 0, labor_hours 0 and confidence "low".
 
 Schedule / legend text extracted from the sheets (may be partial):
 \"\"\"

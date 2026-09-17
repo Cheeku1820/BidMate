@@ -462,3 +462,52 @@ def test_a_shape_cluster_lands_unclassified_with_glyph_wording():
     assert item.warning["found"] == "A symbol appears 4 times on E2.1 but isn't in the legend."
     assert "shape:" not in item.warning["found"]
     assert item.placements[0].w == 6
+
+
+def test_a_shape_cluster_lands_unclassified_on_the_llm_path_when_catalog_id_is_none():
+    """The model was shown this shape's crop (or wasn't, over the per-sheet
+    cap, or a crop that failed to render) and answered catalog_id "none"
+    -- there is no classification to price either way, and this must land
+    exactly as the deterministic path lands an unrecognized shape,
+    regardless of whatever confidence or cost the model attached to a name
+    it could not tie to a catalog item."""
+    from app.engine import sheet
+    from app.engine.contracts import Classification, DetectedSheet, DeviceCluster, Placement
+
+    detected_sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                                   width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    cluster = DeviceCluster(tag="shape:abcd1234", sheet_page_index=0,
+                            placements=[Placement(10, 10, 6, 6)] * 4, exemplar=(7, 7, 13, 13))
+    cls = Classification(
+        specs_by_tag={"shape:abcd1234": {"tag": "shape:abcd1234", "name": "Mystery", "catalog_id": "none",
+                                          "confidence": "high", "material_cost": 40, "labor_hours": 1}},
+        labor_rate=80.0, material_factor=1.0, source="llm", location_note="",
+    )
+    rows, applied, bare = sheet.rows_for([cluster], cls, [detected_sheet])
+    (row,) = rows
+    assert row["status"] == "attention"
+    assert row["name"] == "Unclassified symbol"
+    assert row["warning"]["title"] == "Symbol not in legend"
+    assert row["material_cost"] == 0 and row["labor_hours"] == 0 and row["labor_cost"] == 0 and row["total_cost"] == 0
+
+
+def test_an_ordinary_text_tag_keeps_the_model_warning_path_when_catalog_id_is_none():
+    """The new shape: guard must not swallow a plain text tag's "none"
+    answer -- that keeps going through _row_from_spec and _model_warning
+    exactly as before."""
+    from app.engine import sheet
+    from app.engine.contracts import Classification, DetectedSheet, DeviceCluster, Placement
+
+    detected_sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                                   width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    cluster = DeviceCluster(tag="F2", sheet_page_index=0, placements=[Placement(10, 10)] * 3)
+    cls = Classification(
+        specs_by_tag={"F2": {"tag": "F2", "name": "Type F luminaire", "catalog_id": "none",
+                             "confidence": "low", "material_cost": 120, "labor_hours": 0.5}},
+        labor_rate=80.0, material_factor=1.0, source="llm", location_note="",
+    )
+    rows, applied, bare = sheet.rows_for([cluster], cls, [detected_sheet])
+    (row,) = rows
+    assert row["name"] == "Type F luminaire"
+    assert row["status"] == "attention"
+    assert row["material_cost"] > 0

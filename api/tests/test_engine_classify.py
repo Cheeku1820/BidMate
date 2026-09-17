@@ -446,3 +446,19 @@ def test_a_known_device_tag_is_unaffected_by_the_legend():
     items = classification.classify([cluster], [sheet])
     assert items[0].status == "ready"
     assert items[0].catalog_id == "receptacle_20a"
+
+
+def test_a_shape_cluster_lands_unclassified_with_glyph_wording():
+    from app.engine.classification import classify
+    from app.engine.contracts import DetectedSheet, DeviceCluster, Placement
+    sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                          width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    c = DeviceCluster(tag="shape:0a1b2c3d", sheet_page_index=0,
+                      placements=[Placement(10, 10, 6, 6)] * 4, exemplar=(7, 7, 13, 13))
+    (item,) = classify([c], [sheet])
+    assert item.name == "Unclassified symbol" and item.status == "attention"
+    assert item.source_tag == "shape:0a1b2c3d" and item.quantity == 4
+    assert item.warning["title"] == "Symbol not in legend"
+    assert item.warning["found"] == "A symbol appears 4 times on E2.1 but isn't in the legend."
+    assert "shape:" not in item.warning["found"]
+    assert item.placements[0].w == 6

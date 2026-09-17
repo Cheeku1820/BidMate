@@ -72,6 +72,19 @@ def _unknown_warning(tag: str, count: int, sheet_no: str) -> dict:
     }
 
 
+def _unknown_glyph_warning(count: int, sheet_no: str) -> dict:
+    """A symbol Counting found by shape with no tag to look up. Never
+    quotes the signature -- `shape:…` is a processing internal."""
+    return {
+        "reason": "legend",
+        "title": "Symbol not in legend",
+        "found": f"A symbol appears {count} times on {sheet_no} but isn't in the legend.",
+        "why": "An unclassified symbol has no catalog item, so it isn't counted or priced yet.",
+        "fix": "Assign a classification, or reject it if it isn't a device.",
+        "where": f"{sheet_no}.",
+    }
+
+
 # Neither warning below quotes the parsed description, and neither takes
 # it as an argument -- you cannot interpolate what you were not given.
 #
@@ -190,6 +203,14 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
     items: list[ClassifiedItem] = []
     for c in clusters:
         no = sheet_no.get(c.sheet_page_index, "?")
+        if c.tag.startswith("shape:"):
+            items.append(ClassifiedItem(
+                catalog_id="unclassified", name="Unclassified symbol",
+                system="Unknown", category="Unclassified", unit="ea", symbol="generic",
+                quantity=c.count, sheet_page_index=c.sheet_page_index, placements=c.placements,
+                status="attention", warning=_unknown_glyph_warning(c.count, no), source_tag=c.tag,
+            ))
+            continue
         # Curated Division 26 knowledge outranks a parsed abbreviation: a
         # tag in TAG_TO_CATALOG or the fixture-letter range is hand-built
         # device knowledge, while a legend abbreviation is a heuristic read
@@ -261,6 +282,7 @@ def classify_run(
     context: str,
     estimator_notes: list[dict] | None,
     location: str,
+    crops: dict[str, bytes] | None = None,
 ) -> Classification:
     """The one-per-run classification: every cluster in the set named, and
     the pricing basis it will be priced at.
@@ -284,7 +306,7 @@ def classify_run(
     labor_rate, material_factor, location_note = regions.lookup(location)
     if llm.available():
         try:
-            result = llm.estimate(tags, full_context, location)
+            result = llm.estimate(tags, full_context, location, crops=crops)
             return Classification(
                 specs_by_tag={i["tag"]: i for i in result["items"]},
                 labor_rate=float(result["location_labor_rate"]),

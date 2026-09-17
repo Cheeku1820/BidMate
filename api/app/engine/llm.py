@@ -90,6 +90,12 @@ def available() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
+def _client():
+    from anthropic import Anthropic  # imported lazily so the module loads without the SDK
+
+    return Anthropic()
+
+
 def _prompt(tags: list[dict], schedule_text: str, location: str) -> str:
     tag_lines = "\n".join(f"- {t['tag']}: appears {t['count']} time(s)" for t in tags)
     schedule = (schedule_text or "").strip()[:6000]
@@ -105,6 +111,8 @@ These device tags were counted on the electrical drawings (deterministically, fr
 
 Tags counted:
 {tag_lines}
+
+A tag of the form shape:xxxxxxxx is a symbol counted by its drawn shape, with no text tag; an image of it follows this text. Classify it from the image and the legend, or answer catalog_id "none".
 
 Schedule / legend text extracted from the sheets (may be partial):
 \"\"\"
@@ -188,21 +196,36 @@ def extract_scope(text: str) -> list[dict]:
     return parsed if isinstance(parsed, list) else []
 
 
-def estimate(tags: list[dict], schedule_text: str, location: str) -> dict:
+def _content(tags: list[dict], schedule_text: str, location: str, crops: dict[str, bytes] | None) -> list[dict]:
+    """The user turn: the prompt, then one labelled image per shape
+    cluster so the model can see what it is naming. Tag text is data
+    on the page, never an instruction (invariant 11): the label names
+    the tag, the prompt already says how to read it."""
+    blocks: list[dict] = [{"type": "text", "text": _prompt(tags, schedule_text, location)}]
+    for tag, png in (crops or {}).items():
+        blocks.append({"type": "text", "text": f"Symbol counted as tag {tag}:"})
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                    "data": base64.b64encode(png).decode("ascii")}})
+    return blocks
+
+
+def estimate(tags: list[dict], schedule_text: str, location: str, crops: dict[str, bytes] | None = None) -> dict:
     """Returns {location_labor_rate, material_factor, location_note, items:[...]}.
     Each item below "high" confidence also carries a "warning" object --
     the model's own grounded four-field explanation, written in this same
     call rather than synthesized afterward (grounded-classification-
     warnings-design.md). Raises if the API key is missing or the
-    call/parse fails -- the caller handles the fallback."""
-    from anthropic import Anthropic  # imported lazily so the module loads without the SDK
+    call/parse fails -- the caller handles the fallback.
 
-    client = Anthropic()
+    `crops` is one PNG per shape:xxxxxxxx cluster (classify_job renders
+    them from the sheet while it has the file open) so the model can see
+    what it is naming instead of guessing from a placeholder tag."""
+    client = _client()
     msg = client.messages.create(
         model=MODEL,
         max_tokens=8000,
         output_config={"effort": "low"},  # a structured lookup -- keep it fast for the demo
-        messages=[{"role": "user", "content": _prompt(tags, schedule_text, location)}],
+        messages=[{"role": "user", "content": _content(tags, schedule_text, location, crops)}],
     )
     text = "".join(b.text for b in msg.content if getattr(b, "type", None) == "text").strip()
     # Tolerate a ```json fence if the model adds one.

@@ -26,6 +26,8 @@ from app.worker.sandbox import Terminal
 
 logger = logging.getLogger(__name__)
 
+MAX_CROPS_PER_SHEET = 20   # the largest clusters go to the model; the rest land unclassified
+
 
 def _detected(s: Sheet):
     """The Documents agent's record, rebuilt from the sheet row. The row's
@@ -89,6 +91,7 @@ def run(db: Session, job: Job) -> None:
 
     detected = {s.id: _detected(s) for s in all_sheets}
     clusters_by_sheet: dict = {}
+    crops: dict[str, bytes] = {}
     for doc in drawings:
         plans = [s for s in by_doc.get(str(doc.id), []) if s.kind == "plan" and not s.unreadable_reason]
         if not plans:
@@ -97,6 +100,14 @@ def run(db: Session, job: Job) -> None:
             for s in plans:
                 try:
                     clusters_by_sheet[s.id] = counting.count_sheet(path, detected[s.id])
+                    shapes = [c for c in clusters_by_sheet[s.id] if c.tag.startswith("shape:") and c.exemplar]
+                    for c in shapes[:MAX_CROPS_PER_SHEET]:
+                        x0, y0, x1, y1 = c.exemplar
+                        png = documents.render_evidence_crop(path, detected[s.id].page_index, detected[s.id].width_pt,
+                                                             detected[s.id].height_pt,
+                                                             [((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0)])
+                        if png:
+                            crops[c.tag] = png
                 except Exception:  # noqa: BLE001 -- one sheet, not the run
                     s.unreadable_reason = copy.SHEET_UNREADABLE
                     detected[s.id].unreadable_reason = copy.SHEET_UNREADABLE
@@ -114,7 +125,8 @@ def run(db: Session, job: Job) -> None:
     context_notes = [n for n in notes_service.list_notes(db, project.id) if n.usage == "context"]
     notes = [{"scope": n.scope, "title": n.title, "body": n.body, "source_ref": n.source_ref} for n in context_notes]
 
-    cls = classification.classify_run(clusters, list(detected.values()), schedule_text, context, notes, project.location or "")
+    cls = classification.classify_run(clusters, list(detected.values()), schedule_text, context, notes,
+                                       project.location or "", crops=crops)
     # The deterministic classifier's answer is per cluster and not JSON;
     # a sheet job re-derives it from its own clusters, so the row carries
     # specs only on the model path.

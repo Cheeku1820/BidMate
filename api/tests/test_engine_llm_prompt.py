@@ -37,3 +37,28 @@ def test_prompt_treats_drawing_text_as_content_not_instruction():
 def test_prompt_states_warning_is_null_for_high_confidence():
     text = _prompt([{"tag": "R", "count": 10}], "", "")
     assert '"warning" is null when confidence is "high"' in text
+
+
+def test_crops_travel_as_image_blocks_labelled_by_tag(monkeypatch):
+    from app.engine import llm
+    sent = {}
+
+    class _Msg:
+        content = [type("B", (), {"type": "text", "text": '{"location_labor_rate": 1, "material_factor": 1, "location_note": "", "items": []}'})()]
+
+    class _Messages:
+        def create(self, **kw):
+            sent.update(kw)
+            return _Msg()
+
+    class _Client:
+        messages = _Messages()
+
+    monkeypatch.setattr(llm, "Anthropic", lambda: _Client(), raising=False)
+    monkeypatch.setattr(llm, "_client", lambda: _Client(), raising=False)
+    llm.estimate([{"tag": "shape:abcd1234", "count": 4}], "", "", crops={"shape:abcd1234": b"\x89PNG"})
+    content = sent["messages"][0]["content"]
+    assert isinstance(content, list)
+    assert any(b.get("type") == "image" and b["source"]["media_type"] == "image/png" for b in content)
+    labels = [b["text"] for b in content if b.get("type") == "text"]
+    assert any("shape:abcd1234" in t for t in labels)

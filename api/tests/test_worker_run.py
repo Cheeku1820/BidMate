@@ -28,7 +28,7 @@ def fake_engine(monkeypatch):
     calls = {"classify": [], "finish": []}
     monkeypatch.setattr(counting, "count_sheet", lambda path, sheet: [DeviceCluster("R", sheet.page_index, [Placement(300, 300)])])
 
-    def classify_run(clusters, sheets, schedule_text, context, notes, location):
+    def classify_run(clusters, sheets, schedule_text, context, notes, location, crops=None):
         calls["classify"].append({"tags": sorted(c.tag for c in clusters), "context": context, "notes": notes})
         return Classification(specs_by_tag={"R": {"name": "20A duplex receptacle", "confidence": "high", "material_cost": 5, "labor_hours": 0.5}},
                               labor_rate=80.0, material_factor=1.1, source="llm", location_note="note")
@@ -276,7 +276,7 @@ def test_the_basis_note_folds_every_sheets_assembly_and_unmatched_result(db, pro
 
 def test_the_deterministic_path_hands_each_sheet_the_tags_the_run_classified(db, project, dana, inline, monkeypatch, fake_engine):
     _seeded(db, project, dana, inline, monkeypatch)
-    monkeypatch.setattr(cls_mod, "classify_run", lambda *a: Classification(
+    monkeypatch.setattr(cls_mod, "classify_run", lambda *a, **kw: Classification(
         specs_by_tag={}, labor_rate=70.0, material_factor=1.0, source="deterministic", location_note="regional",
         classified_tags={"R"}))
     handed = []

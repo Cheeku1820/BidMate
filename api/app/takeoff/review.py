@@ -20,6 +20,7 @@ steps directly under one `commit()`, instead of duplicating this
 mutate-then-snapshot pattern outside the module.
 """
 
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -31,7 +32,15 @@ from app.identity.models import User
 from app.takeoff.actions import commit, encode_snapshot
 from app.takeoff.concurrency import check_version, lock_item
 from app.takeoff.edit_validation import EDITABLE_FIELDS, validate_edit
-from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPrice, ReviewStatus, Warning
+from app.takeoff.models import (
+    Action,
+    Item,
+    ProjectLaborLine,
+    ProjectMaterialPrice,
+    ReviewStatus,
+    Warning,
+    WarningReason,
+)
 from app.takeoff.snapshots import LABOR_LINE_KEY, MATERIAL_PRICE_KEY, WARNINGS_KEY, _column_snapshot
 
 
@@ -263,3 +272,33 @@ def delete_item(db: DbSession, actor: User, item: Item, expected_version: int) -
         db, actor=actor, project_id=item.project_id, kind="delete",
         label=f"Deleted {item.name}", before=before, after=after, item_id=item.id,
     )
+
+
+def add_item(db: DbSession, actor: User, *, project, sheet, name: str, symbol: str, system: str, quantity,
+             placements: list, x: int, y: int, source_tag: str, status: str, warning: dict | None, label: str) -> tuple[Item, Action]:
+    """A person adds an item (B3b: the result of a symbol match, named or
+    'not sure'). The mirror of `delete_item`: `before` is empty and
+    `after` is the same full snapshot a delete records, so undo removes
+    the row and redo restores it, warning included. Never approved here
+    -- approval is its own act."""
+    item = Item(
+        id=uuid.uuid4(), project_id=project.id, sheet_id=sheet.id, symbol=symbol, name=name, description="",
+        system=system, category="Devices" if status == "ready" else "Unclassified", quantity=quantity, unit="ea",
+        status=ReviewStatus(status), x=x, y=y, placements=placements, source_tag=source_tag,
+    )
+    db.add(item)
+    db.flush()
+    warnings = []
+    if warning:
+        w = Warning(id=uuid.uuid4(), item_id=item.id, sheet_id=None, reason=WarningReason(warning["reason"]),
+                    title=warning["title"], found=warning["found"], why=warning["why"], fix=warning["fix"], where_=warning["where"])
+        db.add(w)
+        db.flush()
+        warnings.append(w)
+    snapshot = _column_snapshot(item)
+    snapshot.pop("version", None)
+    after = {**snapshot, WARNINGS_KEY: [encode_snapshot(_column_snapshot(w)) for w in warnings],
+             LABOR_LINE_KEY: None, MATERIAL_PRICE_KEY: None}
+    action = commit(db, actor=actor, project_id=project.id, kind="add", label=label, before={}, after=after,
+                    item_id=item.id, sheet_id=sheet.id)
+    return item, action

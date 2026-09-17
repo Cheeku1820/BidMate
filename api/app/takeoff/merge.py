@@ -323,6 +323,8 @@ def merge_sheet(db, *, project, sheet, rows, ai_reading) -> MergeCounts:
     deleted_by_key = _deliberately_deleted(db, project.id, {sheet.id: sheet.number})
     by_key: dict[tuple[str, str], list[Item]] = {}
     for i in existing:
+        if i.source_tag.startswith("match:"):
+            continue   # a person's own addition: no engine row ever matches or removes it
         by_key.setdefault(_key(sheet.number, i.source_tag), []).append(i)
     # Un-approved before approved, then a stable tiebreak -- see
     # `_bucket_order()`. Sorted once per bucket, up front, so every
@@ -444,7 +446,7 @@ def drop_sheets(db: DbSession, sheet_ids) -> None:
     for sheet in db.scalars(select(Sheet).where(Sheet.id.in_(ids))):
         any_approved = False
         for item in db.scalars(select(Item).where(Item.sheet_id == sheet.id)):
-            if item.status is ReviewStatus.APPROVED:
+            if item.status is ReviewStatus.APPROVED or item.source_tag.startswith("match:"):
                 any_approved = True
                 continue
             db.execute(delete(Warning).where(Warning.item_id == item.id))

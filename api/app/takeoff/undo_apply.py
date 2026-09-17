@@ -87,6 +87,8 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
         _apply_bulk_approve(db, state)
     elif action.kind == "delete":
         _apply_delete(db, action, direction)
+    elif action.kind == "add":
+        _apply_add(db, action, direction)
     elif action.kind == "labor_edit":
         _apply_sparse_pricing_row(db, ProjectLaborLine, action.item_id, LABOR_LINE_SNAPSHOT_TYPES, state)
     elif action.kind == "material_price_edit":
@@ -432,3 +434,18 @@ def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
             # as it did the first time, the same way it already handles
             # the item's warnings on this same line.
             db.delete(item)
+
+
+def _apply_add(db: DbSession, action: Action, direction: str) -> None:
+    """The mirror of _apply_delete: an undo (`before`) removes the added
+    row -- ON DELETE CASCADE takes its warning -- and a redo (`after`)
+    restores the row and its warnings from the snapshot `add_item`
+    recorded."""
+    if direction == "before":
+        _delete_row_if_present(db, Item, action.item_id)
+        return
+    state = action.after
+    item_fields = {k: v for k, v in state.items() if k not in NESTED_SNAPSHOT_KEYS}
+    _restore_row_if_missing(db, Item, decode_snapshot(item_fields, ITEM_SNAPSHOT_TYPES))
+    for encoded in state.get(WARNINGS_KEY, []):
+        _restore_row_if_missing(db, Warning, decode_snapshot(encoded, WARNING_SNAPSHOT_TYPES))

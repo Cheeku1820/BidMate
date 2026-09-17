@@ -7,6 +7,7 @@ semantics it proved are unchanged, so those cases run the same
 scenarios through `merge_payload` directly, with the estimator's own
 actions (approve, edit, delete, undo) still taken over HTTP."""
 import base64
+import uuid
 
 from sqlalchemy import select
 
@@ -513,3 +514,25 @@ def test_a_rerun_records_one_action_attributed_to_the_actor(db, project, dana):
     _rerun(db, dana, project, [_row("R", "x")])
     rows = list(db.scalars(select(Action).where(Action.project_id == project.id, Action.kind == "note_apply")))
     assert len(rows) == 2 and {r.actor_user_id for r in rows} == {dana.id}
+
+
+def test_merge_never_touches_a_match_item(db, project, sheet, dana):
+    from app.takeoff import merge, review
+    item, _ = review.add_item(db, dana, project=project, sheet=sheet, name="Duplex receptacle", symbol="receptacle",
+                              system="Power", quantity=2, placements=[[100, 100, 8, 8], [200, 100, 8, 8]], x=100, y=100,
+                              source_tag=f"match:{uuid.uuid4()}", status="ready", warning=None, label="Added")
+    db.flush()
+    merge.merge_sheet(db, project=project, sheet=sheet, rows=[], ai_reading=None)   # a re-run reporting nothing
+    db.flush()
+    assert db.get(Item, item.id) is not None
+
+
+def test_drop_sheets_keeps_a_sheet_holding_a_match_item(db, project, sheet, dana):
+    from app.jobs import copy
+    from app.takeoff import merge, review
+    review.add_item(db, dana, project=project, sheet=sheet, name="Duplex receptacle", symbol="receptacle",
+                    system="Power", quantity=1, placements=[[100, 100, 8, 8]], x=100, y=100,
+                    source_tag=f"match:{uuid.uuid4()}", status="ready", warning=None, label="Added")
+    db.flush()
+    merge.drop_sheets(db, [sheet.id]); db.flush()
+    assert db.get(Sheet, sheet.id) is not None and sheet.unreadable_reason == copy.PAGE_GONE

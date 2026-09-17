@@ -47,31 +47,48 @@ symbol_matches
 
 ## 3. Glyphs and signatures — `engine/glyphs.py`
 
-Pure PyMuPDF and the standard library. No database, no model, no OpenCV.
+Pure PyMuPDF and the standard library. No database, no model, no OpenCV. Every constant below was set by measuring the corpus (Unalaska E1.1/E2.1, Kittles EP101, United Utility E-101), not tuned against a score; the tests in §10 pin them.
 
-**Candidates.** `page.get_drawings()` in the visual frame (`page_frame`). Keep paths whose bbox is ≤ `MAX_GLYPH_PT = 40` on both sides. Union-find paths whose bboxes overlap or touch (expanded by `TOUCH_PT = 0.5`) into candidates. Drop a candidate with fewer than `MIN_PATHS = 2` paths (a lone tick, a leader) or more than `MAX_PATHS = 24` (hatch, a north arrow, a detail bubble's text). Text never enters: it lives in the text layer, and a candidate whose bbox contains a text span's centre is dropped (the tag beside a glyph does not overlap it; a letter drawn as outlines does).
+**Paths.** `page.get_drawings()`, every point moved to the visual frame (`page_frame`), bbox computed from the points (PyMuPDF's `rect` for a vertical line is empty and unions to nothing). Three facts about electrical drafting decide what is kept:
 
-**Signature.** For each candidate: translate every point to the candidate's bbox origin, quantise to a `QUANT_PT = 0.25` grid, record each path as `(fill?, stroke?, closed?, sorted point tuples)`, sort the paths, and hash (`sha256`, first 8 hex). Compute this under the eight dihedral transforms of the bbox (four rotations, each mirrored) and keep the lexicographically smallest hash — orientation never splits a symbol. Fill and stroke are part of it: a filled circle and an open one are different devices. Size is not normalised: a glyph drawn at two scales is two clusters (a duplex and a quad receptacle differ by size on many keys).
+- **Ink.** The architectural underlay is screened — drawn in grey — and the electrical work is full-tone. A path whose stroke (or fill, when it has no stroke) has luminance > `MAX_INK_LUMINANCE = 0.4` (`0.299 R + 0.587 G + 0.114 B`) is background and never a glyph. On Unalaska E2.1 this alone removes 20 of 33 clusters, all of them truss braces and door swings.
+- **Size.** A path ≤ `MAX_GLYPH_PT = 40` on both sides may belong to a glyph; a candidate (below) needs ≥ `MIN_GLYPH_PT = 3` on both sides, so a pair of collinear dashes (0 × 4.6 pt) is never a symbol.
+- **Shape.** A candidate must contain a curve, a closed path, or a fill, or else ≥ `MIN_STRAIGHT_PATHS = 3` straight segments. Two dashes meeting at a corner of a dashed wall are not a device; a filled arrowhead or an open circle is.
+
+**Candidates.** Paths bucketed on an 8 pt grid; union-find over pairs whose bboxes overlap or come within `TOUCH_PT = 0.5`. A candidate with more than `MAX_PATHS = 24` paths (hatch, a north arrow) is dropped, and so is one whose bbox contains the centre of any text word — the tag beside a glyph does not overlap it; a room-number box does.
+
+**Same shape.** Two candidates are the same glyph when, under one of the eight dihedral transforms (four rotations, each mirrored), they have the same number of paths, each path pair has the same fill/stroke/closed flags and point count, and every point matches a point of its pair within `TOL_PT = 0.35` after translating both to their bbox origin. Exact hashing was tried first and split identical receptacles into two clusters over 0.02 pt of floating-point jitter; nearest-point matching under a tolerance is what the corpus needs. Comparison is cheap because candidates are bucketed first on a coarse key `(path count, sorted per-path point counts, round(long side), round(short side))`. Fill and stroke are part of sameness (a filled circle and an open one are different devices); size is not normalised (a duplex and a quad receptacle differ by size on many keys).
+
+**Clusters and signatures.** Candidates are compared in page order against each bucket's exemplars; a match joins that exemplar's cluster, a miss starts a new one. A cluster's `signature` is `sha256` of its exemplar's canonical form (translated to the origin, quantised to 0.25 pt, sorted, the lexicographically smallest of the eight transforms), first 8 hex — stable for the same file across runs, which is what `source_tag = "shape:<signature>"` needs for the merge key.
 
 ```python
 @dataclass
 class Glyph:
     rect: tuple[float, float, float, float]   # page points, visual frame
-    signature: str
-    path_count: int
+    forms: list[Form]                         # the eight dihedral forms, for same_shape
+    key: tuple                                # the coarse bucket
 
-def glyphs_on(page, region) -> list[Glyph]
-def signature_in(page, rect) -> str | None      # the glyph inside a drawn box, if one
-def cluster(glyphs, min_instances=3) -> dict[str, list[Glyph]]
+@dataclass
+class ShapeCluster:
+    signature: str
+    members: list[Glyph]
+
+def glyphs_on(page, region, words) -> list[Glyph]
+def same_shape(a: Glyph, b: Glyph) -> bool
+def cluster(glyphs, min_instances=3) -> list[ShapeCluster]
+def glyph_in(page, rect, words) -> Glyph | None       # the one candidate inside a drawn box, if any
+def matches_of(glyph, glyphs) -> list[Glyph]           # every glyph the same shape as `glyph`, itself included
 ```
 
-**Fixtures.** A signature whose instances sit at nearly the same page coordinates (within `FIXTURE_PT = 2`) on ≥ 60 % of the set's plan sheets is a border or legend fixture, not a device — `count()` drops it before clustering (a one-sheet set has no fixtures to drop). Candidates outside the sheet's `region` (title block, border) and inside the stamp (`_stamp_points`) are excluded, as tag placements are today.
+**Fixtures.** A cluster whose members sit at nearly the same page coordinates (within `FIXTURE_PT = 2`) on ≥ 60 % of the set's plan sheets is a border or legend fixture, not a device — `count()` drops it before returning (a one-sheet set has no fixtures to drop). Candidates outside the sheet's `region` (title block, border) and inside the stamp (`_stamp_points`) are excluded, as tag placements are today.
+
+**Measured.** Unalaska E1.1: 7 clusters, 176 placements; E2.1: 13 clusters, 180 placements (a 37-instance junction box, 31 switches drawn as `$`); Kittles EP101: 5 clusters, 212 placements (80 + 72 duplex receptacles in two orientations, 43 boxed, 14 quad); United Utility E-101: 4 clusters, 138 placements (a 120-instance receptacle). Under 2 s per sheet.
 
 ## 4. Counting — `engine/counting.py`
 
 `count_sheet` runs today's tag counter, then:
 
-1. `glyphs_on(page, sheet.region)` → `cluster(...)` → one `DeviceCluster(tag="shape:<hash>", exemplar=first.rect, placements=[Placement(cx, cy, w, h)…])` per signature with ≥ `MIN_PLACEMENTS` (3) instances.
+1. `glyphs_on(page, sheet.region, words)` → `cluster(...)` → one `DeviceCluster(tag="shape:<signature>", exemplar=members[0].rect, placements=[Placement(cx, cy, w, h)…])` per cluster with ≥ `MIN_PLACEMENTS` (3) members.
 2. **Linking.** For every tag placement, the nearest glyph (any signature) whose centre lies within `LINK_FACTOR = 1.5` × the glyph's larger side of the tag's point. A shape cluster with ≥ `LINK_SHARE = 0.8` of its instances claimed by placements of one tag is that tag's glyph: the tag cluster's placements take those boxes (`w, h` from the glyph, centre moved to the glyph's centre), the shape cluster gets `linked_tag` and is removed from the output. A tag placement that matched nothing keeps `w = h = 0`. A shape cluster claimed by two tags below the share is left untagged — Classification sees it as its own device.
 3. Output: tag clusters (now boxed) followed by the surviving shape clusters. Same `list[DeviceCluster]`; nothing downstream changes shape.
 
@@ -91,8 +108,8 @@ Fifth job kind, same shape as the others: sandboxed child, `timeout_for("match")
 
 1. Load the `symbol_matches` row and its sheet; download the document to a tempfile (`blob_to_tempfile`).
 2. Box → page points (`ingest.denormalize`, the inverse of `normalize_point`; new, next to it).
-3. **Vector path.** `glyphs.signature_in(page, rect)`. If a glyph is inside the box: every `Glyph` on the sheet (inside `region`) with that signature is a match, the boxed one included.
-4. **Raster path** when `signature_in` returns `None` (scanned page, a placed image, or a box drawn on plain lines). `engine/raster_match.py`: render the page greyscale at `MATCH_DPI = 200` (capped at 40 MP — lower the dpi to fit), crop the template, `cv2.matchTemplate(TM_CCOEFF_NORMED)` at 0°, 90°, 180°, 270°, keep peaks ≥ `MATCH_THRESHOLD = 0.80`, non-maximum suppression at half the template's size. The template itself always matches at its own location. Dependency `opencv-python-headless` in `api/requirements.txt` — imported only under `app.engine`, so the import-boundary tests (`app.main` imports no engine) cover it.
+3. **Vector path.** `glyphs.glyph_in(page, rect, words)`. If a glyph is inside the box: `matches_of(glyph, glyphs_on(page, region, words))` — every glyph on the sheet the same shape, the boxed one included.
+4. **Raster path** when `glyph_in` returns `None` (scanned page, a placed image, or a box drawn on plain lines). `engine/raster_match.py`: render the page greyscale at `MATCH_DPI = 200` (capped at 40 MP — lower the dpi to fit), crop the template, `cv2.matchTemplate(TM_CCOEFF_NORMED)` at 0°, 90°, 180°, 270°, keep peaks ≥ `MATCH_THRESHOLD = 0.80`, non-maximum suppression at half the template's size. The template itself always matches at its own location. Dependency `opencv-python-headless` in `api/requirements.txt` — imported only under `app.engine`, so the import-boundary tests (`app.main` imports no engine) cover it.
 5. Write `matches` (sheet units, via `normalize_point`), `status = found`. A terminal failure writes `failed` with `copy.MATCH_FAILED`.
 
 Both paths return `list[tuple[x, y, w, h]]` in page points; one function, `find_matches(path, page_index, sheet, rect)`, chooses.
@@ -130,8 +147,8 @@ Store: `createMatch / getMatch / acceptMatch / discardMatch` in `api.js`; `useRe
 
 ## 10. Testing
 
-- **Signatures** (`tests/engine/test_glyphs.py`): a synthetic PDF built in the test with five identical squares (three rotated, one mirrored), two hatches (> 24 paths), a lone line, and a text label overlapping one outline → one cluster of five, nothing else. Dihedral invariance, the 40 pt gate, the touch radius, fill-vs-stroke, and the fixture drop each get a unit.
-- **Counting** (fixtures under `tests/fixtures/sheets/`, corpus tests skipped without `bid_examples/`): Unalaska E1.1 yields ≥ 3 shape clusters with boxes and a total ≥ 200 placements; Kittles, Pulte, and United Utility tag clusters gain boxes on ≥ 80 % of placements; every existing tag count is unchanged. Linking: a synthetic sheet with tag "A" beside each of five squares → one tag cluster of five, boxed, no shape cluster.
+- **Glyphs** (`tests/test_engine_glyphs.py`): a synthetic PDF built in the test with five identical circle-and-bar receptacles (three rotated, one mirrored, one jittered by 0.1 pt), a grey copy of the same glyph, a hatch (> 24 paths), a dashed-wall corner (two dashes), a lone line, and a text label overlapping one outline → one cluster of five, nothing else. Dihedral invariance, the tolerance, the 40 pt gate and 3 pt floor, the ink rule, the shape rule, the touch radius, fill-vs-stroke, and the fixture drop each get a unit.
+- **Counting** (corpus tests skipped without `bid_examples/`): Unalaska E1.1 ≥ 5 shape clusters and ≥ 120 placements, E2.1 ≥ 8 and ≥ 120; Kittles EP101 ≥ 3 and ≥ 150; United Utility E-101 one cluster ≥ 100 — each at least two-thirds of what was measured, so a regression shows and jitter does not. Every existing tag count is unchanged; every box lies inside its visual page. Linking: a synthetic sheet with tag "A" beside each of five squares → one tag cluster of five, boxed, no shape cluster.
 - **Ingest**: `[x, y, w, h]` normalises per axis; `[x, y]` still accepted; `w, h < 1` clamps to 1.
 - **Match**: a synthetic vector sheet and a raster rendered from it return the same count; the raster path rejects a 0.6 correlation; NMS collapses adjacent peaks; org-scoped 404, both 409s, 422 on a bad box; the wire shape has no `score`; one `POST …/items` = one action row, one item of quantity N, one undo removes it; `merge_sheet` on a sheet with `match:` items leaves them; subprocess tests: `app.main` imports neither `app.engine` nor `cv2`.
 - **Client**: drag → sheet units at two zoom levels; result boxes survive every layer toggle and totals do not change; two-element placements render with the fixed ring; the result card offers the boxed one as a quantity of 1 on zero matches.

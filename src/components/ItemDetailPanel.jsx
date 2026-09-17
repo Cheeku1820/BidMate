@@ -2,6 +2,7 @@ import { Check, Pencil, CircleSlash, Trash2, ChevronLeft, ChevronRight, External
 import Pill from "./Pill.jsx";
 import { SYMBOL_LABELS } from "./Symbols.jsx";
 import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/vocabulary.js";
+import MatchResultCard from "./MatchResultCard.jsx";
 
 /** Right panel: selected item (spec §5, screen F). Renders the review
  *  progress summary when nothing is selected, or the full item detail
@@ -9,14 +10,33 @@ import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/vocabulary.js";
  *  (never collapsed to one — task-15/16), and, when the last write to
  *  this item was refused, an inline banner naming why and how to
  *  recover, right next to the evidence it concerns (DESIGN.md; task-
- *  16-brief.md §4). */
+ *  16-brief.md §4). When a symbol search (task 10/11) is in progress
+ *  or has a result and nothing is selected, the result card (task 12)
+ *  takes the place of the progress summary -- it returns the moment
+ *  the match is discarded or accepted. */
 export default function ItemDetailPanel({
   sel, sheets, currentSheet, edit, onStartEdit, onChangeEdit, onSaveEdit, onCancelEdit,
   onApprove, onReject, onRequestDelete, onShowEvidence, onStep, stepIndex, stepCount,
   itemError, onRefreshItem, onDismissItemError,
   counts, itemsTotal, onNextIssue,
+  match, onAcceptMatch, onDiscardMatch, onRetryMatch,
 }) {
   const aiReading = currentSheet?.aiReading;
+  if (!sel && match) {
+    return (
+      <aside className="detail" aria-label="Selected item">
+        <div className="detail__scroll">
+          <MatchResultCard
+            match={match}
+            onAccept={onAcceptMatch}
+            onDiscard={onDiscardMatch}
+            onRetry={onRetryMatch}
+            sheetNumber={currentSheet?.number}
+          />
+        </div>
+      </aside>
+    );
+  }
   if (!sel) {
     return (
       <aside className="detail" aria-label="Selected item">

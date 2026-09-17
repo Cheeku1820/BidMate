@@ -24,7 +24,7 @@ export default function Workspace() {
     itemError, clearItemError, setPresenceTarget, refresh,
     approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
     me, sheetId, setSheetId, selectedItemId, selectItem, project, projectId,
-    store, match, startMatch,
+    store, match, startMatch, acceptMatch, discardMatch,
   } = useWorkspaceContext();
   const navigate = useNavigate();
 
@@ -211,6 +211,11 @@ export default function Workspace() {
   const overall = counts.missing ? "missing" : counts.attention ? "attention" : counts.ready ? "ready" : "approved";
   const itemsOnSheet = items.filter((i) => i.sheetId === sheetId);
   const stepIndex = itemsOnSheet.findIndex((i) => i.id === selectedItemId) + 1;
+  // A match belongs to the sheet it was drawn on -- scoped the same way
+  // for the canvas overlay and the result card, so switching sheets
+  // mid-search hides both rather than showing a stray result for a
+  // different page.
+  const sheetMatch = match?.sheetId === sheet.id ? match : null;
 
   return (
     <div className="app">
@@ -270,7 +275,7 @@ export default function Workspace() {
           onToggleMenu={setMenu}
           remoteSelections={remoteSelections}
           onCalibrate={() => setModal({ kind: "scale" })}
-          match={match?.sheetId === sheet.id ? match : null}
+          match={sheetMatch}
           onDrawBox={(box) => {
             startMatch(sheet.id, box);
             setTool("pan");
@@ -299,6 +304,14 @@ export default function Workspace() {
           counts={counts}
           itemsTotal={items.length}
           onNextIssue={nextIssue}
+          match={sheetMatch}
+          onAcceptMatch={acceptMatch}
+          onDiscardMatch={discardMatch}
+          onRetryMatch={() => {
+            const b = match.box;
+            discardMatch();
+            startMatch(sheet.id, { x: b[0], y: b[1], w: b[2], h: b[3] });
+          }}
         />
       </div>
 

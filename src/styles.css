@@ -887,6 +887,18 @@ button {
   letter-spacing: -0.01em;
 }
 
+/* the symbol search result card (task 12) -- not an item yet, so no
+   review-status colour anywhere in here; --blue is used only for the
+   one primary action, same as any other form. */
+.matchcard {
+  display: flex;
+  flex-direction: column;
+}
+
+.matchcard .btn--block {
+  margin-top: 10px;
+}
+
 .label {
   margin: 14px 0 3px;
   font-size: 11px;

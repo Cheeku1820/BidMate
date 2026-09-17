@@ -170,3 +170,52 @@ def test_raster_sets_are_unreadable_not_silent(name):
     for s in sheets:
         assert s.unreadable_reason, (name, s.page_index)
         assert counting.count_sheet(path, s) == []
+
+
+# Measured 2026-09-16 on the corpus (spec §3 "Measured"); thresholds are
+# two-thirds of what was seen so a regression shows and jitter does not.
+SHAPE_FLOORS = {
+    ("unalaska", 84): (5, 120),          # E1.1
+    ("unalaska", 87): (8, 120),          # E2.1
+    ("kittles_saxony", 4): (3, 150),     # EP101
+}
+
+
+@pytest.mark.parametrize("name,page_index", sorted(SHAPE_FLOORS))
+def test_shape_clusters_count_untagged_devices(name, page_index):
+    from app.engine import counting
+
+    fx, path, sheets = _detected(name)
+    sheet = next(s for s in sheets if s.page_index == page_index)
+    shapes = [c for c in counting.count_sheet(path, sheet) if c.tag.startswith("shape:")]
+    min_clusters, min_placements = SHAPE_FLOORS[(name, page_index)]
+    assert len(shapes) >= min_clusters, (name, page_index, len(shapes))
+    assert sum(c.count for c in shapes) >= min_placements
+    for c in shapes:
+        for p in c.placements:
+            assert p.w > 0 and p.h > 0
+            assert 0 <= p.x <= sheet.width_pt and 0 <= p.y <= sheet.height_pt
+
+
+def test_united_utility_has_a_hundred_of_one_receptacle():
+    from app.engine import counting
+
+    fx, path, sheets = _detected("united_utility")
+    sheet = next(s for s in sheets if s.page_index == 59)   # E-101
+    shapes = [c for c in counting.count_sheet(path, sheet) if c.tag.startswith("shape:")]
+    assert max((c.count for c in shapes), default=0) >= 100
+
+
+@pytest.mark.parametrize("name", sorted(VECTOR_SETS))
+def test_tag_counts_are_unchanged_by_shape_clusters(name):
+    """Linking moves a tag's placements onto glyph boxes; it never adds
+    or removes a placement."""
+    from app.engine import counting
+
+    fx, path, sheets = _detected(name)
+    for s in sheets:
+        clusters = counting.count_sheet(path, s)
+        for c in clusters:
+            if c.tag.startswith("shape:"):
+                continue
+            assert c.count >= counting.MIN_PLACEMENTS

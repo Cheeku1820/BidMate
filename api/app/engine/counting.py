@@ -19,8 +19,21 @@ from collections import Counter, defaultdict
 
 import pymupdf
 
+from app.engine import glyphs
+from app.engine.glyphs import FIXTURE_PT
+
 from .contracts import DetectedSheet, DeviceCluster, Placement
 from .page_frame import visual_spans, visual_words
+
+# Linking a tag to the glyph it labels (spec §4): a tag's nearest glyph
+# within LINK_FACTOR × the glyph's larger side is its symbol, and a
+# shape cluster whose instances are mostly claimed by one tag belongs
+# to that tag.
+LINK_FACTOR = 1.5
+LINK_SHARE = 0.8
+# A shape at the same coordinates on this share of a set's plan sheets
+# is a border or legend fixture, not a device.
+FIXTURE_SHARE = 0.6
 
 # A device tag: a short uppercase code (fixture type, receptacle, switch,
 # junction, panel/circuit designator). Compound tokens ("D,O") and mixed
@@ -186,17 +199,107 @@ def count_sheet(path: str, sheet: DetectedSheet) -> list[DeviceCluster]:
         if not _in_region(w.cx, w.cy, sheet.region):
             continue
         by_tag[t].append(Placement(int(w.cx), int(w.cy)))
-    clusters = [
+    tag_clusters = [
         DeviceCluster(tag=tag, sheet_page_index=sheet.page_index, placements=places)
         for tag, places in by_tag.items()
         if len(places) >= MIN_PLACEMENTS
     ]
+    shape_clusters = _shape_clusters(page, sheet, words)
+    _link(tag_clusters, shape_clusters)
+    clusters = tag_clusters + [c for c in shape_clusters if not c.linked_tag]
     clusters.sort(key=lambda c: c.count, reverse=True)
     return clusters
+
+
+def _shape_clusters(page, sheet: DetectedSheet, words) -> list[DeviceCluster]:
+    """Untagged device glyphs, by shape (glyphs.py). Counting names
+    nothing: the tag is the shape's signature, and Classification
+    decides what it is."""
+    stamp = _stamp_points(page)
+    found = glyphs.glyphs_on(page, sheet.region, words)
+    found = [g for g in found
+             if (round((g.rect[0] + g.rect[2]) / 2), round((g.rect[1] + g.rect[3]) / 2)) not in stamp]
+    out = []
+    for c in glyphs.cluster(found, MIN_PLACEMENTS):
+        out.append(DeviceCluster(
+            tag=f"shape:{c.signature}", sheet_page_index=sheet.page_index,
+            placements=[_placement(g) for g in c.members], exemplar=c.members[0].rect,
+        ))
+    return out
+
+
+def _placement(g: glyphs.Glyph) -> Placement:
+    x0, y0, x1, y1 = g.rect
+    return Placement(int(round((x0 + x1) / 2)), int(round((y0 + y1) / 2)),
+                     max(1, int(round(x1 - x0))), max(1, int(round(y1 - y0))))
+
+
+def _link(tag_clusters: list[DeviceCluster], shape_clusters: list[DeviceCluster]) -> None:
+    """A tag placement claims the nearest glyph within LINK_FACTOR × the
+    glyph's larger side. A shape cluster with ≥ LINK_SHARE of its
+    instances claimed by one tag is that tag's symbol: the tag's
+    placements take the boxes and the shape cluster is marked linked.
+    Nothing here changes a tag cluster's count."""
+    instances = [(sc, i, p) for sc in shape_clusters for i, p in enumerate(sc.placements)]
+    claims: dict[tuple[int, int], tuple[DeviceCluster, int]] = {}   # (shape idx, instance) -> (tag cluster, placement idx)
+    for tc in tag_clusters:
+        for pi, tp in enumerate(tc.placements):
+            best = None
+            for si, (sc, i, p) in enumerate(instances):
+                reach = LINK_FACTOR * max(p.w, p.h)
+                d = math.hypot(tp.x - p.x, tp.y - p.y)
+                if d <= reach and (best is None or d < best[0]):
+                    best = (d, si)
+            if best is not None:
+                sc, i, _ = instances[best[1]]
+                claims.setdefault((id(sc), i), (tc, pi))
+    for sc in shape_clusters:
+        by_tag: dict[str, list[tuple[int, int]]] = {}
+        for i in range(len(sc.placements)):
+            claim = claims.get((id(sc), i))
+            if claim:
+                by_tag.setdefault(claim[0].tag, []).append((i, claim[1]))
+        for tag, pairs in by_tag.items():
+            if len(pairs) < LINK_SHARE * len(sc.placements):
+                continue
+            tc = next(t for t in tag_clusters if t.tag == tag)
+            for i, pi in pairs:
+                tc.placements[pi] = sc.placements[i]
+            sc.linked_tag = tag
+            break
 
 
 def count(path: str, sheets: list[DetectedSheet]) -> list[DeviceCluster]:
     out: list[DeviceCluster] = []
     for sheet in sheets:
         out.extend(count_sheet(path, sheet))
+    return _drop_fixtures(out, sum(1 for s in sheets if s.kind == "plan" and not s.unreadable_reason))
+
+
+def _drop_fixtures(clusters: list[DeviceCluster], plan_sheets: int) -> list[DeviceCluster]:
+    """A shape whose instances sit at the same coordinates (within
+    FIXTURE_PT) on ≥ FIXTURE_SHARE of the plan sheets is a border or a
+    legend, not a device. Only those repeated instances go; a device of
+    the same shape elsewhere on a sheet stays."""
+    if plan_sheets < 2:
+        return clusters
+    spots: dict[tuple[str, tuple[int, int]], set[int]] = {}
+    for c in clusters:
+        if not c.tag.startswith("shape:"):
+            continue
+        for p in c.placements:
+            key = (c.tag, (round(p.x / FIXTURE_PT), round(p.y / FIXTURE_PT)))
+            spots.setdefault(key, set()).add(c.sheet_page_index)
+    fixture = {k for k, pages in spots.items() if len(pages) >= FIXTURE_SHARE * plan_sheets}
+    if not fixture:
+        return clusters
+    out = []
+    for c in clusters:
+        if not c.tag.startswith("shape:"):
+            out.append(c)
+            continue
+        kept = [p for p in c.placements if (c.tag, (round(p.x / FIXTURE_PT), round(p.y / FIXTURE_PT))) not in fixture]
+        if len(kept) >= MIN_PLACEMENTS:
+            c.placements = kept
+            out.append(c)
     return out

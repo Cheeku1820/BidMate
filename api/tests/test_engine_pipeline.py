@@ -53,25 +53,32 @@ def test_wire_and_conduit_reach_the_total():
 
 
 def test_the_seal_is_gone_from_the_whole_set():
-    """Measured against the real Unalaska set, the seal filter removes
-    509 placements across the 14 sheets -- about 36 per sheet on average
-    (509 / 14), mostly the engineer's-seal glyph (design spec 11.2's
-    earlier estimate of 41 candidates per sheet was Task 3's starting
-    figure, not the measured removed count). What ships is a font-and-
-    proximity filter -- a condensed face is the seal ring's typographic
-    signature, and the inner ring is caught by nearness to a confirmed
-    condensed-font glyph -- not the rotation filter these docstrings used
-    to name; see counting.py's _stamp_centres. Before the filter, the raw
-    count across the set was 812; with it applied, 303. The threshold is
-    tightened to a measured fact rather than a loose bound: 800 would
-    tolerate restoring 496 of the 509 removed placements and still pass.
-    400 leaves headroom for sheet-layout variance while still catching a
-    real regression in the filter."""
+    """B3b Task 3 added a second placement source -- shape clusters, read
+    off drawn glyphs by engine/glyphs.py -- so the total this guards is no
+    longer tag placements alone. Re-measured 2026-09-16 against the real
+    Unalaska set: 322 tag placements (the same figure this test measured
+    on 2026-09-14, unchanged by Task 3) plus 588 shape-cluster placements
+    from previously-uncounted device glyphs, 910 total. count_sheet
+    returns [] for every non-plan sheet, so the 14-sheet whole-set total
+    and the 8-plan-sheet total are the same number.
+
+    The engineer's-seal tag candidates this test was written to guard
+    against (design spec 11.2, ~41/sheet) are excluded by `sheet.region`
+    today before `_stamp_points` is ever consulted -- confirmed by
+    disabling the stamp filter and re-measuring: the total is unchanged
+    (910 either way) on this set. That is a fact about this corpus's seal
+    position, not a claim the stamp filter is dead code; what ships is
+    still a font-and-proximity filter -- a condensed face is the seal
+    ring's typographic signature, and the inner ring is caught by
+    nearness to a confirmed condensed-font glyph -- see counting.py's
+    _stamp_points. 1200 leaves ~32% headroom above the measured 910
+    while still well short of what restoring the seal's ~509 tag
+    placements on top of the shape total would produce."""
     from app.engine import counting, documents
 
     sheets = documents.detect_sheets(BID)
     total = sum(c.count for c in counting.count(BID, sheets))
-    assert total < 400, f"expected the seal filter's ~509 removed placements to hold (812 -> 303), got {total}"
+    assert total < 1200, f"expected tag+shape placements to stay near the measured 910, got {total}"
 
 
 def test_no_parsed_legend_text_reaches_an_item_name_or_a_warning():
@@ -259,16 +266,20 @@ def test_unalaska_non_plans_contribute_no_devices():
 
 
 def test_unalaska_plan_placements_are_in_range_and_in_frame():
-    """Lower bound: what the mis-framed region left. Upper bound: the seal
-    and the schedules stay out.
+    """Lower bound: what a mis-framed region, or a broken shape-clustering
+    pass, would leave. Upper bound: the seal and the schedules stay out.
 
     Measured 2026-09-14 at 322 across the eight plan pages E1.0-E5.1,
-    every placement checked against a rendered crop of its glyph (the
-    site plan's 8 are circled-J boxes at pole bases). The design spec's
-    320 was written for seven plan pages; the site plan is the eighth.
-    330 leaves 8 of headroom, and the smallest thing this guards against
-    -- the legend page's 14 placements coming back, or one seal ring's
-    ~36 -- still trips it."""
+    tag placements only, every placement checked against a rendered crop
+    of its glyph (the site plan's 8 are circled-J boxes at pole bases).
+    B3b Task 3 added shape clusters -- untagged device glyphs, read off
+    the drawing -- as a second placement source on the same sheets;
+    re-measured 2026-09-16 at 910 (the 322 tag placements, unchanged,
+    plus 588 from shape clusters). 700 sits above the old 322 tag-only
+    figure, so a shape-clustering pass that broke or came back empty
+    still trips the lower bound; 1050 leaves ~15% headroom above the
+    measured 910 while the legend page's 14 placements or one seal
+    ring's ~36 would still trip the upper bound."""
     from app.engine import counting, documents
 
     sheets = documents.detect_sheets(BID)
@@ -279,7 +290,7 @@ def test_unalaska_plan_placements_are_in_range_and_in_frame():
             for p in c.placements:
                 assert 0 <= p.x <= s.width_pt and 0 <= p.y <= s.height_pt, (s.number, p)
                 total += 1
-    assert 197 <= total <= 330, total
+    assert 700 <= total <= 1050, total
 
 
 def test_a_placement_sits_on_its_glyph_in_the_rotated_render():

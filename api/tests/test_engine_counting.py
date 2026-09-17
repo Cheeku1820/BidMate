@@ -254,3 +254,80 @@ def test_real_devices_survive_the_stamp_filter():
     seal = [p for c in clusters for p in c.placements
             if 2288 < p.x < 2408 and 850 < p.y < 1010]
     assert seal == [], f"{len(seal)} seal glyphs still counted as devices on E6.1"
+
+
+from tests.test_engine_glyphs import _receptacle  # the same drawn receptacle
+
+
+def _plan(tmp_path, draw, name="shapes.pdf", pages=1):
+    doc = pymupdf.open()
+    for i in range(pages):
+        page = doc.new_page(width=1000, height=800)
+        draw(page, i)
+    path = tmp_path / name
+    doc.save(path)
+    region = (20, 16, 820, 784)
+    return str(path), [DetectedSheet(page_index=i, number=f"E1.{i + 1}", title="t", discipline="Electrical",
+                                     scale="", width_pt=1000, height_pt=800, region=region) for i in range(pages)]
+
+
+def test_untagged_glyphs_become_a_shape_cluster_with_boxes(tmp_path):
+    def draw(page, _):
+        for x in (100, 200, 300, 400):
+            _receptacle(page, x, 300)
+    path, (sheet,) = _plan(tmp_path, draw)
+    (c,) = counting.count_sheet(path, sheet)
+    assert c.tag.startswith("shape:") and len(c.tag) == len("shape:") + 8
+    assert c.count == 4 and c.exemplar is not None
+    p = c.placements[0]
+    assert p.w > 0 and p.h > 0 and abs(p.x - 100) <= 1 and abs(p.y - 300) <= 1
+
+
+def test_a_tag_beside_each_glyph_absorbs_the_shape_cluster(tmp_path):
+    def draw(page, _):
+        for x in (100, 200, 300, 400, 500):
+            _receptacle(page, x, 300)
+            page.insert_text((x + 8, 296), "R", fontsize=6)
+    path, (sheet,) = _plan(tmp_path, draw)
+    clusters = counting.count_sheet(path, sheet)
+    assert [c.tag for c in clusters] == ["R"]
+    r = clusters[0]
+    assert r.count == 5 and all(p.w > 0 and p.h > 0 for p in r.placements)
+    assert all(abs(p.x - x) <= 1 for p, x in zip(sorted(r.placements, key=lambda p: p.x), (100, 200, 300, 400, 500)))
+
+
+def test_a_tag_far_from_any_glyph_keeps_a_point_placement(tmp_path):
+    def draw(page, _):
+        for x in (100, 200, 300):
+            page.insert_text((x, 300), "R", fontsize=6)
+        for x in (100, 200, 300):
+            _receptacle(page, x, 600)   # 300 pt away: not this tag's glyph
+    path, (sheet,) = _plan(tmp_path, draw)
+    tags = {c.tag: c for c in counting.count_sheet(path, sheet)}
+    assert tags["R"].count == 3 and all(p.w == 0 and p.h == 0 for p in tags["R"].placements)
+    assert len([t for t in tags if t.startswith("shape:")]) == 1
+
+
+def test_fewer_than_three_instances_is_not_a_cluster(tmp_path):
+    def draw(page, _):
+        _receptacle(page, 100, 300); _receptacle(page, 200, 300)
+    path, (sheet,) = _plan(tmp_path, draw)
+    assert counting.count_sheet(path, sheet) == []
+
+
+def test_a_shape_at_the_same_place_on_most_sheets_is_a_fixture(tmp_path):
+    def draw(page, i):
+        for x in (100, 200, 300):          # a legend-style row, same spot every page
+            _receptacle(page, x, 100)
+        if i == 0:
+            for x in (100, 250, 400, 550):  # real devices on one page only
+                _receptacle(page, x, 500, rot=90)
+    path, sheets = _plan(tmp_path, draw, pages=3)
+    clusters = counting.count(path, sheets)
+    # the fixture row (same shape, same coordinates on 3 of 3 sheets) is gone;
+    # page 0 keeps its four real devices, which share the shape but not the spot
+    by_page = {}
+    for c in clusters:
+        by_page.setdefault(c.sheet_page_index, []).append(c)
+    assert 1 not in by_page and 2 not in by_page
+    assert len(by_page[0]) == 1 and by_page[0][0].count == 4

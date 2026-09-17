@@ -14,12 +14,15 @@ Everything is in the visual frame (page_frame.py).
 from __future__ import annotations
 
 import hashlib
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 
 import pymupdf
 
 from app.engine.page_frame import Word
+
+logger = logging.getLogger(__name__)
 
 # Ink: the architectural underlay is screened (grey); electrical work is
 # full-tone. Luminance above this is background.
@@ -49,6 +52,16 @@ MAX_CELL_PATHS = 200
 TOL_PT = 0.35
 # Signature: the exemplar's canonical form on this grid, for a stable id.
 QUANT_PT = 0.25
+# Memory guard. PyMuPDF materialises every drawing on the page as a dict
+# before paths_on sees any of them, at about 1.2 GB per million drawings
+# measured (Pulte E-210: 1.6M small paths, get_drawings() alone 2.5 GB, the
+# whole shape pass 3.7 GB RSS against the worker's 4g cap). A page with
+# more drawings than this skips the shape pass entirely and returns no
+# paths: its tags are still counted, only its untagged shape clusters are
+# not. There is no per-sheet, estimator-visible outcome for a skipped
+# page yet -- the sheet simply carries fewer shape rows -- recorded in
+# spec accurate-symbol-marking.md §12.
+MAX_PATHS_PER_PAGE = 3_000_000
 
 
 @dataclass
@@ -91,7 +104,11 @@ def paths_on(page) -> list[Path]:
     to nothing)."""
     m = page.rotation_matrix
     out: list[Path] = []
-    for d in page.get_drawings():
+    drawings = page.get_drawings()
+    if len(drawings) > MAX_PATHS_PER_PAGE:
+        logger.warning("shape pass skipped: %d drawings on the page", len(drawings))
+        return out
+    for d in drawings:
         ink = d.get("color") or d.get("fill")
         if ink is None or _luminance(ink) > MAX_INK_LUMINANCE:
             continue

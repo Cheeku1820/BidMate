@@ -175,7 +175,7 @@ The Documents agent is *language over a deterministic shell*. Scope extraction i
 
 ### 5.1 Process
 
-`python -m app.worker` in `api/app/worker/`. A Compose service `worker` from the same image as `api`, `mem_limit: 2g`, `pids_limit: 256`, `ANTHROPIC_API_KEY` passed through, `depends_on` postgres and minio-init. `docker compose up` is the whole stack; the host `.enginevenv` is for running tests only.
+`python -m app.worker` in `api/app/worker/`. A Compose service `worker` from the same image as `api`, `mem_limit: 4g` (raised from `2g` by B3b: the shape pass on Pulte E-210 peaks at 3.7 GB RSS), `pids_limit: 256`, `ANTHROPIC_API_KEY` passed through, `depends_on` postgres and minio-init. `docker compose up` is the whole stack; the host `.enginevenv` is for running tests only.
 
 `app.worker` is the only package that imports `app.engine` or `pymupdf`. `test_api_import_boundary.py` keeps `app.main` clean; a mirror test asserts `app.worker` imports neither `app.main` nor any `*router*` module.
 

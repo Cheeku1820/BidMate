@@ -180,6 +180,17 @@ def test_a_symbol_beside_a_dense_region_survives(page):
     assert len(cl) == 1 and len(cl[0].members) == 3
 
 
+def test_a_page_over_the_drawing_cap_skips_the_shape_pass(page, monkeypatch):
+    """MAX_PATHS_PER_PAGE is a memory guard: a page PyMuPDF cannot
+    materialise inside the worker's cap yields no paths at all rather
+    than an OOM-killed run. Two paths, cap of one."""
+    _receptacle(page, 100, 100)   # circle + bar: two drawings
+    assert len(glyphs.paths_on(page)) == 2
+    monkeypatch.setattr(glyphs, "MAX_PATHS_PER_PAGE", 1)
+    assert glyphs.paths_on(page) == []
+    assert glyphs.glyphs_on(page, _region(), visual_words(page)) == []
+
+
 def test_the_visual_frame_is_used_on_a_rotated_page():
     doc = pymupdf.open()
     page = doc.new_page(width=800, height=1000)

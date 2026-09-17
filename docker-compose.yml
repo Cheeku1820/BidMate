@@ -72,7 +72,8 @@ services:
       BLOB_BUCKET: bidmate-documents
       BLOB_REGION: us-east-1
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-    mem_limit: 2g
+    # 4g: the shape pass on the densest corpus sheet (Pulte E-210, 1.6M paths) peaks at 3.7 GB RSS, measured; 2g OOM-killed the classify child.
+    mem_limit: 4g
     pids_limit: 256
     volumes: ["./api:/srv"]
     depends_on:

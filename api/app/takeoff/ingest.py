@@ -187,6 +187,27 @@ def normalize_point(value, extent: int, target: int) -> int:
     return round((float(value or 0) / float(extent)) * target)
 
 
+def _normalize_placement(p, width: int, height: int) -> list[int]:
+    """[x, y] or [x, y, w, h] in page points -> sheet units. A box of
+    zero extent is a point: stored two-element, drawn with the fixed
+    ring (B3b spec §2). A real box never normalises below 1 unit."""
+    x = normalize_point(p[0], width, SHEET_SPACE_W)
+    y = normalize_point(p[1], height, SHEET_SPACE_H)
+    if len(p) < 4 or not (p[2] and p[3]):
+        return [x, y]
+    w = max(1, normalize_point(p[2], width, SHEET_SPACE_W))
+    h = max(1, normalize_point(p[3], height, SHEET_SPACE_H))
+    return [x, y, w, h]
+
+
+def denormalize_box(box, width_pt: float, height_pt: float) -> tuple[float, float, float, float]:
+    """A sheet-unit [x, y, w, h] (centre + extent) -> page-point rect
+    (x0, y0, x1, y1), the inverse of `_normalize_placement`."""
+    x, y, w, h = (float(v) for v in box)
+    sx, sy = width_pt / SHEET_SPACE_W, height_pt / SHEET_SPACE_H
+    return ((x - w / 2) * sx, (y - h / 2) * sy, (x + w / 2) * sx, (y + h / 2) * sy)
+
+
 def infer_symbol(name: str, system: str) -> str:
     """Fallback glyph choice for a row that carries no symbol of its own.
     The classifier's symbol is preferred wherever it exists."""
@@ -379,11 +400,8 @@ def map_payload(payload: dict, valid_sheet_numbers: set[str] | None = None) -> M
         name = str(raw.get("name") or "Unclassified item")
         system = str(raw.get("system") or "Unknown")
         warning = raw.get("warning")
-        placements = [
-            [normalize_point(p[0], width, SHEET_SPACE_W), normalize_point(p[1], height, SHEET_SPACE_H)]
-            for p in (raw.get("placements") or [])
-            if isinstance(p, (list, tuple)) and len(p) >= 2
-        ]
+        placements = [_normalize_placement(p, width, height) for p in (raw.get("placements") or [])
+                      if isinstance(p, (list, tuple)) and len(p) >= 2]
         n_places = len(placements) or 1
         png_b64 = raw.get("evidence_png_b64")
         sheet_number = next((s["number"] for s in sheets if s["key"] == key), "")

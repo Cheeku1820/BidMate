@@ -418,7 +418,7 @@ def render_evidence_crop(
     page_index: int,
     page_width_pt: float,
     page_height_pt: float,
-    placements: list[tuple[float, float]],
+    placements: list[tuple[float, ...]],
 ) -> bytes | None:
     """A tight PNG crop of the source page around one item's counted
     location(s), for the item panel's evidence view.
@@ -439,19 +439,18 @@ def render_evidence_crop(
     if not placements or page_width_pt <= 0 or page_height_pt <= 0:
         return None
     try:
-        xs = [p[0] for p in placements]
-        ys = [p[1] for p in placements]
-        if len(placements) == 1:
-            x, y = xs[0], ys[0]
-            x0 = x - EVIDENCE_POINT_RADIUS_PT
-            y0 = y - EVIDENCE_POINT_RADIUS_PT
-            x1 = x + EVIDENCE_POINT_RADIUS_PT
-            y1 = y + EVIDENCE_POINT_RADIUS_PT
+        # A placement is (x, y) or (x, y, w, h); the box, when present,
+        # is what the crop frames (B3b) -- the symbol, not the tag.
+        x0s = [p[0] - (p[2] / 2 if len(p) >= 4 else 0) for p in placements]
+        y0s = [p[1] - (p[3] / 2 if len(p) >= 4 else 0) for p in placements]
+        x1s = [p[0] + (p[2] / 2 if len(p) >= 4 else 0) for p in placements]
+        y1s = [p[1] + (p[3] / 2 if len(p) >= 4 else 0) for p in placements]
+        if len(placements) == 1 and len(placements[0]) < 4:
+            x, y = x0s[0], y0s[0]
+            x0, y0, x1, y1 = x - EVIDENCE_POINT_RADIUS_PT, y - EVIDENCE_POINT_RADIUS_PT, x + EVIDENCE_POINT_RADIUS_PT, y + EVIDENCE_POINT_RADIUS_PT
         else:
-            x0 = min(xs) - EVIDENCE_CLUSTER_MARGIN_PT
-            y0 = min(ys) - EVIDENCE_CLUSTER_MARGIN_PT
-            x1 = max(xs) + EVIDENCE_CLUSTER_MARGIN_PT
-            y1 = max(ys) + EVIDENCE_CLUSTER_MARGIN_PT
+            margin = EVIDENCE_CLUSTER_MARGIN_PT if len(placements) > 1 else EVIDENCE_POINT_RADIUS_PT
+            x0, y0, x1, y1 = min(x0s) - margin, min(y0s) - margin, max(x1s) + margin, max(y1s) + margin
 
         x0 = max(0.0, x0)
         y0 = max(0.0, y0)

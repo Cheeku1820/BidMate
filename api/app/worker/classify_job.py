@@ -122,7 +122,7 @@ def run(db: Session, job: Job) -> None:
     notes_service.mark_applied(db, context_notes)
     project.stage = "processing"
     plan_sheets = [s for s in all_sheets if s.id in clusters_by_sheet]
-    queue.enqueue_sheets(db, job, [(s, {"clusters": [{"tag": c.tag, "placements": [[p.x, p.y] for p in c.placements]}
+    queue.enqueue_sheets(db, job, [(s, {"clusters": [{"tag": c.tag, "placements": [[p.x, p.y, p.w, p.h] for p in c.placements]}
                                                      for c in clusters_by_sheet[s.id]]}) for s in plan_sheets])
     _complete(db, project, job)
 

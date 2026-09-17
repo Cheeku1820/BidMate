@@ -69,3 +69,15 @@ def test_assembly_labor_hours_keeps_three_decimals_not_two():
         AssemblyLine("thhn_12", "#12 THHN", 1, "ft", 0.0, 0.004),
     ])
     assert a.labor_hours == 0.004, "hours must keep 3 decimals; 2 would round this to 0.0"
+
+
+def test_placement_defaults_to_a_point():
+    from app.engine.contracts import Placement
+    p = Placement(10, 20)
+    assert (p.w, p.h) == (0, 0)
+
+
+def test_device_cluster_has_no_exemplar_by_default():
+    from app.engine.contracts import DeviceCluster
+    c = DeviceCluster(tag="R", sheet_page_index=0)
+    assert c.exemplar is None and c.linked_tag == ""

@@ -64,7 +64,7 @@ def run(db: Session, job: Job) -> None:
     all_sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id)))
     detected_all = [_detected(s) for s in all_sheets]
     detected = next(d for s, d in zip(all_sheets, detected_all) if s.id == sheet.id)
-    clusters = [DeviceCluster(c["tag"], detected.page_index, [Placement(int(x), int(y)) for x, y in c["placements"]])
+    clusters = [DeviceCluster(c["tag"], detected.page_index, [Placement(*(int(v) for v in p)) for p in c["placements"]])
                 for c in (job.payload or {}).get("clusters", [])]
     cls = _classification(db, job, clusters)
 

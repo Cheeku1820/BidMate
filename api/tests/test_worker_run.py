@@ -79,7 +79,11 @@ def test_each_sheet_job_carries_its_own_clusters_and_lands_on_its_own_sheet(db, 
     sheets = _sheets_by_page(db, project)
     jobs = {j.sheet_id: j for j in db.scalars(select(Job).where(Job.kind == "sheet"))}
     assert set(jobs) == {sheets[0].id, sheets[1].id}
-    assert all(j.payload["clusters"] == [{"tag": "R", "placements": [[300, 300]]}] for j in jobs.values())
+    # Placement always serialises 4-wide on the wire (x, y, w, h); a
+    # Placement with no box (w = h = 0, the fake engine's default) carries
+    # zeros here, not a 2-element point -- ingest is what collapses a
+    # zero-extent box back to a point (B3b Task 1).
+    assert all(j.payload["clusters"] == [{"tag": "R", "placements": [[300, 300, 0, 0]]}] for j in jobs.values())
     for page, sheet in sheets.items():
         [item] = db.scalars(select(Item).where(Item.sheet_id == sheet.id))
         assert item.source_tag == "R" and item.evidence["sheet"] == "E2.1"

@@ -594,3 +594,26 @@ def test_the_engine_half_is_kept_when_the_model_half_fails():
     assert basis_note({"location_note": "Confidence 90%.", "wiring_note": "Branch wiring is estimated."}) \
         == "Branch wiring is estimated."
     assert basis_note({"location_note": "Confidence 90%."}) == ""
+
+
+def _payload_with(placements):
+    payload = _payload()
+    payload["items"][0]["placements"] = placements
+    return payload
+
+
+def test_boxed_placements_normalise_per_axis_with_a_floor_of_one():
+    from app.takeoff.ingest import map_payload
+    mapped = map_payload(_payload_with([[1000, 750, 20, 30], [10, 10, 0.5, 0.5]]))
+    assert mapped.items[0]["placements"] == [[500, 375, 10, 15], [5, 5, 1, 1]]
+
+
+def test_point_placements_stay_two_element():
+    from app.takeoff.ingest import map_payload
+    mapped = map_payload(_payload_with([[1000, 750, 0, 0], [200, 150]]))
+    assert mapped.items[0]["placements"] == [[500, 375], [100, 75]]
+
+
+def test_denormalize_box_is_the_inverse_of_normalisation():
+    from app.takeoff.ingest import denormalize_box
+    assert denormalize_box([500, 375, 10, 15], 2000, 1500) == (990.0, 735.0, 1010.0, 765.0)

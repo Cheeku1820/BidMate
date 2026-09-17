@@ -37,18 +37,30 @@ class DetectedSheet:
 
 @dataclass
 class Placement:
+    """Where one device sits, page points, visual frame. `w`/`h` are the
+    glyph's extent when Counting found the drawn symbol; 0 when only the
+    tag's text position is known (B3b spec §2)."""
+
     x: int
     y: int
+    w: int = 0
+    h: int = 0
 
 
 @dataclass
 class DeviceCluster:
-    """Counting agent output: an *unlabelled* group of identical tags with
-    exact coordinates. Counting does not know what these are."""
+    """Counting agent output: an *unlabelled* group of identical shapes or
+    tags with exact coordinates. Counting does not know what these are."""
 
     tag: str
     sheet_page_index: int
     placements: list[Placement] = field(default_factory=list)
+    # One instance's page rect (x0, y0, x1, y1), for the crop Classification
+    # sees on a shape cluster. None on a tag cluster.
+    exemplar: tuple[float, float, float, float] | None = None
+    # Set on a shape cluster absorbed by a tag cluster (counting._link);
+    # kept for tests, never serialised.
+    linked_tag: str = ""
 
     @property
     def count(self) -> int:

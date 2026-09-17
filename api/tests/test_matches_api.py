@@ -122,6 +122,17 @@ def test_accepting_with_a_blank_name_is_refused(client, signed_in_user, db, proj
     assert r.status_code == 422 and r.json()["detail"]["code"] == "name_required"
 
 
+def test_accepting_with_an_overlong_symbol_or_system_is_refused(client, signed_in_user, db, project, sheet):
+    """MatchItemsIn is bounded to the Item column widths, so an overlong
+    value is a 422 at the boundary rather than a database error after
+    the row is locked."""
+    m = _found(db, project, sheet, signed_in_user.id)
+    r = client.post(f"/api/symbol-matches/{m.id}/items", json={"name": "Duplex receptacle", "symbol": "x" * 60})
+    assert r.status_code == 422
+    r = client.post(f"/api/symbol-matches/{m.id}/items", json={"name": "Duplex receptacle", "system": "x" * 101})
+    assert r.status_code == 422
+
+
 def test_accepting_a_match_with_no_placements_is_refused(client, signed_in_user, db, project, sheet):
     """A `found` match can carry zero placements -- the worker searched
     and found nothing else like the drawn symbol. Accepting it must not

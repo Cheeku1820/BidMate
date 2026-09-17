@@ -16,9 +16,11 @@ class MatchBoxIn(BaseModel):
 
 
 class MatchItemsIn(BaseModel):
+    # The Item column widths (takeoff/models.py): a longer value would be
+    # a database error after the row lock, not a 422 before it.
     name: str | None = Field(default=None, max_length=300)
-    symbol: str | None = None
-    system: str | None = None
+    symbol: str | None = Field(default=None, max_length=50)
+    system: str | None = Field(default=None, max_length=100)
     not_sure: bool = False
 
 

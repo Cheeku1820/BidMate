@@ -216,3 +216,26 @@ def test_terminal_copy_substitutes_the_run_copy_for_a_classify_job_only_when_it_
     assert queue.terminal_copy(c, "") == copy.RUN_FAILED
     assert queue.terminal_copy(c, copy.UNREADABLE) == copy.RUN_FAILED
     assert queue.terminal_copy(c, copy.NO_DRAWINGS) == copy.NO_DRAWINGS
+
+
+def test_a_takeoff_run_is_claimed_ahead_of_older_render_jobs(db, project, dana):
+    """Renders are queued by the read, before the estimator has pressed
+    Start takeoff, so oldest-first alone parks every takeoff behind the
+    whole set's thumbnails -- on a 14-sheet set that was two minutes of
+    "Waiting" on screen E for twelve seconds of counting. A person is
+    sitting on the run; nobody is sitting on a thumbnail."""
+    sheets = [_sheet(db, project, i) for i in range(3)]
+    renders = [queue.enqueue_render(db, s, f"r{i}") for i, s in enumerate(sheets)]
+    db.commit()
+    c = queue.enqueue_classify(db, project, dana.id)
+    db.commit()
+    first = queue.claim_next(db, "w1"); db.commit()
+    assert first.id == c.id, "the classify job should jump the render queue"
+    queue.mark_done(db, first); db.commit()
+    [sj] = queue.enqueue_sheets(db, first, [(sheets[0], {"clusters": []})])
+    db.commit()
+    second = queue.claim_next(db, "w1"); db.commit()
+    assert second.id == sj.id, "a sheet job is claimed before the renders too"
+    queue.mark_done(db, second); db.commit()
+    third = queue.claim_next(db, "w1"); db.commit()
+    assert third.id == renders[0].id, "renders still go oldest-first among themselves"

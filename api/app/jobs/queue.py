@@ -7,7 +7,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -120,12 +120,23 @@ _READY = text(
 )
 
 
+# Claim order. A render is queued by the read, before anyone has pressed
+# Start takeoff, so oldest-first alone parks every run behind the whole
+# set's thumbnails -- two minutes of "Waiting" on screen E for twelve
+# seconds of counting, on a fourteen-sheet set. A person is sitting on
+# the read, the run, and its sheets; nobody is sitting on a thumbnail,
+# and the canvas falls back to blank paper until it lands. Within a
+# priority, oldest first, as before.
+_CLAIM_PRIORITY = case((Job.kind == "render", 1), else_=0)
+
+
 def claim_next(db: Session, worker_id: str) -> Job | None:
-    """Oldest ready job, locked for this transaction. SKIP LOCKED is the
-    whole coordinator: a second worker claiming at the same moment steps
-    past the row this one holds. The caller commits to release it."""
+    """The next ready job -- takeoff work ahead of renders, oldest first
+    within that -- locked for this transaction. SKIP LOCKED is the whole
+    coordinator: a second worker claiming at the same moment steps past
+    the row this one holds. The caller commits to release it."""
     job = db.scalars(
-        select(Job).where(_READY).order_by(Job.queued_at).with_for_update(skip_locked=True).limit(1)
+        select(Job).where(_READY).order_by(_CLAIM_PRIORITY, Job.queued_at).with_for_update(skip_locked=True).limit(1)
     ).first()
     if job is None:
         return None

@@ -77,17 +77,27 @@ function ProjectRail({ projectId, store, isTakeoffRoute }) {
     setCollapsed(isTakeoffRoute);
   }, [isTakeoffRoute]);
 
+  // Loaded on mount and again on every tick of the store's poll -- the
+  // same tick the review snapshot refreshes on -- so the card's sheet
+  // count and approval progress move with the review instead of
+  // reading "No takeoff yet" through the whole session, as it did when
+  // this fetched once per project id. A store without subscribe (unit
+  // tests, a future caller) just gets the one load.
   useEffect(() => {
     if (!store || typeof store.listProjects !== "function") return undefined;
     let alive = true;
-    store
-      .listProjects({ includeArchived: true })
-      .then((rows) => {
-        if (alive) setProject(rows.find((row) => row.id === projectId) ?? null);
-      })
-      .catch(() => {});
+    const load = () =>
+      store
+        .listProjects({ includeArchived: true })
+        .then((rows) => {
+          if (alive) setProject(rows.find((row) => row.id === projectId) ?? null);
+        })
+        .catch(() => {});
+    load();
+    const unsubscribe = typeof store.subscribe === "function" ? store.subscribe(load) : () => {};
     return () => {
       alive = false;
+      unsubscribe();
     };
   }, [store, projectId]);
 

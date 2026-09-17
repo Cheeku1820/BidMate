@@ -231,6 +231,29 @@ describe("the two navs", () => {
   });
 });
 
+describe("ProjectNav's header card fallbacks", () => {
+  /* Nothing in the pipeline writes a revision label (real title blocks
+     rarely state one), so the card used to say "No drawing set yet"
+     over eleven sheets read and forty counted items. What the pipeline
+     does know is how many sheets it read. */
+  it("names the sheets read when there is no revision label", () => {
+    renderProjectNav({ project: projectRow({ revisionSetLabel: "", sheetsTotal: 11 }) });
+    expect(screen.getByText("11 sheets")).toBeTruthy();
+    expect(screen.queryByText("No drawing set yet")).toBeNull();
+  });
+
+  it("says no drawing set only when no sheet has been read", () => {
+    renderProjectNav({ project: projectRow({ revisionSetLabel: "", sheetsTotal: 0, itemsTotal: 0, itemsApproved: 0 }) });
+    expect(screen.getByText("No drawing set yet")).toBeTruthy();
+    expect(screen.getByText("No takeoff yet")).toBeTruthy();
+  });
+
+  it("prefers the revision label when one exists", () => {
+    renderProjectNav({ project: projectRow({ sheetsTotal: 11 }) });
+    expect(screen.getByText("Rev 3 · Add. 2")).toBeTruthy();
+  });
+});
+
 describe("ProjectNav as the project's rail", () => {
   it("keeps the brand and the project card out of the workspace nav", () => {
     // Both sit in the rail but neither is a workspace. While they were

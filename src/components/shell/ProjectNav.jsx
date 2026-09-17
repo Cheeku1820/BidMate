@@ -78,7 +78,7 @@ import {
   Users,
 } from "lucide-react";
 import { bidDueChip } from "../../lib/format.js";
-import { reviewProgress } from "../../lib/projectStage.js";
+import { drawingSetLabel, reviewProgress } from "../../lib/projectStage.js";
 
 // Sentence case, spec §7's order, unchanged from the flat list this
 // replaced. `counts` marks the workspaces the project row's warning
@@ -198,7 +198,7 @@ function ProjectCard({ project }) {
 
       <div className="project-card-chips">
         {due ? <span className={`due-chip due-chip--${due.tone}`}>{due.label}</span> : null}
-        <span className="project-card-rev">{project.revisionSetLabel || "No drawing set yet"}</span>
+        <span className="project-card-rev">{drawingSetLabel(project)}</span>
       </div>
 
       {progress.total > 0 ? (

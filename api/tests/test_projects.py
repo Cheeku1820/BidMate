@@ -387,3 +387,25 @@ def test_dashboard_counts_are_per_project_not_org_wide(db, org, signed_in_user, 
     assert rows["Nothing uploaded yet"]["itemsTotal"] == 0
     assert rows["Nothing uploaded yet"]["itemsApproved"] == 0
     assert rows["Nothing uploaded yet"]["warningsOpen"] == 0
+
+
+def test_projects_list_carries_the_number_of_sheets_read(db, org, project, sheet, signed_in_user, client):
+    """The sidebar card and the overview say "No drawing set yet" until a
+    revision label exists, and nothing in the pipeline writes one (the
+    title blocks on real sets rarely state a revision), so a project
+    with eleven sheets read and forty items counted still claimed to have
+    no drawings. The honest fallback is what the pipeline does know: how
+    many sheets it read. Superseded sheets are not counted, per
+    ROADMAP.md invariant 2."""
+    from app.takeoff.projects import list_projects
+
+    db.add(Sheet(
+        project_id=project.id, number="E2.1-old", title="Power plan (prior rev)", discipline="Electrical",
+        revision="Rev 1", scale="", scale_options=[], plan="", takeoff_id="d", page_index=9,
+        superseded_at=datetime.datetime.now(datetime.timezone.utc),
+    ))
+    db.flush()
+    rows = list_projects(db, org.id)
+    assert rows[0].sheets_total == 1
+    body = client.get("/api/projects").json()
+    assert body[0]["sheetsTotal"] == 1

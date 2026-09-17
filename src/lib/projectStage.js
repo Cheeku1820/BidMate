@@ -65,3 +65,16 @@ export function matchesFilter(project, filterKey) {
       return true;
   }
 }
+
+/** What to call the drawing set when the project has no revision label.
+ *  Nothing in the pipeline writes one -- a real title block rarely
+ *  states a revision -- so the fallback says what the pipeline does
+ *  know, the number of sheets it read, and claims "no drawing set" only
+ *  when there is genuinely nothing. Shared by the sidebar card and the
+ *  overview so the two never disagree. */
+export function drawingSetLabel(project) {
+  if (project.revisionSetLabel) return project.revisionSetLabel;
+  const sheets = project.sheetsTotal ?? 0;
+  if (sheets > 0) return `${sheets} ${sheets === 1 ? "sheet" : "sheets"}`;
+  return "No drawing set yet";
+}

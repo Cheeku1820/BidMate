@@ -20,7 +20,7 @@
    ============================================================ */
 
 import { describe, expect, it } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import AppShell from "./AppShell.jsx";
 import AppTopBar from "./AppTopBar.jsx";
@@ -90,6 +90,30 @@ describe("AppShell", () => {
     renderShell("/projects/p1/documents", { store });
 
     await waitFor(() => expect(screen.getByText("Riverside Medical Center")).toBeTruthy());
+  });
+
+  it("refreshes the rail's card when the store's poll ticks", async () => {
+    /* The card used to be fetched once per project and never again, so
+       it read "No takeoff yet" through an entire review session. The
+       store's subscribe() is the same tick the review snapshot polls on;
+       the rail re-reads the project row on it. */
+    let tick;
+    const rows = [{ id: "p1", name: "Riverside Medical Center", itemsTotal: 0, itemsApproved: 0, sheetsTotal: 0 }];
+    const store = {
+      listProjects: async () => rows,
+      subscribe: (handler) => {
+        tick = handler;
+        return () => {};
+      },
+    };
+    renderShell("/projects/p1/documents", { store });
+    await waitFor(() => expect(screen.getByText("No takeoff yet")).toBeTruthy());
+    rows[0] = { ...rows[0], itemsTotal: 15, itemsApproved: 1, sheetsTotal: 11 };
+    await act(async () => {
+      tick();
+    });
+    await waitFor(() => expect(screen.getByText("1 of 15 items approved")).toBeTruthy());
+    expect(screen.getByText("11 sheets")).toBeTruthy();
   });
 
   it("renders the rail without a card when the store cannot list projects", async () => {

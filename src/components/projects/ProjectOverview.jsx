@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import { reviewProgress, stageLabel } from "../../lib/projectStage.js";
+import { drawingSetLabel, reviewProgress, stageLabel } from "../../lib/projectStage.js";
 import { formatCalendarDate, NOT_SET } from "../../lib/format.js";
 
 export default function ProjectOverview({ store }) {
@@ -115,7 +115,7 @@ export default function ProjectOverview({ store }) {
     <>
       <AppTopBar
         title={project.name}
-        subtitle={project.revisionSetLabel || "No drawing set yet"}
+        subtitle={drawingSetLabel(project)}
         breadcrumb={[{ label: "Projects", to: "/projects" }]}
         primaryAction={
           hasTakeoff ? (

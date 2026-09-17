@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.errors import DomainError
 from app.identity.models import User
-from app.takeoff.models import Action, Item, Project, ReviewStatus
+from app.takeoff.models import Action, Item, Project, ReviewStatus, Sheet
 from app.takeoff.totals import countable_items
 
 
@@ -47,6 +47,12 @@ class ProjectRow:
     items_approved: int
     warnings_open: int
     missing_info: int
+    # How many sheets the read produced, superseded ones excluded. The
+    # honest fallback for a project with no revision label -- which is
+    # every project today, since no title block on a real set has stated
+    # one -- so the sidebar stops saying "No drawing set yet" over eleven
+    # sheets and forty counted items.
+    sheets_total: int
     # The pricing basis note. Carried on the dashboard row because the
     # export preview reads the project off this shape, and that is where
     # the branch-wiring assumption most needs to be visible.
@@ -89,6 +95,13 @@ def list_projects(
     items_approved = _count(Item.status == ReviewStatus.APPROVED)
     warnings_open = _count(Item.status == ReviewStatus.ATTENTION)
     missing_info = _count(Item.status == ReviewStatus.MISSING)
+    sheets_total = (
+        select(func.count())
+        .select_from(Sheet)
+        .where(Sheet.project_id == Project.id, Sheet.superseded_at.is_(None))
+        .correlate(Project)
+        .scalar_subquery()
+    )
 
     # Project.updated_at only advances when the `projects` row itself is
     # UPDATEd, and nothing in the review flow touches that row -- an
@@ -126,6 +139,7 @@ def list_projects(
             items_approved.label("items_approved"),
             warnings_open.label("warnings_open"),
             missing_info.label("missing_info"),
+            sheets_total.label("sheets_total"),
             effective_updated_at,
         )
         .outerjoin(User, User.id == Project.estimator_user_id)
@@ -136,7 +150,7 @@ def list_projects(
         stmt = stmt.where(Project.archived_at.is_(None))
 
     rows = []
-    for project, estimator_name, total, approved, attention, missing, updated_at in db.execute(stmt):
+    for project, estimator_name, total, approved, attention, missing, sheets, updated_at in db.execute(stmt):
         rows.append(
             ProjectRow(
                 id=project.id,
@@ -154,6 +168,7 @@ def list_projects(
                 items_approved=approved,
                 warnings_open=attention,
                 missing_info=missing,
+                sheets_total=sheets,
                 pricing_note=project.pricing_note or "",
             )
         )

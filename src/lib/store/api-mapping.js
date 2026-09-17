@@ -278,6 +278,7 @@ export function mapProject(raw) {
     itemsApproved: Number(raw.itemsApproved ?? 0),
     warningsOpen: Number(raw.warningsOpen ?? 0),
     missingInfo: Number(raw.missingInfo ?? 0),
+    sheetsTotal: Number(raw.sheetsTotal ?? 0),
     pricingNote: raw.pricingNote ?? "",
   };
 }

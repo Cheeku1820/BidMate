@@ -23,6 +23,7 @@ def test_the_api_process_does_not_import_the_engine():
     Run in a subprocess so this test's own imports don't pollute it."""
     code = (
         "import sys; import app.main; "
+        "assert 'cv2' not in sys.modules, 'app.main imported cv2'; "
         "print(sorted(m for m in sys.modules if m.startswith('app.engine') or m == 'pymupdf'))"
     )
     out = subprocess.run(

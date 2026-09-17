@@ -156,6 +156,30 @@ def test_a_dense_hatch_region_is_dropped_but_symbols_elsewhere_survive(page):
     assert len(glyphs.glyphs_on(page, _region(), visual_words(page))) == 3
 
 
+def test_a_symbol_beside_a_dense_region_survives(page):
+    # Same dense 8 x 8 pt cell as the test above.
+    x0, y0 = 504.0, 504.0
+    for i in range(300):
+        x = x0 + (i % 30) * (6.0 / 30)
+        y = y0 + (i // 30) * (6.0 / 10)
+        s = page.new_shape()
+        s.draw_rect(pymupdf.Rect(x, y, x + 2, y + 2))
+        s.finish(color=(0, 0, 0), fill=(0, 0, 0))
+        s.commit()
+    # This receptacle's own bbox centre sits in the sparse cell just left
+    # of the dense one (r=4 default puts the bar's right endpoint at
+    # 497.8 + 6 = 503.8, 0.2 pt inside the dense cell's left edge at 504).
+    # Its TOUCH_PT padding reaches into the dense cell, but the symbol
+    # itself -- centred well outside it -- must not be dropped.
+    _receptacle(page, 497.8, 508)
+    _receptacle(page, 100, 100)
+    _receptacle(page, 200, 100)
+    g = glyphs.glyphs_on(page, _region(), visual_words(page))
+    assert len(g) == 3
+    cl = glyphs.cluster(g)
+    assert len(cl) == 1 and len(cl[0].members) == 3
+
+
 def test_the_visual_frame_is_used_on_a_rotated_page():
     doc = pymupdf.open()
     page = doc.new_page(width=800, height=1000)

@@ -154,10 +154,14 @@ def _touching(a, b) -> bool:
 def _candidates(paths: list[Path]) -> list[list[Path]]:
     """Union-find over small paths, bucketed on a GRID_PT grid so a sheet
     of thirty thousand fragments stays linear. A cell overrun by hatch or
-    a fill pattern (MAX_CELL_PATHS) has every one of its paths dropped
-    before the pairwise touch test ever runs there, so that test can
-    never go quadratic on a dense region -- the real corpus has put
-    45,894 paths in one 8 x 8 pt cell."""
+    a fill pattern (MAX_CELL_PATHS) drops every path whose own bbox centre
+    falls in that cell, before the pairwise touch test ever runs there, so
+    that test can never go quadratic on a dense region -- the real corpus
+    has put 45,894 paths in one 8 x 8 pt cell. The centre cell is
+    unpadded and decides alone: a symbol sitting beside a hatch region
+    keeps its own (sparse) cell even though its TOUCH_PT padding reaches
+    into the dense one, while the hatch's own fragments are centred
+    inside the dense cell and are the ones actually dropped."""
     n = len(paths)
     parent = list(range(n))
 
@@ -178,10 +182,17 @@ def _candidates(paths: list[Path]) -> list[list[Path]]:
             for gy in range(int((y0 - TOUCH_PT) // GRID_PT), int((y1 + TOUCH_PT) // GRID_PT) + 1):
                 grid[(gx, gy)].append(i)
 
-    # A path that lands in any dense cell is dropped everywhere, even if
-    # one of its other cells (from the TOUCH_PT padding above) is sparse --
-    # it's part of the hatch, not a symbol brushing up against one.
-    dense = {i for cell in grid.values() if len(cell) > MAX_CELL_PATHS for i in cell}
+    # Which grid cells are overrun -- keyed by cell, not by path, so a
+    # path's TOUCH_PT padding into a dense cell never counts against it.
+    dense_cells = {cell for cell, members in grid.items() if len(members) > MAX_CELL_PATHS}
+    dense: set[int] = set()
+    if dense_cells:
+        for i, p in enumerate(paths):
+            x0, y0, x1, y1 = p.rect
+            cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+            if (int(cx // GRID_PT), int(cy // GRID_PT)) in dense_cells:
+                dense.add(i)
+
     for cell in grid.values():
         survivors = [i for i in cell if i not in dense]
         for a in range(len(survivors)):

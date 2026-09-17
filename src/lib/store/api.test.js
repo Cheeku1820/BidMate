@@ -621,3 +621,43 @@ describe("pricing writes", () => {
     expect(row.status).toBe("missing");
   });
 });
+
+describe("the route's project wins over ensureProjectId's fallback", () => {
+  /* React runs a child's effects before its parent's, so a screen inside
+     ProjectWorkspaceLayout (the presence beat, a notes fetch) can reach
+     the store before the layout's useProject(routeId) effect. The
+     fallback then fetches /api/projects, and when that resolves it must
+     not overwrite the id the route set in the meantime -- it did, and
+     an estimator on project A watched project B's takeoff arrive under
+     A's name on the next poll. */
+  it("does not overwrite a project id set while the fallback fetch was in flight", async () => {
+    let releaseProjects;
+    const projectsGate = new Promise((resolve) => {
+      releaseProjects = resolve;
+    });
+    const calls = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url, init) => {
+        calls.push(String(url));
+        if (String(url) === "/api/projects") {
+          await projectsGate;
+          return jsonResponse([{ id: "other-project" }, { id: "route-project" }]);
+        }
+        if (String(url) === "/api/presence") return new Response(null, { status: 204 });
+        if (String(url).includes("/snapshot")) {
+          return jsonResponse({ version: "v1", project_id: "x", sheets: [], items: [], warnings: [], presence: [], undo_head: null, redo_head: null }, { headers: { ETag: "v1" } });
+        }
+        throw new Error("unexpected " + url);
+      }),
+    );
+    const store = createApiStore();
+    const beat = store.setPresence({ sheetId: null, itemId: null }); // child effect: no project yet → fallback
+    store.useProject("route-project"); // the layout's effect lands next
+    releaseProjects();
+    await beat;
+    await store.getSnapshot().catch(() => {});
+    const snapshotUrl = calls.find((u) => u.includes("/snapshot"));
+    expect(snapshotUrl).toBe("/api/projects/route-project/snapshot");
+  });
+});

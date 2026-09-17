@@ -171,6 +171,14 @@ export function createApiStore() {
   async function ensureProjectId() {
     if (projectId) return projectId;
     const projects = await request("/api/projects");
+    // The route may have set the project while that fetch was in
+    // flight -- React runs a child's effects before its parent's, so a
+    // screen's mount-time presence beat reaches here before the
+    // layout's useProject(routeId) effect. The route's id wins:
+    // overwriting it with "the first project the account can see" put
+    // project B's takeoff on screen under project A's name on the next
+    // poll.
+    if (projectId) return projectId;
     if (!Array.isArray(projects) || projects.length === 0) {
       throw { code: "no_project_available", message: "No project is available for this account." };
     }

@@ -102,4 +102,55 @@ describe("useReviewStore -- symbol match polling", () => {
     act(() => result.current.clearMatch());
     expect(result.current.match).toBeNull();
   });
+
+  test("a getMatch rejection during polling fails the match instead of polling forever", async () => {
+    const pendingMatch = { id: "m1", sheetId: "s1", box: [0, 0, 1, 1], status: "pending", count: 0, matches: [], error: "" };
+    const store = makeStore({
+      createMatch: vi.fn().mockResolvedValue(pendingMatch),
+      getMatch: vi.fn().mockRejectedValue({ code: "not_found", message: "This search no longer exists." }),
+    });
+
+    const { result } = renderHook(() => useReviewStore(store, { onSignedOut: () => {} }));
+
+    await act(async () => {
+      await result.current.startMatch("s1", { x: 0, y: 0, w: 1, h: 1 });
+    });
+
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+
+    expect(result.current.match?.status).toBe("failed");
+    expect(result.current.match?.error).toBe("This search no longer exists.");
+
+    // Status left "pending", so the poll effect's cleanup ran and no
+    // further getMatch calls happen even after more time passes.
+    store.getMatch.mockClear();
+    await act(() => vi.advanceTimersByTimeAsync(6000));
+    expect(store.getMatch).not.toHaveBeenCalled();
+  });
+
+  test("an acceptMatch refusal records the error on match, not on itemError", async () => {
+    const pendingMatch = { id: "m1", sheetId: "s1", box: [0, 0, 1, 1], status: "pending", count: 0, matches: [], error: "" };
+    const foundMatch = { ...pendingMatch, status: "found", count: 1, matches: [{ x: 1, y: 1 }] };
+    const store = makeStore({
+      createMatch: vi.fn().mockResolvedValue(pendingMatch),
+      getMatch: vi.fn().mockResolvedValue(foundMatch),
+      acceptMatch: vi.fn().mockRejectedValue({ code: "match_resolved", message: "This search was already resolved." }),
+    });
+
+    const { result } = renderHook(() => useReviewStore(store, { onSignedOut: () => {} }));
+
+    await act(async () => {
+      await result.current.startMatch("s1", { x: 0, y: 0, w: 1, h: 1 });
+    });
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    expect(result.current.match?.status).toBe("found");
+
+    await act(async () => {
+      await result.current.acceptMatch({ notSure: true });
+    });
+
+    expect(result.current.match?.status).toBe("found");
+    expect(result.current.match?.error).toBe("This search was already resolved.");
+    expect(result.current.itemError).toBeNull();
+  });
 });

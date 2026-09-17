@@ -133,17 +133,28 @@ export function useReviewStore(store, { onSignedOut } = {}) {
   // Companion to patchItem/removeItemLocal for acceptMatch (B3b): the
   // response describes a new item rather than one already in the
   // snapshot, so it is appended rather than replaced or filtered out.
+  // Skips the append when an item with that id is already present --
+  // a refresh() racing the same add (the poll, or a second click before
+  // the button disables) must not duplicate the row.
   function addItemLocal(item, version) {
-    setSnapshot((snap) => (snap ? { ...snap, version, items: [...snap.items, item] } : snap));
+    setSnapshot((snap) => {
+      if (!snap) return snap;
+      if (snap.items.some((i) => i.id === item.id)) return { ...snap, version };
+      return { ...snap, version, items: [...snap.items, item] };
+    });
   }
 
-  // Shared tail for the five single-item mutations (plus acceptMatch,
-  // which adds rather than patches or removes): run it, patch/remove/add
+  // Shared tail for the five single-item mutations: run it, patch/remove
   // the one item the response describes, toast the label, and clear any
   // earlier refusal banner for this item — or, on refusal, leave state
   // untouched and surface it as `itemError` rather than an unhandled
   // rejection, so a caller never needs its own try/catch to stay
-  // on-screen after a refusal.
+  // on-screen after a refusal. The `adds` option (addItemLocal) exists
+  // for any future caller whose response names a new item rather than
+  // one already in the snapshot -- acceptMatch below does not use it: a
+  // refused acceptMatch has nothing selected for itemError's banner to
+  // attach to (see acceptMatch's own comment), so it reports its
+  // refusal through `match.error` instead and never touches itemError.
   //
   // The response only describes the one item it touched — totals and
   // the undo head moved too (an approval changes approvedUnits; any
@@ -170,11 +181,6 @@ export function useReviewStore(store, { onSignedOut } = {}) {
         return res;
       } catch (err) {
         if (handleSignedOut(err)) return null;
-        // acceptMatch passes id: null (the response names a new item,
-        // not one already selected) -- itemError.itemId stays null and
-        // ItemDetailPanel's banner renders unconditionally on itemError
-        // being set, never filtered by id, so a null id surfaces the
-        // same generic refusal rather than silently failing to render.
         setItemError({ itemId: id, code: err?.code ?? "request_failed", message: err?.message || "This action could not be completed." });
         return null;
       }
@@ -212,19 +218,46 @@ export function useReviewStore(store, { onSignedOut } = {}) {
       try {
         setMatch(await store.getMatch(match.id));
       } catch (err) {
-        handleSignedOut(err);
+        if (handleSignedOut(err)) return;
+        // A poll rejection that isn't a sign-out (the match's row
+        // vanished, a transient 500) must not leave status stuck on
+        // "pending" -- that would poll every 2s forever with nothing
+        // ever able to stop it. Moving status off "pending" both ends
+        // the search visibly and, since this effect re-runs on
+        // match.status changing, clears the interval on its own.
+        // Functional update so this always patches whatever the latest
+        // match object is, not a stale closure over the one this
+        // effect run captured.
+        setMatch((m) => m && { ...m, status: "failed", error: err?.message || "The search couldn't be checked. Draw the box again." });
       }
     }, 2000);
     return () => clearInterval(t);
   }, [store, match?.id, match?.status, handleSignedOut]);
+  // Does not route through runItemMutation: a refusal here (the match
+  // already resolved, a concurrent accept) has no selected item for
+  // itemError's banner to attach to -- ItemDetailPanel renders that
+  // banner from `sel` downward, and nothing is selected while a match
+  // result card is open. Instead the refusal is written onto `match`
+  // itself (status stays "found") so the result card the estimator is
+  // already looking at can show it inline and offer the same buttons
+  // again, which is where the estimator actually is when this fails.
   const acceptMatch = useCallback(
     async (fields) => {
       if (!match?.id) return null;
-      const res = await runItemMutation(null, () => store.acceptMatch(match.id, fields), { adds: true });
-      if (res) setMatch(null);
-      return res;
+      try {
+        const res = await runMutation(() => store.acceptMatch(match.id, fields));
+        addItemLocal(res.item, res.version);
+        showToast(res.label);
+        await refresh();
+        setMatch(null);
+        return res;
+      } catch (err) {
+        if (handleSignedOut(err)) return null;
+        setMatch((m) => m && { ...m, error: err?.message || "The symbols couldn't be added. Try again." });
+        return null;
+      }
     },
-    [store, match, runItemMutation]
+    [store, match, runMutation, showToast, refresh, handleSignedOut]
   );
   const discardMatch = useCallback(async () => {
     if (match?.id) {

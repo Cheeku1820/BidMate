@@ -281,7 +281,7 @@ def test_the_disclosure_is_not_a_per_item_warning():
 def _stub_llm(monkeypatch, item_for):
     from app.engine import llm
 
-    def fake_estimate(tags, schedule_text, location):
+    def fake_estimate(tags, schedule_text, location, crops=None):
         return {
             "location_labor_rate": 98.0,
             "material_factor": 1.35,
@@ -325,8 +325,16 @@ def test_the_model_path_discloses_what_it_could_not_rough_in(monkeypatch):
 
     assert rows
     for row in rows:
-        assert row["material_cost"] == pytest.approx(
-            40.0 * row["quantity"] * meta["material_factor"], abs=0.02)
+        if row["tag"].startswith("shape:"):
+            # A shape cluster has no legend entry to fall back on, so a
+            # "none" answer for it is never priced as a bare device --
+            # it lands fully unclassified instead (Task 4 finding 2),
+            # regardless of the name/cost the stub attached to every tag.
+            assert row["name"] == "Unclassified symbol" and row["status"] == "attention"
+            assert row["material_cost"] == 0
+        else:
+            assert row["material_cost"] == pytest.approx(
+                40.0 * row["quantity"] * meta["material_factor"], abs=0.02)
     assert "1 item type (Nurse call station) could not be matched" in meta["unmatched_note"]
     assert meta["wiring_note"] == "", \
         "nothing carried an assembly, so nothing assumed a wiring length"

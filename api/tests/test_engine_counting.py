@@ -313,21 +313,3 @@ def test_fewer_than_three_instances_is_not_a_cluster(tmp_path):
         _receptacle(page, 100, 300); _receptacle(page, 200, 300)
     path, (sheet,) = _plan(tmp_path, draw)
     assert counting.count_sheet(path, sheet) == []
-
-
-def test_a_shape_at_the_same_place_on_most_sheets_is_a_fixture(tmp_path):
-    def draw(page, i):
-        for x in (100, 200, 300):          # a legend-style row, same spot every page
-            _receptacle(page, x, 100)
-        if i == 0:
-            for x in (100, 250, 400, 550):  # real devices on one page only
-                _receptacle(page, x, 500, rot=90)
-    path, sheets = _plan(tmp_path, draw, pages=3)
-    clusters = counting.count(path, sheets)
-    # the fixture row (same shape, same coordinates on 3 of 3 sheets) is gone;
-    # page 0 keeps its four real devices, which share the shape but not the spot
-    by_page = {}
-    for c in clusters:
-        by_page.setdefault(c.sheet_page_index, []).append(c)
-    assert 1 not in by_page and 2 not in by_page
-    assert len(by_page[0]) == 1 and by_page[0][0].count == 4

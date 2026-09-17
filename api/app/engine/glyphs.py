@@ -49,9 +49,6 @@ MAX_CELL_PATHS = 200
 TOL_PT = 0.35
 # Signature: the exemplar's canonical form on this grid, for a stable id.
 QUANT_PT = 0.25
-# A cluster at the same coordinates on most plan sheets is a border or
-# legend fixture (counting.count applies this).
-FIXTURE_PT = 2.0
 
 
 @dataclass

@@ -21,6 +21,7 @@ Fixture conventions (see each file's "read_from"):
 """
 
 import json
+import math
 import os
 from pathlib import Path
 
@@ -227,15 +228,32 @@ def test_united_utility_has_a_hundred_of_one_receptacle():
 
 
 @pytest.mark.parametrize("name", sorted(VECTOR_SETS))
-def test_tag_counts_are_unchanged_by_shape_clusters(name):
-    """Linking moves a tag's placements onto glyph boxes; it never adds
-    or removes a placement."""
+def test_tag_counts_are_unchanged_by_shape_clusters(name, monkeypatch):
+    """Linking moves a tag's placements onto glyph boxes; it never adds,
+    removes, or reassigns a tag placement. Compared against a run with
+    _link forced to a no-op (no shape cluster ever gets absorbed): the
+    tag clusters must carry identical {tag: count} maps, and every
+    linked placement's centre must sit within LINK_FACTOR * max(w, h) of
+    some un-linked placement for that same tag -- 0 for an un-boxed
+    placement (w == h == 0), so that case still requires an exact
+    match."""
     from app.engine import counting
 
     fx, path, sheets = _detected(name)
+
+    with_link = {s.page_index: counting.count_sheet(path, s) for s in sheets}
+    monkeypatch.setattr(counting, "_link", lambda tags, shapes: None)
+    without_link = {s.page_index: counting.count_sheet(path, s) for s in sheets}
+
     for s in sheets:
-        clusters = counting.count_sheet(path, s)
-        for c in clusters:
-            if c.tag.startswith("shape:"):
-                continue
-            assert c.count >= counting.MIN_PLACEMENTS
+        linked_tags = {c.tag: c for c in with_link[s.page_index] if not c.tag.startswith("shape:")}
+        base_tags = {c.tag: c for c in without_link[s.page_index] if not c.tag.startswith("shape:")}
+        assert {t: c.count for t, c in linked_tags.items()} == {t: c.count for t, c in base_tags.items()}, \
+            (name, s.page_index)
+        for tag, lc in linked_tags.items():
+            assert lc.count >= counting.MIN_PLACEMENTS, (name, s.page_index, tag)
+            base_centres = [(p.x, p.y) for p in base_tags[tag].placements]
+            for p in lc.placements:
+                reach = counting.LINK_FACTOR * max(p.w, p.h)
+                assert any(math.hypot(p.x - bx, p.y - by) <= reach for bx, by in base_centres), \
+                    (name, s.page_index, tag, p)

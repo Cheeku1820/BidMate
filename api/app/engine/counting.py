@@ -20,7 +20,6 @@ from collections import Counter, defaultdict
 import pymupdf
 
 from app.engine import glyphs
-from app.engine.glyphs import FIXTURE_PT
 
 from .contracts import DetectedSheet, DeviceCluster, Placement
 from .page_frame import visual_spans, visual_words
@@ -31,9 +30,6 @@ from .page_frame import visual_spans, visual_words
 # to that tag.
 LINK_FACTOR = 1.5
 LINK_SHARE = 0.8
-# A shape at the same coordinates on this share of a set's plan sheets
-# is a border or legend fixture, not a device.
-FIXTURE_SHARE = 0.6
 
 # A device tag: a short uppercase code (fixture type, receptacle, switch,
 # junction, panel/circuit designator). Compound tokens ("D,O") and mixed
@@ -204,18 +200,17 @@ def count_sheet(path: str, sheet: DetectedSheet) -> list[DeviceCluster]:
         for tag, places in by_tag.items()
         if len(places) >= MIN_PLACEMENTS
     ]
-    shape_clusters = _shape_clusters(page, sheet, words)
+    shape_clusters = _shape_clusters(page, sheet, words, stamp)
     _link(tag_clusters, shape_clusters)
     clusters = tag_clusters + [c for c in shape_clusters if not c.linked_tag]
     clusters.sort(key=lambda c: c.count, reverse=True)
     return clusters
 
 
-def _shape_clusters(page, sheet: DetectedSheet, words) -> list[DeviceCluster]:
+def _shape_clusters(page, sheet: DetectedSheet, words, stamp: set[tuple[int, int]]) -> list[DeviceCluster]:
     """Untagged device glyphs, by shape (glyphs.py). Counting names
     nothing: the tag is the shape's signature, and Classification
     decides what it is."""
-    stamp = _stamp_points(page)
     found = glyphs.glyphs_on(page, sheet.region, words)
     found = [g for g in found
              if (round((g.rect[0] + g.rect[2]) / 2), round((g.rect[1] + g.rect[3]) / 2)) not in stamp]
@@ -270,36 +265,11 @@ def _link(tag_clusters: list[DeviceCluster], shape_clusters: list[DeviceCluster]
 
 
 def count(path: str, sheets: list[DetectedSheet]) -> list[DeviceCluster]:
+    # No cross-sheet fixture rule: measured a no-op on the real corpus
+    # (legends live on legend-kind sheets, never counted; the title block
+    # sits outside sheet.region), and a typical-floor set with identical
+    # L2/L3 power plans would have it silently delete real devices.
     out: list[DeviceCluster] = []
     for sheet in sheets:
         out.extend(count_sheet(path, sheet))
-    return _drop_fixtures(out, sum(1 for s in sheets if s.kind == "plan" and not s.unreadable_reason))
-
-
-def _drop_fixtures(clusters: list[DeviceCluster], plan_sheets: int) -> list[DeviceCluster]:
-    """A shape whose instances sit at the same coordinates (within
-    FIXTURE_PT) on ≥ FIXTURE_SHARE of the plan sheets is a border or a
-    legend, not a device. Only those repeated instances go; a device of
-    the same shape elsewhere on a sheet stays."""
-    if plan_sheets < 2:
-        return clusters
-    spots: dict[tuple[str, tuple[int, int]], set[int]] = {}
-    for c in clusters:
-        if not c.tag.startswith("shape:"):
-            continue
-        for p in c.placements:
-            key = (c.tag, (round(p.x / FIXTURE_PT), round(p.y / FIXTURE_PT)))
-            spots.setdefault(key, set()).add(c.sheet_page_index)
-    fixture = {k for k, pages in spots.items() if len(pages) >= FIXTURE_SHARE * plan_sheets}
-    if not fixture:
-        return clusters
-    out = []
-    for c in clusters:
-        if not c.tag.startswith("shape:"):
-            out.append(c)
-            continue
-        kept = [p for p in c.placements if (c.tag, (round(p.x / FIXTURE_PT), round(p.y / FIXTURE_PT))) not in fixture]
-        if len(kept) >= MIN_PLACEMENTS:
-            c.placements = kept
-            out.append(c)
     return out

@@ -37,6 +37,13 @@ MIN_STRAIGHT_PATHS = 3
 TOUCH_PT = 0.5
 MAX_PATHS = 24
 GRID_PT = 8.0
+# A GRID_PT cell (8 x 8 pt) cannot hold more than a handful of symbols
+# (MAX_PATHS = 24 paths each); a cell holding more small paths than this
+# is hatch, a fill pattern, or screened linework drawn full-tone -- never
+# a symbol -- and its paths are dropped before grouping, so the O(paths^2)
+# union-find pairwise loop never runs on a hatch region (measured on the
+# real corpus: a single cell held 45,894 paths without this cutoff).
+MAX_CELL_PATHS = 200
 # Sameness: every point matches a point of its pair within TOL_PT.
 # Exact hashing split identical receptacles over 0.02 pt of jitter.
 TOL_PT = 0.35
@@ -91,6 +98,17 @@ def paths_on(page) -> list[Path]:
         ink = d.get("color") or d.get("fill")
         if ink is None or _luminance(ink) > MAX_INK_LUMINANCE:
             continue
+        # Cheap skip before touching d["items"] -- expensive on a page with
+        # 1.6M paths. d["rect"] is in the unrotated frame, but a side
+        # length is rotation-invariant (rotation swaps which axis is which,
+        # never the magnitude), so comparing it against MAX_GLYPH_PT here
+        # is equivalent to the _small() check downstream. A degenerate rect
+        # (e.g. a vertical line, zero width) still passes this gate --
+        # zero is never > MAX_GLYPH_PT -- so the real, point-derived bbox
+        # computed below remains what actually decides small-ness.
+        r = d.get("rect")
+        if r is not None and (r.width > MAX_GLYPH_PT or r.height > MAX_GLYPH_PT):
+            continue
         pts: list[pymupdf.Point] = []
         curved = closed = False
         for it in d["items"]:
@@ -135,7 +153,11 @@ def _touching(a, b) -> bool:
 
 def _candidates(paths: list[Path]) -> list[list[Path]]:
     """Union-find over small paths, bucketed on a GRID_PT grid so a sheet
-    of thirty thousand fragments stays linear."""
+    of thirty thousand fragments stays linear. A cell overrun by hatch or
+    a fill pattern (MAX_CELL_PATHS) has every one of its paths dropped
+    before the pairwise touch test ever runs there, so that test can
+    never go quadratic on a dense region -- the real corpus has put
+    45,894 paths in one 8 x 8 pt cell."""
     n = len(paths)
     parent = list(range(n))
 
@@ -155,15 +177,22 @@ def _candidates(paths: list[Path]) -> list[list[Path]]:
         for gx in range(int((x0 - TOUCH_PT) // GRID_PT), int((x1 + TOUCH_PT) // GRID_PT) + 1):
             for gy in range(int((y0 - TOUCH_PT) // GRID_PT), int((y1 + TOUCH_PT) // GRID_PT) + 1):
                 grid[(gx, gy)].append(i)
+
+    # A path that lands in any dense cell is dropped everywhere, even if
+    # one of its other cells (from the TOUCH_PT padding above) is sparse --
+    # it's part of the hatch, not a symbol brushing up against one.
+    dense = {i for cell in grid.values() if len(cell) > MAX_CELL_PATHS for i in cell}
     for cell in grid.values():
-        for a in range(len(cell)):
-            for b in range(a + 1, len(cell)):
-                i, j = cell[a], cell[b]
+        survivors = [i for i in cell if i not in dense]
+        for a in range(len(survivors)):
+            for b in range(a + 1, len(survivors)):
+                i, j = survivors[a], survivors[b]
                 if _touching(paths[i].rect, paths[j].rect):
                     parent[find(i)] = find(j)
     groups: dict[int, list[Path]] = defaultdict(list)
     for i in range(n):
-        groups[find(i)].append(paths[i])
+        if i not in dense:
+            groups[find(i)].append(paths[i])
     return list(groups.values())
 
 

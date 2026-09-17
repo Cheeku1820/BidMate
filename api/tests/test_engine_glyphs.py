@@ -138,6 +138,24 @@ def test_a_candidate_under_min_glyph_pt_is_not_a_glyph(page):
     assert glyphs.glyphs_on(page, _region(), visual_words(page)) == []
 
 
+def test_a_dense_hatch_region_is_dropped_but_symbols_elsewhere_survive(page):
+    # 300 tiny 2 pt filled squares packed inside one 8 x 8 pt grid cell --
+    # a fill pattern or screened hatch, never a symbol -- each its own
+    # committed shape so each is its own path, well over MAX_CELL_PATHS.
+    x0, y0 = 504.0, 504.0   # aligned to a GRID_PT boundary
+    for i in range(300):
+        x = x0 + (i % 30) * (6.0 / 30)
+        y = y0 + (i // 30) * (6.0 / 10)
+        s = page.new_shape()
+        s.draw_rect(pymupdf.Rect(x, y, x + 2, y + 2))
+        s.finish(color=(0, 0, 0), fill=(0, 0, 0))
+        s.commit()
+    _receptacle(page, 100, 100)
+    _receptacle(page, 200, 100)
+    _receptacle(page, 300, 100)
+    assert len(glyphs.glyphs_on(page, _region(), visual_words(page))) == 3
+
+
 def test_the_visual_frame_is_used_on_a_rotated_page():
     doc = pymupdf.open()
     page = doc.new_page(width=800, height=1000)

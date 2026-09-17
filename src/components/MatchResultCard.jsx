@@ -17,7 +17,7 @@ export default function MatchResultCard({ match, onAccept, onDiscard, onRetry, s
       <section className="matchcard" aria-label="Symbol search">
         <p className="label">Find like this · {sheetNumber}</p>
         <p className="value value--muted">{copy.SEARCHING}</p>
-        <button className="btn btn--block" onClick={onDiscard}>Cancel</button>
+        <button className="btn btn--block" onClick={onDiscard}>Discard</button>
       </section>
     );
   }

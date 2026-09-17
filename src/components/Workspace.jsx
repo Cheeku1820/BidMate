@@ -307,10 +307,10 @@ export default function Workspace() {
           match={sheetMatch}
           onAcceptMatch={acceptMatch}
           onDiscardMatch={discardMatch}
-          onRetryMatch={() => {
-            const b = match.box;
-            discardMatch();
-            startMatch(sheet.id, { x: b[0], y: b[1], w: b[2], h: b[3] });
+          onRetryMatch={async () => {
+            const b = sheetMatch.box;
+            await discardMatch();
+            await startMatch(sheet.id, { x: b[0], y: b[1], w: b[2], h: b[3] });
           }}
         />
       </div>

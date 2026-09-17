@@ -12,7 +12,7 @@
    ============================================================ */
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Workspace from "./Workspace.jsx";
 
@@ -65,7 +65,7 @@ vi.mock("./project/useWorkspaceContext.js", () => ({
   useWorkspaceContext: () => context,
 }));
 
-function renderWorkspace({ notes = [] } = {}) {
+function renderWorkspace({ notes = [], match = null, startMatch = vi.fn(), acceptMatch = vi.fn(), discardMatch = vi.fn() } = {}) {
   const listNotes = vi.fn().mockResolvedValue(notes);
   context = {
     snapshot: baseSnapshot,
@@ -93,6 +93,10 @@ function renderWorkspace({ notes = [] } = {}) {
     project: { id: "p1", name: "Riverside", location: "Riverside, CA" },
     projectId: "p1",
     store: { listNotes },
+    match,
+    startMatch,
+    acceptMatch,
+    discardMatch,
   };
   const result = render(
     <MemoryRouter>
@@ -132,4 +136,41 @@ it("the canvas never requests a sheet image from the engine", () => {
   // <img>, so this also guards against a stray raster element inside
   // the SVG tree specifically).
   expect(document.querySelector("image")).toBeNull();
+});
+
+describe("Workspace — retry a failed symbol search", () => {
+  // task-12 review: onRetryMatch must await discardMatch() before
+  // calling startMatch(), or a create that resolves before the discard
+  // wipes the new pending search back to null. Proves the ordering by
+  // making discardMatch resolve on a later tick than startMatch would
+  // if called immediately, and recording the order both are reached in.
+  it("only starts the new search after the discard has resolved", async () => {
+    const events = [];
+    const discardMatch = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          events.push("discard:called");
+          setTimeout(() => {
+            events.push("discard:resolved");
+            resolve();
+          }, 0);
+        }),
+    );
+    const startMatch = vi.fn(() => {
+      events.push("startMatch:called");
+      return Promise.resolve({ id: "m2", sheetId: "s1", status: "pending" });
+    });
+    const failedMatch = {
+      id: "m1", sheetId: "s1", box: [10, 20, 30, 40], status: "failed",
+      count: 0, matches: [], error: "The symbol couldn't be searched for on this sheet.",
+    };
+
+    renderWorkspace({ match: failedMatch, startMatch, discardMatch });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    await waitFor(() => expect(startMatch).toHaveBeenCalled());
+    expect(events).toEqual(["discard:called", "discard:resolved", "startMatch:called"]);
+    expect(startMatch).toHaveBeenCalledWith("s1", { x: 10, y: 20, w: 30, h: 40 });
+  });
 });

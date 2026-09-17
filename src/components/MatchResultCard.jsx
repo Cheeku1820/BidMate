@@ -31,11 +31,25 @@ export default function MatchResultCard({ match, onAccept, onDiscard, onRetry, s
       </section>
     );
   }
+  if (n === 0) {
+    // Nothing matched, the boxed one included: the box held no glyph and
+    // the render search found nothing either. There is nothing to add --
+    // the API refuses an empty accept -- so only the recovery is offered.
+    return (
+      <section className="matchcard" aria-label="Symbol search">
+        <p className="label">Find like this · {sheetNumber}</p>
+        <h2>{copy.NOTHING_FOUND}</h2>
+        <p className="value value--muted">{copy.NOTHING_FOUND_FIX}</p>
+        <button className="btn btn--primary btn--block" onClick={onRetry}>Try again</button>
+        <button className="btn btn--block" onClick={onDiscard}>Discard</button>
+      </section>
+    );
+  }
   return (
     <section className="matchcard" aria-label="Symbol search">
       <p className="label">Find like this · {sheetNumber}</p>
       <h2 className="tabular">{copy.found(n)}</h2>
-      {n <= 1 && <p className="value value--muted">{copy.NONE_FOUND}</p>}
+      {n === 1 && <p className="value value--muted">{copy.NONE_FOUND}</p>}
       {match.error && <p className="value">{match.error}</p>}
       <label className="label" htmlFor="match-name">Name</label>
       <input id="match-name" className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="What is this symbol" />

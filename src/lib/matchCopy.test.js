@@ -3,7 +3,7 @@ import * as copy from "./matchCopy.js";
 
 describe("match copy", () => {
   it("reads as an instrument", () => {
-    for (const s of [copy.DRAW_PROMPT, copy.SEARCHING, copy.found(3), copy.NONE_FOUND, copy.NOT_SURE, copy.addLabel(3)]) {
+    for (const s of [copy.DRAW_PROMPT, copy.SEARCHING, copy.found(3), copy.NONE_FOUND, copy.NOTHING_FOUND, copy.NOTHING_FOUND_FIX, copy.NOT_SURE, copy.addLabel(3)]) {
       expect(s).not.toMatch(/!|please|successfully|\bAI\b|%/);
       expect(s[0]).toBe(s[0].toUpperCase());
     }

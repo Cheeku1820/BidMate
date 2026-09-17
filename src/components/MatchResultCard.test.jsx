@@ -32,6 +32,19 @@ describe("MatchResultCard", () => {
     expect(screen.getByRole("button", { name: "Add 1 to the takeoff" })).toBeTruthy();
   });
 
+  it("offers only a retry and discard when nothing at all was found", () => {
+    const onRetry = vi.fn();
+    render(<MatchResultCard match={found(0)} onAccept={() => {}} onDiscard={() => {}} onRetry={onRetry} sheetNumber="E2.1" />);
+    expect(screen.getByRole("heading", { name: "No symbols like this were found" })).toBeTruthy();
+    expect(screen.getByText("Draw the box more tightly around one symbol and try again.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^Add/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Not sure yet" })).toBeNull();
+    expect(screen.queryByLabelText("Name")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Discard" })).toBeTruthy();
+  });
+
   it("shows the failure copy and a retry", () => {
     const onRetry = vi.fn();
     render(<MatchResultCard match={{ ...found(0), status: "failed", error: "The symbol couldn't be searched for on this sheet." }} onAccept={() => {}} onDiscard={() => {}} onRetry={onRetry} sheetNumber="E2.1" />);

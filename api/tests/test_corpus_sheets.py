@@ -174,11 +174,24 @@ def test_raster_sets_are_unreadable_not_silent(name):
 
 # Measured 2026-09-16 on the corpus (spec §3 "Measured"); thresholds are
 # two-thirds of what was seen so a regression shows and jitter does not.
+# Floors count *boxed* clusters -- the surviving shape: clusters, plus any
+# tag cluster that absorbed one (linking hands a shape cluster's boxes to
+# the tag that labels it; a tag cluster that gained a boxed placement was
+# a shape cluster) -- and boxed placements (w > 0 and h > 0) across those
+# clusters. A floor measured before linking existed would have counted
+# clusters linking now correctly folds into their tag; counting boxed
+# clusters instead measures the same underlying signal (untagged glyphs
+# found and boxed) independent of whether linking claims them.
 SHAPE_FLOORS = {
     ("unalaska", 84): (5, 120),          # E1.1
     ("unalaska", 87): (8, 120),          # E2.1
     ("kittles_saxony", 4): (3, 150),     # EP101
 }
+
+# Sheets where a tag cluster is known to absorb a shape cluster on the real
+# corpus, not only in the synthetic counting tests -- linking is exercised
+# end to end here, not just unit-tested.
+LINKED = {("unalaska", 87)}
 
 
 @pytest.mark.parametrize("name,page_index", sorted(SHAPE_FLOORS))
@@ -187,14 +200,21 @@ def test_shape_clusters_count_untagged_devices(name, page_index):
 
     fx, path, sheets = _detected(name)
     sheet = next(s for s in sheets if s.page_index == page_index)
-    shapes = [c for c in counting.count_sheet(path, sheet) if c.tag.startswith("shape:")]
+    clusters = counting.count_sheet(path, sheet)
+    shapes = [c for c in clusters if c.tag.startswith("shape:")]
+    boxed_tags = [c for c in clusters if not c.tag.startswith("shape:")
+                  and any(p.w > 0 and p.h > 0 for p in c.placements)]
+    boxed_clusters = shapes + boxed_tags
     min_clusters, min_placements = SHAPE_FLOORS[(name, page_index)]
-    assert len(shapes) >= min_clusters, (name, page_index, len(shapes))
-    assert sum(c.count for c in shapes) >= min_placements
+    assert len(boxed_clusters) >= min_clusters, (name, page_index, len(boxed_clusters))
+    boxed_placements = sum(1 for c in boxed_clusters for p in c.placements if p.w > 0 and p.h > 0)
+    assert boxed_placements >= min_placements
     for c in shapes:
         for p in c.placements:
             assert p.w > 0 and p.h > 0
             assert 0 <= p.x <= sheet.width_pt and 0 <= p.y <= sheet.height_pt
+    if (name, page_index) in LINKED:
+        assert boxed_tags, (name, page_index, "no tag cluster absorbed a shape cluster on the real corpus")
 
 
 def test_united_utility_has_a_hundred_of_one_receptacle():

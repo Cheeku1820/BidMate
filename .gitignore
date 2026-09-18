@@ -19,3 +19,7 @@ api/.venv/
 # committing them out (ROADMAP.md 3.3). The engine regression tests read
 # from here via tests/bid_set.py; the files never leave this machine.
 bid_examples/
+
+# Root .env: docker compose reads it for ${ANTHROPIC_API_KEY:-} and the
+# like. It carries a real key, so it never lands in the repo.
+.env

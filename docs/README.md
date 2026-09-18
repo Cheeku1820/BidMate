@@ -29,6 +29,7 @@ Five documents at the repository root are the entry points: `README.md` (how to 
 | B2 — the engine behind the API | `specs/engine-behind-the-api.md` | `plans/done/engine-behind-the-api.md` | merged |
 | B3 — the drawing behind the markers | `specs/drawing-behind-the-markers.md` | `plans/done/drawing-behind-the-markers.md` | merged |
 | Firm price book | `specs/firm-price-book.md` (branch `feat/corpus-price-book`) | — | designed, parked behind Phase B |
+| Conversation panel | `specs/conversation-panel.md` | `plans/conversation-panel.md` | built on branch `conversation-panel` (read-only slice), not yet merged |
 
 ## Adding a document
 

@@ -86,6 +86,9 @@ src/
       ScopeSection.jsx       screen D's scope list — found/confirmed/dismissed, never the four review labels
       ProcessingStatus.jsx   screen E — polls per-sheet progress from the worker's queue
       SheetProgressList.jsx  the per-sheet stage list screen E and the notes re-run both render
+    conversation/            the panel — read-only in this slice
+      ConversationPanel.jsx  the column: header, thread, composer, collapsed strip
+      screenContext.jsx      the closed set of screen names (mirrored by api/app/assistant/schemas.py); selection and view reporting
 ```
 
 On the API side:
@@ -116,6 +119,10 @@ api/app/engine/
   sheet.py                   finishes one sheet: rows, evidence crops, the vision pass
   scope.py                   scope extraction — LLM with verbatim-quote validation, or a deterministic fallback
   tiles.py                   cuts a sheet into the 512 px tile pyramid, in the visual frame, to ≥150 dpi
+api/app/assistant/
+  context.py                 what each screen puts in view, through the API's existing read paths
+  prompt.py                  the frozen prompt; extracted text rendered as data, never instruction
+  service.py, router.py      one thread per project; the answer streams over server-sent events
 ```
 
 Uploaded files live in object storage (MinIO locally, S3 in deployment), under a key built from the owning org and project — never from anything the client sent. The `documents` table (migration 0019; `status` constrained to its four values by 0020) holds one row per upload with its hash and storage key. The API streams and hashes an upload; it never opens one — that is `app/worker`'s job, run inside `sandbox.py`'s child process with a wall-clock timeout, because a PDF parser is a remote-code-execution surface and the API is not where untrusted bytes get parsed. **The process boundary is enforced, not just described**: `app.worker` is the only package that imports `app.engine` or a PDF parser, `app.main` never imports the engine, and `app.worker` never imports a router — all three subprocess-tested, plus a test proving the worker process can resolve every foreign key on its own. Specs: [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md) (B1), [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md) (B2).
@@ -126,7 +133,7 @@ Marker rendering keeps three channels independent: **glyph** = item type, **ring
 
 ## The engine is five agents
 
-Documents, Counting, Classification, and Pricing now run, behind the API: `api/app/engine/` holds them, `api/app/worker/` is what calls them, on every upload (`read`) and every **Start takeoff** (`classify` and `sheet`). Pricing's basis — labor rate and material factor — comes from the one classification call with a key, or the regional table without one (`classify_run`). Per-row assembly expansion (box, plate, ring, wire, conduit, per `engine/assemblies.py`) is wired into both classification paths through `engine/rows.py` (`resolve_assembly_parent` for the model-classified path, `pricing.price_item` for the deterministic one), called from the sheet job — not just the CLI. Conversation is designed but unbuilt: `engine/conversation.py` routes an utterance to a typed proposal, and nothing in `src/` calls it or renders a panel. Full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
+Documents, Counting, Classification, and Pricing now run, behind the API: `api/app/engine/` holds them, `api/app/worker/` is what calls them, on every upload (`read`) and every **Start takeoff** (`classify` and `sheet`). Pricing's basis — labor rate and material factor — comes from the one classification call with a key, or the regional table without one (`classify_run`). Per-row assembly expansion (box, plate, ring, wire, conduit, per `engine/assemblies.py`) is wired into both classification paths through `engine/rows.py` (`resolve_assembly_parent` for the model-classified path, `pricing.price_item` for the deterministic one), called from the sheet job — not just the CLI. The conversation panel's first slice is built and read-only: api/app/assistant/ answers questions about the screen in view from the API's own read paths, and src/components/conversation/ renders it on every project screen. engine/conversation.py's proposal routing is still not wired to it. Design in docs/specs/conversation-panel.md. Full design in [`docs/product/agent-architecture.md`](docs/product/agent-architecture.md).
 
 | Agent | Nature | Produces |
 |---|---|---|
@@ -164,6 +171,6 @@ Rules that are easy to break here:
 
 ## Known scope limits
 
-Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note. Notes & assumptions is built and routed. The conversation panel is designed but unbuilt — nothing in `src/` implements it yet.
+Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note. Notes & assumptions is built and routed. The conversation panel is read-only: it answers and advises about what is in view, and says where a change is made; it proposes nothing yet. Threads are one per project. See docs/specs/conversation-panel.md.
 
 Within notes, several things the design spec describes are not built: the `applied_action_id` column, the footer strip, sheet-scoped narrowing of a re-run, and item-scoped notes resolving to a cluster tag. See the *Not built in this slice* section of [`docs/specs/notes-and-assumptions.md`](docs/specs/notes-and-assumptions.md).

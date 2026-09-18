@@ -17,12 +17,18 @@
    used to be. Five screens rendered ProjectNav themselves and the
    review workspaces rendered nothing, so an estimator lost the project
    navigation at exactly the point they were deepest inside a project.
+
+   The shell now holds three columns -- rail, screen, conversation panel
+   -- and the panel is mounted here, once per project, so a streaming
+   answer survives navigation between project screens.
    ============================================================ */
 
 import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import CompanyNav from "./CompanyNav.jsx";
 import ProjectNav from "./ProjectNav.jsx";
+import ConversationPanel from "../conversation/ConversationPanel.jsx";
+import { ConversationScreenProvider } from "../conversation/screenContext.jsx";
 import { getCompanySettings } from "../../lib/settingsStore.js";
 
 // /projects/:projectId and anything under it. "new" is excluded because
@@ -39,21 +45,55 @@ export function projectIdFromPath(pathname) {
   return PROJECT_ROUTE.exec(pathname)?.[1] ?? null;
 }
 
+const PANEL_KEY = "conversation-panel-open";
+
+function readPanelOpen() {
+  try {
+    return localStorage.getItem(PANEL_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export default function AppShell({ store = null }) {
   const { pathname } = useLocation();
   const projectId = projectIdFromPath(pathname);
+  const [panelOpen, setPanelOpen] = useState(readPanelOpen);
+
+  const togglePanel = () => {
+    setPanelOpen((v) => {
+      try {
+        localStorage.setItem(PANEL_KEY, v ? "0" : "1");
+      } catch {
+        // Sandboxed frames block storage; the choice just doesn't persist.
+      }
+      return !v;
+    });
+  };
 
   return (
-    <div className="app-shell">
-      {projectId ? (
-        <ProjectRail key={projectId} projectId={projectId} store={store} isTakeoffRoute={TAKEOFF_ROUTE.test(pathname)} />
-      ) : (
-        <CompanyNav />
-      )}
-      <main className="app-shell-main">
-        <Outlet />
-      </main>
-    </div>
+    <ConversationScreenProvider panelOpen={Boolean(projectId) && panelOpen} setPanelOpen={togglePanel}>
+      <div className="app-shell">
+        {projectId ? (
+          <ProjectRail key={projectId} projectId={projectId} store={store} isTakeoffRoute={TAKEOFF_ROUTE.test(pathname)} />
+        ) : (
+          <CompanyNav />
+        )}
+        <main className="app-shell-main">
+          <Outlet />
+        </main>
+        {projectId && store && typeof store.listConversation === "function" && (
+          <ConversationPanel
+            key={`conversation-${projectId}`}
+            store={store}
+            projectId={projectId}
+            pathname={pathname}
+            open={panelOpen}
+            onToggle={togglePanel}
+          />
+        )}
+      </div>
+    </ConversationScreenProvider>
   );
 }
 

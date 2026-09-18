@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Outlet, useParams } from "react-router-dom";
 import { useReviewStore } from "../../lib/useReviewStore.js";
+import { useConversationSelection } from "../conversation/screenContext.jsx";
 
 export default function ProjectWorkspaceLayout({ store, me, onSignedOut }) {
   const { projectId } = useParams();
@@ -104,6 +105,17 @@ function LayoutForProject({ store, me, onSignedOut, projectId }) {
       setSelectedItemId(null);
     }
   }, [items, selectedItemId]);
+
+  // Tell the conversation panel what is in view. Labels ride along so
+  // the panel names the sheet and item without its own subscription.
+  const currentSheet = sheets.find((s) => s.id === sheetId) ?? null;
+  const selectedItem = items.find((i) => i.id === selectedItemId) ?? null;
+  useConversationSelection({
+    sheetId: sheetId ?? null,
+    sheetLabel: currentSheet?.number ?? null,
+    itemId: selectedItemId ?? null,
+    itemLabel: selectedItem?.name ?? null,
+  });
 
   return (
     <Outlet

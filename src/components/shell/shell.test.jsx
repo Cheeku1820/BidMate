@@ -19,8 +19,9 @@
    screen at once.
    ============================================================ */
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import AppShell from "./AppShell.jsx";
 import AppTopBar from "./AppTopBar.jsx";
@@ -178,6 +179,33 @@ describe("AppTopBar", () => {
   it("renders the workspace's own primary action", () => {
     render(<AppTopBar title="Projects" primaryAction={<button type="button">New project</button>} />);
     expect(screen.getByRole("button", { name: /new project/i })).toBeTruthy();
+  });
+});
+
+describe("the conversation panel in the shell", () => {
+  beforeEach(() => localStorage.clear());
+
+  const store = { listConversation: async () => [], sendMessage: async () => ({ id: "a" }), listProjects: async () => [] };
+
+  it("renders on project routes and not at company level", () => {
+    let view = renderShell("/projects/p1/documents", { store });
+    expect(screen.getByRole("complementary", { name: /ask about this project/i })).toBeTruthy();
+    view.unmount();
+    view = renderShell("/projects", { store });
+    expect(screen.queryByRole("complementary", { name: /ask about this project/i })).toBeNull();
+    view.unmount();
+    view = renderShell("/projects/new", { store });
+    expect(screen.queryByRole("complementary", { name: /ask about this project/i })).toBeNull();
+  });
+
+  it("starts closed and remembers being opened", async () => {
+    let view = renderShell("/projects/p1/documents", { store });
+    await userEvent.click(screen.getByRole("button", { name: /open the conversation panel/i }));
+    expect(await screen.findByLabelText("Ask a question")).toBeTruthy();
+    view.unmount();
+    view = renderShell("/projects/p1/export", { store });
+    expect(await screen.findByLabelText("Ask a question")).toBeTruthy();
+    view.unmount();
   });
 });
 

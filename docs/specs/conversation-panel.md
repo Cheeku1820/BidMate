@@ -272,7 +272,7 @@ Every error names a recovery action. No toasts — an error lives in the bubble 
 
 ## Documents touched
 
-- This spec, and the plan at `docs/plans/conversation-panel.md`.
+- This spec, and the plan at `docs/plans/done/conversation-panel.md`.
 - `CLAUDE.md` and `README.md`: replace "designed but unbuilt" with what v1 does and does not do, and add `src/components/conversation/` and `api/app/assistant/` to the architecture listings.
 
 ---

@@ -596,3 +596,26 @@ class ProposalOut(BaseModel):
     versions: dict[uuid.UUID, int]
 
     model_config = MODEL_CONFIG
+
+
+class ApplyProposalIn(BaseModel):
+    proposal: ProposalOut
+    approve: bool = False
+    note: str = Field(default="", max_length=2000)
+
+    model_config = {**MODEL_CONFIG, "extra": "forbid"}
+
+
+class AlsoMatchingOut(BaseModel):
+    count: int
+    sheet_numbers: list[str]
+
+    model_config = MODEL_CONFIG
+
+
+class ApplyProposalOut(BaseModel):
+    label: str
+    snapshot: SnapshotOut
+    also_matching: AlsoMatchingOut
+
+    model_config = MODEL_CONFIG

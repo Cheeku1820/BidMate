@@ -53,7 +53,9 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.errors import DomainError
 from app.takeoff.actions import decode_snapshot
-from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPrice, Sheet, Warning
+from app.takeoff.models import (
+    Action, Item, ProjectLaborLine, ProjectMaterialPrice, Sheet, SymbolResolution, Warning,
+)
 from app.takeoff.snapshots import (
     ITEM_SNAPSHOT_TYPES,
     ITEMS_SNAPSHOT_KEY,
@@ -62,6 +64,7 @@ from app.takeoff.snapshots import (
     MATERIAL_PRICE_KEY,
     MATERIAL_PRICE_SNAPSHOT_TYPES,
     NESTED_SNAPSHOT_KEYS,
+    SYMBOL_RESOLUTION_SNAPSHOT_TYPES,
     WARNING_SNAPSHOT_TYPES,
     WARNINGS_KEY,
 )
@@ -91,6 +94,8 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
         _apply_sparse_pricing_row(db, ProjectLaborLine, action.item_id, LABOR_LINE_SNAPSHOT_TYPES, state)
     elif action.kind == "material_price_edit":
         _apply_sparse_pricing_row(db, ProjectMaterialPrice, action.item_id, MATERIAL_PRICE_SNAPSHOT_TYPES, state)
+    elif action.kind == "resolve":
+        _apply_resolve(db, action, direction)
     else:  # approve, reject, unreject, edit
         _apply_item_state(db, action.item_id, state)
 
@@ -365,6 +370,54 @@ def _apply_scale(db: DbSession, action: Action, direction: str) -> None:
         # touched -- see _apply_item_state()'s docstring for why undo/redo
         # bump the counter forward rather than restoring a snapshotted one.
         item.version += 1
+
+
+def _apply_resolve(db: DbSession, action: Action, direction: str) -> None:
+    """Undo/redo a say-what-it-is apply: every item's snapshotted columns,
+    the warnings the apply cleared (restored on undo, deleted on redo --
+    the same discipline _apply_scale uses), and the library row it
+    wrote (removed on undo when it did not exist before, else restored;
+    re-upserted on redo)."""
+    state = action.before if direction == "before" else action.after
+    rows = state.get(ITEMS_SNAPSHOT_KEY, [])
+    warnings_by_item_id = {uuid.UUID(r["id"]): r.get("warnings", []) for r in action.before.get(ITEMS_SNAPSHOT_KEY, [])}
+    ids = [uuid.UUID(r["id"]) for r in rows]
+    locked = db.scalars(select(Item).where(Item.id.in_(ids)).order_by(Item.id)
+                        .with_for_update().execution_options(populate_existing=True)).all()
+    by_id = {row.id: row for row in locked}
+    for r in rows:
+        item_id, fields = _decode_item_row(r, exclude=frozenset({"warnings"}))
+        item = by_id.get(item_id)
+        if item is None:
+            continue
+        for key, value in fields.items():
+            setattr(item, key, value)
+        for encoded in warnings_by_item_id.get(item_id, []):
+            w = decode_snapshot(encoded, WARNING_SNAPSHOT_TYPES)
+            if direction == "before":
+                _restore_row_if_missing(db, Warning, w)
+            else:
+                _delete_row_if_present(db, Warning, w["id"])
+        item.version += 1
+
+    lib_before = action.before.get("library")
+    lib_after = action.after.get("library")
+    if direction == "before":
+        if lib_after and not lib_before:
+            _delete_row_if_present(db, SymbolResolution, uuid.UUID(lib_after["id"]))
+        elif lib_before:
+            _upsert_row(db, SymbolResolution, decode_snapshot(lib_before, SYMBOL_RESOLUTION_SNAPSHOT_TYPES))
+    elif lib_after:
+        _upsert_row(db, SymbolResolution, decode_snapshot(lib_after, SYMBOL_RESOLUTION_SNAPSHOT_TYPES))
+
+
+def _upsert_row(db: DbSession, model: type, fields: dict) -> None:
+    row = db.get(model, fields["id"])
+    if row is None:
+        db.add(model(**fields))
+    else:
+        for k, v in fields.items():
+            setattr(row, k, v)
 
 
 def _apply_delete(db: DbSession, action: Action, direction: str) -> None:

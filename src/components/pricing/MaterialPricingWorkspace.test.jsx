@@ -33,7 +33,12 @@ function renderMaterial({ store, extra = {} }) {
     dismissToast: vi.fn(),
     undo: vi.fn().mockResolvedValue(undefined),
   };
-  context = { store, projectId: "p1", ...review, ...extra };
+  // Every existing test's `store` fixture predates the price-sheet
+  // round trip (task 11) and only stubs the methods it exercises --
+  // priceRequestUrl is called unconditionally by the header actions
+  // row, so it needs a default here rather than in each of those.
+  const storeWithDefaults = { priceRequestUrl: (id) => `/api/projects/${id}/material-pricing/price-request`, ...store };
+  context = { store: storeWithDefaults, projectId: "p1", ...review, ...extra };
   render(
     <MemoryRouter>
       <MaterialPricingWorkspace />

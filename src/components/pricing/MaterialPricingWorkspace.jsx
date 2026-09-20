@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import DataGrid from "../grid/DataGrid.jsx";
+import PriceSheetImport from "./PriceSheetImport.jsx";
 import { ALLOWANCE_REASON_MESSAGE, COLUMNS, money } from "./pricingColumns.jsx";
 import { REFRESHING, REFRESH_BUSY } from "./marketOutcomeCopy.js";
 import { saveStateText } from "../../lib/format.js";
@@ -51,6 +52,7 @@ export default function MaterialPricingWorkspace() {
   const [marketJob, setMarketJob] = useState(null); // "queued" | "running" | null
   const [loadError, setLoadError] = useState(null);
   const [saveError, setSaveError] = useState(null);
+  const [importing, setImporting] = useState(false);
   const grid = useRef(null);
 
   const load = useCallback(() => {
@@ -182,6 +184,12 @@ export default function MaterialPricingWorkspace() {
           <button type="button" className="btn" onClick={refresh} disabled={!!marketJob}>
             Refresh market estimates
           </button>
+          <a className="btn" href={store.priceRequestUrl(projectId)} download>
+            Download price request
+          </a>
+          <button type="button" className="btn" onClick={() => setImporting(true)}>
+            Upload supplier pricing
+          </button>
         </div>
         {marketJob ? <p className="muted">{REFRESHING}</p> : null}
 
@@ -247,6 +255,19 @@ export default function MaterialPricingWorkspace() {
             Undo
           </button>
         </div>
+      ) : null}
+
+      {importing ? (
+        <PriceSheetImport
+          projectId={projectId}
+          store={store}
+          onClose={() => setImporting(false)}
+          onApplied={(result, n) => {
+            setRows(result.rows);
+            setImporting(false);
+            showToast(`Applied supplier pricing for ${n} item${n === 1 ? "" : "s"}`);
+          }}
+        />
       ) : null}
     </>
   );

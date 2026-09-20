@@ -622,6 +622,30 @@ describe("pricing writes", () => {
   });
 });
 
+describe("price sheet upload", () => {
+  // request()'s one branch PriceSheetImport.jsx depends on: a FormData
+  // body must ride through untouched, with no JSON Content-Type header
+  // set over it -- that header would ship without the multipart
+  // boundary the browser adds itself, and the server couldn't split
+  // the parts.
+  it("posts the file as FormData, with no Content-Type header set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ document_id: "d1" }, { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const store = createApiStore();
+    const file = new File(["x"], "codale.xlsx");
+    const result = await store.uploadPriceSheet("p1", file);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/projects/p1/material-pricing/price-sheets");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.body.get("file")).toBe(file);
+    expect(init.headers["Content-Type"]).toBeUndefined();
+    expect(result).toEqual({ documentId: "d1" });
+  });
+});
+
 describe("the route's project wins over ensureProjectId's fallback", () => {
   /* React runs a child's effects before its parent's, so a screen inside
      ProjectWorkspaceLayout (the presence beat, a notes fetch) can reach

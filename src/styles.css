@@ -2877,3 +2877,55 @@ button {
 .market-evidence li {
   margin-bottom: 2px;
 }
+
+/* ---------------------------------------------------- price sheet import */
+
+/* PriceSheetImport.jsx's three preview groups (matched / not on this
+   project / left unpriced) -- a plain heading over a list, not the
+   grid: this modal reviews what a worker read out of a spreadsheet,
+   it does not re-edit it in place. */
+.pricesheet-group {
+  margin-top: 16px;
+}
+.pricesheet-group h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.pricesheet-rows,
+.pricesheet-plainlist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.pricesheet-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-1);
+  font-size: 13.5px;
+}
+.pricesheet-row__check {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: 500;
+}
+.pricesheet-row__prices {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.pricesheet-plainlist li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-1);
+  font-size: 13.5px;
+  color: var(--ink-2);
+}

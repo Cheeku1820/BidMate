@@ -102,7 +102,14 @@ function parseEvent(block) {
 
 async function request(path, { method = "GET", body, headers = {} } = {}) {
   const init = { method, credentials: "include", headers: { ...headers } };
-  if (body !== undefined) {
+  if (body instanceof FormData) {
+    // Let the browser set the multipart Content-Type (with its boundary)
+    // itself -- setting one here would leave the boundary off and the
+    // server unable to split the parts. uploadPriceSheet is the one
+    // caller that sends a FormData body through this path (uploadDocument
+    // uses its own XHR, for upload progress).
+    init.body = body;
+  } else if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
@@ -617,6 +624,51 @@ export function createApiStore() {
     return mapMaterialRow(result);
   }
 
+  // The price-request download is a plain link, not a fetch -- the
+  // browser drives the download itself off this URL (Content-Disposition:
+  // attachment, task-10-brief.md), so there is nothing here to await.
+  function priceRequestUrl(projectId, { onlyMissing = false } = {}) {
+    return `/api/projects/${projectId}/material-pricing/price-request${onlyMissing ? "?only=missing" : ""}`;
+  }
+
+  async function uploadPriceSheet(projectId, file) {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await request(`/api/projects/${projectId}/material-pricing/price-sheets`, { method: "POST", body: form });
+    return { documentId: r.document_id };
+  }
+
+  async function getPriceSheetPreview(projectId, documentId) {
+    const p = await request(`/api/projects/${projectId}/material-pricing/price-sheets/${documentId}/preview`);
+    return {
+      state: p.state,
+      error: p.error ?? "",
+      refused: p.refused ?? null,
+      supplierName: p.supplier_name ?? "",
+      quoteDate: p.quote_date ?? null,
+      matched: (p.matched ?? []).map((m) => ({
+        itemId: m.item_id, itemName: m.item_name, currentUnitPrice: m.current_unit_price,
+        currentSourceLabel: m.current_source_label, newUnitPrice: m.new_unit_price, partNo: m.part_no,
+        notes: m.notes, line: m.line,
+      })),
+      unmatched: (p.unmatched ?? []).map((u) => ({ itemName: u.item_name, unitPrice: u.unit_price, line: u.line })),
+      unpriced: (p.unpriced ?? []).map((u) => ({ itemId: u.item_id, itemName: u.item_name })),
+    };
+  }
+
+  async function applyPriceSheet(projectId, documentId, { itemIds, supplierName, quoteDate, saveToCompany }) {
+    const body = await request(`/api/projects/${projectId}/material-pricing/price-sheets/${documentId}/apply`, {
+      method: "POST",
+      body: { item_ids: itemIds, supplier_name: supplierName, quote_date: quoteDate, save_to_company: saveToCompany },
+    });
+    // Same cache-bust setMaterialPrice/clearMaterialPrice perform above:
+    // applying a price sheet changes materialCost/totalCost on every
+    // ticked item, so the next snapshot poll must not answer from the
+    // pre-apply cache.
+    invalidateCache();
+    return { pricingSource: body.pricing_source, pricingNote: body.pricing_note, marketJob: body.market_job ?? null, rows: body.rows.map(mapMaterialRow) };
+  }
+
   async function getCompanyLaborRates() {
     return request("/api/company/labor-rates");
   }
@@ -688,6 +740,10 @@ export function createApiStore() {
     getMaterialRows,
     setMaterialPrice,
     clearMaterialPrice,
+    priceRequestUrl,
+    uploadPriceSheet,
+    getPriceSheetPreview,
+    applyPriceSheet,
     refreshMarketEstimates,
     getMarketUsage,
     getCompanyLaborRates,

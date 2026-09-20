@@ -18,6 +18,7 @@ import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import { resolveProject, setProjectOverride, restoreCompanyDefault } from "../../lib/settingsStore.js";
 import { formatCalendarDate, NOT_SET, saveStateText } from "../../lib/format.js";
+import { useSaveFeedback } from "../../lib/useSaveFeedback.js";
 
 // Five digits or empty -- the same shape PostalCodeIn (schemas.py)
 // accepts. Checked here too so a malformed ZIP never reaches the wire
@@ -47,20 +48,14 @@ export default function ProjectSettings({ store }) {
   // The ZIP field: this screen isn't routed inside ProjectWorkspaceLayout
   // (it's the estimator's own listProjects fetch, not the polled review
   // snapshot -- see the load() below), so there's no useWorkspaceContext()
-  // to borrow runMutation/showToast from. Its own save-state and toast
-  // follow the identical convention (DESIGN.md's Saving…/Saved rhythm,
-  // the pricing screens' five-second toast) rather than a different one.
+  // to borrow runMutation/showToast from. useSaveFeedback is the same
+  // generic Saving…/Saved tracker and five-second toast useReviewStore
+  // hands the pricing screens through that context, pulled out so both
+  // can share it instead of each keeping its own copy.
   const [postalCode, setPostalCodeValue] = useState("");
   const [savedPostalCode, setSavedPostalCode] = useState("");
   const [zipError, setZipError] = useState(null);
-  const [saved, setSaved] = useState(null);
-  const [toast, setToast] = useState(null);
-
-  const showToast = useCallback((text) => {
-    const id = Date.now();
-    setToast({ id, text });
-    setTimeout(() => setToast((t) => (t && t.id === id ? null : t)), 5000);
-  }, []);
+  const { saved, toast, showToast, runMutation } = useSaveFeedback();
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -106,17 +101,13 @@ export default function ProjectSettings({ store }) {
     setZipError(null);
     if (value === savedPostalCode) return; // Unchanged -- nothing to save.
 
-    setSaved({ state: "saving", at: Date.now() });
     try {
-      const updated = await store.setPostalCode(projectId, value);
+      const updated = await runMutation(() => store.setPostalCode(projectId, value));
       const next = updated?.postalCode ?? "";
       setPostalCodeValue(next);
       setSavedPostalCode(next);
-      setSaved({ state: "saved", at: Date.now() });
       showToast(next ? "Set project ZIP code" : "Cleared project ZIP code");
     } catch (err) {
-      setSaved({ state: "error", at: Date.now() });
-      setTimeout(() => setSaved((s) => (s?.state === "error" ? { state: "saved", at: Date.now() } : s)), 2600);
       setZipError(err?.message || "That change couldn't be saved. Try again.");
     }
   };

@@ -21,7 +21,7 @@ from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import review
 from app.takeoff.actions import commit, encode_snapshot
-from app.takeoff.concurrency import check_version, lock_item
+from app.takeoff.concurrency import check_version
 from app.takeoff.models import Action, Item, ReviewStatus, Sheet, SymbolResolution, Warning
 from app.takeoff.snapshots import ITEMS_SNAPSHOT_KEY, _column_snapshot
 from app.takeoff.totals import countable_items
@@ -50,7 +50,11 @@ def _also_matching(db: DbSession, item: Item, target_ids: set[uuid.UUID]) -> tup
     if not item.source_tag:
         return 0, []
     rows = db.scalars(
-        countable_items(item.project_id).where(Item.source_tag == item.source_tag, Item.id.not_in(target_ids))
+        countable_items(item.project_id).where(
+            Item.source_tag == item.source_tag,
+            Item.id.not_in(target_ids),
+            Item.sheet_id != item.sheet_id,
+        )
     ).all()
     if not rows:
         return 0, []
@@ -70,9 +74,12 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
         select(Item).where(Item.id.in_(ids), Item.project_id == item.project_id).order_by(Item.id)
         .with_for_update().execution_options(populate_existing=True)
     ).all()
+    # Every locked target must carry a version the client claims to have
+    # seen -- an absent id is not "unchecked," it is refused with the same
+    # stale-version copy check_version() already produces (no row's
+    # version can ever equal -1, so this always raises for a missing id).
     for row in locked:
-        if row.id in versions:
-            check_version(db, row, versions[row.id])
+        check_version(db, row, versions.get(row.id, -1))
 
     before_rows, after_rows = [], []
     if intent == "exclude":
@@ -92,7 +99,7 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
 
     clears_warning = bool(proposal.get("schedule_match")) or bool(proposal.get("catalog_id"))
     for row in locked:
-        before_rows.append(_item_snapshot(db, row, warnings=True))
+        before_rows.append(_item_snapshot(db, row, warnings=clears_warning))
         row.name = proposal["name"]
         row.system = proposal["system"]
         row.category = proposal["category"]
@@ -108,7 +115,7 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
         if approve:
             review._apply_approve(db, actor, row, None)   # raises on Missing information / rejected -- nothing committed
         db.flush()
-        after_rows.append(_item_snapshot(db, row, warnings=True))
+        after_rows.append(_item_snapshot(db, row, warnings=clears_warning))
 
     lib_before, lib_after = None, None
     if item.source_tag:

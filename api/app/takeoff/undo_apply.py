@@ -406,18 +406,43 @@ def _apply_resolve(db: DbSession, action: Action, direction: str) -> None:
         if lib_after and not lib_before:
             _delete_row_if_present(db, SymbolResolution, uuid.UUID(lib_after["id"]))
         elif lib_before:
-            _upsert_row(db, SymbolResolution, decode_snapshot(lib_before, SYMBOL_RESOLUTION_SNAPSHOT_TYPES))
+            _upsert_symbol_resolution(db, decode_snapshot(lib_before, SYMBOL_RESOLUTION_SNAPSHOT_TYPES))
     elif lib_after:
-        _upsert_row(db, SymbolResolution, decode_snapshot(lib_after, SYMBOL_RESOLUTION_SNAPSHOT_TYPES))
+        _upsert_symbol_resolution(db, decode_snapshot(lib_after, SYMBOL_RESOLUTION_SNAPSHOT_TYPES))
 
 
-def _upsert_row(db: DbSession, model: type, fields: dict) -> None:
-    row = db.get(model, fields["id"])
-    if row is None:
-        db.add(model(**fields))
-    else:
-        for k, v in fields.items():
-            setattr(row, k, v)
+# The fields a library snapshot merges onto an already-live row for the
+# same tag -- never "id", "org_id", "project_id", or "tag" themselves,
+# which name the row being merged onto, not a value to overwrite it with.
+_LIBRARY_MERGE_FIELDS = ("name", "system", "category", "catalog_id", "resolved_by_user_id", "resolved_at")
+
+
+def _upsert_symbol_resolution(db: DbSession, fields: dict) -> None:
+    """Restore or re-apply a `SymbolResolution` snapshot, resolved by its
+    business key -- `(project_id, tag)` -- never by the row's own `id`.
+
+    `resolve_apply.apply_proposal()` itself looks up the existing row for
+    a tag the same way (`SymbolResolution.project_id == ..., .tag ==
+    ...`), which is what lets an apply -> undo -> re-apply sequence give
+    the same tag's live row a *different* id than the one an earlier
+    action's snapshot remembers. A later redo/undo that replays that
+    earlier snapshot must merge onto whichever row is live for the tag
+    now -- inserting under the snapshot's own id would either collide
+    with `uq_symbol_resolution_project_tag` (a live row for the tag
+    already exists, under a different id) or resurrect a second, stale
+    row for a tag that can only ever have one.
+    """
+    existing = db.scalars(
+        select(SymbolResolution).where(
+            SymbolResolution.project_id == fields["project_id"],
+            SymbolResolution.tag == fields["tag"],
+        )
+    ).first()
+    if existing is None:
+        db.add(SymbolResolution(**fields))
+        return
+    for key in _LIBRARY_MERGE_FIELDS:
+        setattr(existing, key, fields[key])
 
 
 def _apply_delete(db: DbSession, action: Action, direction: str) -> None:

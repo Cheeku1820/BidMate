@@ -75,6 +75,16 @@ def test_stale_version_refuses(client, db, item, signed_in_user):
     p = _proposal([item]); p["versions"][str(item.id)] = item.version + 5
     r = client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": p, "approve": True, "note": "x"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "stale_item_version"
+    db.expire_all()
+    assert db.get(Item, item.id).name != "2x4 LED troffer, 4000K — type F"
+
+
+def test_missing_version_for_a_target_refuses_the_whole_apply(client, db, item, signed_in_user):
+    p = _proposal([item]); p["versions"] = {}
+    r = client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": p, "approve": True, "note": "x"})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "stale_item_version"
+    db.expire_all()
+    assert db.get(Item, item.id).name != "2x4 LED troffer, 4000K — type F"
 
 
 def test_library_row_written_on_apply_and_upserted(client, db, item, org, signed_in_user):
@@ -110,3 +120,55 @@ def test_undo_restores_every_item_the_warning_and_removes_the_library_row(client
     db.expire_all()
     assert db.get(Item, item.id).status is ReviewStatus.APPROVED
     assert db.scalars(select(SymbolResolution)).first() is not None
+
+
+def test_undo_reverses_an_exclude(client, db, item, signed_in_user):
+    p = _proposal([item], intent="exclude", reject_reason="not a device", name=item.name)
+    client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": p, "approve": False, "note": "not a device"})
+    client.post(f"/api/projects/{item.project_id}/undo")
+    db.expire_all()
+    fresh = db.get(Item, item.id)
+    assert fresh.rejected_at is None and fresh.reject_reason is None
+
+
+def test_redo_does_not_delete_a_warning_the_apply_never_cleared(client, db, item, signed_in_user):
+    item.source_tag = "F"; item.status = ReviewStatus.ATTENTION
+    db.add(Warning(item_id=item.id, reason=WarningReason.SCHEDULE_CONFLICT, title="t", found="f", why="w", fix="x", where_="E-501"))
+    db.commit()
+    p = _proposal([item], schedule_match=None, catalog_id=None, source="typed")
+    r = client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": p, "approve": False, "note": "x"})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.get(Item, item.id).status is ReviewStatus.ATTENTION
+    assert db.scalars(select(Warning).where(Warning.item_id == item.id)).first() is not None
+
+    client.post(f"/api/projects/{item.project_id}/undo")
+    db.expire_all()
+    assert db.scalars(select(Warning).where(Warning.item_id == item.id)).first() is not None
+
+    client.post(f"/api/projects/{item.project_id}/redo")
+    db.expire_all()
+    assert db.get(Item, item.id).status is ReviewStatus.ATTENTION
+    assert db.scalars(select(Warning).where(Warning.item_id == item.id)).first() is not None
+
+
+def test_redo_after_reapplying_the_same_tag_merges_onto_the_live_row(client, db, item, signed_in_user):
+    item.source_tag = "F"; db.commit()
+    r1 = client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": _proposal([item]), "approve": False, "note": "x"})
+    assert r1.status_code == 200, r1.text
+
+    client.post(f"/api/projects/{item.project_id}/undo")
+    db.expire_all()
+    item = db.get(Item, item.id)
+    assert db.scalars(select(SymbolResolution)).first() is None
+
+    r2 = client.post(f"/api/items/{item.id}/apply-proposal",
+                      json={"proposal": _proposal([item], name="2x4 LED troffer — type F (again)",
+                                                    versions={str(item.id): item.version}),
+                            "approve": False, "note": "z"})
+    assert r2.status_code == 200, r2.text
+
+    r3 = client.post(f"/api/projects/{item.project_id}/redo")
+    assert r3.status_code == 200, r3.text
+    rows = db.scalars(select(SymbolResolution).where(SymbolResolution.project_id == item.project_id)).all()
+    assert len(rows) == 1

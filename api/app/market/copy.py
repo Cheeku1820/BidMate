@@ -41,6 +41,25 @@ _COPY = {
 }
 
 
+def _dollars(value) -> str:
+    return f"${value:,.2f}"
+
+
+def wide_range_warning(*, low, high, location_label: str, fetched_note: str) -> dict:
+    """The four-field warning behind a Market estimate that resolves
+    *Needs attention* (pricing.py's WIDE_RANGE_RATIO): the sellers
+    disagree by more than half, and the row has to say so, or the
+    amber pill is a status with no reason. `where` is the same place
+    and date the row's basis note names."""
+    return {
+        "title": "Wide price range",
+        "found": f"Sellers quoted between {_dollars(low)} and {_dollars(high)}.",
+        "why": "The market price for this item is uncertain by more than half.",
+        "fix": "Check the sellers listed under the item, then enter a price or upload a supplier price sheet.",
+        "where": ", ".join(part for part in (location_label, fetched_note) if part),
+    }
+
+
 def warning_for(outcome: str, *, query: str, sheet_number: str, description: str) -> dict | None:
     """The four-field warning for an unpriced outcome, or None for
     "priced". `found` says what was asked; `where` says where the item's

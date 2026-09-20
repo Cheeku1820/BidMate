@@ -15,7 +15,7 @@ from app.db import get_db
 from app.errors import DomainError
 from app.identity.models import User
 from app.jobs import queue
-from app.market.copy import warning_for
+from app.market.copy import warning_for, wide_range_warning
 from app.takeoff import actions
 from app.takeoff.actions import encode_snapshot
 from app.takeoff.models import (
@@ -31,7 +31,7 @@ from app.takeoff.models import (
     ProjectMaterialPrice,
     Sheet,
 )
-from app.takeoff.pricing import resolve_labor, resolve_material_price
+from app.takeoff.pricing import _short_date, resolve_labor, resolve_material_price
 from app.takeoff.router import load_item, load_project
 from app.takeoff.schemas import (
     CompanyLaborHoursOverrideIn,
@@ -135,6 +135,13 @@ def _material_row_out(item, resolution, override, market=None, lookup=None, shee
     warning = None
     if resolution.status == "missing" and market is not None:
         warning = warning_for(market.outcome, query=market.query, sheet_number=sheet_number, description=item.description or "")
+    elif resolution.status == "attention" and resolution.source_label == "Market estimate" and market is not None:
+        # The one way a market estimate reads Needs attention is a wide
+        # range (pricing.resolve_material_price); the amber pill needs
+        # its four fields like every other warning.
+        warning = wide_range_warning(low=resolution.price_low, high=resolution.price_high,
+                                     location_label=market.location_label,
+                                     fetched_note=_short_date(market.fetched_at) if market.fetched_at else "")
     return MaterialRowOut(
         item_id=item.id, item_name=item.name, quantity=item.quantity,
         unit_price=resolution.unit_price,

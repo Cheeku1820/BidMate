@@ -598,7 +598,32 @@ def test_material_rows_carry_the_market_estimate(client, db, signed_in_user, pro
     assert row["source_label"] == "Market estimate" and row["status"] == "attention"
     assert row["price_low"] == "156.75" and row["price_high"] == "303.33"
     assert row["market_evidence"] == [{"seller": "Codale", "price": 169.95, "link": "https://codale.example/x"}]
-    assert row["basis_note"] == "Austin, TX, Sep 18" and row["market_warning"] is None
+    assert row["basis_note"] == "Austin, TX, Sep 18"
+    # (303.33 - 156.75) / 169.95 > 0.5: the amber pill has to say why.
+    assert row["market_warning"] == {
+        "title": "Wide price range",
+        "found": "Sellers quoted between $156.75 and $303.33.",
+        "why": "The market price for this item is uncertain by more than half.",
+        "fix": "Check the sellers listed under the item, then enter a price or upload a supplier price sheet.",
+        "where": "Austin, TX, Sep 18",
+    }
+
+
+def test_a_narrow_market_estimate_carries_no_warning(client, db, signed_in_user, project, sheet, item, org):
+    from datetime import datetime, timezone
+    from decimal import Decimal
+    from app.takeoff.models import ItemMarketPrice, MarketLookup
+    project.org_id = signed_in_user.org_id
+    lk = MarketLookup(source="onebuild", query_key="20a duplex receptacle", location_key="78701", status="priced",
+                      result={"matched": {"name": "Duplex receptacle", "uom": "EA"}},
+                      fetched_at=datetime(2026, 9, 18, tzinfo=timezone.utc), billed=True, org_id=org.id)
+    db.add(lk); db.flush()
+    db.add(ItemMarketPrice(item_id=item.id, lookup_id=lk.id, outcome="priced", source="onebuild", query="20A duplex receptacle",
+                           unit_price=Decimal("12.40"), price_low=Decimal("12.40"), price_high=Decimal("12.40"),
+                           unit="EA", location_label="Travis County, TX", fetched_at=lk.fetched_at))
+    db.commit()
+    row = client.get(f"/api/projects/{project.id}/material-pricing").json()["rows"][0]
+    assert row["source_label"] == "Market estimate" and row["status"] == "ready" and row["market_warning"] is None
 
 
 def test_material_rows_carry_the_outcome_warning(client, db, signed_in_user, project, sheet, item):

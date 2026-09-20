@@ -2804,3 +2804,19 @@ button {
 }
 .conversation__composer textarea:disabled,
 .conversation__composer textarea:read-only { background: var(--paper-1); color: var(--ink-3); }
+
+/* ---------------------------------------------------- pricing basis */
+
+/* Under the Labor and Material pricing grids: where the numbers came
+   from, in one quiet line. It used to be a banner above the grid. */
+.pricing-basis {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+.pricing-basis__label {
+  font-weight: 600;
+  color: var(--ink-2);
+  margin-right: 6px;
+}

@@ -97,6 +97,11 @@ On the API side:
 api/app/takeoff/
   notes.py                   note CRUD, audited through commit(), not undoable
   merge.py                   the one write path for engine output — approval-preserving, per sheet
+  price_sheet_router.py      the supplier price-sheet round trip: request, upload, preview, apply
+api/app/market/
+  classify.py                which source prices a line, and with what query — pure, deterministic
+  copy.py                    the market lookup's outcomes and the estimator-facing words for each
+  price_sheet.py             the price-request workbook and the parser that reads a filled sheet back
 api/app/documents/
   blobstore.py               the storage boundary: S3BlobStore over MinIO, MemoryBlobStore for tests
   service.py                 store / list / retype / delete / stream, each audited, none undoable
@@ -115,6 +120,9 @@ api/app/worker/
   __main__.py                the poll loop — the only process that opens a PDF
   sandbox.py                 every job body runs in a child process with a per-kind wall-clock timeout
   handlers.py, read_job.py, classify_job.py, sheet_job.py, render_job.py   the four job kinds
+  price_job.py               a market estimate for every countable item, cache first, then the source
+  price_sheet_job.py         reads an uploaded supplier price sheet into a preview on the job's payload
+  market_sources.py          the two market sources as small HTTP clients — worker only, never the API
 api/app/engine/
   sheet.py                   finishes one sheet: rows, evidence crops, the vision pass
   scope.py                   scope extraction — LLM with verbatim-quote validation, or a deterministic fallback
@@ -140,7 +148,7 @@ Documents, Counting, Classification, and Pricing now run, behind the API: `api/a
 | Documents | Language, over a deterministic shell | Sheets, discipline, revision, scale, legend, schedules |
 | Counting | Deterministic geometry | Clusters of identical shapes with exact coordinates |
 | Classification | Language | Catalog item per cluster, with status and warning |
-| Pricing | Lookup, plus a quote-line matcher | Assemblies, material cost, labour hours |
+| Pricing | Lookup (market estimate by ZIP), plus a price-sheet round trip; a quote-line matcher later | Assemblies, material cost, labour hours |
 | Conversation | Language | Intent, target records, routed proposals |
 
 Each has exactly one nature, because that is what makes them separately measurable. **Counting is tested, not trained** — it reads placements out of the file rather than estimating them, so it gets asserted counts on known sets. Tuning it like a model is how exact work quietly becomes approximate.
@@ -171,6 +179,6 @@ Rules that are easy to break here:
 
 ## Known scope limits
 
-Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note. Notes & assumptions is built and routed. The conversation panel is read-only: it answers and advises about what is in view, and says where a change is made; it proposes nothing yet. Threads are one per project. See docs/specs/conversation-panel.md.
+Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note, with a market estimate tier by ZIP on top of it and a supplier price-sheet round trip for turning that into a real quote; labor returned by the market feed is stored but not resolved into an estimate (docs/specs/estimate-first-pricing.md §9). Notes & assumptions is built and routed. The conversation panel is read-only: it answers and advises about what is in view, and says where a change is made; it proposes nothing yet. Threads are one per project. See docs/specs/conversation-panel.md.
 
 Within notes, several things the design spec describes are not built: the `applied_action_id` column, the footer strip, sheet-scoped narrowing of a re-run, and item-scoped notes resolving to a cluster tag. See the *Not built in this slice* section of [`docs/specs/notes-and-assumptions.md`](docs/specs/notes-and-assumptions.md).

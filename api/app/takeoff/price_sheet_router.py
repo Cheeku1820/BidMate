@@ -12,7 +12,7 @@ from `pricing_router` rather than duplicating them -- all three are
 already the single place each of those concerns lives."""
 import uuid
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Depends, File, Response, UploadFile
 from sqlalchemy import select
@@ -26,7 +26,7 @@ from app.documents.router import _content_disposition
 from app.errors import DomainError
 from app.identity.models import User
 from app.jobs import queue
-from app.market.price_sheet import build_request_workbook
+from app.market.price_sheet import build_request_workbook, price_in_range
 from app.takeoff import actions
 from app.takeoff.models import CompanyMaterialPrice, Document, Job, ProjectMaterialPrice
 from app.takeoff.pricing_router import _snapshot, get_material_pricing, record_company_action
@@ -103,13 +103,24 @@ def apply_price_sheet(project_id: uuid.UUID, document_id: uuid.UUID, body: Price
     wanted = [str(i) for i in body.item_ids]
     if not wanted or any(i not in by_id for i in wanted):
         raise DomainError("price_sheet_rows", "Choose rows from the price sheet preview to apply.", status=422)
+    # Every price checked before any row is written: a negative or an
+    # oversized one (Numeric(10, 2) holds up to 99,999,999.99) would
+    # otherwise land, or fail the flush, after earlier rows had gone in.
+    prices = {}
+    for item_id in wanted:
+        try:
+            prices[item_id] = Decimal(by_id[item_id]["new_unit_price"])
+        except (InvalidOperation, TypeError):
+            prices[item_id] = None
+        if prices[item_id] is None or not price_in_range(prices[item_id]):
+            raise DomainError("price_sheet_price", "A price must be zero or more and under 100,000,000.", status=422)
     before, after = {}, {}
     for item_id in wanted:
         iid = uuid.UUID(item_id)
         item = load_item(iid, db, user)
         before[item_id] = _snapshot(ProjectMaterialPrice, iid, db) or {}
         row = db.get(ProjectMaterialPrice, iid) or ProjectMaterialPrice(item_id=iid, price_override=0, source="supplier_quote")
-        row.price_override = Decimal(by_id[item_id]["new_unit_price"])
+        row.price_override = prices[item_id]
         row.source, row.reason = "supplier_quote", ""
         row.supplier_name, row.quote_date, row.updated_by_user_id = body.supplier_name, body.quote_date, user.id
         db.add(row)

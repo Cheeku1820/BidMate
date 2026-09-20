@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from datetime import date as date_type
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,10 +21,20 @@ from app.worker.handlers import register
 _DATE_RE = re.compile(r"(\d{4})[-_.](\d{2})[-_.](\d{2})")
 
 
+def _valid_date(text: str) -> str | None:
+    """The filename's date only when it is one: "2026-13-45" matches the
+    pattern and is not a date, and PriceSheetPreviewOut.quote_date
+    would refuse it at the response -- as a 500, not a blank field."""
+    try:
+        return date_type.fromisoformat(text).isoformat()
+    except ValueError:
+        return None
+
+
 def _supplier_and_date(filename: str) -> tuple[str, str | None]:
     stem = os.path.splitext(os.path.basename(filename))[0]
     m = _DATE_RE.search(stem)
-    date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
+    date = _valid_date(f"{m.group(1)}-{m.group(2)}-{m.group(3)}") if m else None
     if re.search(r"price request", stem, re.IGNORECASE):
         # The platform's own download name (price_sheet_router.py's
         # get_price_request builds "<project name> - price request -

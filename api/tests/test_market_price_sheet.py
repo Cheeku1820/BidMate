@@ -71,3 +71,17 @@ def test_price_refuses_scientific_notation_and_other_ambiguous_strings():
     assert _price("2.250,00") is None
     assert _price(True) is None
     assert _price("") is None
+
+
+def test_price_refuses_a_negative_or_oversized_number_as_unpriced():
+    """A negative price would subtract from the bid, and one at or over
+    100,000,000 can't be stored in the price column (Numeric(10, 2)) --
+    both read back as unpriced, so the preview lists the row rather
+    than carrying a number the apply step would have to refuse."""
+    assert _price("-9.10") is None
+    assert _price(-1) is None
+    assert _price("123456789012.00") is None
+    assert _price(100_000_000) is None
+    assert _price("99,999,999.99") == Decimal("99999999.99")
+    assert _price(0) == Decimal("0.00")
+    assert _price(float("inf")) is None

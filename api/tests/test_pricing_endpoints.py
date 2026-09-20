@@ -1,6 +1,8 @@
 """PATCH /api/items/{item_id}/labor and /material-price -- the two
 project-level override mutations -- plus the five company-scoped pricing
 mutations and their audit log (CompanyAction)."""
+import uuid
+
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import InternalError, ProgrammingError
@@ -684,6 +686,42 @@ def test_apply_refuses_an_item_not_in_the_preview(client, db, signed_in_user, pr
     assert r.status_code == 422
 
 
+def _preview_doc(db, project, user, matched, name="codale.xlsx"):
+    from app.takeoff.models import Document, Job
+    d = Document(project_id=project.id, filename=name, doc_type="Pricing", content_type="x", size_bytes=1,
+                 sha256=uuid.uuid4().hex * 2, storage_key=f"k-{uuid.uuid4()}", uploaded_by=user.id)
+    db.add(d); db.flush()
+    db.add(Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=d.id, status="done",
+               payload={"preview": {"matched": matched, "unmatched": [], "unpriced": [], "refused": None,
+                                    "supplier_name": "codale", "quote_date": None}}))
+    db.commit()
+    return d
+
+
+@pytest.mark.parametrize("bad", ["-9.10", "123456789012.00", "100000000"])
+def test_apply_refuses_a_negative_or_oversized_price_before_writing_anything(client, db, signed_in_user, project, item, sheet, bad):
+    """The preview is worker-written, but the parser's bounds and this
+    route's are the same rule stated twice on purpose: a negative price
+    would land in the bid, and one Numeric(10, 2) can't hold fails the
+    flush as a 500 after earlier rows in the same apply have gone in.
+    Refused up front, with no row written and no action recorded."""
+    from sqlalchemy import func, select
+    from app.takeoff.models import Action, Item, ProjectMaterialPrice, ReviewStatus
+    project.org_id = signed_in_user.org_id
+    other = Item(project_id=project.id, sheet_id=sheet.id, symbol="panel", name="Panelboard", system="Distribution",
+                 category="Equipment", quantity=1, unit="EA", status=ReviewStatus.READY, x=1, y=1)
+    db.add(other); db.flush()
+    good = {"item_id": str(item.id), "item_name": item.name, "current_unit_price": None, "current_source_label": None,
+            "new_unit_price": "9.10", "part_no": "", "notes": "", "line": 2}
+    d = _preview_doc(db, project, signed_in_user, [good, {**good, "item_id": str(other.id), "item_name": other.name, "new_unit_price": bad, "line": 3}])
+    r = client.post(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/apply",
+                    json={"item_ids": [str(item.id), str(other.id)], "supplier_name": "Codale", "quote_date": "2026-09-18", "save_to_company": False})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"] == {"code": "price_sheet_price", "message": "A price must be zero or more and under 100,000,000."}
+    assert db.scalar(select(func.count()).select_from(ProjectMaterialPrice)) == 0
+    assert db.scalar(select(func.count()).select_from(Action).where(Action.kind == "supplier_quote_apply")) == 0
+
+
 def test_price_request_download_survives_a_quote_and_non_latin1_character_in_the_project_name(client, db, signed_in_user, project, item):
     """A raw f-string Content-Disposition would let a `"` in the project
     name split the header, and a non-latin-1 character (Starlette encodes
@@ -768,6 +806,27 @@ def test_preview_reads_as_ready_with_the_matched_row_once_the_worker_runs(client
     body = r.json()
     assert body["state"] == "ready"
     assert [m["item_id"] for m in body["matched"]] == [str(item.id)]
+
+
+def test_preview_with_an_impossible_date_in_the_filename_reads_with_no_quote_date(client, db, signed_in_user, project, item, store, monkeypatch):
+    """"2026-13-45" matches the filename date pattern and is not a date.
+    Carried through as a string, PriceSheetPreviewOut.quote_date (a
+    `date`) would refuse it and the preview route would 500 -- the
+    worker leaves it None instead, and the estimator types the date."""
+    from tests.test_worker_read import _run_all
+    from app.worker import blobs
+    monkeypatch.setattr(blobs, "get_blob_store", lambda: store)
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    monkeypatch.setenv("WORKER_INLINE", "1")
+    project.org_id = signed_in_user.org_id; db.commit()
+
+    document_id = _upload_price_sheet(client, project.id, item.name, name="codale_2026-13-45.csv").json()["document_id"]
+    _run_all(db)
+
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-sheets/{document_id}/preview")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["state"] == "ready" and body["quote_date"] is None and body["supplier_name"] == "codale"
 
 
 def test_preview_reads_as_failed_with_the_jobs_error(client, db, signed_in_user, project, item):

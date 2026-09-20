@@ -27,6 +27,15 @@ _CURRENCY_WORD_TRAIL_RE = re.compile(r"\s+[A-Za-z]+$")
 # formatting variant) is refused rather than silently mis-parsed.
 _THOUSANDS_RE = re.compile(r"^-?\d{1,3}(,\d{3})+(\.\d+)?$")
 _PLAIN_NUMBER_RE = re.compile(r"^-?\d+(\.\d+)?$")
+# A unit price is zero or more and below this: the column it lands in
+# (ProjectMaterialPrice.price_override, Numeric(10, 2)) holds up to
+# 99,999,999.99, and a negative price is a typo that would subtract
+# from the bid. Either reads back as unpriced, never as a number.
+PRICE_LIMIT = Decimal("100000000")
+
+
+def price_in_range(value: Decimal) -> bool:
+    return Decimal(0) <= value < PRICE_LIMIT
 
 
 class ParsedRow(NamedTuple):
@@ -70,13 +79,19 @@ def _price(v) -> Decimal | None:
     is unambiguously a plain or US-grouped decimal number -- scientific
     notation ("1e3"), a European "2.250,00", "call for price", or
     anything else non-numeric returns None (unpriced) rather than
-    guessing."""
+    guessing. So does a number outside `price_in_range`: a negative
+    price or one the price column can't hold is listed as unpriced,
+    not carried to the apply step to fail there."""
     if isinstance(v, bool):
         return None
     if v is None or v == "":
         return None
     if isinstance(v, (int, float, Decimal)):
-        return Decimal(str(v)).quantize(Decimal("0.01"))
+        try:
+            d = Decimal(str(v)).quantize(Decimal("0.01"))
+        except InvalidOperation:   # inf, nan
+            return None
+        return d if price_in_range(d) else None
     s = str(v).strip()
     s = _CURRENCY_WORD_LEAD_RE.sub("", s)
     s = _CURRENCY_WORD_TRAIL_RE.sub("", s)
@@ -86,9 +101,10 @@ def _price(v) -> Decimal | None:
     elif not _PLAIN_NUMBER_RE.match(s):
         return None
     try:
-        return Decimal(s).quantize(Decimal("0.01"))
+        d = Decimal(s).quantize(Decimal("0.01"))
     except InvalidOperation:
         return None
+    return d if price_in_range(d) else None
 
 
 def _grid(data: bytes, filename: str) -> list[list]:

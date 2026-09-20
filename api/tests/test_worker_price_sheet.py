@@ -5,11 +5,13 @@ import io
 import uuid
 
 import openpyxl
+import pytest
 from sqlalchemy import select
 
 from app.jobs import queue
 from app.market.price_sheet import build_request_workbook
 from app.takeoff.models import Document, Item, Job, ReviewStatus
+from app.worker.price_sheet_job import _supplier_and_date
 from tests.test_worker_read import _run_all, inline  # noqa: F401
 
 
@@ -53,6 +55,19 @@ def test_preview_matches_by_exact_name_without_a_key(db, project, sheet, item, d
     job = queue.enqueue_price_sheet(db, d, dana.id); _run_all(db)
     db.refresh(job)
     assert [m["item_id"] for m in job.payload["preview"]["matched"]] == [str(item.id)]
+
+
+@pytest.mark.parametrize("filename, supplier, date", [
+    ("codale_2026-09-18.xlsx", "codale", "2026-09-18"),
+    ("codale_2026-13-45.xlsx", "codale", None),      # looks like a date, isn't one
+    ("codale_2026-02-30.csv", "codale", None),
+    ("codale.xlsx", "codale", None),
+])
+def test_supplier_and_date_only_keeps_a_real_date(filename, supplier, date):
+    """A filename can carry digits in the date pattern that are not a
+    date. The preview's quote_date is a `date` on the wire, so a bad
+    string there is a 500 at the response -- it has to become None here."""
+    assert _supplier_and_date(filename) == (supplier, date)
 
 
 def test_refused_sheet_completes_with_the_reason(db, project, dana, inline, monkeypatch):

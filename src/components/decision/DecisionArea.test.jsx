@@ -162,6 +162,15 @@ describe("DecisionArea", () => {
     await waitFor(() => expect(screen.getByRole("textbox", { name: "What is this?" })).toBe(document.activeElement));
   });
 
+  it("the focus decision-cmd focuses the box even when already on it (the common case)", async () => {
+    setup();
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    box.blur();
+    expect(document.activeElement).not.toBe(box);
+    act(() => { window.dispatchEvent(new CustomEvent("decision-cmd", { detail: { type: "focus" } })); });
+    await waitFor(() => expect(document.activeElement).toBe(box));
+  });
+
   it("guards against double submission while a resolve is pending", async () => {
     let resolveFn;
     const pending = new Promise((res) => { resolveFn = res; });
@@ -244,5 +253,52 @@ describe("DecisionArea", () => {
     await screen.findByRole("button", { name: "Confirm and approve" });
     expect(screen.getByText(/Applies to all 42 · renames "Luminaire type F" · clears the warning/)).toBeInTheDocument();
     expect(screen.queryByText(/count 42 → 40/)).not.toBeInTheDocument();
+  });
+
+  it("a Ctrl+Z undo that contradicts a local approval drops the statement back to the box (green never lingers on an unapproved item)", async () => {
+    const { onApply, rerender, mergedItem } = setup();
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "type F per E-501" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and approve 28" }));
+    await screen.findByText(/You approved 28 ea/);
+    const rerenderProps = { sheetNumber: "EP101", onResolve: vi.fn(), onApply, onUndo: vi.fn(), onSelectItem: vi.fn(), alsoMatchingItemId: "i9" };
+    // the store confirms the apply first — must change nothing (finding 1's case)
+    rerender(<DecisionArea item={{ ...mergedItem, status: "approved" }} {...rerenderProps} />);
+    expect(screen.getByText(/You approved 28 ea/)).toBeInTheDocument();
+    // ...then a later Ctrl+Z reverses it — the statement must not linger
+    rerender(<DecisionArea item={{ ...mergedItem, status: "attention" }} {...rerenderProps} />);
+    expect(screen.getByRole("textbox", { name: "What is this?" })).toHaveValue("type F per E-501");
+    expect(screen.queryByText(/You approved/)).not.toBeInTheDocument();
+  });
+
+  it("an item that becomes approved while idle opens on the item-derived statement (a teammate's action)", async () => {
+    const { rerender, mergedItem } = setup({ item: { status: "ready" } });
+    screen.getByRole("textbox", { name: "What is this?" }); // idle on the box, no local statement
+    const updated = { ...mergedItem, status: "approved", approvedBy: "Dana", approvedAt: "2026-09-18T14:41:00Z", resolveNote: "type F per E-501" };
+    rerender(<DecisionArea item={updated} sheetNumber="EP101" onResolve={vi.fn()} onApply={vi.fn()} onUndo={vi.fn()} onSelectItem={vi.fn()} alsoMatchingItemId="i9" />);
+    expect(await screen.findByText(/You approved 30 ea/)).toBeInTheDocument();
+  });
+
+  it("an item-derived statement returns to the box if the item stops being approved or rejected", () => {
+    const { rerender, mergedItem } = setup({ item: { status: "approved", approvedBy: "Dana", approvedAt: "2026-09-18T14:41:00Z", resolveNote: "type F per E-501" } });
+    expect(screen.getByText(/You approved 30 ea/)).toBeInTheDocument();
+    const updated = { ...mergedItem, status: "attention", approvedBy: null, approvedAt: null, resolveNote: null };
+    rerender(<DecisionArea item={updated} sheetNumber="EP101" onResolve={vi.fn()} onApply={vi.fn()} onUndo={vi.fn()} onSelectItem={vi.fn()} alsoMatchingItemId="i9" />);
+    expect(screen.getByRole("textbox", { name: "What is this?" })).toBeInTheDocument();
+  });
+
+  it("Escape on the focused card stops the keypress from also reaching a window-level listener", async () => {
+    setup();
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "type F" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    const card = await screen.findByRole("group", { name: "Proposal" });
+    const spy = vi.fn();
+    window.addEventListener("keydown", spy);
+    fireEvent.keyDown(card, { key: "Escape", bubbles: true });
+    window.removeEventListener("keydown", spy);
+    expect(spy).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "What is this?" })).toHaveValue("type F");
   });
 });

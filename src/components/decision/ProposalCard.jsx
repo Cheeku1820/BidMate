@@ -3,7 +3,10 @@ import { changesLine, approveCount, CUSTOM_LINE, UNKNOWN_COPY } from "./decision
 
 export default function ProposalCard({ item, proposal, busy, sheetNumber, cardRef, onEscape, onApprove, onConfirmOnly, onReject, onChangeWording }) {
   function handleKeyDown(e) {
-    if (e.key === "Escape") { e.preventDefault(); onEscape(); }
+    // Stop the native event from bubbling to the window-level Escape
+    // listener too (DecisionArea's fallback for when focus isn't on the
+    // card) — otherwise a focused card fires backToBox() twice per press.
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onEscape(); }
   }
 
   if (proposal.intent === "unknown") {

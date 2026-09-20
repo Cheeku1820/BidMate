@@ -30,6 +30,31 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id]);
 
+  // A refresh that CONTRADICTS what this area shows — the top bar's Ctrl+Z,
+  // or a teammate acting on the same item — must not be ignored just
+  // because the id-reset effect above only watches item.id. Green must
+  // never linger on an item that is not, in fact, Estimator approved:
+  //   - a local "done" the item no longer bears out is dropped, back to
+  //     the box, keeping the sentence so nothing is lost;
+  //   - with no local "done", an item-derived statement (opened at mount)
+  //     follows the same rule and returns to the box if the item stops
+  //     being approved/rejected;
+  //   - with no local "done" and idle on the box, a fresh approval/
+  //     rejection that appears (a teammate's action) opens on it.
+  // A refresh that instead CONFIRMS a local apply (status becomes
+  // "approved" after approve: true) changes nothing here.
+  useEffect(() => {
+    if (done) {
+      const contradicted = (done.approved && item.status !== "approved") || (done.rejected && !item.rejected);
+      if (contradicted) { setDone(null); setState("box"); }
+      return;
+    }
+    const itemDone = item.status === "approved" || item.rejected;
+    if (state === "done" && !itemDone) setState("box");
+    else if (state === "box" && itemDone) setState("done");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.status, item.rejected]);
+
   useEffect(() => {
     if (state === "box") boxRef.current?.focus();
     else if (state === "card") cardRef.current?.focus();
@@ -65,13 +90,21 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
 
   // Escape's target: back to the box with the sentence intact. Shared by the
   // card's own Escape handler, "Change wording", and the window-level
-  // listener below (so Escape works even when focus isn't on the card).
+  // listener below (so Escape works even when focus isn't on the card —
+  // the card's own handler stops propagation, so the window branch only
+  // ever fires when focus was elsewhere).
   function backToBox() { setState("box"); }
 
   useEffect(() => {
     function onCmd(e) {
       const { type } = e.detail || {};
-      if (type === "focus") setState("box");
+      if (type === "focus") {
+        // Already on the box is the common case (estimator on the canvas
+        // presses E) — setState("box") there is a no-op (same value), so
+        // the focus effect below never re-runs and nothing gets focus.
+        if (state === "box") boxRef.current?.focus();
+        else setState("box");
+      }
       if (type === "reject" && state !== "done") submit(REJECT_CHIP);
       if (type === "confirm") {
         if (state === "card" && proposal && proposal.intent !== "unknown") apply(proposal.intent !== "exclude");

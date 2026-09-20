@@ -47,6 +47,30 @@ def test_patch_refuses_an_unknown_type(client, uploaded):
     assert r.json()["detail"]["message"] == "Document type must be one of Drawings, Specifications, Addendum, Scope, Other, Pricing."
 
 
+def test_patch_refuses_crossing_the_pricing_line_either_way(client, signed_in_user, project, store, uploaded):
+    # A drawing (a PDF) can't become a price sheet -- the read job only
+    # parses PDFs, and a spreadsheet's rows come back through the
+    # price-sheet parser instead.
+    r = client.patch(f"/api/documents/{uploaded['id']}", json={"doc_type": "Pricing"})
+    assert r.status_code == 422
+    assert r.json()["detail"]["code"] == "invalid_doc_type"
+    assert "price sheet" in r.json()["detail"]["message"] and "drawing" in r.json()["detail"]["message"]
+
+    # A retype among the non-Pricing types is unaffected.
+    r2 = client.patch(f"/api/documents/{uploaded['id']}", json={"doc_type": "Other"})
+    assert r2.status_code == 200
+
+    # And a price sheet can't be retyped into a drawing either.
+    pricing = client.post(
+        f"/api/projects/{project.id}/documents",
+        files={"file": ("codale.xlsx", io.BytesIO(b"PK\x03\x04fake"), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"doc_type": "Pricing"},
+    ).json()
+    r3 = client.patch(f"/api/documents/{pricing['id']}", json={"doc_type": "Drawings"})
+    assert r3.status_code == 422
+    assert r3.json()["detail"]["code"] == "invalid_doc_type"
+
+
 def test_delete_removes_row_and_blob_and_is_audited_not_undoable(client, uploaded, db, project, store):
     key = db.get(Document, uploaded["id"]).storage_key
     assert store.exists(key)

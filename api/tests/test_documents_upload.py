@@ -8,7 +8,7 @@ import io
 import uuid
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.documents import blobstore
@@ -207,3 +207,20 @@ def test_upload_is_audited_without_bytes(client, signed_in_user, project, db, st
     assert action.label == "Uploaded E-set.pdf as Drawings"
     assert set(action.after) == {"id", "filename", "doc_type", "size_bytes", "sha256", "status"}
     assert action.after["filename"] == "E-set.pdf"
+
+
+def test_a_pricing_upload_accepts_xlsx_and_queues_no_read(client, signed_in_user, project, db, store):
+    from app.takeoff.models import Job
+    r = _upload(
+        client, project.id, name="codale.xlsx", data=b"PK\x03\x04fake",
+        doc_type="Pricing", ctype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    assert r.status_code == 201, r.text
+    assert db.scalar(select(func.count()).select_from(Job).where(Job.kind == "read")) == 0
+
+
+def test_a_pricing_upload_refuses_a_pdf_and_drawings_refuse_xlsx(client, signed_in_user, project, store):
+    r = _upload(client, project.id, name="q.pdf", data=b"%PDF-1.4", doc_type="Pricing", ctype="application/pdf")
+    assert r.status_code == 415
+    r = _upload(client, project.id, name="q.xlsx", data=b"PK", doc_type="Drawings", ctype="application/octet-stream")
+    assert r.status_code == 415

@@ -48,6 +48,10 @@ def _is_pdf(filename: str, content_type: str) -> bool:
     return filename.lower().endswith(".pdf") and content_type == "application/pdf"
 
 
+def _is_spreadsheet(filename: str) -> bool:
+    return filename.lower().endswith((".xlsx", ".csv"))
+
+
 def _duplicate_error(existing: Document) -> DomainError:
     return DomainError(
         "duplicate_document",
@@ -61,7 +65,14 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     content_type = upload.content_type or ""
     if doc_type not in DOC_TYPES:
         raise DomainError("invalid_doc_type", f"Document type must be one of {', '.join(DOC_TYPES)}.", status=422)
-    if not _is_pdf(filename, content_type):
+    if doc_type == "Pricing":
+        if not _is_spreadsheet(filename):
+            raise DomainError(
+                "unsupported_document",
+                f"{filename} isn't a spreadsheet. Upload the .xlsx or .csv your supplier filled in.",
+                status=415,
+            )
+    elif not _is_pdf(filename, content_type):
         raise DomainError(
             "unsupported_document",
             f"{filename} isn't a PDF. Upload PDF drawings, specifications, addenda, and scope documents.",
@@ -125,7 +136,11 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     # The read is queued in the same transaction as the row, so a
     # document never exists without the job that will read it. The
     # audit row below therefore records the document as `processing`.
-    queue.enqueue_read(db, document)
+    # A price sheet isn't read by the worker's PDF parser at all -- its
+    # rows come back through the price-sheet parser instead (Task 10),
+    # so no job is queued and it never leaves `uploaded`.
+    if document.doc_type != "Pricing":
+        queue.enqueue_read(db, document)
     actions.commit(
         db, actor=actor, project_id=project.id, kind="document_add",
         label=f"Uploaded {filename} as {doc_type}", before={}, after=_row_fields(document),
@@ -155,15 +170,27 @@ def set_doc_type(db: DbSession, *, actor: User, document: Document, doc_type: st
         raise DomainError("run_in_flight", copy.RETYPE_DURING_RUN, status=409)
     if doc_type not in DOC_TYPES:
         raise DomainError("invalid_doc_type", f"Document type must be one of {', '.join(DOC_TYPES)}.", status=422)
+    # A price sheet is never opened by the worker's PDF parser, and a
+    # PDF is never read by the price-sheet parser -- so a retype across
+    # that line would either queue a read job that can't succeed, or
+    # leave a spreadsheet stuck as if it were still a drawing.
+    if (document.doc_type == "Pricing") != (doc_type == "Pricing"):
+        raise DomainError(
+            "invalid_doc_type",
+            "A price sheet can't be used as a drawing, and a drawing can't be used as a price sheet.",
+            status=422,
+        )
     before = _row_fields(document)
     document.doc_type = doc_type
     # A retyped file is read again: Other -> Specifications now
     # contributes context; Drawings -> Other drops its sheets (the read
-    # job's non-Drawings branch treats every page as vanished).
-    # Idempotent while a read is already in flight, and queued before
-    # the audit row so `after` records the document as `processing`,
-    # exactly as `store_upload`'s does.
-    queue.enqueue_read(db, document)
+    # job's non-Drawings branch treats every page as vanished). Pricing
+    # never queues a read (see store_upload). Idempotent while a read is
+    # already in flight, and queued before the audit row so `after`
+    # records the document as `processing`, exactly as `store_upload`'s
+    # does.
+    if document.doc_type != "Pricing":
+        queue.enqueue_read(db, document)
     db.flush()
     actions.commit(
         db, actor=actor, project_id=document.project_id, kind="document_type",

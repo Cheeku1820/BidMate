@@ -6,6 +6,7 @@ marks its items "failed" and the job still completes -- one dead feed
 must not fail a run."""
 from __future__ import annotations
 
+import statistics
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -47,7 +48,6 @@ def _result_from_cache(lookup: MarketLookup, source_name: str) -> SourceResult:
         labor = _cents(m.get("laborRateUsdCents"))
         return SourceResult("priced", price, price, price, labor, m.get("uom") or "", f"ZIP {lookup.location_key}", r)
     prices = sorted(Decimal(str(s["price"])) for s in r.get("sellers") or [])
-    import statistics
     median = Decimal(str(statistics.median(prices))).quantize(Decimal("0.01"))
     return SourceResult("priced", median, prices[0], prices[-1], None, "EA", lookup.location_key, r)
 
@@ -73,7 +73,6 @@ def run(db: Session, job: Job) -> None:
         return
     sources = get_sources()
     cap = settings.market_lookup_monthly_cap
-    used = billed_this_month(db, project.org_id)
     items = list(db.scalars(countable_items(project.id)))
     for item in items:
         existing = db.get(ItemMarketPrice, item.id)
@@ -100,7 +99,13 @@ def run(db: Session, job: Job) -> None:
             _write(db, item, outcome=res.status, source=source.name, query=lookup.query, res=res if res.status == "priced" else None,
                    lookup=cached, run_id=job.run_id)
             continue
-        if used >= cap:
+        # Re-read on every call, not once per job: two projects in the same
+        # org can run on two workers at once, and a local counter here
+        # would let both pass `used < cap` against the same stale count
+        # and overshoot it together. A COUNT is cheap next to the network
+        # call it gates, and the flush below makes this job's own calls
+        # visible to its own next check.
+        if billed_this_month(db, project.org_id) >= cap:
             _write(db, item, outcome="over_budget", source=source.name, query=lookup.query, res=None, lookup=None, run_id=job.run_id)
             continue
         try:
@@ -108,7 +113,6 @@ def run(db: Session, job: Job) -> None:
         except SourceError:
             _write(db, item, outcome="failed", source=source.name, query=lookup.query, res=None, lookup=None, run_id=job.run_id)
             continue
-        used += 1
         row = cached or MarketLookup(source=source.name, query_key=key, location_key=loc, org_id=project.org_id)
         row.status, row.result, row.fetched_at, row.billed = res.status, res.result, _now(), True
         db.add(row)

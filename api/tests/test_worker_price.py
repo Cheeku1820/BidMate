@@ -152,3 +152,38 @@ def test_rerun_prices_only_items_without_a_fresh_row(db, project, sheet, dana, m
     b = _item(db, project, sheet, "B")
     queue.enqueue_price(db, project, dana.id); _run_all(db)
     assert src.calls == ["A", "B"]
+
+
+def test_cap_is_reread_before_each_call_so_a_concurrent_jobs_row_counts(db, project, sheet, dana, org, monkeypatch):
+    """Two projects in the same org can run their price jobs on two
+    workers at once; enqueue_price only serialises jobs per project, so
+    the cap has to be re-read against the database before every call,
+    not tracked as a local counter for the job's own lifetime. Here a
+    second job's billed call is simulated landing -- via a side effect
+    of this job's own first source call -- in between this job's two
+    items; with cap=2 the local job's own count alone (1) would not
+    trip an old, per-job-local counter, so a correct re-read is what
+    makes the second item resolve over_budget, not the local run having
+    made two calls of its own."""
+    project.postal_code = "78701"
+
+    class RacySource(FakeSource):
+        def lookup(self, query, unit, loc):
+            self.calls.append(query)
+            db.add(MarketLookup(source="onebuild", query_key="a concurrent job's item", location_key="78701",
+                                status="priced", result={}, fetched_at=datetime.now(timezone.utc),
+                                billed=True, org_id=org.id))
+            db.flush()
+            return self._answer
+
+    src = RacySource("onebuild", _priced())
+    _wire(monkeypatch, db, {"onebuild": src}, cap=2)
+    a = _item(db, project, sheet, "Item 1")
+    b = _item(db, project, sheet, "Item 2")
+    job = queue.enqueue_price(db, project, dana.id); _run_all(db)
+    db.refresh(job)
+    assert job.status == "done"
+    assert src.calls == ["Item 1"]   # the second item's own call never happens
+    assert db.get(ItemMarketPrice, a.id).outcome == "priced"
+    assert db.get(ItemMarketPrice, b.id).outcome == "over_budget"
+    assert db.scalar(select(func.count()).select_from(MarketLookup).where(MarketLookup.billed.is_(True))) == 2

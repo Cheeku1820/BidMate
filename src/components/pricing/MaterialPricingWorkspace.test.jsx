@@ -268,8 +268,12 @@ describe("MaterialPricingWorkspace", () => {
     };
     renderMaterial({ store });
     await loaded();
-    expect(screen.getByText(/Branch wiring is estimated/)).toBeInTheDocument();
-    expect(screen.getByText(/no automatic regional price estimate/)).toBeInTheDocument();
+    // Under the grid, labelled as the basis; the old banner above it is gone.
+    const note = screen.getByText(/Branch wiring is estimated/).closest(".pricing-basis");
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveTextContent(/^Pricing basis/);
+    expect(screen.queryByText(/no automatic regional price estimate/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pricing assistant/i)).not.toBeInTheDocument();
   });
 
   test("shows no basis note when the project carries none", async () => {
@@ -278,8 +282,9 @@ describe("MaterialPricingWorkspace", () => {
     };
     renderMaterial({ store });
     await loaded();
-    expect(screen.getByText(/no automatic regional price estimate/)).toBeInTheDocument();
+    expect(screen.queryByText(/no automatic regional price estimate/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Branch wiring is estimated/)).not.toBeInTheDocument();
+    expect(document.querySelector(".pricing-basis")).toBeNull();
   });
 
   test("shows an empty state when the project has no items", async () => {

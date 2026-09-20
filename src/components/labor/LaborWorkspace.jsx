@@ -40,7 +40,6 @@ export default function LaborWorkspace() {
   const { store, projectId, runMutation, showToast, saved, toast, dismissToast, undo } = useWorkspaceContext();
 
   const [rows, setRows] = useState(null); // null = loading
-  const [pricingSource, setPricingSource] = useState(null);
   const [pricingNote, setPricingNote] = useState("");
   const [loadError, setLoadError] = useState(null);
   const [saveError, setSaveError] = useState(null);
@@ -51,7 +50,6 @@ export default function LaborWorkspace() {
       .getLaborRows(projectId)
       .then((result) => {
         setRows(result.rows);
-        setPricingSource(result.pricingSource);
         setPricingNote(result.pricingNote);
       })
       .catch((err) => setLoadError(err?.message || "Couldn't load labor pricing. Check your connection and try again."));
@@ -118,14 +116,6 @@ export default function LaborWorkspace() {
       <div className="page page--fill">
         <h1 className="page-heading">Labor</h1>
 
-        {pricingSource !== "llm" ? (
-          <p className="muted">
-            This project has no automatic labor-hour estimate. Set hours and rates directly on each row below, or
-            reprocess the project once a pricing assistant is configured.
-          </p>
-        ) : null}
-        {pricingNote ? <p className="muted">{pricingNote}</p> : null}
-
         {loadError ? (
           <div className="load-error" role="alert">
             <p>{loadError}</p>
@@ -160,6 +150,16 @@ export default function LaborWorkspace() {
               caption="Labor by item"
             />
           )
+        ) : null}
+
+        {/* The basis note travels with the numbers, under them rather
+            than as a banner above: it is provenance for the total
+            (the 30-ft-per-device wiring rule lives here), not a
+            headline. */}
+        {rows !== null && !loadError && pricingNote ? (
+          <p className="pricing-basis">
+            <span className="pricing-basis__label">Pricing basis</span> {pricingNote}
+          </p>
         ) : null}
       </div>
 

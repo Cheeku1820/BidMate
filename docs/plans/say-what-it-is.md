@@ -43,7 +43,7 @@ Commit messages end with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`
 
 | File | Responsibility |
 |---|---|
-| `api/migrations/versions/0023_resolve.py` | `items.reject_reason`, `items.resolve_note`; `symbol_resolutions` |
+| `api/migrations/versions/0024_resolve.py` | `items.reject_reason`, `items.resolve_note`; `symbol_resolutions` |
 | `api/app/takeoff/models.py` | the two columns; `SymbolResolution` |
 | `api/app/takeoff/snapshots.py` | snapshot types for the new columns and the new table |
 | `api/app/takeoff/schemas.py` | `ItemOut` fields; `ResolveIn`, `ProposalOut`, `ApplyProposalIn`, `ApplyProposalOut` |
@@ -69,7 +69,7 @@ Commit messages end with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`
 Spec: "Applying a proposal" (the columns and the table), "Client" (`mapItem`).
 
 **Files:**
-- Create: `api/migrations/versions/0023_resolve.py`
+- Create: `api/migrations/versions/0024_resolve.py`
 - Modify: `api/app/takeoff/models.py` (Item, after `notes`; new class after `ItemEvidenceImage`)
 - Modify: `api/app/takeoff/snapshots.py` (`ITEM_SNAPSHOT_TYPES`; new `SYMBOL_RESOLUTION_SNAPSHOT_TYPES`)
 - Modify: `api/app/takeoff/schemas.py` (`ItemOut`), `api/app/takeoff/snapshot.py` (`_item_out`)
@@ -140,13 +140,13 @@ Expected: ImportError on `SymbolResolution` / AttributeError on `reject_reason`.
 
 - [ ] **Step 3: Migration**
 
-Create `api/migrations/versions/0023_resolve.py`:
+Create `api/migrations/versions/0024_resolve.py`:
 
 ```python
 """reject_reason and resolve_note on items; symbol_resolutions
 
-Revision ID: 0023
-Revises: 0022
+Revision ID: 0024
+Revises: 0023
 Create Date: 2026-09-18 00:00:00.000000
 
 docs/specs/say-what-it-is.md: the estimator's sentence lives on the item
@@ -162,8 +162,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision: str = '0023'
-down_revision: Union[str, None] = '0022'
+revision: str = '0024'
+down_revision: Union[str, None] = '0023'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -303,7 +303,7 @@ Expected: all pass. The migration-chain test in CI reverses the last migration; 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add api/migrations/versions/0023_resolve.py api/app/takeoff/models.py api/app/takeoff/actions.py api/app/takeoff/snapshots.py api/app/takeoff/schemas.py api/app/takeoff/snapshot.py api/tests/test_resolve_schema.py src/lib/store/api-mapping.js src/lib/store/api-mapping.test.js
+git add api/migrations/versions/0024_resolve.py api/app/takeoff/models.py api/app/takeoff/actions.py api/app/takeoff/snapshots.py api/app/takeoff/schemas.py api/app/takeoff/snapshot.py api/tests/test_resolve_schema.py src/lib/store/api-mapping.js src/lib/store/api-mapping.test.js
 git commit -m "Schema: reject_reason and resolve_note on items, note on actions, symbol_resolutions
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"

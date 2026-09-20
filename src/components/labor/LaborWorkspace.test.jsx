@@ -299,13 +299,15 @@ describe("LaborWorkspace", () => {
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Nothing to undo"));
   });
 
-  test("shows the no-automatic-estimate copy when the project was not priced automatically", async () => {
+  test("never shows the old no-automatic-estimate banner, whatever the pricing source", async () => {
     const store = {
       getLaborRows: vi.fn().mockResolvedValue({ pricingSource: "deterministic", pricingNote: "", rows: [baseRow] }),
       setLaborLine: vi.fn(),
     };
     renderLabor({ store });
-    await waitFor(() => expect(screen.getByText(/no automatic labor-hour estimate/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());
+    expect(screen.queryByText(/no automatic labor-hour estimate/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/pricing assistant/i)).not.toBeInTheDocument();
   });
 
   test("shows the pricing basis note on a deterministic project, not only an automated one", async () => {
@@ -323,8 +325,12 @@ describe("LaborWorkspace", () => {
     };
     renderLabor({ store });
     await waitFor(() => expect(screen.getByText(/Branch wiring is estimated/)).toBeInTheDocument());
-    // Both facts belong on screen: the note, and that nothing was estimated automatically.
-    expect(screen.getByText(/no automatic labor-hour estimate/)).toBeInTheDocument();
+    // Under the grid, labelled as the basis, not as a banner above it.
+    const note = screen.getByText(/Branch wiring is estimated/).closest(".pricing-basis");
+    expect(note).toBeInTheDocument();
+    expect(note).toHaveTextContent(/^Pricing basis/);
+    const table = screen.getByRole("grid");
+    expect(table.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   test("shows no basis note when the project carries none", async () => {
@@ -333,7 +339,8 @@ describe("LaborWorkspace", () => {
       setLaborLine: vi.fn(),
     };
     renderLabor({ store });
-    await waitFor(() => expect(screen.getByText(/no automatic labor-hour estimate/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());
     expect(screen.queryByText(/Branch wiring is estimated/)).not.toBeInTheDocument();
+    expect(document.querySelector(".pricing-basis")).toBeNull();
   });
 });

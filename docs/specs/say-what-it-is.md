@@ -283,7 +283,9 @@ interpreted again.
   nothing written.
 - **Exclude**: for each target sets `rejected_at`, `rejected_by_user_id`,
   and `reject_reason` = `note`. `reject_reason` and `resolve_note` are
-  new nullable `Text` columns on `items`, migration 0023, reversible;
+  new nullable `Text` columns on `items`, migration 0024 (written as
+  0023; renumbered at integration behind `0023_conversation_messages`),
+  reversible;
   both are carried on `ItemOut` and mapped by `mapItem`.
 - One `actions.commit()` of kind `resolve`, `before`/`after` per item
   (the same nested-key snapshot shape `bulk_approve` uses), `label` in

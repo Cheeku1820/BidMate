@@ -41,7 +41,6 @@ export default function MaterialPricingWorkspace() {
   const { store, projectId, runMutation, showToast, saved, toast, dismissToast, undo } = useWorkspaceContext();
 
   const [rows, setRows] = useState(null); // null = loading
-  const [pricingSource, setPricingSource] = useState(null);
   const [pricingNote, setPricingNote] = useState("");
   const [loadError, setLoadError] = useState(null);
   const [saveError, setSaveError] = useState(null);
@@ -53,7 +52,6 @@ export default function MaterialPricingWorkspace() {
       .getMaterialRows(projectId)
       .then((result) => {
         setRows(result.rows);
-        setPricingSource(result.pricingSource);
         setPricingNote(result.pricingNote);
       })
       .catch((err) => setLoadError(err?.message || "Couldn't load material pricing. Check your connection and try again."));
@@ -151,14 +149,6 @@ export default function MaterialPricingWorkspace() {
       <div className="page page--fill">
         <h1 className="page-heading">Material pricing</h1>
 
-        {pricingSource !== "llm" ? (
-          <p className="muted">
-            This project has no automatic regional price estimate. Set a price directly on each row below, or
-            reprocess the project once a pricing assistant is configured.
-          </p>
-        ) : null}
-        {pricingNote ? <p className="muted">{pricingNote}</p> : null}
-
         {loadError ? (
           <div className="load-error" role="alert">
             <p>{loadError}</p>
@@ -195,6 +185,14 @@ export default function MaterialPricingWorkspace() {
               caption="Material pricing by item"
             />
           )
+        ) : null}
+
+        {/* Same placement as Labor: the basis note sits under the grid
+            as provenance for the total, not as a banner above it. */}
+        {rows !== null && !loadError && pricingNote ? (
+          <p className="pricing-basis">
+            <span className="pricing-basis__label">Pricing basis</span> {pricingNote}
+          </p>
         ) : null}
       </div>
 

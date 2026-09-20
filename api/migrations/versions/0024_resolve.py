@@ -1,8 +1,12 @@
 """reject_reason and resolve_note on items; symbol_resolutions
 
-Revision ID: 0023
-Revises: 0022
+Revision ID: 0024
+Revises: 0023
 Create Date: 2026-09-18 00:00:00.000000
+
+Numbered 0024: 0023 is conversation_messages, which landed first on main;
+this migration was written as 0023 on its own branch and renumbered at
+integration so the chain stays linear.
 
 docs/specs/say-what-it-is.md: the estimator's sentence lives on the item
 (`resolve_note` on a reclassification, `reject_reason` on a rejection)
@@ -17,8 +21,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision: str = '0023'
-down_revision: Union[str, None] = '0022'
+revision: str = '0024'
+down_revision: Union[str, None] = '0023'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

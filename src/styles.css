@@ -1291,7 +1291,9 @@ button {
    stay fixed while the middle scrolls, and a flex child can only resolve
    `flex: 1; min-height: 0` against a definite height. Long pages scroll
    inside .app-shell-main (or inside .workspace-body where a screen has
-   one) rather than scrolling the window. */
+   one) rather than scrolling the window. The third column is the
+   conversation panel, auto so its closed strip costs 44px and its open
+   column 340px. */
 .app-shell {
   display: grid;
   /* minmax(0, 1fr), not 1fr: a 1fr track's automatic minimum is its
@@ -1300,7 +1302,7 @@ button {
      truncated to a single letter at 1280px. minmax(0, …) lets column 2
      shrink and scroll instead, which is what .app-shell-main's
      min-width: 0 already assumes. */
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   height: 100vh;
 }
 
@@ -2758,3 +2760,87 @@ button {
 .decision-done--rejected { background: var(--paper-1); border-color: var(--line-2); color: var(--ink-1); }
 .decision-done--neutral { background: var(--paper-1); border-color: var(--slate); color: var(--ink-1); }
 .decision-done__lead { margin: 0 0 4px; font-weight: 600; }
+
+/* ---------------------------------------------------- conversation panel */
+
+/* A sibling of the blueprint's 330px item panel, so the two right-hand
+   columns read as one family. Closed, it is a 44px strip carrying only
+   the open control, the same treatment as the collapsed rail. */
+.conversation {
+  width: 340px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--surface);
+  border-left: 1px solid var(--line-1);
+}
+.conversation--closed { width: 44px; align-items: center; padding-top: 8px; }
+.conversation__toggle {
+  width: 32px; height: 32px; display: grid; place-items: center;
+  border: 1px solid var(--line-2); border-radius: var(--r-md); background: var(--surface); color: var(--ink-2);
+}
+.conversation__toggle:hover { color: var(--ink-1); border-color: var(--line-3); }
+
+.conversation__head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  padding: 12px 14px 10px; border-bottom: 1px solid var(--line-1);
+}
+.conversation__title { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink-1); }
+.conversation__context { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-3); }
+
+.conversation__thread {
+  list-style: none; margin: 0; padding: 12px 14px; flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px; font-size: 13.5px; line-height: 1.45;
+}
+.conversation__turn { max-width: 92%; border-radius: var(--r-md); padding: 8px 10px; }
+.conversation__turn p, .conversation__turn ul { margin: 0 0 6px; }
+.conversation__turn p:last-child, .conversation__turn ul:last-child { margin-bottom: 0; }
+.conversation__turn ul { padding-left: 18px; }
+.conversation__turn--estimator { align-self: flex-end; background: var(--paper-0); border: 1px solid var(--line-1); }
+.conversation__turn--answer { align-self: flex-start; color: var(--ink-1); }
+
+.conversation__waiting { display: inline-flex; gap: 4px; padding: 4px 0; }
+.conversation__waiting span { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); animation: conversation-pulse 1.2s infinite; }
+.conversation__waiting span:nth-child(2) { animation-delay: 0.2s; }
+.conversation__waiting span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes conversation-pulse { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .conversation__waiting span { animation: none; opacity: 0.6; } }
+
+.conversation__error { color: var(--ink-2); font-size: 13px; margin-top: 6px; }
+.conversation__empty, .conversation__unavailable { margin: 0; padding: 12px 14px; font-size: 13.5px; color: var(--ink-3); }
+
+.conversation__examples { display: flex; flex-direction: column; gap: 6px; padding: 0 14px 12px; }
+.conversation__example {
+  text-align: left; font-size: 13px; padding: 8px 10px; border-radius: var(--r-md);
+  border: 1px solid var(--line-2); background: var(--surface); color: var(--ink-1);
+}
+.conversation__example:hover { background: var(--blue-tint); border-color: var(--blue-line); }
+
+.conversation__composer {
+  display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end;
+  padding: 10px 14px 12px; border-top: 1px solid var(--line-1);
+}
+.conversation__label { grid-column: 1 / -1; font-size: 12.5px; color: var(--ink-2); }
+.conversation__composer textarea {
+  width: 100%; resize: none; font: inherit; font-size: 13.5px; padding: 8px 10px;
+  border: 1px solid var(--line-2); border-radius: var(--r-md); background: var(--surface); color: var(--ink-1);
+}
+.conversation__composer textarea:disabled,
+.conversation__composer textarea:read-only { background: var(--paper-1); color: var(--ink-3); }
+
+/* ---------------------------------------------------- pricing basis */
+
+/* Under the Labor and Material pricing grids: where the numbers came
+   from, in one quiet line. It used to be a banner above the grid. */
+.pricing-basis {
+  margin: 12px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+.pricing-basis__label {
+  font-weight: 600;
+  color: var(--ink-2);
+  margin-right: 6px;
+}

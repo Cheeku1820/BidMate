@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import TakeoffSpreadsheet from "./TakeoffSpreadsheet.jsx";
+import { ConversationScreenProvider, useConversationScreenContext } from "../conversation/screenContext.jsx";
 
 const items = [
   { id: "i1", sheetId: "s1", name: "20A duplex receptacle", description: "Duplex, 20A", system: "Power", quantity: 12, unit: "ea", status: "approved", notes: "", rejected: false, warnings: [], version: 1 },
@@ -40,6 +41,22 @@ const renderSheet = () =>
     <MemoryRouter>
       <TakeoffSpreadsheet />
     </MemoryRouter>,
+  );
+
+/** Renders what the conversation screen context has for the current view. */
+function ViewProbe() {
+  const { view } = useConversationScreenContext();
+  return <p data-testid="view">{JSON.stringify(view)}</p>;
+}
+
+const renderSheetWithConversation = () =>
+  render(
+    <ConversationScreenProvider>
+      <ViewProbe />
+      <MemoryRouter>
+        <TakeoffSpreadsheet />
+      </MemoryRouter>
+    </ConversationScreenProvider>,
   );
 
 describe("TakeoffSpreadsheet", () => {
@@ -108,5 +125,15 @@ describe("TakeoffSpreadsheet", () => {
     await userEvent.type(screen.getByLabelText(/search items/i), "zzzz");
     expect(screen.getByText(/no items match/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /clear search/i })).toBeTruthy();
+  });
+
+  it("reports its status filter and search to the conversation context", async () => {
+    renderSheetWithConversation();
+    await userEvent.click(screen.getByRole("button", { name: /needs attention/i }));
+    await userEvent.type(screen.getByLabelText(/search items/i), "LP-2");
+
+    await waitFor(() => {
+      expect(JSON.parse(screen.getByTestId("view").textContent)).toEqual({ filter: "attention", search: "LP-2" });
+    });
   });
 });

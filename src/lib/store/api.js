@@ -89,6 +89,17 @@ async function parseErrorBody(res) {
   return { code: "request_failed", message: `The request failed (status ${res.status}). Try again.` };
 }
 
+function parseEvent(block) {
+  let name = null;
+  let data = null;
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event: ")) name = line.slice(7);
+    else if (line.startsWith("data: ")) data = line.slice(6);
+  }
+  if (!name || data === null) return null;
+  return { name, data: JSON.parse(data) };
+}
+
 async function request(path, { method = "GET", body, headers = {} } = {}) {
   const init = { method, credentials: "include", headers: { ...headers } };
   if (body !== undefined) {
@@ -489,6 +500,51 @@ export function createApiStore() {
     await request(`/api/notes/${noteId}`, { method: "DELETE" });
   }
 
+  // The conversation panel (docs/specs/conversation-panel.md). A thread
+  // is not part of the polled snapshot -- a message never changes the
+  // takeoff -- so it is fetched on mount and appended to locally.
+  async function listConversation(id) {
+    const body = await request(`/api/projects/${id}/conversation`);
+    return (body?.messages ?? []).map((m) => ({
+      id: m.id, role: m.role, text: m.text, screen: m.screen, createdAt: m.created_at,
+    }));
+  }
+
+  /** Streams the answer. `onDelta(text)` is called per chunk; resolves
+   *  with the done payload ({ id }); rejects with { code, message } --
+   *  the 503/4xx body via parseErrorBody, or the stream's own error
+   *  event. Server-sent events are parsed by hand: EventSource cannot
+   *  POST a body, and fetch + a reader is all the format needs. */
+  async function sendMessage(id, { text, screen }, onDelta, signal) {
+    const res = await fetch(`/api/projects/${id}/conversation/messages`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, screen }),
+      signal,
+    });
+    if (!res.ok) throw await parseErrorBody(res);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const event = parseEvent(block);
+        if (!event) continue;
+        if (event.name === "delta") onDelta(event.data.text);
+        else if (event.name === "done") return event.data;
+        else if (event.name === "error") throw { code: event.data.code, message: event.data.message };
+      }
+    }
+    throw { code: "interrupted", message: "Answer interrupted — ask again" };
+  }
+
   // Labor and Material Pricing (task-9-brief.md): the client half of
   // pricing_router.py's endpoints (Tasks 4, 6, 7). request() already
   // JSON.stringify()s whatever object is passed as `body` and already
@@ -608,6 +664,8 @@ export function createApiStore() {
     createNote,
     updateNote,
     deleteNote,
+    listConversation,
+    sendMessage,
     getLaborRows,
     setLaborLine,
     getMaterialRows,

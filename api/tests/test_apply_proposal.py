@@ -250,6 +250,75 @@ def test_redo_does_not_delete_a_warning_the_apply_never_cleared(client, db, item
     assert db.scalars(select(Warning).where(Warning.item_id == item.id)).first() is not None
 
 
+def test_a_typed_reading_clears_the_legend_warning_and_undo_restores_it(client, db, item, signed_in_user):
+    """"Symbol not in legend -- assign a classification" is answered by
+    any reading, key or no key: the estimator has just assigned one in
+    their own words. The item moves to Ready to review; undo puts the
+    warning and the status back; redo clears it again."""
+    item.source_tag = "F"; item.status = ReviewStatus.ATTENTION
+    db.add(Warning(item_id=item.id, reason=WarningReason.LEGEND, title="Symbol not in legend",
+                   found="f", why="w", fix="x", where_="E-501"))
+    db.commit()
+    p = _proposal([item], schedule_match=None, catalog_id=None, source="typed", name="patient headwall")
+    r = client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": p, "approve": False, "note": "patient headwall"})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert db.scalars(select(Warning).where(Warning.item_id == item.id)).first() is None
+    assert db.get(Item, item.id).status is ReviewStatus.READY
+
+    client.post(f"/api/projects/{item.project_id}/undo")
+    db.expire_all()
+    restored = db.scalars(select(Warning).where(Warning.item_id == item.id)).all()
+    assert [w.reason for w in restored] == [WarningReason.LEGEND]
+    assert db.get(Item, item.id).status is ReviewStatus.ATTENTION
+
+    client.post(f"/api/projects/{item.project_id}/redo")
+    db.expire_all()
+    assert db.scalars(select(Warning).where(Warning.item_id == item.id)).first() is None
+    assert db.get(Item, item.id).status is ReviewStatus.READY
+
+
+def test_a_typed_reading_keeps_a_schedule_conflict_and_needs_attention(client, db, item, signed_in_user):
+    """A schedule conflict is not answered by words alone -- it clears
+    only once the reading is matched to the schedule or the catalog, so
+    a typed reading leaves it, and the item, at Needs attention."""
+    item.source_tag = "F"; item.status = ReviewStatus.ATTENTION
+    db.add(Warning(item_id=item.id, reason=WarningReason.LEGEND, title="l", found="f", why="w", fix="x", where_="E-501"))
+    db.add(Warning(item_id=item.id, reason=WarningReason.SCHEDULE_CONFLICT, title="s", found="f", why="w", fix="x", where_="E-501"))
+    db.commit()
+    p = _proposal([item], schedule_match=None, catalog_id=None, source="typed")
+    r = client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": p, "approve": False, "note": "x"})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    assert [w.reason for w in db.scalars(select(Warning).where(Warning.item_id == item.id))] == [WarningReason.SCHEDULE_CONFLICT]
+    assert db.get(Item, item.id).status is ReviewStatus.ATTENTION
+
+
+def test_targets_outside_the_anchors_cluster_are_refused(client, db, item, project, signed_in_user):
+    """`target_item_ids` is verified against the cluster the server
+    computes for the anchor now: the same tag on another sheet, or
+    another tag on this sheet, is refused before anything is locked --
+    nothing written, no action recorded."""
+    other = Sheet(project_id=project.id, number="EL101", title="Lighting", discipline="Electrical", revision="",
+                  scale="", scale_options=[], plan="", takeoff_id="d", page_index=7)
+    db.add(other); db.flush()
+    item.source_tag = "F"; item.status = ReviewStatus.ATTENTION
+    elsewhere = _twin(db, item, sheet_id=other.id)          # same tag, another sheet
+    other_tag = _twin(db, item, tag="G")                     # another tag, this sheet
+    db.commit()
+    for stranger in (elsewhere, other_tag):
+        r = client.post(f"/api/items/{item.id}/apply-proposal",
+                        json={"proposal": _proposal([item, stranger]), "approve": True, "note": "x"})
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"] == {"code": "targets_not_in_cluster",
+                                      "message": "Those items aren't the same symbol on this sheet — reload and try again."}
+    db.expire_all()
+    for it in (item, elsewhere, other_tag):
+        fresh = db.get(Item, it.id)
+        assert fresh.name != "2x4 LED troffer, 4000K — type F" and fresh.status is not ReviewStatus.APPROVED
+    assert db.scalars(select(Action)).first() is None
+
+
 def test_redo_after_reapplying_the_same_tag_merges_onto_the_live_row(client, db, item, signed_in_user):
     item.source_tag = "F"; db.commit()
     r1 = client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": _proposal([item]), "approve": False, "note": "x"})

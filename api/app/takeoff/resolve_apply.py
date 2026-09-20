@@ -25,6 +25,7 @@ from app.takeoff.actions import commit, encode_snapshot
 from app.takeoff.concurrency import check_version
 from app.takeoff.edit_validation import validate_edit
 from app.takeoff.models import Action, Item, ReviewStatus, Sheet, SymbolResolution, Warning, WarningReason
+from app.takeoff.resolve import targets_for
 from app.takeoff.snapshots import ITEMS_SNAPSHOT_KEY, _column_snapshot
 from app.takeoff.totals import countable_items
 
@@ -32,13 +33,19 @@ LIBRARY_KEY = "library"
 _REVERSIBLE_ITEM_FIELDS = ("name", "system", "category", "quantity", "status", "approved_by_user_id", "approved_at",
                            "rejected_by_user_id", "rejected_at", "reject_reason", "resolve_note")
 
-# The warnings a reclassify is entitled to clear: the classifier's own
-# reasons -- a symbol not in the legend, a fixture disagreeing with its
-# schedule. Never SCALE: naming a measured item says nothing about the
+# The warnings a reclassify is entitled to clear, and when. A LEGEND
+# warning ("symbol not in legend -- assign a classification") is
+# answered by any reading: the estimator has just said what the symbol
+# is, in their words, whether or not a key was set. A SCHEDULE_CONFLICT
+# warning stands until the reading is actually matched to the schedule
+# or the catalog. Never SCALE: naming an item says nothing about the
 # sheet's scale, and deleting that warning would leave a Missing
 # information row with nothing explaining why (WarningReason's docstring
 # in models.py is about exactly this).
-_CLEARABLE_REASONS = (WarningReason.LEGEND, WarningReason.SCHEDULE_CONFLICT)
+def _reasons_cleared_by(proposal: dict) -> tuple[WarningReason, ...]:
+    if bool(proposal.get("schedule_match")) or bool(proposal.get("catalog_id")):
+        return (WarningReason.LEGEND, WarningReason.SCHEDULE_CONFLICT)
+    return (WarningReason.LEGEND,)
 
 
 @dataclass
@@ -48,18 +55,19 @@ class ApplyResult:
     also_matching_sheets: list[str] = field(default_factory=list)
 
 
-def _clearable_warnings(db: DbSession, item_id: uuid.UUID) -> list[Warning]:
-    return db.scalars(select(Warning).where(Warning.item_id == item_id, Warning.reason.in_(_CLEARABLE_REASONS))).all()
+def _warnings_with(db: DbSession, item_id: uuid.UUID, reasons: tuple[WarningReason, ...]) -> list[Warning]:
+    return db.scalars(select(Warning).where(Warning.item_id == item_id, Warning.reason.in_(reasons))).all()
 
 
-def _item_snapshot(db: DbSession, item: Item, *, warnings: bool) -> dict:
-    """`warnings` snapshots only the warnings the apply clears, so undo
-    puts back exactly those and redo (`undo_apply._apply_resolve`, which
-    deletes whatever the before-snapshot lists) never removes a scale
-    warning the apply itself left alone."""
+def _item_snapshot(db: DbSession, item: Item, *, clears: tuple[WarningReason, ...] = ()) -> dict:
+    """`clears` names the warning reasons this apply deletes; only those
+    are snapshotted, so undo puts back exactly what was cleared and redo
+    (`undo_apply._apply_resolve`, which deletes whatever the
+    before-snapshot lists) never removes a scale warning the apply
+    itself left alone."""
     snap = {"id": item.id, **{k: getattr(item, k) for k in _REVERSIBLE_ITEM_FIELDS}}
-    if warnings:
-        snap["warnings"] = [encode_snapshot(_column_snapshot(w)) for w in _clearable_warnings(db, item.id)]
+    if clears:
+        snap["warnings"] = [encode_snapshot(_column_snapshot(w)) for w in _warnings_with(db, item.id, clears)]
     return encode_snapshot(snap)
 
 
@@ -115,6 +123,15 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
     if intent == "reclassify":
         _validate_reclassify(proposal)
     ids = sorted({uuid.UUID(str(i)) for i in proposal["target_item_ids"]} | {item.id})
+    # The targets are the anchor's cluster as the server computes it now
+    # (`targets_for`: same sheet, same tag, countable, the anchor always
+    # included) -- a body naming anything else is refused before any row
+    # is locked. The client only ever echoes what /resolve returned, so
+    # an id outside that set is a stale or crafted request, not a
+    # different reading.
+    allowed = {t.id for t in targets_for(db, item)} | {item.id}
+    if any(i not in allowed for i in ids):
+        raise DomainError("targets_not_in_cluster", "Those items aren't the same symbol on this sheet — reload and try again.")
     versions = {uuid.UUID(str(k)): int(v) for k, v in (proposal.get("versions") or {}).items()}
 
     locked = db.scalars(
@@ -135,10 +152,10 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
             raise DomainError("reject_reason_required", "Say why this isn't counted — the reason stays with the item.")
         label = f"Rejected {_count(locked)} — {reason}"
         for row in locked:
-            before_rows.append(_item_snapshot(db, row, warnings=False))
+            before_rows.append(_item_snapshot(db, row))
             review._apply_reject(db, row, actor, row.version)
             row.reject_reason = reason
-            after_rows.append(_item_snapshot(db, row, warnings=False))
+            after_rows.append(_item_snapshot(db, row))
         action = commit(db, actor=actor, project_id=item.project_id, kind="resolve", label=label, item_id=item.id,
                         before={ITEMS_SNAPSHOT_KEY: before_rows}, after={ITEMS_SNAPSHOT_KEY: after_rows}, note=note)
         return ApplyResult(action=action)
@@ -156,25 +173,28 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
         for row in locked:
             review.refuse_unless_approvable(row)
 
-    clears_warning = bool(proposal.get("schedule_match")) or bool(proposal.get("catalog_id"))
+    clears = _reasons_cleared_by(proposal)
     for row in locked:
-        before_rows.append(_item_snapshot(db, row, warnings=clears_warning))
+        before_rows.append(_item_snapshot(db, row, clears=clears))
         row.name = proposal["name"]
         row.system = proposal["system"]
         row.category = proposal["category"]
         if proposal.get("quantity") is not None:
             row.quantity = Decimal(str(proposal["quantity"]))
         row.resolve_note = note or None
-        if clears_warning:
-            for w in _clearable_warnings(db, row.id):
-                db.delete(w)
-            if row.status is ReviewStatus.ATTENTION:
-                row.status = ReviewStatus.READY
+        for w in _warnings_with(db, row.id, clears):
+            db.delete(w)
+        db.flush()
+        # Needs attention was the classifier's verdict; once nothing on
+        # the row still asks for a decision, it is Ready to review. A
+        # schedule conflict that survives a typed reading keeps it.
+        if row.status is ReviewStatus.ATTENTION and not db.scalars(select(Warning.id).where(Warning.item_id == row.id)).first():
+            row.status = ReviewStatus.READY
         row.version += 1
         if approve:
             review._apply_approve(db, actor, row, None)   # re-checks under FOR UPDATE; nothing committed on a refusal
         db.flush()
-        after_rows.append(_item_snapshot(db, row, warnings=clears_warning))
+        after_rows.append(_item_snapshot(db, row, clears=clears))
 
     lib_before, lib_after = None, None
     if item.source_tag:

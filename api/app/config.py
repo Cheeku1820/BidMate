@@ -19,5 +19,13 @@ class Settings(BaseSettings):
     blob_bucket: str = "bidmate-documents"
     blob_region: str = "us-east-1"
 
+    # Market pricing (docs/specs/estimate-first-pricing.md). Both keys
+    # are optional and read only by the worker; absence marks a lookup
+    # "unavailable", never an error. The cap is per org per calendar
+    # month and is what stops one 400-item set from spending the budget.
+    onebuild_api_key: str = ""
+    serpapi_key: str = ""
+    market_lookup_monthly_cap: int = 2000
+
 
 settings = Settings()

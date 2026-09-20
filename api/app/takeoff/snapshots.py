@@ -18,7 +18,7 @@ them) reads this module, not a review-internal one.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import inspect as sa_inspect
@@ -112,6 +112,8 @@ MATERIAL_PRICE_SNAPSHOT_TYPES: dict[str, type] = {
     "price_override": Decimal,
     "source": str,
     "reason": str,
+    "supplier_name": str,
+    "quote_date": date,
     "updated_by_user_id": uuid.UUID,
     "updated_at": datetime,
 }

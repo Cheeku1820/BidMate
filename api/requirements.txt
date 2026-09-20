@@ -16,3 +16,4 @@ httpx==0.28.1
 pymupdf==1.28.2
 pdfplumber==0.11.4
 anthropic>=0.40.0
+openpyxl>=3.1

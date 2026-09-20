@@ -44,7 +44,7 @@ def test_patch_changes_the_type_and_is_audited(client, uploaded, db, project):
 def test_patch_refuses_an_unknown_type(client, uploaded):
     r = client.patch(f"/api/documents/{uploaded['id']}", json={"doc_type": "Photos"})
     assert r.status_code == 422
-    assert r.json()["detail"]["message"] == "Document type must be one of Drawings, Specifications, Addendum, Scope, Other."
+    assert r.json()["detail"]["message"] == "Document type must be one of Drawings, Specifications, Addendum, Scope, Other, Pricing."
 
 
 def test_delete_removes_row_and_blob_and_is_audited_not_undoable(client, uploaded, db, project, store):

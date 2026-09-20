@@ -125,6 +125,26 @@ def test_content_streams_the_exact_bytes_privately(client, uploaded):
     assert r.headers["x-content-type-options"] == "nosniff"
 
 
+def test_content_streams_a_pricing_upload_with_its_own_content_type(client, signed_in_user, project, store):
+    """A price sheet's content route must serve it as the spreadsheet it
+    is -- not as `application/pdf`, which every Pricing upload got
+    before this was fixed."""
+    xlsx = b"PK\x03\x04fake"
+    r = client.post(
+        f"/api/projects/{project.id}/documents",
+        files={"file": ("codale.xlsx", io.BytesIO(xlsx), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        data={"doc_type": "Pricing"},
+    )
+    assert r.status_code == 201, r.text
+    doc_id = r.json()["id"]
+
+    content = client.get(f"/api/documents/{doc_id}/content")
+    assert content.status_code == 200
+    assert content.content == xlsx
+    assert content.headers["content-type"].startswith("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    assert content.headers["x-content-type-options"] == "nosniff"
+
+
 def test_content_says_what_to_do_when_the_stored_file_is_gone(client, uploaded, store):
     """A row whose blob is missing is reachable without a bug here -- a
     storage lifecycle rule, a restore from a backup taken after the blob

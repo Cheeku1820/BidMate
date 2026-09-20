@@ -92,14 +92,15 @@ def get_content(document_id: uuid.UUID, user: User = Depends(current_user), db: 
     body = service.open_content(document, store)
     return StreamingResponse(
         iter(lambda: body.read(1024 * 1024), b""),
-        media_type="application/pdf",
+        media_type=document.content_type,
         headers={
             "Content-Disposition": _content_disposition(document.filename),
             "Content-Length": str(document.size_bytes),
-            # The bytes are a PDF and are served as one. `nosniff` stops
-            # a user agent from deciding otherwise from the content --
-            # an uploaded file is untrusted input, and content sniffing
-            # is how it gets to choose its own type.
+            # The bytes are served as the type they were stored as --
+            # a PDF, or a Pricing upload's own spreadsheet type.
+            # `nosniff` stops a user agent from deciding otherwise from
+            # the content -- an uploaded file is untrusted input, and
+            # content sniffing is how it gets to choose its own type.
             "X-Content-Type-Options": "nosniff",
         },
         # botocore's StreamingBody holds an open connection from the

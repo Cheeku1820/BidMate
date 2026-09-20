@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import openpyxl
 
-from app.market.price_sheet import HEADER, build_request_workbook, parse_price_sheet
+from app.market.price_sheet import HEADER, _price, build_request_workbook, parse_price_sheet
 
 ROWS = [
     {"item_id": "11111111-1111-1111-1111-111111111111", "item_name": "20A duplex receptacle", "description": "Duplex Receptacle", "quantity": 14, "unit": "EA"},
@@ -59,3 +59,15 @@ def test_parse_refuses_a_sheet_without_a_unit_price_header():
 def test_parse_finds_the_header_below_a_title_row():
     csv = "Codale quote 9/18\n\nItem,Unit price\n20A duplex receptacle,9.10\n"
     assert parse_price_sheet(csv.encode(), "q.csv").rows[0].unit_price == Decimal("9.10")
+
+
+def test_price_refuses_scientific_notation_and_other_ambiguous_strings():
+    """A wrong unit price with no refusal is the one failure this
+    module exists to prevent -- scientific notation and a European
+    thousands format must never be silently mis-parsed into a number."""
+    assert _price("1e3") is None
+    assert _price("$ 2,250.00") == Decimal("2250.00")
+    assert _price("USD 9.10") == Decimal("9.10")
+    assert _price("2.250,00") is None
+    assert _price(True) is None
+    assert _price("") is None

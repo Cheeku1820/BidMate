@@ -17,7 +17,16 @@ from openpyxl.utils import get_column_letter
 HEADER = ("Item", "Description", "Qty", "Unit", "Unit price", "Supplier part no.", "Notes", "Row key")
 REQUIRED_HEADER = ("Item", "Unit price")
 _KEY_COL = HEADER.index("Row key") + 1
-_MONEY_RE = re.compile(r"[^\d.\-]")
+# A leading or trailing currency word ("USD 9.10", "9.10 USD"), stripped
+# before the number itself is validated.
+_CURRENCY_WORD_LEAD_RE = re.compile(r"^[A-Za-z]+\s+")
+_CURRENCY_WORD_TRAIL_RE = re.compile(r"\s+[A-Za-z]+$")
+# US-style thousands grouping ("2,250.00") -- the comma is only ever
+# removed once the grouping itself is confirmed correct, never blindly,
+# so a European "2.250,00" (which is a different number, not a
+# formatting variant) is refused rather than silently mis-parsed.
+_THOUSANDS_RE = re.compile(r"^-?\d{1,3}(,\d{3})+(\.\d+)?$")
+_PLAIN_NUMBER_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
 
 class ParsedRow(NamedTuple):
@@ -52,13 +61,32 @@ def build_request_workbook(rows: list[dict]) -> bytes:
 
 
 def _price(v) -> Decimal | None:
+    """The one cell besides the row key that's interpreted rather than
+    carried as text -- so a wrong number here is the failure this
+    module exists to prevent. A number (int/float/Decimal, but not
+    bool: `True`/`False` are never a price) converts directly. A string
+    is accepted only when, after stripping a `$`, surrounding
+    whitespace, and a leading or trailing currency word, what remains
+    is unambiguously a plain or US-grouped decimal number -- scientific
+    notation ("1e3"), a European "2.250,00", "call for price", or
+    anything else non-numeric returns None (unpriced) rather than
+    guessing."""
+    if isinstance(v, bool):
+        return None
     if v is None or v == "":
         return None
     if isinstance(v, (int, float, Decimal)):
         return Decimal(str(v)).quantize(Decimal("0.01"))
-    s = _MONEY_RE.sub("", str(v))
+    s = str(v).strip()
+    s = _CURRENCY_WORD_LEAD_RE.sub("", s)
+    s = _CURRENCY_WORD_TRAIL_RE.sub("", s)
+    s = s.replace("$", "").strip()
+    if _THOUSANDS_RE.match(s):
+        s = s.replace(",", "")
+    elif not _PLAIN_NUMBER_RE.match(s):
+        return None
     try:
-        return Decimal(s).quantize(Decimal("0.01")) if s not in ("", "-", ".") else None
+        return Decimal(s).quantize(Decimal("0.01"))
     except InvalidOperation:
         return None
 

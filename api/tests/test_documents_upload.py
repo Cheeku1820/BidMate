@@ -224,3 +224,17 @@ def test_a_pricing_upload_refuses_a_pdf_and_drawings_refuse_xlsx(client, signed_
     assert r.status_code == 415
     r = _upload(client, project.id, name="q.xlsx", data=b"PK", doc_type="Drawings", ctype="application/octet-stream")
     assert r.status_code == 415
+
+
+def test_a_pricing_xlsx_upload_is_stored_as_a_spreadsheet_not_a_pdf(client, signed_in_user, project, db, store):
+    """A price sheet uploaded as .xlsx must be recorded and stored as
+    that spreadsheet type -- not silently stamped `application/pdf`,
+    which is what the row and the blob both got before this was fixed."""
+    r = _upload(
+        client, project.id, name="codale.xlsx", data=b"PK\x03\x04fake",
+        doc_type="Pricing", ctype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    assert r.status_code == 201, r.text
+    row = db.get(Document, r.json()["id"])
+    assert row.content_type.endswith("spreadsheetml.sheet")
+    assert row.storage_key.endswith(".xlsx")

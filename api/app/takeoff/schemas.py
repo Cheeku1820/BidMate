@@ -561,3 +561,38 @@ class CompanyLaborHoursOverrideOut(BaseModel):
     updated_at: datetime
 
     model_config = MODEL_CONFIG
+
+
+class ResolveIn(BaseModel):
+    text: str = Field(default="", max_length=2000)
+    cluster: bool = True
+
+    model_config = {**MODEL_CONFIG, "extra": "forbid"}
+
+
+class ScheduleMatchOut(BaseModel):
+    sheet: str
+    line: str
+
+    model_config = MODEL_CONFIG
+
+
+class ProposalOut(BaseModel):
+    """What the estimator's sentence would change -- shown, not written.
+    Shape-constrained on purpose (say-what-it-is spec): there is no
+    field a drawing set could steer into an action."""
+    intent: str  # "reclassify" | "exclude" | "unknown"
+    target_item_ids: list[uuid.UUID]
+    name: str
+    system: str
+    category: str
+    unit: str
+    catalog_id: str | None = None
+    schedule_match: ScheduleMatchOut | None = None
+    quantity: int | None = None
+    reject_reason: str | None = None
+    summary: str
+    source: str  # "read" | "typed"
+    versions: dict[uuid.UUID, int]
+
+    model_config = MODEL_CONFIG

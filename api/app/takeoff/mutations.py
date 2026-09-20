@@ -33,6 +33,7 @@ from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import bulk, review
 from app.takeoff import notes as notes_service
+from app.takeoff import resolve as resolve_service
 from app.takeoff import scale as scale_module
 from app.takeoff import snapshot as snapshot_module
 from app.takeoff import undo as undo_module
@@ -40,7 +41,7 @@ from app.takeoff.models import ItemEvidenceImage, Note, Project
 from app.takeoff.router import load_item, load_project, load_sheet, not_found
 from app.takeoff.schemas import (
     BulkApproveOut, ItemMutationOut, NoteCreateIn, NoteOut, NoteUpdateIn,
-    ScaleMutationOut, SkippedItemOut, UndoRedoOut,
+    ProposalOut, ResolveIn, ScaleMutationOut, SkippedItemOut, UndoRedoOut,
 )
 
 router = APIRouter(prefix="/api", tags=["takeoff-mutations"])
@@ -235,6 +236,20 @@ def reject(
     action = review.reject_item(db, user, item, expected_version)
     db.commit()
     return _item_mutation_response(db, project_id, action, item)
+
+
+@router.post("/items/{item_id}/resolve", response_model=ProposalOut)
+def resolve_item(
+    item_id: uuid.UUID,
+    body: ResolveIn,
+    user: User = Depends(current_user),
+    db: DbSession = Depends(get_db),
+) -> ProposalOut:
+    """What the estimator's sentence would change. Proposes only -- no
+    row is written and no action recorded; apply-proposal does that on
+    a person's press (say-what-it-is spec)."""
+    item = load_item(item_id, db, user)
+    return ProposalOut(**resolve_service.resolve_for_item(db, item, body.text, cluster=body.cluster))
 
 
 @router.post("/items/{item_id}/unreject", response_model=ItemMutationOut)

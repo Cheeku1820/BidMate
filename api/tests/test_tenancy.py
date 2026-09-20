@@ -194,6 +194,8 @@ TENANCY_TABLE = [
      lambda p, s, i: {"priceOverride": 15.5, "source": "project_price"}, None),
     ("DELETE", "/api/items/{item_id}/material-price",
      lambda p, s, i: f"/api/items/{i.id}/material-price", None, None),
+    ("POST", "/api/items/{item_id}/resolve",
+     lambda p, s, i: f"/api/items/{i.id}/resolve", lambda p, s, i: {"text": "junction box"}, None),
     ("POST", "/api/projects/{project_id}/items/bulk-approve",
      lambda p, s, i: f"/api/projects/{p.id}/items/bulk-approve",
      lambda p, s, i: {"item_ids": [str(i.id)]}, None),

@@ -7,7 +7,7 @@
    ============================================================ */
 import { useEffect, useRef, useState } from "react";
 import ProposalCard from "./ProposalCard.jsx";
-import { REJECT_CHIP, EXISTING_CHIP, EMPTY_HELPER, RESOLVE_ERROR, timeShort } from "./decisionCopy.js";
+import { REJECT_CHIP, EXISTING_CHIP, EMPTY_HELPER, RESOLVE_ERROR, isUnclassified, timeShort } from "./decisionCopy.js";
 
 export default function DecisionArea({ item, sheetNumber, onResolve, onApply, onUndo, onSelectItem, alsoMatchingItemId }) {
   const [state, setState] = useState(item.status === "approved" || item.rejected ? "done" : "box");
@@ -70,9 +70,29 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, item.status, item.rejected]);
 
-  useEffect(() => {
+  // The box takes focus by itself only on an unclassified item — the one
+  // case where typing is the next thing to do. On every other item it
+  // renders unfocused, so J/K/A/E/R and the zoom keys work single-press
+  // (the workspace suppresses them while a text field has focus); E, or
+  // coming back to the box from the card or the statement, asks for
+  // focus explicitly through `focusBoxRef`.
+  const focusBoxRef = useRef(false);
+  function openBox() {
+    focusBoxRef.current = true;
     if (state === "box") boxRef.current?.focus();
-    else if (state === "card") cardRef.current?.focus();
+    else setState("box");
+  }
+  const focusedForRef = useRef(null);
+  useEffect(() => {
+    if (state === "box") {
+      if (focusBoxRef.current || isUnclassified(item)) boxRef.current?.focus();
+      // The textarea is one DOM node across selections, so focus taken
+      // for item A would otherwise ride along to a classified item B.
+      else if (focusedForRef.current !== item.id && document.activeElement === boxRef.current) boxRef.current.blur();
+      focusedForRef.current = item.id;
+      focusBoxRef.current = false;
+    } else if (state === "card") cardRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, item.id]);
 
   const readingUsable = item.status === "ready" && item.category !== "Unclassified";
@@ -129,19 +149,14 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
   // own handler stops propagation, so the window branch only ever fires
   // when focus was elsewhere).
   function backToBox() {
-    setState(item.status === "approved" || item.rejected ? "done" : "box");
+    if (item.status === "approved" || item.rejected) setState("done");
+    else openBox();
   }
 
   useEffect(() => {
     function onCmd(e) {
       const { type } = e.detail || {};
-      if (type === "focus") {
-        // Already on the box is the common case (estimator on the canvas
-        // presses E) — setState("box") there is a no-op (same value), so
-        // the focus effect below never re-runs and nothing gets focus.
-        if (state === "box") boxRef.current?.focus();
-        else setState("box");
-      }
+      if (type === "focus") openBox();
       if (type === "reject" && state !== "done") submit(REJECT_CHIP);
       if (type === "confirm") {
         if (state === "card" && proposal && proposal.intent !== "unknown") apply(proposal.intent !== "exclude");
@@ -182,7 +197,7 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
     // would reverse some unrelated action and then show the box on an
     // item that is still Estimator approved.
     const undoBtn = done ? <button className="linkbtn" onClick={handleUndo}>Undo</button> : null;
-    const changeBtn = <button className="linkbtn" onClick={() => setState("box")}>Change</button>;
+    const changeBtn = <button className="linkbtn" onClick={openBox}>Change</button>;
     return (
       <div className={"decision-done " + tone} role="status">
         <p className="decision-done__lead">

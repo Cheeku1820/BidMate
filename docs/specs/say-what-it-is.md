@@ -100,7 +100,14 @@ What is this?
 [ Read this ]
 ```
 
-- The box is autofocused when the item is selected, empty.
+- The box is empty when the item is selected. It takes focus by itself
+  only when the item is unclassified — no usable name: a live `legend`
+  warning, an empty name, or the engine's "Unclassified symbol (TAG)"
+  placeholder (`isUnclassified` in `decisionCopy.js`). On every other
+  item it renders unfocused, so `J`/`K`/`A`/`E`/`R` and the zoom keys
+  work single-press; `E` puts the cursor in the box, and Enter on the
+  empty box is then the fast path. Coming back to the box from the card
+  or the statement (Escape, Change wording, Change) focuses it.
 - The chips **fill the box** and submit; they do not bypass it. Which
   chips appear:
   - the engine's current reading (`item.name`) — always;
@@ -197,7 +204,9 @@ After apply, the slot holds a statement, not a button:
 `A` confirms the current card, or on State 1 submits the reading (the
 fast path). `E` focuses the box. `R` fills the box with "not a device"
 and submits. `J`/`K` unchanged. All suppressed while typing in the box,
-except Enter and Escape, which the box owns.
+except Enter and Escape, which the box owns — and the box holds focus
+on its own only on an unclassified item (above), so stepping a sheet
+of classified items never needs an Escape first.
 
 ### Measured items
 
@@ -289,6 +298,13 @@ interpreted again.
   same `400` code-and-message shape, so the panel's existing banner
   shows the refusal. This route writes the same columns from a
   client-supplied body; it is not a way around the edit rules.
+- Verifies `target_item_ids` against the anchor's cluster as the
+  server computes it now (`targets_for`, the anchor itself always
+  allowed) and refuses — `400 targets_not_in_cluster`, "Those items
+  aren't the same symbol on this sheet — reload and try again." — if
+  any id is outside it, before locking anything. The body is the
+  `ProposalOut` `/resolve` returned; an id from another sheet or
+  another tag is a stale or crafted request.
 - Loads every target under `FOR UPDATE`, in id order (the same lock
   discipline `bulk_approve` uses); refuses with the
   existing stale-version copy if any `versions[id]` differs.
@@ -298,11 +314,16 @@ interpreted again.
   own shape — one row per `(sheet, tag)` carrying the placement count);
   with more than one row it is refused — "This tag is counted as N rows
   on this sheet — correct the count on each row." — because writing
-  28 to each of two rows would count 56. Clears the warnings whose
-  reason is `LEGEND` or `SCHEDULE_CONFLICT` when the proposal's
-  `schedule_match` is set or `catalog_id` is set (the classifier's own
-  reasons no longer hold); never a `SCALE` warning, which is about the
-  sheet, not the item's identity. Then, if `approve`, applies
+  28 to each of two rows would count 56. Clears each target's `LEGEND`
+  warning on every reading, `source: "typed"` included — "symbol not in
+  legend, assign a classification" is answered the moment the estimator
+  says what it is; clears a `SCHEDULE_CONFLICT` warning only when the
+  proposal's `schedule_match` or `catalog_id` is set (words alone do
+  not settle a disagreement with the schedule); never a `SCALE`
+  warning, which is about the sheet, not the item's identity. A target
+  at *Needs attention* with no warning left moves to *Ready to review*;
+  one still carrying a schedule conflict stays. Undo restores exactly
+  the warnings cleared. Then, if `approve`, applies
   the same approval rule `review.approve_item` enforces — every target
   is checked before any is written, so a target at
   *Missing information* refuses the whole apply with that rule's copy,

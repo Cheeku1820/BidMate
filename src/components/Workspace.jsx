@@ -178,11 +178,11 @@ export default function Workspace() {
         else doUndo();
         return;
       }
-      // The decision box autofocuses on every selection (say-what-it-is
-      // spec), which suppresses J/K/+/-/0 below since focus sits in a
-      // textarea. Escape while it holds focus blurs it -- one press and
-      // the single-key shortcuts work again -- before the typing
-      // early-return would otherwise swallow the Escape entirely.
+      // The decision box takes focus by itself only on an unclassified
+      // item, and on E (say-what-it-is spec). While it holds focus the
+      // single-key shortcuts below are suppressed, as in any text field;
+      // Escape blurs it -- one press and they work again -- before the
+      // typing early-return would otherwise swallow the Escape entirely.
       if (e.key === "Escape" && t?.id === "decision-box") { t.blur(); return; }
       if (typing || e.metaKey || e.ctrlKey) return;
       if (e.key === "Escape") { setModal(null); setMenu(null); setEdit(null); return; }

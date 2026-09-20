@@ -94,14 +94,22 @@ function press(key) {
 }
 
 describe("Workspace — decision-cmd keys", () => {
+  it("on a classified item the box renders unfocused and J steps without being swallowed", async () => {
+    renderWorkspace();
+    const box = await screen.findByRole("textbox", { name: "What is this?" });
+    expect(document.activeElement).not.toBe(box);
+
+    press("j");
+
+    expect(context.selectItem).toHaveBeenCalledWith("i1");
+    expect(box).toHaveValue("");
+  });
+
   it('pressing "a" with the box empty on a Ready item resolves the item by name', async () => {
     const { resolveItem } = renderWorkspace();
-    // The box autofocuses on selection (the spec's deliberate choice --
-    // see Workspace.jsx's key handler comment), so a real "a" press
-    // arrives after focus has moved elsewhere -- off the box, same as
-    // the "e" case below.
+    // A classified item: the box renders unfocused, so "a" is a shortcut.
     const box = await screen.findByRole("textbox", { name: "What is this?" });
-    box.blur();
+    expect(document.activeElement).not.toBe(box);
 
     press("a");
 

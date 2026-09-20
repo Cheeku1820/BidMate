@@ -2,8 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import DecisionArea from "./DecisionArea.jsx";
 
+// A Needs attention item carrying the classifier's legend warning — the
+// unclassified case, so the box takes focus by itself.
 const item = { id: "i1", name: "Luminaire type F", quantity: 30, unit: "ea", status: "attention", rejected: false,
-  system: "Lighting", category: "Fixtures", sourceTag: "F", approvedBy: null, approvedAt: null, resolveNote: null, rejectReason: null, path: null };
+  system: "Lighting", category: "Fixtures", sourceTag: "F", approvedBy: null, approvedAt: null, resolveNote: null, rejectReason: null, path: null,
+  warnings: [{ id: "w1", reason: "legend", title: "Fixture type needs confirmation", found: "f", why: "w", fix: "x", where: "E-501" }] };
+// The same item once classified: no warning, a usable name.
+const classified = { ...item, warnings: [], status: "ready" };
 const proposal = { intent: "reclassify", targetItemIds: ["i1", "i2", "i3"], name: "2x4 LED troffer, 4000K — type F", system: "Lighting",
   category: "Fixtures", unit: "ea", catalogId: null, scheduleMatch: { sheet: "E-501", line: "F" }, quantity: 28, rejectReason: null,
   summary: "Applies to all 3", source: "read", versions: { i1: 1, i2: 1, i3: 1 } };
@@ -26,6 +31,60 @@ describe("DecisionArea", () => {
     expect(screen.getByRole("button", { name: "Not a device" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Existing to remain" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /approve item/i })).not.toBeInTheDocument();
+  });
+
+  it("a classified item renders the box unfocused, so a single-key shortcut is not swallowed", () => {
+    setup({ item: classified });
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    expect(document.activeElement).not.toBe(box);
+    const seen = vi.fn();
+    window.addEventListener("keydown", seen);
+    fireEvent.keyDown(document.body, { key: "j" });
+    window.removeEventListener("keydown", seen);
+    expect(seen).toHaveBeenCalledTimes(1);
+    expect(seen.mock.calls[0][0].target).toBe(document.body);
+    expect(box).toHaveValue("");
+  });
+
+  it("E focuses the box on a classified item, and Enter then submits the reading", async () => {
+    const { onResolve } = setup({ item: classified });
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    expect(document.activeElement).not.toBe(box);
+    act(() => { window.dispatchEvent(new CustomEvent("decision-cmd", { detail: { type: "focus" } })); });
+    await waitFor(() => expect(document.activeElement).toBe(box));
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(onResolve).toHaveBeenCalledWith("Luminaire type F"));
+  });
+
+  it("stepping from an unclassified item to a classified one leaves the new box unfocused", () => {
+    const { rerender } = setup();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "What is this?" }));
+    rerender(<DecisionArea item={{ ...classified, id: "i2" }} sheetNumber="EP101" onResolve={vi.fn()} onApply={vi.fn()} onUndo={vi.fn()} onSelectItem={vi.fn()} alsoMatchingItemId="i9" />);
+    expect(document.activeElement).not.toBe(screen.getByRole("textbox", { name: "What is this?" }));
+  });
+
+  it("Change wording on a classified item returns focus to the box", async () => {
+    setup({ item: classified });
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "type F" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "Change wording" }));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "What is this?" })));
+  });
+
+  it("a typed proposal on an unclassified item says it clears the warning; on a classified item with no warning it does not", async () => {
+    const typed = { ...proposal, source: "typed", name: "patient headwalls", scheduleMatch: null, catalogId: null, quantity: null };
+    const { rerender } = setup({ props: { onResolve: vi.fn().mockResolvedValue(typed) } });
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "patient headwalls" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByText(/renames "Luminaire type F" · clears the warning/)).toBeInTheDocument();
+    rerender(<DecisionArea item={{ ...classified, id: "i2" }} sheetNumber="EP101" onResolve={vi.fn().mockResolvedValue(typed)} onApply={vi.fn()} onUndo={vi.fn()} onSelectItem={vi.fn()} alsoMatchingItemId="i9" />);
+    const box2 = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box2, { target: { value: "patient headwalls" } });
+    fireEvent.keyDown(box2, { key: "Enter" });
+    expect(await screen.findByText(/renames "Luminaire type F"$/)).toBeInTheDocument();
+    expect(screen.queryByText(/clears the warning/)).not.toBeInTheDocument();
   });
 
   it("Enter resolves the sentence and shows the card without writing", async () => {

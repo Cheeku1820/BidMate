@@ -1,5 +1,6 @@
 """The two market sources, as small HTTP clients. Worker only -- the
-API never imports this module (test_api_import_boundary.py). `fetch` is
+API process never imports `app.worker`, this module included
+(test_api_import_boundary.py checks the package as a whole). `fetch` is
 injectable so the clients are tested against canned responses; the
 default fetchers use urllib with a 20 s timeout.
 

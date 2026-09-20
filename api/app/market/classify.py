@@ -16,14 +16,25 @@ class Lookup(NamedTuple):
 
 
 # Whole-word (or whole-phrase) markers of gear that is priced by quote.
-# Every entry is matched with \b on both sides, case-insensitively.
+# Every entry is matched with \b on both sides, case-insensitively. A
+# one-word entry also matches its plural ("Standby Generators 150kW",
+# "Switchboards MSB-1") -- a schedule line names the set as often as
+# the unit, and a plural that slipped through went to the catalog
+# source and came back priced from an accessory. Phrases are matched
+# as written.
 QUOTE_REQUIRED_WORDS: tuple[str, ...] = (
     "switchboard", "switch board", "switchgear", "mcc", "motor control center",
     "transformer", "spd", "surge protective", "surge protection", "generator", "ats",
     "automatic transfer", "bus duct", "busway", "vfd", "variable frequency",
     "furnish and install", "furnish & install", "connection to", "provide power for", "lump sum",
 )
-_QUOTE_RE = re.compile(r"\b(" + "|".join(re.escape(w) for w in QUOTE_REQUIRED_WORDS) + r")\b", re.IGNORECASE)
+
+
+def _quote_pattern(word: str) -> str:
+    return re.escape(word) + (r"s?" if " " not in word else "")
+
+
+_QUOTE_RE = re.compile(r"\b(" + "|".join(_quote_pattern(w) for w in QUOTE_REQUIRED_WORDS) + r")\b", re.IGNORECASE)
 
 _ZIP_RE = re.compile(r"\b(\d{5})(?:-\d{4})?\s*(?:USA?)?\s*$", re.IGNORECASE)
 _MODEL_LINE_RE = re.compile(r"^\s*model\s*(?:no\.?|#|number)?\s*[:#]?\s*#?\s*(\S+)", re.IGNORECASE | re.MULTILINE)

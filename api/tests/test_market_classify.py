@@ -42,6 +42,13 @@ def test_extract_model_rejects_short_or_wordy_tokens():
     ("Luminaire", "C: 8' LED Vaportite\nManufacturer: Current\nModel: CVT8-LSCS-MV", "EA", "shopping", "model"),
     ("20A duplex receptacle", "", "EA", "onebuild", "name"),
     ("2x4 LED troffer", "A: 8' LED strip\nManufacturer: Signify", "EA", "onebuild", "name"),
+    # Plurals of the one-word markers are the same gear.
+    ("Standby Generators 150kW", "", "EA", None, "quote_required"),
+    ("Switchboards MSB-1", "", "EA", None, "quote_required"),
+    ("Dry-type transformers 75kVA", "", "EA", None, "quote_required"),
+    ("ATS", "", "EA", None, "quote_required"),
+    # ...but the optional `s` is on the word, not a substring of another.
+    ("Stadium seats", "", "EA", "onebuild", "name"),
 ])
 def test_classify_for_lookup(name, description, unit, source, reason):
     lookup = classify_for_lookup(name, description, unit)

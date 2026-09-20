@@ -39,6 +39,24 @@ def test_patch_material_price_creates_a_row(client, db, item, signed_in_user):
     assert row is not None and float(row.price_override) == 15.5 and row.source == "project_price"
 
 
+def test_patch_material_price_over_a_supplier_quote_clears_the_supplier_and_quote_date(client, db, item, signed_in_user):
+    """A supplier quote retyped as a project price is the estimator's
+    number: the supplier and the date were the quote's provenance and
+    would mislabel the new price (the row out reads them back)."""
+    from datetime import date
+    db.add(ProjectMaterialPrice(item_id=item.id, price_override=9.10, source="supplier_quote",
+                                supplier_name="Codale", quote_date=date(2026, 9, 18), updated_by_user_id=signed_in_user.id))
+    db.commit()
+    response = client.patch(f"/api/items/{item.id}/material-price", json={"priceOverride": 15.5, "source": "project_price"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["source_label"] == "Project price" and body["supplier_name"] == "" and body["quote_date"] is None
+    db.refresh(item)
+    row = db.get(ProjectMaterialPrice, item.id)
+    db.refresh(row)
+    assert row.source == "project_price" and row.supplier_name == "" and row.quote_date is None
+
+
 def test_patch_material_price_allowance_requires_a_reason(client, item, signed_in_user):
     response = client.patch(f"/api/items/{item.id}/material-price",
                              json={"priceOverride": 15.5, "source": "allowance"})

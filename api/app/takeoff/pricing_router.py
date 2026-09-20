@@ -238,6 +238,11 @@ def patch_material_price(
         row.price_override = body.price_override
         row.source = body.source
     row.reason = body.reason
+    if body.source != "supplier_quote":
+        # A supplier quote retyped as a project price or an allowance is
+        # the estimator's number now; the supplier and the quote date
+        # were the old row's provenance and would mislabel the new one.
+        row.supplier_name, row.quote_date = "", None
     row.updated_by_user_id = user.id
     db.flush()
     db.refresh(row)  # normalize Numeric precision before snapshotting -- see put_company_labor_rates

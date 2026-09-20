@@ -16,6 +16,7 @@ from app.observability import RequestIdMiddleware, configure_logging, request_id
 from app.scope.router import router as scope_router
 from app.takeoff.actions import CrossOrgActionError
 from app.takeoff.mutations import router as takeoff_mutations_router
+from app.takeoff.price_sheet_router import router as price_sheet_router
 from app.takeoff.pricing_router import router as pricing_router
 from app.takeoff.router import PROJECT_NOT_FOUND_CODE, PROJECT_NOT_FOUND_MESSAGE
 from app.takeoff.router import router as takeoff_router
@@ -111,6 +112,7 @@ app.include_router(auth_router)
 app.include_router(takeoff_router)
 app.include_router(takeoff_mutations_router)
 app.include_router(pricing_router)
+app.include_router(price_sheet_router)
 app.include_router(documents_router)
 app.include_router(processing_router)
 app.include_router(scope_router)

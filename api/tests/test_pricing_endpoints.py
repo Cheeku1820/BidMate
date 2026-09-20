@@ -682,3 +682,105 @@ def test_apply_refuses_an_item_not_in_the_preview(client, db, signed_in_user, pr
     r = client.post(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/apply",
                     json={"item_ids": [str(item.id)], "supplier_name": "X", "quote_date": "2026-09-18", "save_to_company": False})
     assert r.status_code == 422
+
+
+def test_price_request_download_survives_a_quote_and_non_latin1_character_in_the_project_name(client, db, signed_in_user, project, item):
+    """A raw f-string Content-Disposition would let a `"` in the project
+    name split the header, and a non-latin-1 character (Starlette encodes
+    header values as latin-1) would raise inside the response layer as a
+    500 -- both real project names, not adversarial input. The download
+    route reuses documents/router.py's `_content_disposition()`, which
+    percent-encodes the real name into `filename*=` and ships an
+    ASCII-only fallback in `filename=`, so this must come back 200."""
+    project.org_id = signed_in_user.org_id
+    project.name = 'Ünalaska "Bid"'
+    db.commit()
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-request")
+    assert r.status_code == 200, r.text
+
+
+# --- Task 10 review: success-path coverage for upload and preview ---
+
+
+@pytest.fixture
+def store():
+    """A `MemoryBlobStore` wired as the app's blob-store dependency, the
+    same pattern test_documents_upload.py uses -- so a price sheet
+    posted through the real HTTP route actually lands somewhere the test
+    (or, with the worker also pointed at this same instance, an inline
+    job run) can read back."""
+    from app.documents import blobstore
+    from app.main import app
+
+    s = blobstore.MemoryBlobStore()
+    app.dependency_overrides[blobstore.get_blob_store] = lambda: s
+    yield s
+    app.dependency_overrides.pop(blobstore.get_blob_store, None)
+
+
+def _upload_price_sheet(client, project_id, item_name, price="9.10", name="codale.csv"):
+    import io
+    data = f"Item,Unit price\n{item_name},{price}\n".encode()
+    return client.post(f"/api/projects/{project_id}/material-pricing/price-sheets",
+                       files={"file": (name, io.BytesIO(data), "text/csv")})
+
+
+def test_uploading_a_price_sheet_stores_a_pricing_document_and_queues_one_job(client, db, signed_in_user, project, item, store):
+    import uuid
+    from sqlalchemy import func, select
+    from app.takeoff.models import Document, Job
+    project.org_id = signed_in_user.org_id; db.commit()
+
+    r = _upload_price_sheet(client, project.id, item.name)
+    assert r.status_code == 202, r.text
+
+    doc = db.get(Document, uuid.UUID(r.json()["document_id"]))
+    assert doc is not None and doc.doc_type == "Pricing"
+    assert db.scalar(select(func.count()).select_from(Job).where(
+        Job.kind == "price_sheet", Job.document_id == doc.id)) == 1
+
+
+def test_preview_reads_as_reading_while_its_job_is_still_queued(client, db, signed_in_user, project, item, store):
+    project.org_id = signed_in_user.org_id; db.commit()
+
+    document_id = _upload_price_sheet(client, project.id, item.name).json()["document_id"]
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-sheets/{document_id}/preview")
+    assert r.status_code == 200 and r.json()["state"] == "reading"
+
+
+def test_preview_reads_as_ready_with_the_matched_row_once_the_worker_runs(client, db, signed_in_user, project, item, store, monkeypatch):
+    from tests.test_worker_read import _run_all
+    from app.worker import blobs
+    # The upload route wrote its blob to `store` above (the app's real
+    # blob-store dependency); the worker looks up its own store at call
+    # time (app.worker.blobs.get_blob_store), so it has to be pointed at
+    # that same instance -- otherwise the job would fail to find bytes
+    # that are, in fact, sitting right there.
+    monkeypatch.setattr(blobs, "get_blob_store", lambda: store)
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    monkeypatch.setenv("WORKER_INLINE", "1")
+    project.org_id = signed_in_user.org_id; db.commit()
+
+    document_id = _upload_price_sheet(client, project.id, item.name).json()["document_id"]
+    _run_all(db)
+
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-sheets/{document_id}/preview")
+    body = r.json()
+    assert body["state"] == "ready"
+    assert [m["item_id"] for m in body["matched"]] == [str(item.id)]
+
+
+def test_preview_reads_as_failed_with_the_jobs_error(client, db, signed_in_user, project, item):
+    from app.takeoff.models import Document, Job
+    project.org_id = signed_in_user.org_id
+    d = Document(project_id=project.id, filename="codale.csv", doc_type="Pricing", content_type="text/csv",
+                 size_bytes=1, sha256="c" * 64, storage_key="k3", uploaded_by=signed_in_user.id)
+    db.add(d); db.flush()
+    db.add(Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=d.id,
+               status="failed", error="This file couldn't be read as a spreadsheet."))
+    db.commit()
+
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/preview")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "failed" and body["error"] == "This file couldn't be read as a spreadsheet."

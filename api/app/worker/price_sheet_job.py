@@ -24,6 +24,14 @@ def _supplier_and_date(filename: str) -> tuple[str, str | None]:
     stem = os.path.splitext(os.path.basename(filename))[0]
     m = _DATE_RE.search(stem)
     date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
+    if re.search(r"price request", stem, re.IGNORECASE):
+        # The platform's own download name (price_sheet_router.py's
+        # get_price_request builds "<project name> - price request -
+        # <date>.xlsx") uploaded back unmodified. There is no supplier
+        # in that name -- what is left after stripping the phrase below
+        # is the *project's* name, and guessing that as the supplier
+        # would prefill the estimator's own project onto the quote.
+        return "", date
     name = _DATE_RE.sub("", stem).replace("_", " ").replace("-", " ").strip(" .")
     name = re.sub(r"\b(price( request| sheet)?|quote|pricing)\b", "", name, flags=re.IGNORECASE).strip()
     return name[:200], date

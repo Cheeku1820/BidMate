@@ -219,15 +219,16 @@ def _apply_sparse_pricing_row(db: DbSession, model: type, item_id: uuid.UUID, sn
         return
     decoded = decode_snapshot(state, snapshot_types)
     decoded.pop("item_id", None)
-    # `updated_at` is NOT NULL with `onupdate=func.now()` on both sparse
-    # pricing tables -- restoring it explicitly, including a literal
-    # `None` a caller's snapshot may carry (Task 10's supplier_quote_apply
-    # undo, whose per-row state does not always know a prior timestamp),
-    # would either violate that constraint or pin the row to a stale
-    # value. Dropping it here lets the column's own default/onupdate
-    # stamp the restore, which is what "this row changed just now" means
-    # for a housekeeping timestamp -- no test asserts an exact restored
-    # value for it.
+    # Deliberately not restored from the snapshot: `updated_at` is
+    # housekeeping, not business state anyone reads back, so undo/redo
+    # always stamps it to now() via the column's own `onupdate` rather
+    # than pinning it to whatever value the snapshot happened to carry.
+    # "restored just now" is the correct meaning for this column on a
+    # reversal, the same as any other write to the row -- and dropping
+    # it here rather than trusting every caller's snapshot to carry a
+    # real value also means a literal `None` (nothing currently
+    # constructs one, but nothing typechecks against it either) can
+    # never reach `setattr()` and trip the column's NOT NULL constraint.
     decoded.pop("updated_at", None)
     if not _sparse_row_exists(db, model, item_id):
         _expunge_stale(db, model, item_id)

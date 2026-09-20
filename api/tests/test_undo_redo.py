@@ -839,3 +839,24 @@ def test_undoing_a_delete_action_with_no_pricing_keys_does_not_raise(db, dana, p
     assert db.get(Item, item_id) is not None
     assert db.get(ProjectLaborLine, item_id) is None, "a missing key must not fabricate a pricing row"
     assert db.get(ProjectMaterialPrice, item_id) is None, "a missing key must not fabricate a pricing row"
+
+
+def test_undo_of_a_supplier_quote_apply_restores_the_prior_price(client, db, signed_in_user, project, item):
+    from decimal import Decimal
+    from app.takeoff import actions
+    from app.takeoff.models import ProjectMaterialPrice
+    project.org_id = signed_in_user.org_id
+    db.add(ProjectMaterialPrice(item_id=item.id, price_override=Decimal("15"), source="project_price")); db.flush()
+    before = {"rows": {str(item.id): {"item_id": str(item.id), "price_override": "15.00", "source": "project_price", "reason": "",
+                                       "supplier_name": "", "quote_date": None, "updated_by_user_id": None, "updated_at": None}}}
+    row = db.get(ProjectMaterialPrice, item.id)
+    row.price_override, row.source, row.supplier_name = Decimal("9.10"), "supplier_quote", "Codale"
+    db.flush()
+    after = {"rows": {str(item.id): {**before["rows"][str(item.id)], "price_override": "9.10", "source": "supplier_quote", "supplier_name": "Codale"}}}
+    actions.commit(db, actor=signed_in_user, project_id=project.id, kind="supplier_quote_apply",
+                   label="Applied supplier pricing from Codale for 1 item", before=before, after=after)
+    db.commit()
+    assert client.post(f"/api/projects/{project.id}/undo").status_code == 200
+    db.expire_all()
+    row = db.get(ProjectMaterialPrice, item.id)
+    assert row.price_override == Decimal("15") and row.source == "project_price"

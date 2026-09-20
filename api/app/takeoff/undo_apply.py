@@ -91,6 +91,9 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
         _apply_sparse_pricing_row(db, ProjectLaborLine, action.item_id, LABOR_LINE_SNAPSHOT_TYPES, state)
     elif action.kind == "material_price_edit":
         _apply_sparse_pricing_row(db, ProjectMaterialPrice, action.item_id, MATERIAL_PRICE_SNAPSHOT_TYPES, state)
+    elif action.kind == "supplier_quote_apply":
+        for item_id, row_state in (state.get("rows") or {}).items():
+            _apply_sparse_pricing_row(db, ProjectMaterialPrice, uuid.UUID(item_id), MATERIAL_PRICE_SNAPSHOT_TYPES, row_state)
     else:  # approve, reject, unreject, edit
         _apply_item_state(db, action.item_id, state)
 
@@ -216,6 +219,16 @@ def _apply_sparse_pricing_row(db: DbSession, model: type, item_id: uuid.UUID, sn
         return
     decoded = decode_snapshot(state, snapshot_types)
     decoded.pop("item_id", None)
+    # `updated_at` is NOT NULL with `onupdate=func.now()` on both sparse
+    # pricing tables -- restoring it explicitly, including a literal
+    # `None` a caller's snapshot may carry (Task 10's supplier_quote_apply
+    # undo, whose per-row state does not always know a prior timestamp),
+    # would either violate that constraint or pin the row to a stale
+    # value. Dropping it here lets the column's own default/onupdate
+    # stamp the restore, which is what "this row changed just now" means
+    # for a housekeeping timestamp -- no test asserts an exact restored
+    # value for it.
+    decoded.pop("updated_at", None)
     if not _sparse_row_exists(db, model, item_id):
         _expunge_stale(db, model, item_id)
         db.add(model(item_id=item_id, **decoded))

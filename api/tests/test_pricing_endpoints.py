@@ -630,3 +630,55 @@ def test_usage_counts_billed_lookups_this_month(client, db, signed_in_user, org)
                         fetched_at=datetime.now(timezone.utc), billed=False, org_id=signed_in_user.org_id))
     db.commit()
     assert client.get("/api/company/market-pricing/usage").json() == {"used": 1, "cap": 2000}
+
+
+def test_price_request_download_is_an_xlsx_with_one_row_per_item(client, db, signed_in_user, project, item):
+    import io, openpyxl
+    project.org_id = signed_in_user.org_id; db.commit()
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-request")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.openxmlformats")
+    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+    assert ws.cell(2, 1).value == item.name and ws.cell(2, 8).value == str(item.id)
+
+
+def test_apply_writes_supplier_quotes_as_one_undoable_action(client, db, signed_in_user, project, item):
+    from datetime import date
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.takeoff.models import Action, Document, Job, ProjectMaterialPrice
+    project.org_id = signed_in_user.org_id
+    d = Document(project_id=project.id, filename="codale.xlsx", doc_type="Pricing", content_type="x", size_bytes=1,
+                 sha256="a" * 64, storage_key="k", uploaded_by=signed_in_user.id)
+    db.add(d); db.flush()
+    job = Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=d.id, status="done",
+              payload={"preview": {"matched": [{"item_id": str(item.id), "item_name": item.name, "current_unit_price": None,
+                                                "current_source_label": None, "new_unit_price": "9.10", "part_no": "", "notes": "", "line": 2}],
+                                   "unmatched": [], "unpriced": [], "refused": None, "supplier_name": "codale", "quote_date": None}})
+    db.add(job); db.commit()
+    r = client.post(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/apply",
+                    json={"item_ids": [str(item.id)], "supplier_name": "Codale", "quote_date": "2026-09-18", "save_to_company": True})
+    assert r.status_code == 200, r.text
+    row = r.json()["rows"][0]
+    assert row["source_label"] == "Supplier quote" and row["unit_price"] == "9.10" and row["status"] == "approved"
+    pm = db.get(ProjectMaterialPrice, item.id)
+    assert pm.source == "supplier_quote" and pm.supplier_name == "Codale" and pm.quote_date == date(2026, 9, 18)
+    a = db.scalars(select(Action).where(Action.project_id == project.id, Action.kind == "supplier_quote_apply")).one()
+    assert a.label == "Applied supplier pricing from Codale for 1 item" and a.before == {"rows": {str(item.id): {}}}
+    from app.takeoff.models import CompanyMaterialPrice
+    cp = db.scalars(select(CompanyMaterialPrice).where(CompanyMaterialPrice.item_name == item.name)).one()
+    assert cp.unit_price == Decimal("9.10") and cp.effective_date == date(2026, 9, 18)
+
+
+def test_apply_refuses_an_item_not_in_the_preview(client, db, signed_in_user, project, item):
+    import uuid
+    from app.takeoff.models import Document, Job
+    project.org_id = signed_in_user.org_id
+    d = Document(project_id=project.id, filename="q.csv", doc_type="Pricing", content_type="x", size_bytes=1,
+                 sha256="b" * 64, storage_key="k2", uploaded_by=signed_in_user.id)
+    db.add(d); db.flush()
+    db.add(Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=d.id, status="done",
+               payload={"preview": {"matched": [], "unmatched": [], "unpriced": [], "refused": None, "supplier_name": "", "quote_date": None}}))
+    db.commit()
+    r = client.post(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/apply",
+                    json={"item_ids": [str(item.id)], "supplier_name": "X", "quote_date": "2026-09-18", "save_to_company": False})
+    assert r.status_code == 422

@@ -114,6 +114,17 @@ def enqueue_render(db: Session, sheet: Sheet, prefix: str) -> Job | None:
     return job
 
 
+def enqueue_price_sheet(db: Session, document: Document, requested_by: uuid.UUID | None) -> Job:
+    """Parse an uploaded price sheet into a preview. One per document;
+    a second upload is a second document."""
+    project = db.get(Project, document.project_id)
+    job = Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=document.id,
+              requested_by=requested_by, max_attempts=MAX_ATTEMPTS)
+    db.add(job)
+    db.flush()
+    return job
+
+
 def enqueue_price(db: Session, project: Project, requested_by: uuid.UUID | None, run_id: uuid.UUID | None = None) -> Job | None:
     """One market-pricing job per project at a time (estimate-first-
     pricing §3). Queued by the run that just completed, by the

@@ -532,6 +532,26 @@ class MaterialListOut(BaseModel):
     model_config = MODEL_CONFIG
 
 
+class PriceSheetPreviewOut(BaseModel):
+    state: str                     # "reading" | "ready" | "failed"
+    error: str = ""
+    matched: list[dict] = []
+    unmatched: list[dict] = []
+    unpriced: list[dict] = []
+    refused: str | None = None
+    supplier_name: str = ""
+    quote_date: date | None = None
+    model_config = MODEL_CONFIG
+
+
+class PriceSheetApplyIn(BaseModel):
+    item_ids: list[uuid.UUID]
+    supplier_name: str = Field(min_length=1, max_length=200)
+    quote_date: date
+    save_to_company: bool = False
+    model_config = MODEL_CONFIG
+
+
 class CompanyLaborRatesIn(BaseModel):
     journeyman_rate: Decimal
     foreman_rate: Decimal

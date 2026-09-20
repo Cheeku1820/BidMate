@@ -28,6 +28,7 @@ import json
 import os
 
 from .catalog import CATALOG
+from .contracts import RESOLVE_CATEGORIES, RESOLVE_SYSTEMS
 
 MODEL = "claude-opus-5"
 
@@ -211,8 +212,6 @@ def estimate(tags: list[dict], schedule_text: str, location: str) -> dict:
     return json.loads(text)
 
 
-_RESOLVE_SYSTEMS = ("Lighting", "Power", "Distribution", "Low voltage", "Life safety", "Unknown")
-_RESOLVE_CATEGORIES = ("Fixtures", "Devices", "Boxes", "Equipment", "Unclassified")
 
 
 def _resolve_prompt(text: str, item_ctx: dict, candidates: list[dict], schedule_text: str) -> str:
@@ -239,7 +238,7 @@ Rules:
 - "schedule_match" is {{"sheet", "line"}} only when the schedule text above actually lists the type the estimator named; otherwise null. Never invent a line.
 - "quantity" is a number only when the estimator stated a count in their sentence; otherwise null. Never take a count from the schedule text.
 - "summary" is one sentence, sentence case, in plain construction language, saying what would change -- no mention of models, confidence, or "I think".
-- "system" is one of {", ".join(_RESOLVE_SYSTEMS)}; "category" one of {", ".join(_RESOLVE_CATEGORIES)}; "unit" is "ea" unless the estimator said otherwise."""
+- "system" is one of {", ".join(RESOLVE_SYSTEMS)}; "category" one of {", ".join(RESOLVE_CATEGORIES)}; "unit" is "ea" unless the estimator said otherwise."""
 
 
 def resolve_proposal(text: str, item_ctx: dict, candidates: list[dict], schedule_text: str) -> dict:
@@ -276,8 +275,8 @@ def resolve_proposal(text: str, item_ctx: dict, candidates: list[dict], schedule
     if parsed is None:
         raise ValueError("no parsed proposal")
     out = parsed.model_dump()
-    if out["system"] not in _RESOLVE_SYSTEMS:
+    if out["system"] not in RESOLVE_SYSTEMS:
         out["system"] = "Unknown"
-    if out["category"] not in _RESOLVE_CATEGORIES:
+    if out["category"] not in RESOLVE_CATEGORIES:
         out["category"] = "Unclassified"
     return out

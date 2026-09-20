@@ -580,12 +580,22 @@ class ScheduleMatchOut(BaseModel):
 class ProposalOut(BaseModel):
     """What the estimator's sentence would change -- shown, not written.
     Shape-constrained on purpose (say-what-it-is spec): there is no
-    field a drawing set could steer into an action."""
+    field a drawing set could steer into an action.
+
+    The same shape comes back as `ApplyProposalIn.proposal`, so the text
+    fields carry their columns' widths (`Item.name` and
+    `symbol_resolutions.name` are String(300); `system` and `category`
+    String(100)). Membership in the closed system/category sets and the
+    non-blank/quantity rules are the apply route's
+    (`resolve_apply._validate_reclassify`), with the copy `PATCH
+    /items/{id}` uses -- an exclude or couldn't-read proposal echoes the
+    item's current values, which a hand edit may have set outside those
+    sets, and that echo must still serialize."""
     intent: str  # "reclassify" | "exclude" | "unknown"
     target_item_ids: list[uuid.UUID]
-    name: str
-    system: str
-    category: str
+    name: str = Field(max_length=300)
+    system: str = Field(max_length=100)
+    category: str = Field(max_length=100)
     unit: str
     catalog_id: str | None = None
     schedule_match: ScheduleMatchOut | None = None

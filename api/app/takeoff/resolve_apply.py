@@ -17,18 +17,28 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
+from app.engine.contracts import RESOLVE_CATEGORIES, RESOLVE_SYSTEMS
 from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff import review
 from app.takeoff.actions import commit, encode_snapshot
 from app.takeoff.concurrency import check_version
-from app.takeoff.models import Action, Item, ReviewStatus, Sheet, SymbolResolution, Warning
+from app.takeoff.edit_validation import validate_edit
+from app.takeoff.models import Action, Item, ReviewStatus, Sheet, SymbolResolution, Warning, WarningReason
 from app.takeoff.snapshots import ITEMS_SNAPSHOT_KEY, _column_snapshot
 from app.takeoff.totals import countable_items
 
 LIBRARY_KEY = "library"
 _REVERSIBLE_ITEM_FIELDS = ("name", "system", "category", "quantity", "status", "approved_by_user_id", "approved_at",
                            "rejected_by_user_id", "rejected_at", "reject_reason", "resolve_note")
+
+# The warnings a reclassify is entitled to clear: the classifier's own
+# reasons -- a symbol not in the legend, a fixture disagreeing with its
+# schedule. Never SCALE: naming a measured item says nothing about the
+# sheet's scale, and deleting that warning would leave a Missing
+# information row with nothing explaining why (WarningReason's docstring
+# in models.py is about exactly this).
+_CLEARABLE_REASONS = (WarningReason.LEGEND, WarningReason.SCHEDULE_CONFLICT)
 
 
 @dataclass
@@ -38,12 +48,47 @@ class ApplyResult:
     also_matching_sheets: list[str] = field(default_factory=list)
 
 
+def _clearable_warnings(db: DbSession, item_id: uuid.UUID) -> list[Warning]:
+    return db.scalars(select(Warning).where(Warning.item_id == item_id, Warning.reason.in_(_CLEARABLE_REASONS))).all()
+
+
 def _item_snapshot(db: DbSession, item: Item, *, warnings: bool) -> dict:
+    """`warnings` snapshots only the warnings the apply clears, so undo
+    puts back exactly those and redo (`undo_apply._apply_resolve`, which
+    deletes whatever the before-snapshot lists) never removes a scale
+    warning the apply itself left alone."""
     snap = {"id": item.id, **{k: getattr(item, k) for k in _REVERSIBLE_ITEM_FIELDS}}
     if warnings:
-        rows = db.scalars(select(Warning).where(Warning.item_id == item.id)).all()
-        snap["warnings"] = [encode_snapshot(_column_snapshot(w)) for w in rows]
+        snap["warnings"] = [encode_snapshot(_column_snapshot(w)) for w in _clearable_warnings(db, item.id)]
     return encode_snapshot(snap)
+
+
+def _count(rows: list[Item]) -> str:
+    """The device count the label names: the summed quantity across the
+    cluster's rows (the same figure `resolve.resolve_for_item` reports as
+    `count`, and the one the panel's statement shows), never the row
+    count -- a tag counted 30 times is one row with quantity 30."""
+    total = sum((Decimal(r.quantity) for r in rows), Decimal(0))
+    return f"{total.normalize():f}"
+
+
+def _validate_reclassify(proposal: dict) -> None:
+    """The same rules `PATCH /items/{id}` applies to these fields
+    (`edit_validation.validate_edit`), plus the closed sets the
+    classifier draws `system` and `category` from. This route writes the
+    same columns from a client-supplied body, so it refuses the same
+    things with the same copy -- ROADMAP invariant 4, rules are
+    server-authoritative."""
+    if not str(proposal.get("name") or "").strip():
+        raise DomainError("field_cannot_be_empty", "Name cannot be blank. Say what the item is, then apply it again.")
+    changes = {"system": proposal.get("system"), "category": proposal.get("category")}
+    if proposal.get("quantity") is not None:
+        changes["quantity"] = proposal["quantity"]
+    validate_edit(changes)
+    if proposal["system"] not in RESOLVE_SYSTEMS:
+        raise DomainError("invalid_system", f"System must be one of {', '.join(RESOLVE_SYSTEMS)}. Correct it and apply again.")
+    if proposal["category"] not in RESOLVE_CATEGORIES:
+        raise DomainError("invalid_category", f"Category must be one of {', '.join(RESOLVE_CATEGORIES)}. Correct it and apply again.")
 
 
 def _also_matching(db: DbSession, item: Item, target_ids: set[uuid.UUID]) -> tuple[int, list[str]]:
@@ -67,6 +112,8 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
     intent = proposal["intent"]
     if intent not in ("reclassify", "exclude"):
         raise DomainError("proposal_not_applicable", "This proposal can't be applied — say what the item is first.")
+    if intent == "reclassify":
+        _validate_reclassify(proposal)
     ids = sorted({uuid.UUID(str(i)) for i in proposal["target_item_ids"]} | {item.id})
     versions = {uuid.UUID(str(k)): int(v) for k, v in (proposal.get("versions") or {}).items()}
 
@@ -86,16 +133,28 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
         reason = (proposal.get("reject_reason") or note or "").strip()
         if not reason:
             raise DomainError("reject_reason_required", "Say why this isn't counted — the reason stays with the item.")
+        label = f"Rejected {_count(locked)} — {reason}"
         for row in locked:
             before_rows.append(_item_snapshot(db, row, warnings=False))
             review._apply_reject(db, row, actor, row.version)
             row.reject_reason = reason
             after_rows.append(_item_snapshot(db, row, warnings=False))
-        count = len(locked)
-        label = f"Rejected {count} — {reason}"
         action = commit(db, actor=actor, project_id=item.project_id, kind="resolve", label=label, item_id=item.id,
                         before={ITEMS_SNAPSHOT_KEY: before_rows}, after={ITEMS_SNAPSHOT_KEY: after_rows}, note=note)
         return ApplyResult(action=action)
+
+    # A stated count is one number for one row. The cluster is every
+    # same-tag row on the sheet, and writing "28" to each of two rows
+    # would count 56 -- so with more than one row the count is refused
+    # and the estimator corrects each row where its own count is edited.
+    if proposal.get("quantity") is not None and len(locked) > 1:
+        raise DomainError("quantity_needs_one_row",
+                          f"This tag is counted as {len(locked)} rows on this sheet — correct the count on each row.")
+    # Every target is checked before any is written, so a refusal
+    # (a Missing information row in the cluster) leaves nothing behind.
+    if approve:
+        for row in locked:
+            review.refuse_unless_approvable(row)
 
     clears_warning = bool(proposal.get("schedule_match")) or bool(proposal.get("catalog_id"))
     for row in locked:
@@ -107,13 +166,13 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
             row.quantity = Decimal(str(proposal["quantity"]))
         row.resolve_note = note or None
         if clears_warning:
-            for w in db.scalars(select(Warning).where(Warning.item_id == row.id)).all():
+            for w in _clearable_warnings(db, row.id):
                 db.delete(w)
             if row.status is ReviewStatus.ATTENTION:
                 row.status = ReviewStatus.READY
         row.version += 1
         if approve:
-            review._apply_approve(db, actor, row, None)   # raises on Missing information / rejected -- nothing committed
+            review._apply_approve(db, actor, row, None)   # re-checks under FOR UPDATE; nothing committed on a refusal
         db.flush()
         after_rows.append(_item_snapshot(db, row, warnings=clears_warning))
 
@@ -129,8 +188,7 @@ def apply_proposal(db: DbSession, actor: User, item: Item, proposal: dict, *, ap
         db.add(target); db.flush(); db.refresh(target)
         lib_after = encode_snapshot(_column_snapshot(target))
 
-    count = len(locked)
-    label = (f"Approved {count} × {proposal['name']}" if approve else f"Read {item.source_tag or 'item'} as {proposal['name']}")
+    label = (f"Approved {_count(locked)} × {proposal['name']}" if approve else f"Read {item.source_tag or 'item'} as {proposal['name']}")
     action = commit(db, actor=actor, project_id=item.project_id, kind="resolve", label=label, item_id=item.id,
                     before={ITEMS_SNAPSHOT_KEY: before_rows, LIBRARY_KEY: lib_before},
                     after={ITEMS_SNAPSHOT_KEY: after_rows, LIBRARY_KEY: lib_after}, note=note)

@@ -64,11 +64,15 @@ def resolve_for_item(db: DbSession, item: Item, text: str, *, cluster: bool = Tr
     if routed.intent == "exclude":
         return {**base, "intent": "exclude", "reject_reason": text.strip(), "source": "read",
                 "summary": f"Reject {count} — {text.strip()}"}
-    # An empty sentence, or one that reads as project context rather than
-    # a device identity ("ceiling is 14 feet") -- context capture is out
-    # of this spec's scope, so it is a couldn't-read result here rather
-    # than something sent to the classification model as a device name.
-    if not (text or "").strip() or routed.intent == "set_context":
+    # On this route the only intent that matters is exclude-vs-not. The
+    # panel router's other intents are read from the vocabulary of free-
+    # form utterances ("the ceiling is 14 feet" is context there), and
+    # that vocabulary -- ceiling, height, mounting, voltage -- is half of
+    # what an estimator says when naming a device ("counter height duplex
+    # receptacle", "ceiling mounted occupancy sensor"). The box asked what
+    # the item is, so every sentence that is not an exclusion is a device
+    # name and reaches Classification. Only an empty one is unreadable.
+    if not (text or "").strip():
         return {**base, "intent": "unknown", "source": "read", "summary": "Couldn't read that — try naming the device."}
 
     resolutions = [

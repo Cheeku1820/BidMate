@@ -81,6 +81,27 @@ def test_count_is_the_placement_count_not_the_row_count(client, db, item, signed
     assert r2.json()["summary"] == "Reject 30 — not a device"
 
 
+@pytest.mark.parametrize("sentence", ["counter height duplex receptacle", "ceiling mounted occupancy sensor",
+                                      "surface mounting box", "480 voltage disconnect"])
+def test_a_device_name_in_context_vocabulary_still_reaches_classification(client, db, item, signed_in_user, stub_model, sentence):
+    """The panel router reads "ceiling", "height", "mounting", "voltage"
+    as project context. On this route the estimator was asked what the
+    item is, so a sentence with those words is a device name and must
+    produce a named proposal, never "Couldn't read that"."""
+    body = client.post(f"/api/items/{item.id}/resolve", json={"text": sentence}).json()
+    assert body["intent"] == "reclassify", body
+    assert body["name"] == "2x4 LED troffer, 4000K — type F"
+    assert len(stub_model) == 1 and stub_model[0]["text"] == sentence
+
+
+@pytest.mark.parametrize("sentence", ["counter height duplex receptacle", "ceiling mounted occupancy sensor"])
+def test_a_device_name_in_context_vocabulary_is_named_on_the_typed_path_too(client, db, item, signed_in_user, monkeypatch, sentence):
+    monkeypatch.setattr(engine_resolve.llm, "available", lambda: False)
+    body = client.post(f"/api/items/{item.id}/resolve", json={"text": sentence}).json()
+    assert body["intent"] == "reclassify" and body["source"] == "typed"
+    assert body["name"] == sentence
+
+
 def test_empty_text_is_unknown(client, item, signed_in_user, stub_model):
     body = client.post(f"/api/items/{item.id}/resolve", json={"text": "   "}).json()
     assert body["intent"] == "unknown" and not stub_model

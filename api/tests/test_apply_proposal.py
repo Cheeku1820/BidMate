@@ -23,25 +23,61 @@ def _proposal(items, **over):
 
 
 def test_apply_renames_the_cluster_approves_and_records_one_action(client, db, item, signed_in_user):
+    """A two-row cluster, no count stated: both rows renamed and approved
+    in one action, each keeping its own count (14 + 1), and the label
+    names the device count -- 15 -- not the row count."""
     item.source_tag = "F"; item.status = ReviewStatus.ATTENTION
     db.add(Warning(item_id=item.id, reason=WarningReason.LEGEND, title="Fixture type needs confirmation",
                    found="f", why="w", fix="x", where_="E-501"))
     twin = _twin(db, item); db.commit()
     r = client.post(f"/api/items/{item.id}/apply-proposal",
-                    json={"proposal": _proposal([item, twin], quantity=28), "approve": True, "note": "type F per E-501"})
+                    json={"proposal": _proposal([item, twin]), "approve": True, "note": "type F per E-501"})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["label"] == "Approved 2 × 2x4 LED troffer, 4000K — type F"
+    assert body["label"] == "Approved 15 × 2x4 LED troffer, 4000K — type F"
     assert body["also_matching"] == {"count": 0, "sheet_numbers": []}
     db.expire_all()
-    for it in (item, twin):
+    for it, qty in ((item, 14), (twin, 1)):
         fresh = db.get(Item, it.id)
-        assert fresh.name == "2x4 LED troffer, 4000K — type F" and float(fresh.quantity) == 28
+        assert fresh.name == "2x4 LED troffer, 4000K — type F" and float(fresh.quantity) == qty
         assert fresh.status is ReviewStatus.APPROVED and fresh.resolve_note == "type F per E-501"
     assert db.scalars(select(Warning).where(Warning.item_id == item.id)).first() is None
     actions = db.scalars(select(Action).where(Action.project_id == item.project_id)).all()
     assert [a.kind for a in actions] == ["resolve"]
     assert len(actions[0].before["items"]) == 2 and actions[0].note == "type F per E-501"
+
+
+def test_a_stated_count_lands_on_a_one_row_cluster_and_names_the_label(client, db, item, signed_in_user):
+    """The engine's shape: one row per (sheet, tag) with quantity = the
+    placement count. "28 of these" corrects that one row's count, and
+    the label says 28 -- the figure the card and the statement show."""
+    item.source_tag = "F"; item.status = ReviewStatus.ATTENTION; item.quantity = 30; db.commit()
+    r = client.post(f"/api/items/{item.id}/apply-proposal",
+                    json={"proposal": _proposal([item], quantity=28), "approve": True, "note": "28 of these, type F"})
+    assert r.status_code == 200, r.text
+    assert r.json()["label"] == "Approved 28 × 2x4 LED troffer, 4000K — type F"
+    db.expire_all()
+    fresh = db.get(Item, item.id)
+    assert float(fresh.quantity) == 28 and fresh.status is ReviewStatus.APPROVED
+
+
+def test_a_stated_count_is_refused_on_a_multi_row_cluster(client, db, item, signed_in_user):
+    """Writing one count to every row would multiply it (28 on two rows
+    is 56 in the drawer). Refused with the row count and where to fix
+    it; nothing written."""
+    item.source_tag = "F"; item.status = ReviewStatus.ATTENTION
+    twin = _twin(db, item); db.commit()
+    r = client.post(f"/api/items/{item.id}/apply-proposal",
+                    json={"proposal": _proposal([item, twin], quantity=28), "approve": True, "note": "28 of these"})
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == {"code": "quantity_needs_one_row",
+                                  "message": "This tag is counted as 2 rows on this sheet — correct the count on each row."}
+    db.expire_all()
+    for it, qty in ((item, 14), (twin, 1)):
+        fresh = db.get(Item, it.id)
+        assert float(fresh.quantity) == qty and fresh.status is not ReviewStatus.APPROVED
+        assert fresh.name != "2x4 LED troffer, 4000K — type F"
+    assert db.scalars(select(Action)).first() is None
 
 
 def test_confirm_without_approve_leaves_status_alone(client, db, item, signed_in_user):
@@ -55,7 +91,8 @@ def test_exclude_rejects_with_the_reason(client, db, item, signed_in_user):
     p = _proposal([item], intent="exclude", reject_reason="not a device", name=item.name)
     r = client.post(f"/api/items/{item.id}/apply-proposal", json={"proposal": p, "approve": False, "note": "not a device"})
     assert r.status_code == 200, r.text
-    assert r.json()["label"] == "Rejected 1 — not a device"
+    # The device count (the fixture's quantity), not the row count.
+    assert r.json()["label"] == "Rejected 14 — not a device"
     db.expire_all()
     fresh = db.get(Item, item.id)
     assert fresh.rejected_at is not None and fresh.reject_reason == "not a device"
@@ -69,6 +106,67 @@ def test_missing_information_refuses_the_whole_apply(client, db, item, signed_in
     assert r.json()["detail"]["code"] == "missing_information_blocks_approval"
     db.expire_all()
     assert db.get(Item, item.id).name != "2x4 LED troffer, 4000K — type F"
+
+
+def test_a_scale_warning_on_the_anchor_survives_an_apply_and_its_undo_redo(client, db, item, signed_in_user):
+    """Naming the item resolves the classifier's warnings (legend,
+    schedule conflict), never the sheet's scale warning -- deleting that
+    would leave a Missing information row with nothing explaining why.
+    Undo puts the legend warning back without duplicating the scale
+    one; redo removes only the legend warning again."""
+    item.source_tag = "F"; item.status = ReviewStatus.MISSING
+    db.add(Warning(item_id=item.id, reason=WarningReason.SCALE, title="Scale needs confirmation",
+                   found="f", why="w", fix="x", where_="E2.1"))
+    db.add(Warning(item_id=item.id, reason=WarningReason.LEGEND, title="Symbol not in legend",
+                   found="f", why="w", fix="x", where_="E-501"))
+    db.commit()
+
+    def reasons():
+        db.expire_all()
+        return sorted(w.reason.value for w in db.scalars(select(Warning).where(Warning.item_id == item.id)))
+
+    r = client.post(f"/api/items/{item.id}/apply-proposal",
+                    json={"proposal": _proposal([item], catalog_id="luminaire_troffer"), "approve": False, "note": "type F"})
+    assert r.status_code == 200, r.text
+    assert reasons() == ["scale"]
+    assert db.get(Item, item.id).status is ReviewStatus.MISSING
+
+    client.post(f"/api/projects/{item.project_id}/undo")
+    assert reasons() == ["legend", "scale"]
+
+    client.post(f"/api/projects/{item.project_id}/redo")
+    assert reasons() == ["scale"]
+
+
+@pytest.mark.parametrize("over, code", [
+    ({"name": "   "}, "field_cannot_be_empty"),
+    ({"system": ""}, "field_cannot_be_empty"),
+    ({"category": " "}, "field_cannot_be_empty"),
+    ({"quantity": -3}, "invalid_quantity"),
+    ({"quantity": 10**12}, "invalid_quantity"),
+    ({"system": "Plumbing"}, "invalid_system"),
+    ({"category": "Receptacles"}, "invalid_category"),
+])
+def test_apply_refuses_what_an_edit_would_refuse(client, db, item, signed_in_user, over, code):
+    """The same rules PATCH /items/{id} applies, with a code and message
+    the panel's error banner shows -- this route writes the same
+    columns from a client-supplied body, so it is not a way around them."""
+    item.source_tag = "F"; db.commit()
+    r = client.post(f"/api/items/{item.id}/apply-proposal",
+                    json={"proposal": _proposal([item], **over), "approve": True, "note": "x"})
+    assert r.status_code == 400, r.text
+    detail = r.json()["detail"]
+    assert detail["code"] == code and detail["message"]
+    db.expire_all()
+    fresh = db.get(Item, item.id)
+    assert fresh.name == "20A duplex receptacle" and fresh.status is ReviewStatus.READY
+    assert db.scalars(select(Action)).first() is None
+
+
+def test_apply_refuses_a_name_wider_than_its_column(client, db, item, signed_in_user):
+    r = client.post(f"/api/items/{item.id}/apply-proposal",
+                    json={"proposal": _proposal([item], name="x" * 301), "approve": False, "note": "x"})
+    assert r.status_code == 422
 
 
 def test_stale_version_refuses(client, db, item, signed_in_user):

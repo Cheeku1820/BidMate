@@ -11,6 +11,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# The closed vocabularies a resolved item's `system` and `category` are
+# drawn from. Classification coerces a model answer onto them
+# (`llm.resolve_proposal`), and the apply route refuses anything outside
+# them (`takeoff/resolve_apply.py`) -- one list, so a value that lands
+# through a sentence is one the pricing basis and the grid already know.
+RESOLVE_SYSTEMS = ("Lighting", "Power", "Distribution", "Low voltage", "Life safety", "Unknown")
+RESOLVE_CATEGORIES = ("Fixtures", "Devices", "Boxes", "Equipment", "Unclassified")
+
 
 @dataclass
 class DetectedSheet:

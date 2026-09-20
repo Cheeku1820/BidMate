@@ -35,6 +35,27 @@ from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPr
 from app.takeoff.snapshots import LABOR_LINE_KEY, MATERIAL_PRICE_KEY, WARNINGS_KEY, _column_snapshot
 
 
+def refuse_unless_approvable(locked: Item) -> None:
+    """The two rules that stop an approval, with the copy the A key
+    shows. Shared with `resolve_apply.apply_proposal()`, which checks
+    every locked target of a cluster *before* writing any of them, so a
+    refused apply has touched nothing -- not even the rows that came
+    earlier in id order."""
+    if locked.status is ReviewStatus.MISSING:
+        raise DomainError(
+            "missing_information_blocks_approval",
+            "This item is missing information it needs, such as a scale or "
+            "a legend entry. Resolve the warning on its sheet before approving it.",
+            status=409,
+        )
+    if locked.rejected_at is not None:
+        raise DomainError(
+            "rejected_item_cannot_be_approved",
+            "This item was rejected, so it cannot be approved as-is. Restore it, then approve it.",
+            status=409,
+        )
+
+
 def _apply_approve(db: DbSession, actor: User, item: Item, expected_version: int | None) -> tuple[dict, dict]:
     """Mutate `item` into an approved state and return its before/after
     pair, without recording an action.
@@ -62,19 +83,7 @@ def _apply_approve(db: DbSession, actor: User, item: Item, expected_version: int
     if expected_version is not None:
         check_version(db, locked, expected_version)
 
-    if locked.status is ReviewStatus.MISSING:
-        raise DomainError(
-            "missing_information_blocks_approval",
-            "This item is missing information it needs, such as a scale or "
-            "a legend entry. Resolve the warning on its sheet before approving it.",
-            status=409,
-        )
-    if locked.rejected_at is not None:
-        raise DomainError(
-            "rejected_item_cannot_be_approved",
-            "This item was rejected, so it cannot be approved as-is. Restore it, then approve it.",
-            status=409,
-        )
+    refuse_unless_approvable(locked)
 
     before = {
         "status": locked.status,

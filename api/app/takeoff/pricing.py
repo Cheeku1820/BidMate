@@ -18,13 +18,21 @@ from decimal import Decimal
 # not a company setting (design doc's Known limitations).
 STALE_PRICE_DAYS = 180
 
+# A market estimate whose sellers disagree by more than half of the
+# median reads Needs attention ("Wide price range"): a person looks
+# before it stands. (high - low) / median, strictly greater.
+WIDE_RANGE_RATIO = Decimal("0.5")
+
 
 @dataclass
 class MaterialResolution:
     unit_price: Decimal | None
-    source_label: str | None  # "Project price" | "Allowance" | "Company price" | "Regional baseline" | None
+    source_label: str | None  # "Project price" | "Allowance" | "Supplier quote" | "Company price" | "Market estimate" | "Regional baseline" | None
     status: str  # "ready" | "attention" | "missing" | "approved"
     basis_note: str = ""
+    price_low: Decimal | None = None
+    price_high: Decimal | None = None
+    market_outcome: str | None = None
 
 
 @dataclass
@@ -39,28 +47,79 @@ class LaborResolution:
     basis_note: str = ""
 
 
-def resolve_material_price(item, project, override, company_price) -> MaterialResolution:
+def _short_date(d) -> str:
+    return f"{d:%b} {d.day}"
+
+
+def _supplier_quote_basis_note(supplier_name, quote_date) -> str:
+    """Format the basis note for a supplier quote.
+    Both present -> 'Codale, Sep 18, 2026'
+    Only name -> the name
+    Only date -> 'Sep 18, 2026'
+    Neither -> ''
+    """
+    if supplier_name and quote_date:
+        return f"{supplier_name}, {quote_date:%b} {quote_date.day}, {quote_date.year}"
+    elif supplier_name:
+        return supplier_name
+    elif quote_date:
+        return f"{quote_date:%b} {quote_date.day}, {quote_date.year}"
+    else:
+        return ""
+
+
+def resolve_material_price(item, project, override, company_price, market=None) -> MaterialResolution:
     """`override` is a ProjectMaterialPrice row or None. `company_price`
     is a CompanyMaterialPrice row (already looked up by item.name by the
-    caller) or None."""
+    caller) or None. `market` is the item's ItemMarketPrice row or None;
+    only outcome "priced" resolves, every other outcome is carried on
+    the result so the row can say what happened."""
+    outcome = market.outcome if market is not None else None
+
     if override is not None:
+        if override.source == "supplier_quote":
+            note = _supplier_quote_basis_note(
+                getattr(override, "supplier_name", None),
+                getattr(override, "quote_date", None)
+            )
+            return MaterialResolution(
+                unit_price=override.price_override, source_label="Supplier quote",
+                status="approved", basis_note=note, market_outcome=outcome
+            )
         label = "Allowance" if override.source == "allowance" else "Project price"
-        return MaterialResolution(unit_price=override.price_override, source_label=label, status="approved")
+        return MaterialResolution(
+            unit_price=override.price_override, source_label=label, status="approved",
+            market_outcome=outcome
+        )
 
     if company_price is not None:
         stale = (date.today() - company_price.effective_date) > timedelta(days=STALE_PRICE_DAYS)
         status = "attention" if stale else "ready"
-        label = "Company price"
-        return MaterialResolution(unit_price=company_price.unit_price, source_label=label, status=status)
+        return MaterialResolution(
+            unit_price=company_price.unit_price, source_label="Company price", status=status,
+            market_outcome=outcome
+        )
+
+    if market is not None and market.outcome == "priced" and market.unit_price:
+        low, high, mid = market.price_low, market.price_high, market.unit_price
+        wide = low is not None and high is not None and (high - low) / mid > WIDE_RANGE_RATIO
+        note = market.location_label
+        if market.fetched_at is not None:
+            note = f"{note}, {_short_date(market.fetched_at)}" if note else _short_date(market.fetched_at)
+        return MaterialResolution(
+            unit_price=mid, source_label="Market estimate",
+            status="attention" if wide else "ready", basis_note=note,
+            price_low=low, price_high=high, market_outcome="priced"
+        )
 
     if project.pricing_source == "llm" and item.quantity and item.material_cost:
         unit_price = item.material_cost / item.quantity
         return MaterialResolution(
             unit_price=unit_price, source_label="Regional baseline", status="ready",
-            basis_note=project.pricing_note,
+            basis_note=project.pricing_note, market_outcome=outcome,
         )
 
-    return MaterialResolution(unit_price=None, source_label=None, status="missing")
+    return MaterialResolution(unit_price=None, source_label=None, status="missing", market_outcome=outcome)
 
 
 def _labor_override_has_any_field(override) -> bool:

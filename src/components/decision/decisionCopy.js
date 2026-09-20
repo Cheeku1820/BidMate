@@ -6,6 +6,7 @@ export const EXISTING_CHIP = "Existing to remain";
 export const CUSTOM_LINE = "Read from your words as a custom item.";
 export const UNKNOWN_COPY = "Couldn't read that — try naming the device (e.g. '20A duplex receptacle').";
 export const EMPTY_HELPER = "Say what it is, or pick one above.";
+export const RESOLVE_ERROR = "Couldn't read that right now — try again.";
 
 /** The count the primary button names: the corrected one, else the item's. */
 export function approveCount(item, proposal) {

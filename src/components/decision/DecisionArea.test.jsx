@@ -302,6 +302,78 @@ describe("DecisionArea", () => {
     expect(screen.getByRole("textbox", { name: "What is this?" })).toHaveValue("type F");
   });
 
+  it("a resolve that returns after the estimator moved to another item is discarded, not shown as that item's card", async () => {
+    let resolveFn;
+    const pending = new Promise((res) => { resolveFn = res; });
+    const onResolve = vi.fn().mockReturnValue(pending);
+    const { rerender, mergedItem } = setup({ props: { onResolve } });
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "type F" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    const itemB = { ...mergedItem, id: "i2", name: "Unclassified symbol (TOP)" };
+    rerender(<DecisionArea item={itemB} sheetNumber="EP101" onResolve={onResolve} onApply={vi.fn()} onUndo={vi.fn()} onSelectItem={vi.fn()} alsoMatchingItemId="i9" />);
+    await act(async () => { resolveFn(proposal); await pending; });
+    expect(screen.queryByRole("group", { name: "Proposal" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "What is this?" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Read this" })).toBeEnabled();
+  });
+
+  it("an apply that returns after the estimator moved to another item never shows a green statement on that item", async () => {
+    let resolveApply;
+    const pendingApply = new Promise((res) => { resolveApply = res; });
+    const onApply = vi.fn().mockReturnValue(pendingApply);
+    const { rerender, mergedItem } = setup({ props: { onApply } });
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "type F per E-501" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and approve 28" }));
+    expect(onApply).toHaveBeenCalledTimes(1);
+    const itemB = { ...mergedItem, id: "i2", status: "attention" };
+    rerender(<DecisionArea item={itemB} sheetNumber="EP101" onResolve={vi.fn()} onApply={onApply} onUndo={vi.fn()} onSelectItem={vi.fn()} alsoMatchingItemId="i9" />);
+    await act(async () => { resolveApply({ label: "Approved 28 × 2x4 LED troffer", alsoMatching: { count: 0, sheetNumbers: [] } }); await pendingApply; });
+    expect(screen.queryByText(/You approved/)).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "What is this?" })).toBeInTheDocument();
+  });
+
+  it("a failed read says so, names the recovery, and leaves the box usable", async () => {
+    const onResolve = vi.fn().mockRejectedValue(new Error("network"));
+    setup({ props: { onResolve } });
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "type F" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(await screen.findByText("Couldn't read that right now — try again.")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "What is this?" })).toHaveValue("type F");
+    expect(screen.getByRole("button", { name: "Read this" })).toBeEnabled();
+    expect(screen.queryByRole("group", { name: "Proposal" })).not.toBeInTheDocument();
+    // and the next attempt goes out
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "What is this?" }), { key: "Enter" });
+    await waitFor(() => expect(onResolve).toHaveBeenCalledTimes(2));
+  });
+
+  it("an item-derived statement offers Change but not Undo (the shared undo would reverse an unrelated action)", () => {
+    setup({ item: { status: "approved", approvedBy: "Dana", approvedAt: "2026-09-18T14:41:00Z", resolveNote: "type F per E-501" } });
+    expect(screen.getByText(/You approved 30 ea/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
+  });
+
+  it("an item-derived rejected statement offers Change but not Undo", () => {
+    setup({ item: { rejected: true, rejectReason: "Not a device" } });
+    expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
+  });
+
+  it("a statement produced by this area's own apply offers Undo", async () => {
+    setup();
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "type F per E-501" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and approve 28" }));
+    await screen.findByText(/You approved 28 ea/);
+    expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change" })).toBeInTheDocument();
+  });
+
   it("selecting an already-rejected item right after a local approval shows its own statement, not a stale box (the id/status race)", async () => {
     const { onApply, rerender, mergedItem } = setup();
     const box = screen.getByRole("textbox", { name: "What is this?" });

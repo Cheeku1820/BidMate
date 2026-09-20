@@ -7,7 +7,7 @@
    ============================================================ */
 import { useEffect, useRef, useState } from "react";
 import ProposalCard from "./ProposalCard.jsx";
-import { REJECT_CHIP, EXISTING_CHIP, EMPTY_HELPER, timeShort } from "./decisionCopy.js";
+import { REJECT_CHIP, EXISTING_CHIP, EMPTY_HELPER, RESOLVE_ERROR, timeShort } from "./decisionCopy.js";
 
 export default function DecisionArea({ item, sheetNumber, onResolve, onApply, onUndo, onSelectItem, alsoMatchingItemId }) {
   const [state, setState] = useState(item.status === "approved" || item.rejected ? "done" : "box");
@@ -18,6 +18,13 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
   const [done, setDone] = useState(null); // { note, approved, rejected, count, alsoMatching, at }
   const boxRef = useRef(null);
   const cardRef = useRef(null);
+  // The item this render is for. Each async call captures it on the way
+  // out and compares on the way back: a resolve or apply that lands after
+  // the estimator has J-stepped to another item is discarded, never
+  // rendered under the new item's name (A's proposal card on B, or a
+  // green "You approved" on a B that is not approved).
+  const idRef = useRef(item.id);
+  idRef.current = item.id;
 
   // A new item resets the area; a refresh of the SAME item reconciles
   // instead. These used to be two effects on different deps — but when
@@ -33,7 +40,7 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
   useEffect(() => {
     if (prevIdRef.current !== item.id) {
       prevIdRef.current = item.id;
-      setText(""); setProposal(null); setHelper(""); setDone(null);
+      setText(""); setProposal(null); setHelper(""); setDone(null); setBusy(false);
       setState(item.status === "approved" || item.rejected ? "done" : "box");
       return;
     }
@@ -78,22 +85,38 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
       return submit(item.name);
     }
     setHelper(""); setBusy(true);
+    const startedFor = item.id;
     try {
       const p = await onResolve(s);
+      if (startedFor !== idRef.current) return; // a different item is selected now; the reset already ran
       setText(s); setProposal(p); setState("card");
-    } finally { setBusy(false); }
+    } catch {
+      // A failed read leaves the box as it was, with a line that says
+      // what to do — never a silent no-op or a stuck busy button.
+      if (startedFor !== idRef.current) return;
+      setHelper(RESOLVE_ERROR);
+    } finally {
+      if (startedFor === idRef.current) setBusy(false);
+    }
   }
 
   async function apply(approve) {
     if (busy) return;
     setBusy(true);
+    const startedFor = item.id;
     try {
       const res = await onApply(proposal, { approve, note: text });
+      if (startedFor !== idRef.current) return; // the write landed on the item it was for; this area shows another
       if (!res) return; // the panel's error banner explains; stay on the card
       setDone({ note: text, approved: approve, rejected: proposal.intent === "exclude",
                 count: proposal.quantity ?? item.quantity, alsoMatching: res.alsoMatching, at: new Date().toISOString(), name: proposal.name });
       setState("done");
-    } finally { setBusy(false); }
+    } catch {
+      // The store surfaces the refusal in the panel's banner; stay on
+      // the card so the estimator can press again or change wording.
+    } finally {
+      if (startedFor === idRef.current) setBusy(false);
+    }
   }
 
   // Escape's target from the card, and "Change wording": normally back to
@@ -151,13 +174,22 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
       setText(note);
       setState("box");
     }
+    // Undo is the shared undo, and it reverses whatever is at the head of
+    // the stack. That is this statement's own action only when the
+    // statement is local to this mount (`done` set by this component's
+    // apply). An item-derived statement — an item approved or rejected
+    // earlier, by anyone, selected now — offers only Change: its Undo
+    // would reverse some unrelated action and then show the box on an
+    // item that is still Estimator approved.
+    const undoBtn = done ? <button className="linkbtn" onClick={handleUndo}>Undo</button> : null;
+    const changeBtn = <button className="linkbtn" onClick={() => setState("box")}>Change</button>;
     return (
       <div className={"decision-done " + tone} role="status">
         <p className="decision-done__lead">
           {rejected ? `✕ You rejected ${count} — "${note}"` : approved ? `✓ You approved ${count} ${item.unit}${at ? " · " + timeShort(at) : ""}` : `You read this as ${done?.name ?? item.name}`}
         </p>
-        {!rejected && note ? <p className="value value--muted">From your note: "{note}" · <button className="linkbtn" onClick={handleUndo}>Undo</button> · <button className="linkbtn" onClick={() => setState("box")}>Change</button></p>
-                          : <p className="value value--muted"><button className="linkbtn" onClick={handleUndo}>Undo</button></p>}
+        {!rejected && note ? <p className="value value--muted">From your note: "{note}" · {undoBtn}{undoBtn ? " · " : null}{changeBtn}</p>
+                          : <p className="value value--muted">{undoBtn ?? changeBtn}</p>}
         {done?.alsoMatching?.count > 0 ? (
           <p className="value">
             {done.alsoMatching.count} more {item.sourceTag} on {done.alsoMatching.sheetNumbers.join(", ")} read the same way —{" "}
@@ -185,10 +217,10 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
           if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
         }} />
       <div className="decision__chips">
-        <button type="button" className="chip" onClick={() => submit(item.name)}>{item.name}</button>
-        {item.scheduleHint ? <button type="button" className="chip" onClick={() => submit(item.scheduleHint)}>{item.scheduleHint}</button> : null}
-        <button type="button" className="chip" onClick={() => submit(REJECT_CHIP)}>{REJECT_CHIP}</button>
-        <button type="button" className="chip" onClick={() => submit(EXISTING_CHIP)}>{EXISTING_CHIP}</button>
+        <button type="button" className="decision__chip" onClick={() => submit(item.name)}>{item.name}</button>
+        {item.scheduleHint ? <button type="button" className="decision__chip" onClick={() => submit(item.scheduleHint)}>{item.scheduleHint}</button> : null}
+        <button type="button" className="decision__chip" onClick={() => submit(REJECT_CHIP)}>{REJECT_CHIP}</button>
+        <button type="button" className="decision__chip" onClick={() => submit(EXISTING_CHIP)}>{EXISTING_CHIP}</button>
       </div>
       {helper ? <p className="value value--muted">{helper}</p> : null}
       <div className="actions"><button className="btn btn--primary btn--block" disabled={busy} onClick={() => submit()}>Read this</button></div>

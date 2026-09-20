@@ -343,6 +343,7 @@ export function createApiStore() {
   async function createProject({
     name,
     location,
+    postalCode = "",
     number = "",
     customer = "",
     bidDueDate = null,
@@ -359,6 +360,7 @@ export function createApiStore() {
       body: {
         name,
         location,
+        postalCode,
         number,
         customer,
         bidDueDate,
@@ -367,6 +369,20 @@ export function createApiStore() {
       },
     });
     return mapProject(raw);
+  }
+
+  /** PATCH /api/projects/{id}/postal-code -- the one project field an
+   *  estimator edits after creation today (ProjectSettings.jsx). Unlike
+   *  ProjectCreateIn/ProjectOut, this route's body is snake_case
+   *  (PostalCodeIn uses MODEL_CONFIG, not CAMEL_MODEL_CONFIG), so the
+   *  request body below is deliberately not camelCase. */
+  async function setPostalCode(projectId, postalCode) {
+    const p = await request(`/api/projects/${projectId}/postal-code`, {
+      method: "PATCH",
+      body: { postal_code: postalCode },
+    });
+    invalidateCache();
+    return mapProject(p);
   }
 
   /** Starts a takeoff run behind the API (B2) -- the client no longer
@@ -634,6 +650,7 @@ export function createApiStore() {
     redo,
     listProjects,
     createProject,
+    setPostalCode,
     startTakeoff,
     getProcessing,
     listScope,

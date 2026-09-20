@@ -17,7 +17,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import { resolveProject, setProjectOverride, restoreCompanyDefault } from "../../lib/settingsStore.js";
-import { formatCalendarDate, NOT_SET } from "../../lib/format.js";
+import { formatCalendarDate, NOT_SET, saveStateText } from "../../lib/format.js";
+
+// Five digits or empty -- the same shape PostalCodeIn (schemas.py)
+// accepts. Checked here too so a malformed ZIP never reaches the wire
+// and shows an estimator-facing reason inline, at the field, rather
+// than as a rejected-request message with no recovery action named.
+const ZIP_PATTERN = /^\d{5}$/;
 
 // The estimator-owned values a project may override. Details (name,
 // address) are project facts, not overrides, so they render separately.
@@ -38,6 +44,24 @@ export default function ProjectSettings({ store }) {
   const [errorMessage, setErrorMessage] = useState(null);
   const [resolved, setResolved] = useState(() => resolveProject(projectId));
 
+  // The ZIP field: this screen isn't routed inside ProjectWorkspaceLayout
+  // (it's the estimator's own listProjects fetch, not the polled review
+  // snapshot -- see the load() below), so there's no useWorkspaceContext()
+  // to borrow runMutation/showToast from. Its own save-state and toast
+  // follow the identical convention (DESIGN.md's Saving…/Saved rhythm,
+  // the pricing screens' five-second toast) rather than a different one.
+  const [postalCode, setPostalCodeValue] = useState("");
+  const [savedPostalCode, setSavedPostalCode] = useState("");
+  const [zipError, setZipError] = useState(null);
+  const [saved, setSaved] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  const showToast = useCallback((text) => {
+    const id = Date.now();
+    setToast({ id, text });
+    setTimeout(() => setToast((t) => (t && t.id === id ? null : t)), 5000);
+  }, []);
+
   const mountedRef = useRef(true);
   useEffect(() => {
     mountedRef.current = true;
@@ -55,6 +79,8 @@ export default function ProjectSettings({ store }) {
         if (!mountedRef.current) return;
         const found = rows.find((row) => row.id === projectId);
         setProject(found ?? null);
+        setPostalCodeValue(found?.postalCode ?? "");
+        setSavedPostalCode(found?.postalCode ?? "");
         setState(found ? "ready" : "missing");
       })
       .catch((err) => {
@@ -70,6 +96,30 @@ export default function ProjectSettings({ store }) {
 
   const override = (field, value) => setResolved(setProjectOverride(projectId, field, value));
   const restore = (field) => setResolved(restoreCompanyDefault(projectId, field));
+
+  const handleZipBlur = async () => {
+    const value = postalCode.trim();
+    if (value !== "" && !ZIP_PATTERN.test(value)) {
+      setZipError("Enter a five-digit ZIP code");
+      return;
+    }
+    setZipError(null);
+    if (value === savedPostalCode) return; // Unchanged -- nothing to save.
+
+    setSaved({ state: "saving", at: Date.now() });
+    try {
+      const updated = await store.setPostalCode(projectId, value);
+      const next = updated?.postalCode ?? "";
+      setPostalCodeValue(next);
+      setSavedPostalCode(next);
+      setSaved({ state: "saved", at: Date.now() });
+      showToast(next ? "Set project ZIP code" : "Cleared project ZIP code");
+    } catch (err) {
+      setSaved({ state: "error", at: Date.now() });
+      setTimeout(() => setSaved((s) => (s?.state === "error" ? { state: "saved", at: Date.now() } : s)), 2600);
+      setZipError(err?.message || "That change couldn't be saved. Try again.");
+    }
+  };
 
   if (state === "loading") return <p className="muted page">Loading project…</p>;
 
@@ -106,6 +156,7 @@ export default function ProjectSettings({ store }) {
           { label: "Projects", to: "/projects" },
           { label: project.name, to: `/projects/${projectId}` },
         ]}
+        saveState={saveStateText(saved)}
       />
 
       <div className="page">
@@ -120,6 +171,32 @@ export default function ProjectSettings({ store }) {
             <dd>{project.customer || NOT_SET}</dd>
             <dt>Location</dt>
             <dd>{project.location || NOT_SET}</dd>
+            <dt>
+              <label className="formfield-label" htmlFor="proj-postal-code">
+                ZIP code
+              </label>
+            </dt>
+            <dd>
+              <input
+                id="proj-postal-code"
+                className={zipError ? "field field--error" : "field"}
+                inputMode="numeric"
+                pattern="\d{5}"
+                value={postalCode}
+                onChange={(e) => {
+                  setPostalCodeValue(e.target.value);
+                  if (zipError) setZipError(null);
+                }}
+                onBlur={handleZipBlur}
+                aria-describedby={zipError ? "proj-postal-code-error" : undefined}
+                aria-invalid={zipError ? "true" : undefined}
+              />
+              {zipError ? (
+                <p className="formfield-error" id="proj-postal-code-error">
+                  {zipError}
+                </p>
+              ) : null}
+            </dd>
             <dt>Internal number</dt>
             <dd className="tabular">{project.number || NOT_SET}</dd>
             <dt>Bid due</dt>
@@ -192,6 +269,15 @@ export default function ProjectSettings({ store }) {
           <Link to={`/projects/${projectId}/takeoff`}>Open the review workspace</Link>
         </section>
       </div>
+
+      {/* No Undo here, unlike the pricing screens' toast -- the ZIP PATCH
+          is audited but not undoable (router.py's patch_postal_code
+          docstring): a ZIP is settings, not a takeoff mutation. */}
+      {toast ? (
+        <div className="toast" role="status">
+          {toast.text}
+        </div>
+      ) : null}
     </>
   );
 }

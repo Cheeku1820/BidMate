@@ -268,6 +268,7 @@ export function mapProject(raw) {
     number: raw.number ?? "",
     customer: raw.customer ?? "",
     location: raw.location ?? "",
+    postalCode: raw.postalCode ?? null,
     bidDueDate: raw.bidDueDate ?? null,
     stage: raw.stage,
     revisionSetLabel: raw.revisionSetLabel ?? "",

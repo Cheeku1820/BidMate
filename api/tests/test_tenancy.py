@@ -231,6 +231,8 @@ TENANCY_TABLE = [
     ("POST", "/api/projects/{project_id}/conversation/messages",
      lambda p, s, i: f"/api/projects/{p.id}/conversation/messages",
      lambda p, s, i: {"text": "test", "screen": {"name": "export"}}, None),
+    ("PATCH", "/api/projects/{project_id}/postal-code",
+     lambda p, s, i: f"/api/projects/{p.id}/postal-code", lambda p, s, i: {"postal_code": "78701"}, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]

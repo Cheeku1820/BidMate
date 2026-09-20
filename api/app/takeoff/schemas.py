@@ -164,6 +164,7 @@ class ProjectOut(BaseModel):
     number: str
     customer: str
     location: str
+    postal_code: str | None
     bid_due_date: date | None
     stage: str
     revision_set_label: str
@@ -198,6 +199,10 @@ class ProjectCreateIn(BaseModel):
 
     name: str = Field(min_length=1, max_length=300)
     location: str = Field(min_length=1, max_length=300)
+    # Five digits or empty. Empty means "parse one from location if it
+    # ends in one" -- see create_project. Camel-cased on the wire like
+    # the rest of this schema (postalCode).
+    postal_code: str = Field(default="", pattern=r"^(\d{5})?$")
     number: str = Field(default="", max_length=100)
     customer: str = Field(default="", max_length=300)
     bid_due_date: date | None = None
@@ -216,6 +221,12 @@ class ProjectCreateIn(BaseModel):
         return stripped
 
     model_config = CAMEL_MODEL_CONFIG
+
+
+class PostalCodeIn(BaseModel):
+    postal_code: str = Field(pattern=r"^(\d{5})?$")
+
+    model_config = MODEL_CONFIG
 
 
 class ProjectDetailOut(BaseModel):

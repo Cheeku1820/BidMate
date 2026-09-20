@@ -75,3 +75,43 @@ def test_get_sources_only_returns_configured(monkeypatch):
     monkeypatch.setattr(config.settings, "onebuild_api_key", "a")
     monkeypatch.setattr(config.settings, "serpapi_key", "")
     assert set(get_sources()) == {"onebuild"}
+
+
+def test_shopping_skips_unparseable_price_but_prices_from_the_rest():
+    """SerpApi emits a string like "call for price" for quote-only
+    listings instead of omitting extracted_price. That row is skipped,
+    not counted, and does not crash the lookup."""
+    data = {"shopping_results": [
+        {"title": "A", "extracted_price": 100.0, "source": "S1", "link": "https://a.example"},
+        {"title": "B", "extracted_price": "call for price", "source": "S2", "link": "https://b.example"},
+        {"title": "C", "extracted_price": 200.0, "source": "S3", "link": "https://c.example"},
+        {"title": "D", "extracted_price": 150.0, "source": "S4", "link": "https://d.example"},
+    ]}
+    r = ShoppingSource("k", fetch=lambda u, p: data).lookup("q", "EA", "Austin, TX")
+    assert r.status == "priced"
+    assert [s["seller"] for s in r.result["sellers"]] == ["S1", "S3", "S4"]
+
+
+def test_shopping_one_numeric_and_one_unparseable_is_no_match():
+    data = {"shopping_results": [
+        {"title": "A", "extracted_price": 100.0, "source": "S1", "link": "https://a.example"},
+        {"title": "B", "extracted_price": "call for price", "source": "S2", "link": "https://b.example"},
+    ]}
+    r = ShoppingSource("k", fetch=lambda u, p: data).lookup("q", "EA", "Austin, TX")
+    assert r.status == "no_match"
+
+
+def test_onebuild_skips_node_with_non_numeric_rate_and_picks_the_valid_one():
+    data = {"data": {"sources": {"nodes": [
+        {"name": "Bad rate", "uom": "EA", "materialRateUsdCents": "n/a", "laborRateUsdCents": 100},
+        {"name": "Good rate", "uom": "EA", "materialRateUsdCents": 500, "laborRateUsdCents": 200},
+    ]}}}
+    r = OneBuildSource("k", fetch=lambda *a: data).lookup("x", "EA", "78701")
+    assert r.status == "priced"
+    assert r.result["matched"]["name"] == "Good rate"
+
+
+def test_cents_helper_rejects_non_numeric_and_rounds_half_up():
+    from app.worker.market_sources import _cents
+    assert _cents("abc") is None
+    assert _cents(1239.7) == Decimal("12.40")

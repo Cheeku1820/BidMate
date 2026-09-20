@@ -10,12 +10,13 @@ never interpreted."""
 from __future__ import annotations
 
 import json
+import math
 import re
 import statistics
 import urllib.error
 import urllib.parse
 import urllib.request
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Callable, NamedTuple
 
 from app.config import settings
@@ -60,7 +61,28 @@ def _get_json(url: str, params: dict) -> dict:
 
 
 def _cents(v) -> Decimal | None:
-    return None if v is None else (Decimal(int(v)) / 100).quantize(Decimal("0.01"))
+    """Cents -> dollars, rounded to the nearest cent. `v` is a vendor
+    field (a JSON number, or occasionally a string): anything that does
+    not convert to a finite Decimal is treated as absent, not raised."""
+    if v is None:
+        return None
+    try:
+        d = Decimal(str(v))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
+    if not d.is_finite():
+        return None
+    return (d / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _call(fn, *args):
+    """Run a fetcher, mapping network/parse failures to SourceError.
+    Vendor field parsing happens after this, deliberately outside it --
+    a malformed field should degrade that one row, not fail the job."""
+    try:
+        return fn(*args)
+    except (OSError, urllib.error.URLError, ValueError) as e:
+        raise SourceError(str(e)) from e
 
 
 class OneBuildSource:
@@ -73,21 +95,21 @@ class OneBuildSource:
         return project.postal_code or None
 
     def lookup(self, query: str, item_unit: str, location_key: str) -> SourceResult:
-        try:
-            data = self._fetch(_ONEBUILD_URL, {"1build-api-key": self._key},
-                               {"query": _ONEBUILD_QUERY, "variables": {"term": query, "zip": location_key}})
-        except (OSError, urllib.error.URLError, ValueError) as e:
-            raise SourceError(str(e)) from e
+        data = _call(self._fetch, _ONEBUILD_URL, {"1build-api-key": self._key},
+                     {"query": _ONEBUILD_QUERY, "variables": {"term": query, "zip": location_key}})
         if "errors" in data:
             raise SourceError(str(data["errors"])[:300])
         nodes = (((data.get("data") or {}).get("sources") or {}).get("nodes")) or []
         label = f"ZIP {location_key}"
         for n in nodes:
-            if unit_matches(n.get("uom") or "", item_unit) and n.get("materialRateUsdCents"):
-                price = _cents(n["materialRateUsdCents"])
-                trimmed = {k: n.get(k) for k in ("name", "uom", "materialRateUsdCents", "laborRateUsdCents")}
-                return SourceResult("priced", price, price, price, _cents(n.get("laborRateUsdCents")),
-                                    n["uom"], label, {"matched": trimmed})
+            if not unit_matches(n.get("uom") or "", item_unit):
+                continue
+            price = _cents(n.get("materialRateUsdCents"))
+            if not price:  # None (absent/unparseable), or zero -- neither is a usable candidate
+                continue
+            trimmed = {k: n.get(k) for k in ("name", "uom", "materialRateUsdCents", "laborRateUsdCents")}
+            return SourceResult("priced", price, price, price, _cents(n.get("laborRateUsdCents")),
+                                n["uom"], label, {"matched": trimmed})
         return SourceResult("no_match", None, None, None, None, "", label, {"candidates": len(nodes)})
 
 
@@ -104,21 +126,21 @@ class ShoppingSource:
         return project.postal_code or None
 
     def lookup(self, query: str, item_unit: str, location_key: str) -> SourceResult:
-        try:
-            data = self._fetch(_SERPAPI_URL, {"engine": "google_shopping", "q": query, "location": location_key,
-                                              "hl": "en", "gl": "us", "api_key": self._key})
-        except (OSError, urllib.error.URLError, ValueError) as e:
-            raise SourceError(str(e)) from e
+        data = _call(self._fetch, _SERPAPI_URL, {"engine": "google_shopping", "q": query, "location": location_key,
+                                                  "hl": "en", "gl": "us", "api_key": self._key})
         if data.get("error"):
             raise SourceError(str(data["error"])[:300])
         sellers = []
         for r in data.get("shopping_results") or []:
-            price = r.get("extracted_price")
-            if price is None:
+            try:
+                price = float(r.get("extracted_price"))
+            except (TypeError, ValueError):
+                continue  # e.g. SerpApi's "call for price" listings -- skip, don't crash the job
+            if not math.isfinite(price):
                 continue
             link = r.get("link") or ""
             sellers.append({"title": str(r.get("title", ""))[:200], "seller": str(r.get("source", ""))[:100],
-                            "price": float(price), "link": link if link.startswith("https://") else None})
+                            "price": price, "link": link if link.startswith("https://") else None})
         if len(sellers) < 2:
             return SourceResult("no_match", None, None, None, None, "", location_key, {"sellers": sellers})
         prices = sorted(Decimal(str(s["price"])) for s in sellers)

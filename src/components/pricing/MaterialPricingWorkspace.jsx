@@ -263,7 +263,14 @@ export default function MaterialPricingWorkspace() {
           store={store}
           onClose={() => setImporting(false)}
           onApplied={(result, n) => {
+            // applyPriceSheet returns the same MaterialListOut shape
+            // load() consumes -- pricingNote and marketJob can both move
+            // (a supplier quote can be exactly what a stalled market run
+            // was missing), so the basis note and the poll effect must
+            // pick up the new values here too, not just the rows.
             setRows(result.rows);
+            setPricingNote(result.pricingNote);
+            setMarketJob(result.marketJob ?? null);
             setImporting(false);
             showToast(`Applied supplier pricing for ${n} item${n === 1 ? "" : "s"}`);
           }}

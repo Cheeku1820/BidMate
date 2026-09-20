@@ -420,4 +420,42 @@ describe("MaterialPricingWorkspace", () => {
     expect(document.activeElement).not.toHaveAttribute("role", "gridcell");
     expect(document.activeElement).toBe(summary);
   });
+
+  test("uploads a price sheet through the modal and applying it moves the screen into the refreshing state", async () => {
+    const previewResult = {
+      state: "ready", refused: null, supplierName: "codale", quoteDate: "2026-09-18",
+      matched: [{ itemId: "i1", itemName: "20A duplex receptacle", currentUnitPrice: null, currentSourceLabel: null, newUnitPrice: "9.10", partNo: "HBL5362", notes: "", line: 2 }],
+      unmatched: [], unpriced: [],
+    };
+    const applied = {
+      pricingSource: null, pricingNote: "",
+      marketJob: "queued", // a supplier quote can be exactly what an idle market run was waiting on
+      rows: [{ ...baseRow, unitPrice: 9.1, source: "supplier_quote", sourceLabel: "Supplier quote", status: "approved" }],
+    };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow], marketJob: null }),
+      priceRequestUrl: vi.fn().mockReturnValue("/api/projects/p1/material-pricing/price-request"),
+      uploadPriceSheet: vi.fn().mockResolvedValue({ documentId: "d1" }),
+      getPriceSheetPreview: vi.fn().mockResolvedValue(previewResult),
+      applyPriceSheet: vi.fn().mockResolvedValue(applied),
+    };
+    renderMaterial({ store });
+    await loaded();
+
+    expect(screen.getByRole("link", { name: "Download price request" })).toHaveAttribute(
+      "href",
+      "/api/projects/p1/material-pricing/price-request",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Upload supplier pricing" }));
+    expect(screen.getByLabelText("Price sheet")).toBeInTheDocument();
+
+    const file = new File(["x"], "codale.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    await userEvent.upload(screen.getByLabelText("Price sheet"), file);
+    await userEvent.click(await screen.findByRole("button", { name: "Apply 1 price" }));
+
+    await waitFor(() => expect(store.applyPriceSheet).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Price sheet")).not.toBeInTheDocument();
+    expect(await screen.findByText(/Refreshing market estimates/)).toBeInTheDocument();
+  });
 });

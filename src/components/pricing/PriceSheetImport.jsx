@@ -25,8 +25,18 @@ import { money, NONE } from "./pricingColumns.jsx";
 
 const POLL_MS = 2000;
 
-function pluralize(n, singular, plural) {
-  return `${n} ${n === 1 ? singular : plural}`;
+// Same pattern as BulkApproveBar.jsx's per-status count (~line 76):
+// only the digit itself gets `.tabular`, so the label text after it
+// stays ordinary prose. The rendered textContent is unchanged from a
+// plain string ("1 row matched", "Apply 2 prices"), so this is a
+// presentational change only -- it doesn't touch what a test or a
+// screen reader reads.
+function CountLabel({ n, singular, plural }) {
+  return (
+    <>
+      <span className="tabular">{n}</span> {n === 1 ? singular : plural}
+    </>
+  );
 }
 
 export default function PriceSheetImport({ projectId, store, onApplied, onClose }) {
@@ -137,7 +147,13 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
           </button>
           {ready ? (
             <button type="button" className="btn btn--primary" onClick={handleApply} disabled={!canApply}>
-              {applying ? "Applying…" : `Apply ${ticked.size} price${ticked.size === 1 ? "" : "s"}`}
+              {applying ? (
+                "Applying…"
+              ) : (
+                <>
+                  Apply <span className="tabular">{ticked.size}</span> price{ticked.size === 1 ? "" : "s"}
+                </>
+              )}
             </button>
           ) : null}
         </>
@@ -181,7 +197,7 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
         <>
           {preview.matched.length > 0 ? (
             <div className="pricesheet-group">
-              <h4>{pluralize(preview.matched.length, "row matched", "rows matched")}</h4>
+              <h4><CountLabel n={preview.matched.length} singular="row matched" plural="rows matched" /></h4>
               <ul className="pricesheet-rows">
                 {preview.matched.map((row) => (
                   <li key={row.itemId} className="pricesheet-row">
@@ -205,7 +221,7 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
 
           {preview.unmatched.length > 0 ? (
             <div className="pricesheet-group">
-              <h4>{pluralize(preview.unmatched.length, "row not on this project", "rows not on this project")}</h4>
+              <h4><CountLabel n={preview.unmatched.length} singular="row not on this project" plural="rows not on this project" /></h4>
               <ul className="pricesheet-plainlist">
                 {preview.unmatched.map((row, i) => (
                   <li key={i}>
@@ -218,7 +234,7 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
 
           {preview.unpriced.length > 0 ? (
             <div className="pricesheet-group">
-              <h4>{pluralize(preview.unpriced.length, "item left unpriced", "items left unpriced")}</h4>
+              <h4><CountLabel n={preview.unpriced.length} singular="item left unpriced" plural="items left unpriced" /></h4>
               <ul className="pricesheet-plainlist">
                 {preview.unpriced.map((row) => (
                   <li key={row.itemId}>{row.itemName}</li>

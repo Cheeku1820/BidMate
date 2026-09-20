@@ -166,13 +166,28 @@ class Assembly:
 class Proposal:
     """Conversation agent output. It proposes; a person applies it through
     the same path a manual edit takes (spec 2.5, ROADMAP invariant 9).
-    Deliberately carries no method that writes anything."""
+    Deliberately carries no method that writes anything.
+
+    The routing fields (`intent`, `target_item_ids`, `field`, `value`,
+    `summary`) come from `conversation.route()`. The classification
+    fields below are filled by `engine.resolve` from one Classification
+    call, or from the estimator's own words when no call was possible
+    (`source == "typed"`). Defaults keep `route()`'s three tests intact."""
 
     intent: str  # "reclassify" | "exclude" | "set_context" | "unknown"
     target_item_ids: list[str]
     field: str
     value: str
     summary: str
+    name: str = ""
+    system: str = "Unknown"
+    category: str = "Unclassified"
+    unit: str = "ea"
+    catalog_id: str | None = None
+    schedule_match: dict | None = None
+    quantity: int | None = None
+    reject_reason: str | None = None
+    source: str = "read"
 
 
 @dataclass

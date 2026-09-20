@@ -41,12 +41,16 @@ def test_a_proposal_never_carries_a_classification_of_its_own():
     """It resolves WHICH items and WHICH field, then hands off. If it ever
     returned a catalog label there would be two classifiers, and when they
     drift every per-agent accuracy number stops meaning anything (spec 2.5
-    limit 1). The dataclass shape guarantees no catalog_id field; this also
+    limit 1). `Proposal` now also carries the classification fields
+    `engine.resolve` fills in (say-what-it-is task 2) -- the dataclass is
+    shared between the two agents, so the shape alone can no longer prove
+    this. What still proves it: route() itself never assigns them, so a
+    proposal it returns carries only their declared defaults; this also
     pins the behaviour, since a reclassify proposal that filled `value`
-    with a guessed item name would satisfy the shape and still break the
+    with a guessed item name would satisfy that and still break the
     limit."""
     p = route("these six are all type F", ["a"])
-    assert not hasattr(p, "catalog_id")
+    assert p.catalog_id is None and p.schedule_match is None
     assert p.intent == "reclassify"
     assert p.field == "name"
     assert p.value == "", "Conversation must not supply the label -- Classification does"

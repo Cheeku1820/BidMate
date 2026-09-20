@@ -27,7 +27,11 @@ def stub_model(monkeypatch):
 
 
 def test_reclassify_calls_the_model_once_and_targets_the_cluster(client, db, item, signed_in_user, stub_model):
-    item.source_tag = "F"; item.status = ReviewStatus.ATTENTION
+    # The conftest item's quantity (14) is unrelated to cluster size --
+    # set it to 1 so the three-row cluster sums to 3, matching how the
+    # engine actually lands one row per (sheet, source_tag) cluster with
+    # quantity = placement count (engine/rows.py, merge.py).
+    item.source_tag = "F"; item.status = ReviewStatus.ATTENTION; item.quantity = 1
     a = _sibling(db, item); b = _sibling(db, item); db.commit()
     r = client.post(f"/api/items/{item.id}/resolve", json={"text": "2x4 LED troffer, type F on E-501"})
     assert r.status_code == 200, r.text
@@ -57,6 +61,24 @@ def test_exclusion_never_reaches_the_model(client, db, item, signed_in_user, mon
     assert body["intent"] == "exclude"
     assert body["reject_reason"] == "not a device, it's the TOP OF ATRIUM label"
     assert body["target_item_ids"] == [str(item.id)]
+
+
+def test_count_is_the_placement_count_not_the_row_count(client, db, item, signed_in_user, stub_model):
+    """The engine lands one row per (sheet, source_tag) cluster with
+    quantity = the placement count it counted (engine/rows.py,
+    merge.py) -- a tag counted 30 times is one row with quantity 30, so
+    `count` must read that field, not len(targets). Exercised as a
+    single-item cluster (untagged item fixture), the exact case the
+    earlier len(targets) bug always got right by accident, since
+    len(targets) == 1 there too -- only the summed quantity tells the
+    two apart."""
+    item.quantity = 30; db.commit()
+    r = client.post(f"/api/items/{item.id}/resolve", json={"text": "junction box"})
+    assert r.json()["intent"] == "reclassify"
+    assert stub_model[0]["ctx"]["count"] == 30
+
+    r2 = client.post(f"/api/items/{item.id}/resolve", json={"text": "not a device"})
+    assert r2.json()["summary"] == "Reject 30 — not a device"
 
 
 def test_empty_text_is_unknown(client, item, signed_in_user, stub_model):

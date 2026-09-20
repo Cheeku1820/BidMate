@@ -301,4 +301,30 @@ describe("DecisionArea", () => {
     expect(spy).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "What is this?" })).toHaveValue("type F");
   });
+
+  it("selecting an already-rejected item right after a local approval shows its own statement, not a stale box (the id/status race)", async () => {
+    const { onApply, rerender, mergedItem } = setup();
+    const box = screen.getByRole("textbox", { name: "What is this?" });
+    fireEvent.change(box, { target: { value: "type F per E-501" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "Confirm and approve 28" }));
+    await screen.findByText(/You approved 28 ea/);
+    const itemB = { ...mergedItem, id: "i2", rejected: true, rejectReason: "not a device" };
+    rerender(<DecisionArea item={itemB} sheetNumber="EP101" onResolve={vi.fn()} onApply={onApply} onUndo={vi.fn()} onSelectItem={vi.fn()} alsoMatchingItemId="i9" />);
+    expect(await screen.findByText(/You rejected 30 — "not a device"/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "What is this?" })).not.toBeInTheDocument();
+  });
+
+  it("selecting an already-approved item right after a local rejection shows its own statement, not a stale box (the id/status race)", async () => {
+    const reject = { ...proposal, intent: "exclude", rejectReason: "Not a device", quantity: null, targetItemIds: ["i1"] };
+    const onApply = vi.fn().mockResolvedValue({ label: "Rejected", alsoMatching: null });
+    const { rerender, mergedItem } = setup({ props: { onResolve: vi.fn().mockResolvedValue(reject), onApply } });
+    fireEvent.click(screen.getByRole("button", { name: "Not a device" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reject 30" }));
+    await screen.findByText(/You rejected 30/);
+    const itemB = { ...mergedItem, id: "i2", rejected: false, rejectReason: null, status: "approved", approvedBy: "Dana", approvedAt: "2026-09-18T14:41:00Z", resolveNote: "type F per E-501" };
+    rerender(<DecisionArea item={itemB} sheetNumber="EP101" onResolve={vi.fn()} onApply={onApply} onUndo={vi.fn()} onSelectItem={vi.fn()} alsoMatchingItemId="i9" />);
+    expect(await screen.findByText(/You approved 30 ea/)).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "What is this?" })).not.toBeInTheDocument();
+  });
 });

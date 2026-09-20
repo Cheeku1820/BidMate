@@ -19,31 +19,39 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
   const boxRef = useRef(null);
   const cardRef = useRef(null);
 
-  // A new item resets the area; an approved or rejected one opens on the
-  // statement. Keyed on id ALONE: the store's snapshot refreshing this same
-  // item after this area's own apply flips item.status, and if that were in
-  // the dependency list it would wipe the statement, the also-matching line,
-  // and the sentence out from under the estimator who just wrote them.
+  // A new item resets the area; a refresh of the SAME item reconciles
+  // instead. These used to be two effects on different deps — but when
+  // item.id changes in the same commit as status/rejected (approve A
+  // locally, then select an already-rejected B), both ran against the SAME
+  // pre-reset closure: the id-reset effect queued the reset for B, then the
+  // reconciliation effect below evaluated "contradicted" using A's stale
+  // local "done" against B's status/rejected, and its own setState("box")
+  // landed after the reset's setState("done") in the same batch — winning.
+  // One effect, gated on a ref rather than a second dependency list,
+  // removes the ordering dependency instead of papering over it.
+  const prevIdRef = useRef(item.id);
   useEffect(() => {
-    setText(""); setProposal(null); setHelper(""); setDone(null);
-    setState(item.status === "approved" || item.rejected ? "done" : "box");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id]);
-
-  // A refresh that CONTRADICTS what this area shows — the top bar's Ctrl+Z,
-  // or a teammate acting on the same item — must not be ignored just
-  // because the id-reset effect above only watches item.id. Green must
-  // never linger on an item that is not, in fact, Estimator approved:
-  //   - a local "done" the item no longer bears out is dropped, back to
-  //     the box, keeping the sentence so nothing is lost;
-  //   - with no local "done", an item-derived statement (opened at mount)
-  //     follows the same rule and returns to the box if the item stops
-  //     being approved/rejected;
-  //   - with no local "done" and idle on the box, a fresh approval/
-  //     rejection that appears (a teammate's action) opens on it.
-  // A refresh that instead CONFIRMS a local apply (status becomes
-  // "approved" after approve: true) changes nothing here.
-  useEffect(() => {
+    if (prevIdRef.current !== item.id) {
+      prevIdRef.current = item.id;
+      setText(""); setProposal(null); setHelper(""); setDone(null);
+      setState(item.status === "approved" || item.rejected ? "done" : "box");
+      return;
+    }
+    // Same item: a refresh that CONTRADICTS what this area shows — the top
+    // bar's Ctrl+Z, or a teammate acting on the same item — reconciles
+    // rather than being ignored. Green must never linger on an item that
+    // is not, in fact, Estimator approved:
+    //   - a local "done" the item no longer bears out is dropped, back to
+    //     the box, keeping the sentence so nothing is lost;
+    //   - with no local "done", an item-derived statement (opened at mount)
+    //     follows the same rule and returns to the box if the item stops
+    //     being approved/rejected;
+    //   - with no local "done" and idle on the box, a fresh approval/
+    //     rejection that appears (a teammate's action) opens on it.
+    // A refresh that instead CONFIRMS a local apply (status becomes
+    // "approved" after approve: true) changes nothing here. State "card"
+    // is left alone either way — a pending proposal isn't reconciled
+    // mid-edit.
     if (done) {
       const contradicted = (done.approved && item.status !== "approved") || (done.rejected && !item.rejected);
       if (contradicted) { setDone(null); setState("box"); }
@@ -53,7 +61,7 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
     if (state === "done" && !itemDone) setState("box");
     else if (state === "box" && itemDone) setState("done");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.status, item.rejected]);
+  }, [item.id, item.status, item.rejected]);
 
   useEffect(() => {
     if (state === "box") boxRef.current?.focus();
@@ -88,12 +96,18 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
     } finally { setBusy(false); }
   }
 
-  // Escape's target: back to the box with the sentence intact. Shared by the
-  // card's own Escape handler, "Change wording", and the window-level
-  // listener below (so Escape works even when focus isn't on the card —
-  // the card's own handler stops propagation, so the window branch only
-  // ever fires when focus was elsewhere).
-  function backToBox() { setState("box"); }
+  // Escape's target from the card, and "Change wording": normally back to
+  // the box with the sentence intact. But if the item has become approved
+  // or rejected while the card sat open (a teammate acted on it), there is
+  // no sentence left to resume — open on the item-derived statement
+  // instead of a box that would just bounce back on the next reconcile.
+  // Shared by the card's own Escape handler and the window-level listener
+  // below (so Escape works even when focus isn't on the card — the card's
+  // own handler stops propagation, so the window branch only ever fires
+  // when focus was elsewhere).
+  function backToBox() {
+    setState(item.status === "approved" || item.rejected ? "done" : "box");
+  }
 
   useEffect(() => {
     function onCmd(e) {

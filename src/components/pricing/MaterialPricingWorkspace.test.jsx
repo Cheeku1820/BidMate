@@ -9,6 +9,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import MaterialPricingWorkspace from "./MaterialPricingWorkspace.jsx";
+import { REFRESH_BUSY } from "./marketOutcomeCopy.js";
 
 const baseRow = {
   itemId: "i1", itemName: "20A duplex receptacle", quantity: 10, unitPrice: null, source: null,
@@ -357,5 +358,61 @@ describe("MaterialPricingWorkspace", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Refresh market estimates" }));
     expect(refreshMarketEstimates).toHaveBeenCalled();
     expect(await screen.findByText(/Refreshing market estimates/)).toBeInTheDocument();
+  });
+
+  test("refresh already running shows the busy toast instead of a poll", async () => {
+    const showToast = vi.fn();
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+      refreshMarketEstimates: vi.fn().mockResolvedValue({ queued: false }),
+    };
+    renderMaterial({ store, extra: { showToast } });
+    await loaded(/2x4 LED troffer/);
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh market estimates" }));
+    expect(showToast).toHaveBeenCalledWith(REFRESH_BUSY);
+    expect(screen.queryByText(/Refreshing market estimates/)).not.toBeInTheDocument();
+  });
+
+  test("a failed refresh shows the same inline error style as other actions", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+      refreshMarketEstimates: vi.fn().mockRejectedValue(new Error()),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh market estimates" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't refresh market estimates. Check your connection and try again.",
+    );
+  });
+
+  test("shows sellers as evidence with seller — price text and an external link", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    expect(screen.getByText("Sellers")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /Codale — \$169\.95/ });
+    expect(link).toHaveAttribute("href", "https://codale.example/x");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
+  });
+
+  test("Tab from inside the market evidence details is not hijacked back onto the grid", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    const summary = screen.getByText("Sellers");
+    summary.focus();
+    expect(document.activeElement).toBe(summary);
+    fireEvent.keyDown(summary, { key: "Tab" });
+    // The grid's own Tab handling must not have fired: focus stays put
+    // (jsdom does not itself move focus on Tab) rather than jumping to
+    // whatever cell the grid's roving-tabindex logic would pick next.
+    expect(document.activeElement).not.toHaveAttribute("role", "gridcell");
+    expect(document.activeElement).toBe(summary);
   });
 });

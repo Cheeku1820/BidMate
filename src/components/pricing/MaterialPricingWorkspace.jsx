@@ -80,9 +80,14 @@ export default function MaterialPricingWorkspace() {
   }, [marketJob, load]);
 
   const refresh = async () => {
-    const { queued } = await store.refreshMarketEstimates(projectId);
-    if (queued) setMarketJob("queued");
-    else showToast(REFRESH_BUSY);
+    setSaveError(null);
+    try {
+      const { queued } = await store.refreshMarketEstimates(projectId);
+      if (queued) setMarketJob("queued");
+      else showToast(REFRESH_BUSY);
+    } catch (err) {
+      setSaveError(err?.message || "Couldn't refresh market estimates. Check your connection and try again.");
+    }
   };
 
   const replaceRow = (itemId, next) =>

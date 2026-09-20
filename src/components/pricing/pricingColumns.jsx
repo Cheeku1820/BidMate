@@ -55,7 +55,7 @@ function MarketEvidence({ evidence }) {
         {evidence.map((e, i) => {
           const text = isSellers ? (
             <>
-              {e.seller} — {money(e.price)}
+              {e.seller} — <span className="tabular">{money(e.price)}</span>
             </>
           ) : (
             <>

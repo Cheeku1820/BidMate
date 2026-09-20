@@ -261,6 +261,17 @@ const DataGrid = forwardRef(function DataGrid(
 
   function onCellKeyDown(event, row, column) {
     if (editing) return;
+    // A read-only cell can hold its own interactive content -- the
+    // Material pricing grid's market-evidence <details>/<summary> and
+    // seller <a>, so far. Its own focusable descendants own their own
+    // keyboard handling, Tab included: without this guard, this
+    // handler's Tab logic below fires on the bubbled event before the
+    // browser's default and redirects focus onto the grid's (possibly
+    // stale) active cell instead of leaving that element's own tab
+    // order alone.
+    if (event.target !== event.currentTarget && event.target.closest("a, button, summary, input, select, textarea, [contenteditable]")) {
+      return;
+    }
     if (MOVES[event.key]) {
       event.preventDefault();
       activate(move(MOVES[event.key]));

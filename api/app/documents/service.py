@@ -179,8 +179,17 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     return document
 
 
-def list_documents(db: DbSession, project: Project) -> list[Document]:
-    return list(db.scalars(select(Document).where(Document.project_id == project.id).order_by(Document.created_at, Document.id)))
+def list_documents(db: DbSession, project: Project, *, include_pricing: bool = False) -> list[Document]:
+    """The project's documents, oldest first. A Pricing upload is left
+    out by default: a supplier price sheet is not part of the drawing
+    set -- it is never read, so it stays `uploaded` for good, and the
+    intake screens would show it as a drawing that never finishes
+    reading. It lives on the Material pricing workspace, which loads
+    it by id."""
+    q = select(Document).where(Document.project_id == project.id)
+    if not include_pricing:
+        q = q.where(Document.doc_type != "Pricing")
+    return list(db.scalars(q.order_by(Document.created_at, Document.id)))
 
 
 def load_document(document_id: uuid.UUID, db: DbSession, user: User) -> Document:

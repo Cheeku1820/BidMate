@@ -268,6 +268,21 @@ def test_processing_with_no_run_and_a_failed_document(client, db, project, dana,
     assert body["run"] is None and body["documents"][0]["state"] == "failed" and body["documents"][0]["reason"] == "Couldn't read this file."
 
 
+def test_processing_leaves_a_pricing_upload_out_of_the_document_list(client, db, project, dana, signed_in_user):
+    """A price sheet never gets a read job, so its status stays
+    `uploaded` -- which _DOC_STATE maps to "reading". Listed, it would
+    be a drawing that never finishes reading, and screen E would poll
+    for it forever."""
+    _processed_drawing(db, project, dana)
+    db.add(Document(project_id=project.id, filename="codale.xlsx", doc_type="Pricing",
+                    content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size_bytes=1,
+                    sha256="d" * 64, storage_key="k-price", uploaded_by=dana.id, status="uploaded"))
+    db.flush()
+    body = client.get(f"/api/projects/{project.id}/processing").json()
+    assert [d["filename"] for d in body["documents"]] == ["E-set.pdf"]
+    assert all(d["state"] != "reading" for d in body["documents"])
+
+
 def test_deleting_a_document_cancels_its_read_and_removes_its_sheets(client, db, project, dana, signed_in_user, blob_store):
     d = _processed_drawing(db, project, dana)
     queue.enqueue_read(db, d); db.flush()

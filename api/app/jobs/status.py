@@ -60,7 +60,11 @@ def _sheet_summary(s: Sheet) -> dict:
 
 
 def build_processing(db, project: Project) -> dict:
-    docs = list(db.scalars(select(Document).where(Document.project_id == project.id).order_by(Document.created_at, Document.id)))
+    # A Pricing upload is not in the drawing set and never gets a read
+    # job, so it would sit at "reading" here forever (documents/service
+    # .py's list_documents leaves it out for the same reason).
+    docs = list(db.scalars(select(Document).where(Document.project_id == project.id, Document.doc_type != "Pricing")
+                           .order_by(Document.created_at, Document.id)))
     sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id).order_by(Sheet.sort_order, Sheet.page_index)))
     sheets_per_doc: dict[str, list[Sheet]] = {}
     for s in sheets:

@@ -145,6 +145,32 @@ def test_content_streams_a_pricing_upload_with_its_own_content_type(client, sign
     assert content.headers["x-content-type-options"] == "nosniff"
 
 
+def test_a_pricing_upload_is_not_listed_with_the_drawing_set(client, signed_in_user, project, store, uploaded, db):
+    """A price sheet is never read, so it stays `uploaded` for good --
+    and the intake screens render an `uploaded` document as a drawing
+    still being read, polling for a finish that never comes. It is a
+    project document (stored, audited, streamable by id) but not part of
+    the drawing set the documents list is."""
+    r = client.post(
+        f"/api/projects/{project.id}/documents",
+        files={"file": ("codale.csv", io.BytesIO(b"Item,Unit price\nx,1\n"), "text/csv")},
+        data={"doc_type": "Pricing"},
+    )
+    assert r.status_code == 201, r.text
+    pricing_id = r.json()["id"]
+
+    listed = client.get(f"/api/projects/{project.id}/documents").json()
+    assert [d["id"] for d in listed] == [uploaded["id"]]
+    assert pricing_id not in {d["id"] for d in listed}
+    # Still reachable by id: the material-pricing preview loads it that way.
+    assert client.get(f"/api/documents/{pricing_id}/content").status_code == 200
+
+    from app.documents import service
+    from app.takeoff.models import Project
+    p = db.get(Project, project.id)
+    assert {str(d.id) for d in service.list_documents(db, p, include_pricing=True)} == {uploaded["id"], pricing_id}
+
+
 def test_content_says_what_to_do_when_the_stored_file_is_gone(client, uploaded, store):
     """A row whose blob is missing is reachable without a bug here -- a
     storage lifecycle rule, a restore from a backup taken after the blob

@@ -183,6 +183,7 @@ def commit(
     item_id: uuid.UUID | None = None,
     sheet_id: uuid.UUID | None = None,
     undoes_action_id: uuid.UUID | None = None,
+    note: str | None = None,
 ) -> Action:
     """The only way anything in this module records a change.
 
@@ -238,6 +239,7 @@ def commit(
         sheet_id=sheet_id,
         actor_user_id=actor.id,
         undoes_action_id=undoes_action_id,
+        note=note,
     )
     db.add(action)
     return action

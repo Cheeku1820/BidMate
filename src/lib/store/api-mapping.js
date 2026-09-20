@@ -33,6 +33,8 @@ export function mapItem(i) {
     y: i.y ?? null,
     path: i.path ?? null,
     notes: i.notes,
+    rejectReason: i.reject_reason ?? null,
+    resolveNote: i.resolve_note ?? null,
     evidence: i.evidence ?? null,
     // Never collapsed to a singular field (carry-forward 3) — an item
     // can carry a scale warning and a legend warning at once.

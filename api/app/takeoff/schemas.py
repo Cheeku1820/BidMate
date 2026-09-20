@@ -80,6 +80,8 @@ class ItemOut(BaseModel):
     y: int | None = None
     path: list | None = None
     notes: str
+    reject_reason: str | None = None
+    resolve_note: str | None = None
     evidence: dict | None = None
     # A list, not a single optional warning: an item can carry more than
     # one live warning at once (Task 9's scale-and-legend case is the

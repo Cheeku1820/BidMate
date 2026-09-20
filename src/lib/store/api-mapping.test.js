@@ -6,7 +6,7 @@
    ============================================================ */
 
 import { describe, expect, test } from "vitest";
-import { evidenceImageUrl, mapLaborRow, mapMaterialRow, mapSheet } from "./api-mapping.js";
+import { evidenceImageUrl, mapItem, mapLaborRow, mapMaterialRow, mapSheet } from "./api-mapping.js";
 
 describe("evidenceImageUrl", () => {
   test("returns a URL when the item has an image", () => {
@@ -107,5 +107,15 @@ describe("mapSheet", () => {
   test("defaults the render fields when the wire omits them", () => {
     const mapped = mapSheet({ id: "x", number: "E1", title: "t" });
     expect(mapped).toMatchObject({ renderStatus: "pending", renderError: "", maxZoom: null });
+  });
+});
+
+
+describe("mapItem", () => {
+  test("carries rejectReason and resolveNote, null when absent", () => {
+    const base = { id: "i1", sheet_id: "s1", name: "x", symbol: "receptacle", system: "Power", category: "Devices",
+      quantity: "1", unit: "ea", status: "ready", notes: "", warnings: [], version: 1 };
+    expect(mapItem({ ...base, reject_reason: "not a device", resolve_note: null })).toMatchObject({ rejectReason: "not a device", resolveNote: null });
+    expect(mapItem(base)).toMatchObject({ rejectReason: null, resolveNote: null });
   });
 });

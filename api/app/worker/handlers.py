@@ -28,8 +28,8 @@ def register(kind: str):
 
 
 def _load_handlers() -> None:
-    # The four handler modules register themselves on import.
-    for name in ("read_job", "classify_job", "sheet_job", "render_job"):
+    # The handler modules register themselves on import.
+    for name in ("read_job", "classify_job", "sheet_job", "render_job", "price_job"):
         __import__(f"app.worker.{name}")
 
 

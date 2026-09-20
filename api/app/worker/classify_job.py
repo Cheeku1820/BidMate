@@ -167,4 +167,5 @@ def _finish_project(db: Session, project: Project, classify_job: Job) -> None:
     n_items = db.scalar(select(func.count()).select_from(Item).where(Item.project_id == project.id))
     actions.commit(db, actor=actor, project_id=project.id, kind="ingest",
                    label=f"Processed {n_done} sheet(s) into {n_items} item(s)", before={}, after={})
+    queue.enqueue_price(db, project, classify_job.requested_by, run_id=classify_job.run_id)
     db.flush()

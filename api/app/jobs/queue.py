@@ -114,6 +114,21 @@ def enqueue_render(db: Session, sheet: Sheet, prefix: str) -> Job | None:
     return job
 
 
+def enqueue_price(db: Session, project: Project, requested_by: uuid.UUID | None, run_id: uuid.UUID | None = None) -> Job | None:
+    """One market-pricing job per project at a time (estimate-first-
+    pricing §3). Queued by the run that just completed, by the
+    estimator's Refresh, or by a ZIP being set. Returns None while one
+    is already queued or running -- the caller's copy says so."""
+    if db.scalars(select(Job).where(
+            Job.kind == "price", Job.project_id == project.id, Job.status.in_(_IN_FLIGHT))).first():
+        return None
+    job = Job(org_id=project.org_id, project_id=project.id, kind="price", run_id=run_id,
+              requested_by=requested_by, max_attempts=MAX_ATTEMPTS)
+    db.add(job)
+    db.flush()
+    return job
+
+
 _READY = text(
     "status = 'queued' AND (not_before IS NULL OR not_before <= now()) AND "
     "(kind <> 'sheet' OR run_id IN (SELECT run_id FROM jobs WHERE kind = 'classify' AND status = 'done'))"

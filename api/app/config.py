@@ -27,5 +27,4 @@ class Settings(BaseSettings):
     serpapi_key: str = ""
     market_lookup_monthly_cap: int = 2000
 
-
 settings = Settings()

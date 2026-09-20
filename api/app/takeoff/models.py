@@ -696,7 +696,10 @@ class MarketLookup(Base):
     also the meter -- `billed` rows count against `org_id`'s cap."""
 
     __tablename__ = "market_lookups"
-    __table_args__ = (UniqueConstraint("source", "query_key", "location_key", name="uq_market_lookup"),)
+    __table_args__ = (
+        UniqueConstraint("source", "query_key", "location_key", name="uq_market_lookup"),
+        Index("ix_market_lookups_org_fetched", "org_id", "fetched_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     source: Mapped[str] = mapped_column(String(20))        # "onebuild" | "shopping"

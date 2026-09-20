@@ -5,10 +5,17 @@ Revises: 0023
 Create Date: 2026-09-18 00:00:00.000000
 
 docs/specs/estimate-first-pricing.md: the two market tables, the
-project ZIP (backfilled from `location`'s trailing 5-digit token, the
-same rule regions.py reads a state by), the supplier fields on
-project_material_prices, and two new job kinds. Job kinds are spelled
-out here rather than imported, per 0020/0021's convention.
+project ZIP, the supplier fields on project_material_prices, and two
+new job kinds. Job kinds are spelled out here rather than imported,
+per 0020/0021's convention.
+
+The ZIP backfill reads `location`'s trailing 5-digit token (optionally
+followed by "-NNNN" and/or a trailing "USA"/"US") as the postal code,
+and nothing else -- it does not parse or validate against any real ZIP
+database. A location that happens to end in some other 5-digit number
+is read as a ZIP by this same rule; it is editable afterwards on
+project settings (Task 4). Task 3 reimplements this exact regex as a
+tested pure function, `parse_zip`, so the two must stay in agreement.
 """
 import re
 from typing import Sequence, Union

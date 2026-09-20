@@ -14,6 +14,13 @@ def test_leading_count_is_read_from_the_front_of_the_sentence():
     assert resolve.leading_count("") is None
 
 
+def test_leading_count_is_read_even_when_followed_by_a_size():
+    # the count precedes the size ("20A", "2x4"); the size itself is
+    # never read as a second, competing count
+    assert resolve.leading_count("12 20A duplex receptacles") == 12
+    assert resolve.leading_count("28 2x4 LED troffers") == 28
+
+
 def test_typed_fallback_uses_the_words_and_never_a_catalog_id():
     p = resolve.typed_fallback("28 patient headwalls, 4-gang")
     assert p["source"] == "typed"
@@ -22,6 +29,15 @@ def test_typed_fallback_uses_the_words_and_never_a_catalog_id():
     assert p["catalog_id"] is None and p["schedule_match"] is None
     assert p["system"] == "Unknown" and p["category"] == "Unclassified"
     assert p["summary"] == "Read from your words as a custom item."
+
+
+def test_typed_fallback_never_produces_a_nameless_record():
+    # "6 of these" strips down to nothing once the count phrase is
+    # removed -- the typed path is the feature's floor, so it falls back
+    # to the estimator's original words rather than leaving no name at all
+    p = resolve.typed_fallback("6 of these")
+    assert p["name"] == "6 of these"
+    assert p["quantity"] == 6
 
 
 def test_candidates_are_ranked_by_token_overlap_and_capped_at_five():
@@ -69,3 +85,37 @@ def test_a_malformed_stub_answer_falls_back(monkeypatch):
     monkeypatch.setattr(resolve.llm, "resolve_proposal", lambda *a, **k: {"name": ""})  # missing fields
     p = resolve.resolve("2x4 LED troffer", {"tag": "F", "count": 30, "sheet": "EP101"}, [], "")
     assert p["source"] == "typed"
+
+
+def _stub_proposal(**overrides):
+    base = {
+        "name": "2x4 LED troffer", "system": "Lighting", "category": "Fixtures", "unit": "ea",
+        "catalog_id": None, "schedule_match": None, "quantity": None, "summary": "Renames the item",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_a_model_quantity_not_stated_in_the_text_is_discarded(monkeypatch):
+    # the schedule text can carry a count the estimator never said -- a
+    # quantity must come from the estimator's own words, by shape, not by
+    # trusting whatever the model returns (ROADMAP invariant 11)
+    monkeypatch.setattr(resolve.llm, "available", lambda: True)
+    monkeypatch.setattr(resolve.llm, "resolve_proposal", lambda *a, **k: _stub_proposal(quantity=500))
+    p = resolve.resolve("duplex receptacle", {"tag": "F", "count": 30, "sheet": "EP101"}, [], "")
+    assert p["quantity"] is None
+
+
+def test_a_model_quantity_stated_in_the_text_is_kept(monkeypatch):
+    monkeypatch.setattr(resolve.llm, "available", lambda: True)
+    monkeypatch.setattr(resolve.llm, "resolve_proposal", lambda *a, **k: _stub_proposal(quantity=28))
+    p = resolve.resolve("28 of these", {"tag": "F", "count": 30, "sheet": "EP101"}, [], "")
+    assert p["quantity"] == 28
+
+
+def test_candidates_with_no_overlap_returns_nothing():
+    # the prompt already renders "(none)" for an empty candidate list --
+    # an arbitrary first-five fallback would just be noise the model has
+    # to talk itself out of
+    out = resolve.candidates("xyzzy plugh unrelated words entirely", {}, [])
+    assert out == []

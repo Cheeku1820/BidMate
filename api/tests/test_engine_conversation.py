@@ -3,10 +3,12 @@
 It routes and proposes. It never classifies, never writes, and never
 approves (design spec 2.5). These tests are the boundary."""
 
+import dataclasses
 import inspect
 
 from app.engine import conversation
 from app.engine.conversation import INTENTS, route
+from app.engine.contracts import Proposal
 
 
 def test_exclusion_language_routes_to_exclude():
@@ -44,13 +46,18 @@ def test_a_proposal_never_carries_a_classification_of_its_own():
     limit 1). `Proposal` now also carries the classification fields
     `engine.resolve` fills in (say-what-it-is task 2) -- the dataclass is
     shared between the two agents, so the shape alone can no longer prove
-    this. What still proves it: route() itself never assigns them, so a
-    proposal it returns carries only their declared defaults; this also
-    pins the behaviour, since a reclassify proposal that filled `value`
-    with a guessed item name would satisfy that and still break the
-    limit."""
+    this. What still proves it: route() itself never assigns any of them,
+    so a proposal it returns carries only their declared defaults.
+    Compared field-by-field (via a freshly-constructed `Proposal` that
+    only sets the routing fields) rather than naming `catalog_id` and
+    `schedule_match` individually, so a future classification field is
+    covered automatically instead of needing its own line here -- this
+    also pins the behaviour, since a reclassify proposal that filled
+    `value` with a guessed item name would satisfy a narrower check and
+    still break the limit."""
     p = route("these six are all type F", ["a"])
-    assert p.catalog_id is None and p.schedule_match is None
+    expected = Proposal(intent=p.intent, target_item_ids=p.target_item_ids, field=p.field, value=p.value, summary=p.summary)
+    assert dataclasses.asdict(p) == dataclasses.asdict(expected)
     assert p.intent == "reclassify"
     assert p.field == "name"
     assert p.value == "", "Conversation must not supply the label -- Classification does"

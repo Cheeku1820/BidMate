@@ -34,8 +34,12 @@ _STOP = {"a", "an", "the", "of", "on", "in", "per", "these", "this", "it", "its"
 
 def leading_count(text: str) -> int | None:
     """An integer the sentence starts with, read as a count -- "28 of
-    these ..." -- but not a size like "2x4" or "20A"."""
-    m = re.match(r"\s*(\d{1,5})(?=\s+\D)", text or "")
+    these ..." -- but not a size like "2x4" or "20A" standing alone as
+    the first word. A count may itself be followed by a size ("12 20A
+    duplex receptacles" -> 12, "28 2x4 LED troffers" -> 28): what rules
+    a token out is being a *plain* number, not merely starting with a
+    digit."""
+    m = re.match(r"\s*(\d{1,5})(?=\s+(?!\d+(?:\s|$)))", text or "")
     return int(m.group(1)) if m else None
 
 
@@ -59,19 +63,33 @@ def candidates(text: str, catalog: dict, resolutions: list[dict], *, tag_hint: s
         entry = {"id": cid, "name": c.name, "system": c.system, "category": c.category}
         scored.append((float(len(words & _tokens(c.name))), entry))
     scored.sort(key=lambda p: -p[0])
-    return [e for score, e in scored[:limit] if score > 0] or [e for _, e in scored[:limit]]
+    return [e for score, e in scored[:limit] if score > 0]
 
 
 def typed_fallback(text: str) -> dict:
     count = leading_count(text)
-    name = (text or "").strip()
+    original = (text or "").strip()
+    name = original
     if count is not None:
-        name = re.sub(r"^\s*\d{1,5}\s+(of\s+(these|them)\s*,?\s*)?", "", name).strip(" ,")
+        stripped = re.sub(r"^\s*\d{1,5}\s+(of\s+(these|them)\s*,?\s*)?", "", original).strip(" ,")
+        # "6 of these" strips to nothing -- the typed path is the floor
+        # this feature never falls through, so a nameless record is
+        # worse than a redundant one. Keep the original words instead.
+        name = stripped or original
     return {
         "name": name, "system": "Unknown", "category": "Unclassified", "unit": "ea",
         "catalog_id": None, "schedule_match": None, "quantity": count,
         "summary": TYPED_SUMMARY, "source": "typed",
     }
+
+
+def _quantity_is_stated(text: str, quantity: int) -> bool:
+    """Whether `quantity` appears in `text` as a whole number, not as a
+    substring of a different number or a unit ("500A" does not state
+    500). This is what keeps a model-proposed quantity from silently
+    coming out of the schedule text instead of the estimator's own
+    words -- the rule the prompt asks for, enforced by shape."""
+    return re.search(rf"\b{re.escape(str(quantity))}\b", text or "") is not None
 
 
 def resolve(text: str, item_ctx: dict, candidates_: list[dict], schedule_text: str) -> dict:
@@ -84,7 +102,11 @@ def resolve(text: str, item_ctx: dict, candidates_: list[dict], schedule_text: s
         if not isinstance(answer, dict) or any(k not in answer for k in _REQUIRED) or not str(answer.get("name") or "").strip():
             raise ValueError("proposal missing fields")
         out = {k: answer[k] for k in _REQUIRED}
-        out["quantity"] = int(out["quantity"]) if out["quantity"] is not None else leading_count(text)
+        model_quantity = out["quantity"]
+        if model_quantity is not None and _quantity_is_stated(text, int(model_quantity)):
+            out["quantity"] = int(model_quantity)
+        else:
+            out["quantity"] = leading_count(text)
         out["source"] = "read"
         return out
     except Exception as exc:  # noqa: BLE001 -- any failure is the typed path, never a dead end

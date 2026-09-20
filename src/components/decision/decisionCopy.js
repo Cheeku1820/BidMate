@@ -12,12 +12,18 @@ export function approveCount(item, proposal) {
   return proposal.quantity != null ? proposal.quantity : item.quantity;
 }
 
-/** "Applies to all 28 · renames "Luminaire type F" · count 30 → 28 · clears the warning" */
+/** "Applies to all 30 · renames "Luminaire type F" · count 30 → 28 · clears the warning"
+    The applies-to count is the item's count as it stands today; a stated
+    correction shows up separately as "count 30 → 28" so the estimator sees
+    both the scope of the change and what it corrects. A measured item's
+    own length/count is edited below the box, not restated here. */
 export function changesLine(item, proposal) {
-  const n = approveCount(item, proposal);
+  const n = item.quantity;
   const parts = [n > 1 ? `Applies to all ${n}` : "Applies to this item"];
   if (proposal.name !== item.name) parts.push(`renames "${item.name}"`);
-  if (proposal.quantity != null && Number(proposal.quantity) !== Number(item.quantity)) parts.push(`count ${item.quantity} → ${proposal.quantity}`);
+  if (!item.path && proposal.quantity != null && Number(proposal.quantity) !== Number(item.quantity)) {
+    parts.push(`count ${item.quantity} → ${proposal.quantity}`);
+  }
   if (proposal.scheduleMatch || proposal.catalogId) parts.push("clears the warning");
   return parts.join(" · ");
 }

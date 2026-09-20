@@ -17,20 +17,28 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
   const [helper, setHelper] = useState("");
   const [done, setDone] = useState(null); // { note, approved, rejected, count, alsoMatching, at }
   const boxRef = useRef(null);
+  const cardRef = useRef(null);
 
-  // A new item resets the area; an approved or rejected one opens on the statement.
+  // A new item resets the area; an approved or rejected one opens on the
+  // statement. Keyed on id ALONE: the store's snapshot refreshing this same
+  // item after this area's own apply flips item.status, and if that were in
+  // the dependency list it would wipe the statement, the also-matching line,
+  // and the sentence out from under the estimator who just wrote them.
   useEffect(() => {
     setText(""); setProposal(null); setHelper(""); setDone(null);
     setState(item.status === "approved" || item.rejected ? "done" : "box");
-  }, [item.id, item.status, item.rejected]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id]);
 
   useEffect(() => {
     if (state === "box") boxRef.current?.focus();
+    else if (state === "card") cardRef.current?.focus();
   }, [state, item.id]);
 
   const readingUsable = item.status === "ready" && item.category !== "Unclassified";
 
   async function submit(sentence) {
+    if (busy) return;
     const s = (sentence ?? text).trim();
     if (!s) {
       if (!readingUsable) { setHelper(EMPTY_HELPER); return; }
@@ -44,6 +52,7 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
   }
 
   async function apply(approve) {
+    if (busy) return;
     setBusy(true);
     try {
       const res = await onApply(proposal, { approve, note: text });
@@ -54,18 +63,30 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
     } finally { setBusy(false); }
   }
 
+  // Escape's target: back to the box with the sentence intact. Shared by the
+  // card's own Escape handler, "Change wording", and the window-level
+  // listener below (so Escape works even when focus isn't on the card).
+  function backToBox() { setState("box"); }
+
   useEffect(() => {
     function onCmd(e) {
       const { type } = e.detail || {};
-      if (type === "focus") { setState("box"); setTimeout(() => boxRef.current?.focus(), 0); }
+      if (type === "focus") setState("box");
       if (type === "reject" && state !== "done") submit(REJECT_CHIP);
       if (type === "confirm") {
         if (state === "card" && proposal && proposal.intent !== "unknown") apply(proposal.intent !== "exclude");
         else if (state === "box") submit();
       }
     }
+    function onWindowKeyDown(e) {
+      if (e.key === "Escape" && state === "card") backToBox();
+    }
     window.addEventListener("decision-cmd", onCmd);
-    return () => window.removeEventListener("decision-cmd", onCmd);
+    window.addEventListener("keydown", onWindowKeyDown);
+    return () => {
+      window.removeEventListener("decision-cmd", onCmd);
+      window.removeEventListener("keydown", onWindowKeyDown);
+    };
   });
 
   if (state === "done") {
@@ -75,13 +96,21 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
     const at = done ? done.at : item.approvedAt;
     const count = done ? done.count : item.quantity;
     const tone = rejected ? "decision-done--rejected" : approved ? "decision-done--approved" : "decision-done--neutral";
+    // Undo doesn't wait on the store to refresh this item back to its prior
+    // status — it returns to the box locally, right away, with the sentence
+    // that produced this statement so the estimator isn't starting over.
+    function handleUndo() {
+      onUndo();
+      setText(note);
+      setState("box");
+    }
     return (
       <div className={"decision-done " + tone} role="status">
         <p className="decision-done__lead">
           {rejected ? `✕ You rejected ${count} — "${note}"` : approved ? `✓ You approved ${count} ${item.unit}${at ? " · " + timeShort(at) : ""}` : `You read this as ${done?.name ?? item.name}`}
         </p>
-        {!rejected && note ? <p className="value value--muted">From your note: "{note}" · <button className="linkbtn" onClick={onUndo}>Undo</button> · <button className="linkbtn" onClick={() => setState("box")}>Change</button></p>
-                          : <p className="value value--muted"><button className="linkbtn" onClick={onUndo}>Undo</button></p>}
+        {!rejected && note ? <p className="value value--muted">From your note: "{note}" · <button className="linkbtn" onClick={handleUndo}>Undo</button> · <button className="linkbtn" onClick={() => setState("box")}>Change</button></p>
+                          : <p className="value value--muted"><button className="linkbtn" onClick={handleUndo}>Undo</button></p>}
         {done?.alsoMatching?.count > 0 ? (
           <p className="value">
             {done.alsoMatching.count} more {item.sourceTag} on {done.alsoMatching.sheetNumbers.join(", ")} read the same way —{" "}
@@ -94,9 +123,9 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
 
   if (state === "card" && proposal) {
     return (
-      <ProposalCard item={item} proposal={proposal} busy={busy}
+      <ProposalCard item={item} proposal={proposal} busy={busy} sheetNumber={sheetNumber} cardRef={cardRef} onEscape={backToBox}
         onApprove={() => apply(true)} onConfirmOnly={() => apply(false)} onReject={() => apply(false)}
-        onChangeWording={() => setState("box")} />
+        onChangeWording={backToBox} />
     );
   }
 
@@ -107,7 +136,6 @@ export default function DecisionArea({ item, sheetNumber, onResolve, onApply, on
         onChange={(e) => { setText(e.target.value); setHelper(""); }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
-          if (e.key === "Escape") { e.preventDefault(); setText(""); }
         }} />
       <div className="decision__chips">
         <button type="button" className="chip" onClick={() => submit(item.name)}>{item.name}</button>

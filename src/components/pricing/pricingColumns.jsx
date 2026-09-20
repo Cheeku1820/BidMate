@@ -40,12 +40,12 @@ const BASIS_LABEL = { project_price: "Project price", allowance: "Allowance" };
 export const ALLOWANCE_REASON_MESSAGE =
   "An allowance needs a reason — say what it's standing in for, so the total can be traced back.";
 
-/** Market evidence is either a list of sellers (1build's price-comparison
- *  results and Google Shopping's, both `{seller, price, link}`) or a
- *  single matched catalog item (1build's own match, `{name, uom}`, with
- *  no price of its own to show). Either shape is written by a market
- *  source, not the estimator, so seller/item names render as text nodes
- *  only -- never markup. */
+/** Market evidence is either a list of sellers (Google Shopping's
+ *  listings, `{seller, price, link}` each) or the one matched catalog
+ *  item 1build returns (`{name, uom}`, with no price of its own to show
+ *  -- the row's unit price is that item's rate). Either shape is written
+ *  by a market source, not the estimator, so seller/item names render
+ *  as text nodes only -- never markup. */
 function MarketEvidence({ evidence }) {
   const isSellers = "seller" in evidence[0];
   return (

@@ -25,6 +25,15 @@ import { money, NONE } from "./pricingColumns.jsx";
 
 const POLL_MS = 2000;
 
+// The quote date the API requires, prefilled when the filename carried
+// none: today, in the estimator's own calendar day (an ISO string from
+// toISOString() is UTC, and after 5 pm in Sacramento that is tomorrow).
+function todayIso() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 // Same pattern as BulkApproveBar.jsx's per-status count (~line 76):
 // only the digit itself gets `.tabular`, so the label text after it
 // stays ordinary prose. The rendered textContent is unchanged from a
@@ -82,7 +91,7 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
       setPhase(result.state);
       if (result.state === "ready") {
         setSupplierName(result.supplierName || "");
-        setQuoteDate(result.quoteDate || "");
+        setQuoteDate(result.quoteDate || todayIso());
         setTicked(new Set(result.matched.map((m) => m.itemId)));
       } else if (result.state === "failed") {
         setError(result.error || "The price sheet couldn't be read. Try again.");
@@ -134,7 +143,10 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
   }
 
   const ready = phase === "ready" && preview && !preview.refused;
-  const canApply = ready && ticked.size > 0 && supplierName.trim().length > 0 && !applying;
+  // The API refuses an apply without a supplier and a quote date, so
+  // the button waits for both rather than sending a request it knows
+  // will come back 422.
+  const canApply = ready && ticked.size > 0 && supplierName.trim().length > 0 && quoteDate.length > 0 && !applying;
 
   return (
     <Modal
@@ -225,7 +237,7 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
               <ul className="pricesheet-plainlist">
                 {preview.unmatched.map((row, i) => (
                   <li key={i}>
-                    {row.itemName} <span className="tabular muted">{money(row.unitPrice)}</span>
+                    {row.itemName} <span className="tabular muted">{row.unitPrice != null ? money(row.unitPrice) : NONE}</span>
                   </li>
                 ))}
               </ul>

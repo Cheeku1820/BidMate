@@ -24,7 +24,7 @@ import AppTopBar from "../shell/AppTopBar.jsx";
 import DataGrid from "../grid/DataGrid.jsx";
 import PriceSheetImport from "./PriceSheetImport.jsx";
 import { ALLOWANCE_REASON_MESSAGE, COLUMNS, money } from "./pricingColumns.jsx";
-import { REFRESHING, REFRESH_BUSY } from "./marketOutcomeCopy.js";
+import { NO_ZIP, REFRESHING, REFRESH_BUSY } from "./marketOutcomeCopy.js";
 import { saveStateText } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 
@@ -53,7 +53,25 @@ export default function MaterialPricingWorkspace() {
   const [loadError, setLoadError] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [usage, setUsage] = useState(null); // { used, cap } | null = not shown
   const grid = useRef(null);
+
+  // The month's market-lookup meter, once per visit. It is context, not
+  // a control: a request that fails just leaves the line off rather
+  // than putting an error in front of the grid. (Promise.resolve() so a
+  // store without the method fails the same way as a request would.)
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => store.getMarketUsage())
+      .then((result) => {
+        if (!cancelled && result && typeof result.used === "number" && typeof result.cap === "number") setUsage(result);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [store]);
 
   const load = useCallback(() => {
     setLoadError(null);
@@ -159,6 +177,11 @@ export default function MaterialPricingWorkspace() {
     };
   }, [rows]);
 
+  // A row the market job could not place: the project has no ZIP code.
+  // Each such row carries its own warning; this is the one line under
+  // the heading that says the fix once rather than per row.
+  const locationNeeded = useMemo(() => (rows || []).some((r) => r.marketOutcome === "location_needed"), [rows]);
+
   const footer = totals ? (
     <tr>
       <td colSpan={COLUMNS.length - 1}>
@@ -179,6 +202,7 @@ export default function MaterialPricingWorkspace() {
 
       <div className="page page--fill">
         <h1 className="page-heading">Material pricing</h1>
+        {locationNeeded ? <p className="muted">{NO_ZIP}</p> : null}
 
         <div className="page-actions">
           <button type="button" className="btn" onClick={refresh} disabled={!!marketJob}>
@@ -187,11 +211,20 @@ export default function MaterialPricingWorkspace() {
           <a className="btn" href={store.priceRequestUrl(projectId)} download>
             Download price request
           </a>
+          <a className="btn" href={store.priceRequestUrl(projectId, { onlyMissing: true })} download>
+            Download price request for unpriced rows
+          </a>
           <button type="button" className="btn" onClick={() => setImporting(true)}>
             Upload supplier pricing
           </button>
         </div>
         {marketJob ? <p className="muted">{REFRESHING}</p> : null}
+        {usage ? (
+          <p className="muted">
+            Market lookups this month: <span className="tabular">{usage.used.toLocaleString()}</span> of{" "}
+            <span className="tabular">{usage.cap.toLocaleString()}</span>
+          </p>
+        ) : null}
 
         {loadError ? (
           <div className="load-error" role="alert">

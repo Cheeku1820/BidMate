@@ -9,7 +9,7 @@ import { render, screen, fireEvent, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import MaterialPricingWorkspace from "./MaterialPricingWorkspace.jsx";
-import { REFRESH_BUSY } from "./marketOutcomeCopy.js";
+import { NO_ZIP, REFRESH_BUSY } from "./marketOutcomeCopy.js";
 
 const baseRow = {
   itemId: "i1", itemName: "20A duplex receptacle", quantity: 10, unitPrice: null, source: null,
@@ -37,7 +37,15 @@ function renderMaterial({ store, extra = {} }) {
   // round trip (task 11) and only stubs the methods it exercises --
   // priceRequestUrl is called unconditionally by the header actions
   // row, so it needs a default here rather than in each of those.
-  const storeWithDefaults = { priceRequestUrl: (id) => `/api/projects/${id}/material-pricing/price-request`, ...store };
+  const storeWithDefaults = {
+    priceRequestUrl: (id, { onlyMissing = false } = {}) =>
+      `/api/projects/${id}/material-pricing/price-request${onlyMissing ? "?only=missing" : ""}`,
+    // The usage line is optional context: a store that can't answer
+    // (as these older fixtures can't) leaves it off, and nothing else
+    // on the screen depends on it.
+    getMarketUsage: () => Promise.reject(new Error("no usage in this fixture")),
+    ...store,
+  };
   context = { store: storeWithDefaults, projectId: "p1", ...review, ...extra };
   render(
     <MemoryRouter>
@@ -349,7 +357,9 @@ describe("MaterialPricingWorkspace", () => {
     renderMaterial({ store });
     await loaded(/2x4 LED troffer/);
     expect(screen.getByText("Project location needed")).toBeInTheDocument();
-    expect(screen.getByText(/Add the project ZIP code/)).toBeInTheDocument();
+    // The row's own fix; the page-level ZIP line under the heading is
+    // separate (and asserted on its own below).
+    expect(within(screen.getByRole("grid")).getByText(/Add the project ZIP code/)).toBeInTheDocument();
   });
 
   test("refresh queues the job and says so", async () => {
@@ -446,6 +456,9 @@ describe("MaterialPricingWorkspace", () => {
       "href",
       "/api/projects/p1/material-pricing/price-request",
     );
+    // The second download asks the store for the unpriced-rows variant.
+    expect(store.priceRequestUrl).toHaveBeenCalledWith("p1", { onlyMissing: true });
+    expect(screen.getByRole("link", { name: "Download price request for unpriced rows" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Upload supplier pricing" }));
     expect(screen.getByLabelText("Price sheet")).toBeInTheDocument();
@@ -457,5 +470,56 @@ describe("MaterialPricingWorkspace", () => {
     await waitFor(() => expect(store.applyPriceSheet).toHaveBeenCalled());
     expect(screen.queryByLabelText("Price sheet")).not.toBeInTheDocument();
     expect(await screen.findByText(/Refreshing market estimates/)).toBeInTheDocument();
+  });
+
+  test("shows the month's market lookups against the cap, in tabular numerals", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),
+      getMarketUsage: vi.fn().mockResolvedValue({ used: 1234, cap: 2000 }),
+    };
+    renderMaterial({ store });
+    await loaded();
+    const line = await screen.findByText(/Market lookups this month/);
+    expect(line.textContent.replace(/\s+/g, " ")).toBe("Market lookups this month: 1,234 of 2,000");
+    const numerals = Array.from(line.querySelectorAll(".tabular")).map((el) => el.textContent);
+    expect(numerals).toEqual(["1,234", "2,000"]);
+    expect(store.getMarketUsage).toHaveBeenCalledTimes(1);
+  });
+
+  test("leaves the usage line off when the request fails", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),
+      getMarketUsage: vi.fn().mockRejectedValue(new Error("network")),
+    };
+    renderMaterial({ store });
+    await loaded();
+    await waitFor(() => expect(store.getMarketUsage).toHaveBeenCalled());
+    expect(screen.queryByText(/Market lookups this month/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("says to add the project ZIP code once, under the heading, when any row needs a location", async () => {
+    const located = { ...baseRow, itemId: "i2", itemName: "Panelboard", marketOutcome: "no_match" };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({
+        pricingSource: null, pricingNote: "",
+        rows: [{ ...baseRow, marketOutcome: "location_needed" }, located],
+      }),
+    };
+    renderMaterial({ store });
+    await loaded();
+    expect(screen.getAllByText(NO_ZIP)).toHaveLength(1);
+    expect(screen.getByText(NO_ZIP).tagName).toBe("P");
+  });
+
+  test("shows no ZIP line when every row has a location", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({
+        pricingSource: null, pricingNote: "", rows: [{ ...baseRow, marketOutcome: "no_match" }],
+      }),
+    };
+    renderMaterial({ store });
+    await loaded();
+    expect(screen.queryByText(NO_ZIP)).toBeNull();
   });
 });

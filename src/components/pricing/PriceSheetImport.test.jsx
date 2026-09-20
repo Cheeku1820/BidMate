@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PriceSheetImport from "./PriceSheetImport.jsx";
@@ -49,6 +49,50 @@ describe("PriceSheetImport", () => {
     await waitFor(() => expect(s.applyPriceSheet).toHaveBeenCalledWith("p1", "d1",
       { itemIds: ["i1"], supplierName: "Codale", quoteDate: "2026-09-18", saveToCompany: false }));
     expect(onApplied).toHaveBeenCalled();
+  });
+
+  it("needs a quote date before Apply is enabled, and prefills today when the filename carried none", async () => {
+    // The API refuses an apply without a quote date; the button waits
+    // for one rather than sending a request that comes back 422.
+    const s = store({ getPriceSheetPreview: vi.fn().mockResolvedValue({ ...preview, quoteDate: null }) });
+    render(<PriceSheetImport projectId="p1" store={s} onApplied={vi.fn()} onClose={() => {}} />);
+    const file = new File(["x"], "codale.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    await userEvent.upload(screen.getByLabelText("Price sheet"), file);
+    const apply = await screen.findByRole("button", { name: "Apply 1 price" });
+
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    expect(screen.getByLabelText("Quote date")).toHaveValue(today);
+    expect(apply).toBeEnabled();
+
+    await userEvent.clear(screen.getByLabelText("Quote date"));
+    expect(screen.getByLabelText("Quote date")).toHaveValue("");
+    expect(apply).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Quote date"), { target: { value: "2026-09-18" } });
+    expect(apply).toBeEnabled();
+    await userEvent.click(apply);
+    await waitFor(() => expect(s.applyPriceSheet).toHaveBeenCalledWith("p1", "d1",
+      expect.objectContaining({ quoteDate: "2026-09-18" })));
+  });
+
+  it("keeps a date the filename carried rather than overwriting it with today", async () => {
+    const s = store();
+    render(<PriceSheetImport projectId="p1" store={s} onApplied={vi.fn()} onClose={() => {}} />);
+    await userEvent.upload(screen.getByLabelText("Price sheet"), new File(["x"], "codale_2026-09-18.xlsx"));
+    await screen.findByRole("button", { name: "Apply 1 price" });
+    expect(screen.getByLabelText("Quote date")).toHaveValue("2026-09-18");
+  });
+
+  it("shows a dash, not a broken amount, for an unmatched row the sheet left unpriced", async () => {
+    const s = store({ getPriceSheetPreview: vi.fn().mockResolvedValue({
+      ...preview, unmatched: [{ itemName: "Something extra", unitPrice: null, line: 3 }],
+    }) });
+    render(<PriceSheetImport projectId="p1" store={s} onApplied={vi.fn()} onClose={() => {}} />);
+    await userEvent.upload(screen.getByLabelText("Price sheet"), new File(["x"], "codale.xlsx"));
+    const item = await screen.findByText(/Something extra/);
+    expect(item.textContent).toContain("—");
+    expect(item.textContent).not.toContain("NaN");
   });
 
   it("shows a refused sheet's reason and no apply", async () => {

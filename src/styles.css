@@ -2747,8 +2747,11 @@ button {
    Estimator approved. */
 .decision__box { width: 100%; box-sizing: border-box; resize: vertical; }
 .decision__chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
-.chip { border: 1px solid var(--line-2); background: var(--surface); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12.5px; color: var(--ink-1); cursor: pointer; }
-.chip:hover { background: var(--paper-1); }
+/* Namespaced: the sheets rail's own `.chip` (its All/Electrical/Needs
+   attention filter, above) is a different control with its own weight
+   and border, and a second `.chip` rule here would restyle it. */
+.decision__chip { border: 1px solid var(--line-2); background: var(--surface); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12.5px; color: var(--ink-1); cursor: pointer; }
+.decision__chip:hover { background: var(--paper-1); }
 .decision-card { border: 1px solid var(--line-2); border-radius: var(--r-md); padding: 10px 12px; margin: 8px 0; background: var(--paper-1); }
 .decision-card.is-pending { outline: 1px dashed var(--ink-3); outline-offset: -4px; }
 .decision-card__lead { margin: 0 0 6px; font-weight: 600; }
@@ -2756,7 +2759,7 @@ button {
 .decision-kv dt { color: var(--ink-3); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 .decision-kv dd { margin: 0; }
 .decision-done { border-radius: var(--r-md); padding: 10px 12px; margin: 8px 0; border: 1px solid var(--line-2); }
-.decision-done--approved { background: var(--green-tint, #e9f6ef); border-color: var(--green); color: var(--green); }
+.decision-done--approved { background: var(--green-tint); border-color: var(--green); color: var(--green); }
 .decision-done--rejected { background: var(--paper-1); border-color: var(--line-2); color: var(--ink-1); }
 .decision-done--neutral { background: var(--paper-1); border-color: var(--slate); color: var(--ink-1); }
 .decision-done__lead { margin: 0 0 4px; font-weight: 600; }

@@ -178,8 +178,12 @@ After apply, the slot holds a statement, not a button:
   the status pill above shows whatever the item now is.
 - For a rejection: "✕ You rejected 5 — 'not a device' · Undo".
 - **Undo** calls the shared undo; the panel reloads to the before-state
-  including the pill. **Change** returns to State 1 with the previous
-  sentence.
+  including the pill. It is offered only on a statement this panel just
+  produced — the head of the shared stack is then this action. An
+  item-derived statement (an item approved or rejected earlier, by
+  anyone, selected now) offers only **Change**: its Undo would reverse
+  whatever unrelated action sits at the head. **Change** returns to
+  State 1 with the previous sentence.
 - The "also matching" line appears only when `apply-proposal` reports
   `also_matching.count > 0`. Its link selects the first such item on its
   sheet (the canvas brings it into view). Nothing on those sheets has
@@ -232,7 +236,13 @@ Produced in this order:
    return at once with `reject_reason = text.strip()`, `intent:
    "exclude"`, targets resolved, `source: "read"`. The model is never
    asked whether to reject. `unknown` on an empty or whitespace text →
-   `intent: "unknown"`. Otherwise continue.
+   `intent: "unknown"`. Every other sentence continues — including one
+   the panel router would read as context (`set_context` fires on
+   "ceiling", "height", "mounting", "voltage", which are half the
+   vocabulary of a device name: "counter height duplex receptacle",
+   "ceiling mounted occupancy sensor"). On this route the estimator was
+   asked what the item is, so the only intent that matters is
+   exclude-vs-not.
 2. **Targets.** The cluster: countable items on the same sheet with the
    same `source_tag` (the engine's cluster tag, already stored on every
    item as the re-run merge key). If the item's `source_tag` is empty,
@@ -271,14 +281,30 @@ Body: the `ProposalOut` as returned, plus `{ "approve": boolean, "note": string 
 `note` is the sentence the estimator typed; it is stored, never
 interpreted again.
 
+- Validates a reclassify body first, with the rules `PATCH /items/{id}`
+  applies (`edit_validation.validate_edit` on `system`, `category`,
+  `quantity`), a non-blank `name`, and membership of `system` /
+  `category` in the closed sets Classification draws from
+  (`engine.contracts.RESOLVE_SYSTEMS` / `RESOLVE_CATEGORIES`) — the
+  same `400` code-and-message shape, so the panel's existing banner
+  shows the refusal. This route writes the same columns from a
+  client-supplied body; it is not a way around the edit rules.
 - Loads every target under `FOR UPDATE`, in id order (the same lock
   discipline `bulk_approve` uses); refuses with the
   existing stale-version copy if any `versions[id]` differs.
 - **Reclassify**: for each target sets `name`, `system`, `category`,
-  `quantity` when given, and `resolve_note` = `note`; clears `warning` when the proposal's
+  and `resolve_note` = `note`. A stated `quantity` is one number for
+  one row: it lands only when the cluster is a single row (the engine's
+  own shape — one row per `(sheet, tag)` carrying the placement count);
+  with more than one row it is refused — "This tag is counted as N rows
+  on this sheet — correct the count on each row." — because writing
+  28 to each of two rows would count 56. Clears the warnings whose
+  reason is `LEGEND` or `SCHEDULE_CONFLICT` when the proposal's
   `schedule_match` is set or `catalog_id` is set (the classifier's own
-  reasons for the warning no longer hold); then, if `approve`, applies
-  the same approval rule `review.approve_item` enforces — a target at
+  reasons no longer hold); never a `SCALE` warning, which is about the
+  sheet, not the item's identity. Then, if `approve`, applies
+  the same approval rule `review.approve_item` enforces — every target
+  is checked before any is written, so a target at
   *Missing information* refuses the whole apply with that rule's copy,
   nothing written.
 - **Exclude**: for each target sets `rejected_at`, `rejected_by_user_id`,
@@ -291,7 +317,9 @@ interpreted again.
   (the same nested-key snapshot shape `bulk_approve` uses), `label` in
   the estimator's words — "Approved 28 × 2x4 LED troffer, 4000K — type
   F", "Rejected 5 — not a device", "Read F as 2x4 LED troffer …" — and
-  the `note`. `resolve` joins `undo.REVERSIBLE`; `undo_apply` reverses it
+  the `note`. The number is the device count, the summed quantity
+  across the cluster's rows after the apply (the figure the card and
+  the statement show), never the row count. `resolve` joins `undo.REVERSIBLE`; `undo_apply` reverses it
   through the existing per-item state restore, so one undo puts back
   every name, count, status, and reject for the cluster.
 - **Library write**, only here and only for reclassify: upsert
@@ -307,7 +335,7 @@ interpreted again.
 
 `symbol_resolutions` is also read by `classify_run` on later runs of the
 same project: a tag with a resolution is named from it, at *Ready to
-review*, warning cleared, with `basis_note` "Read as … from your earlier
+review*, warning cleared, with `description` "Read as … from your earlier
 review." Never approved by the run.
 
 ## Client

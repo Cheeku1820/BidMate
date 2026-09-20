@@ -233,6 +233,8 @@ TENANCY_TABLE = [
      lambda p, s, i: {"text": "test", "screen": {"name": "export"}}, None),
     ("PATCH", "/api/projects/{project_id}/postal-code",
      lambda p, s, i: f"/api/projects/{p.id}/postal-code", lambda p, s, i: {"postal_code": "78701"}, None),
+    ("POST", "/api/projects/{project_id}/market-pricing/refresh",
+     lambda p, s, i: f"/api/projects/{p.id}/market-pricing/refresh", None, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]
@@ -341,6 +343,7 @@ NON_PROJECT_SCOPED_ROUTES = {
     ("GET", "/api/company/labor-hours-overrides"),
     ("PUT", "/api/company/labor-hours-overrides/{item_name}"),
     ("DELETE", "/api/company/labor-hours-overrides/{item_name}"),
+    ("GET", "/api/company/market-pricing/usage"),
     # FastAPI's own framework routes -- docs UI, its OAuth2 redirect
     # target, the OpenAPI schema, and ReDoc. None of these take a
     # project id or touch tenant data; they exist the moment `FastAPI()`

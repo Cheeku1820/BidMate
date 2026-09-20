@@ -511,6 +511,14 @@ class MaterialRowOut(BaseModel):
     reason: str = ""
     status: str
     basis_note: str = ""
+    price_low: Decimal | None = None
+    price_high: Decimal | None = None
+    market_outcome: str | None = None
+    market_warning: dict | None = None
+    market_evidence: list[dict] = []
+    fetched_at: datetime | None = None
+    supplier_name: str = ""
+    quote_date: date | None = None
 
     model_config = MODEL_CONFIG
 
@@ -519,6 +527,7 @@ class MaterialListOut(BaseModel):
     pricing_source: str | None
     pricing_note: str
     rows: list[MaterialRowOut]
+    market_job: str | None = None
 
     model_config = MODEL_CONFIG
 

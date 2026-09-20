@@ -14,6 +14,8 @@ from app.auth.dependencies import current_user
 from app.db import get_db
 from app.errors import DomainError
 from app.identity.models import User
+from app.jobs import queue
+from app.market.copy import warning_for
 from app.takeoff import actions
 from app.takeoff.actions import encode_snapshot
 from app.takeoff.models import (
@@ -21,9 +23,13 @@ from app.takeoff.models import (
     CompanyLaborHoursOverride,
     CompanyLaborRate,
     CompanyMaterialPrice,
+    ItemMarketPrice,
+    Job,
+    MarketLookup,
     Project,
     ProjectLaborLine,
     ProjectMaterialPrice,
+    Sheet,
 )
 from app.takeoff.pricing import resolve_labor, resolve_material_price
 from app.takeoff.router import load_item, load_project
@@ -112,7 +118,23 @@ def labor_row_for(item, project, db: DbSession, user: User) -> LaborRowOut:
     return _labor_row_out(item, resolution, line)
 
 
-def _material_row_out(item, resolution, override) -> MaterialRowOut:
+def _evidence(market: ItemMarketPrice | None, lookup: MarketLookup | None) -> list[dict]:
+    """The seller/catalog evidence behind a priced market estimate. No
+    vendor name on the row otherwise -- this is the one place sellers
+    surface, and only once the outcome is "priced"."""
+    if market is None or lookup is None or market.outcome != "priced":
+        return []
+    r = lookup.result or {}
+    if market.source == "shopping":
+        return [{"seller": s.get("seller", ""), "price": s.get("price"), "link": s.get("link")} for s in r.get("sellers") or []]
+    m = r.get("matched") or {}
+    return [{"name": m.get("name", ""), "uom": m.get("uom", "")}] if m else []
+
+
+def _material_row_out(item, resolution, override, market=None, lookup=None, sheet_number="") -> MaterialRowOut:
+    warning = None
+    if resolution.status == "missing" and market is not None:
+        warning = warning_for(market.outcome, query=market.query, sheet_number=sheet_number, description=item.description or "")
     return MaterialRowOut(
         item_id=item.id, item_name=item.name, quantity=item.quantity,
         unit_price=resolution.unit_price,
@@ -120,6 +142,12 @@ def _material_row_out(item, resolution, override) -> MaterialRowOut:
         source_label=resolution.source_label,
         reason=override.reason if override is not None else "",
         status=resolution.status, basis_note=resolution.basis_note,
+        price_low=resolution.price_low, price_high=resolution.price_high,
+        market_outcome=resolution.market_outcome, market_warning=warning,
+        market_evidence=_evidence(market, lookup),
+        fetched_at=market.fetched_at if market is not None else None,
+        supplier_name=override.supplier_name if override is not None else "",
+        quote_date=override.quote_date if override is not None else None,
     )
 
 
@@ -132,8 +160,11 @@ def material_row_for(item, project, db: DbSession, user: User) -> MaterialRowOut
             CompanyMaterialPrice.item_name == item.name,
         )
     ).one_or_none()
-    resolution = resolve_material_price(item, project, override, company_price)
-    return _material_row_out(item, resolution, override)
+    market = db.get(ItemMarketPrice, item.id)
+    lookup = db.get(MarketLookup, market.lookup_id) if market and market.lookup_id else None
+    sheet = db.get(Sheet, item.sheet_id)
+    resolution = resolve_material_price(item, project, override, company_price, market=market)
+    return _material_row_out(item, resolution, override, market, lookup, sheet.number if sheet else "")
 
 
 @router.patch("/items/{item_id}/labor", response_model=LaborRowOut)
@@ -279,8 +310,9 @@ def get_labor(project_id: uuid.UUID, user: User = Depends(current_user), db: DbS
 def get_material_pricing(project_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
     project = load_project(project_id, db, user)
     items = list(db.scalars(countable_items(project.id)))
+    ids = [i.id for i in items]
     overrides = {row.item_id: row for row in db.scalars(
-        select(ProjectMaterialPrice).where(ProjectMaterialPrice.item_id.in_([i.id for i in items]))
+        select(ProjectMaterialPrice).where(ProjectMaterialPrice.item_id.in_(ids))
     )}
     names = {i.name for i in items}
     company_prices = {
@@ -292,13 +324,48 @@ def get_material_pricing(project_id: uuid.UUID, user: User = Depends(current_use
             )
         )
     }
+    markets = {m.item_id: m for m in db.scalars(select(ItemMarketPrice).where(ItemMarketPrice.item_id.in_(ids)))}
+    lookup_ids = {m.lookup_id for m in markets.values() if m.lookup_id}
+    lookups = {l.id: l for l in db.scalars(select(MarketLookup).where(MarketLookup.id.in_(lookup_ids)))}
+    sheet_numbers = {s.id: s.number for s in db.scalars(select(Sheet).where(Sheet.project_id == project.id))}
 
     rows = []
     for item in items:
         override = overrides.get(item.id)
-        resolution = resolve_material_price(item, project, override, company_prices.get(item.name))
-        rows.append(_material_row_out(item, resolution, override))
-    return MaterialListOut(pricing_source=project.pricing_source, pricing_note=project.pricing_note, rows=rows)
+        market = markets.get(item.id)
+        lookup = lookups.get(market.lookup_id) if market is not None and market.lookup_id else None
+        resolution = resolve_material_price(item, project, override, company_prices.get(item.name), market=market)
+        rows.append(_material_row_out(
+            item, resolution, override, market, lookup, sheet_numbers.get(item.sheet_id, "")
+        ))
+    job = db.scalars(select(Job).where(Job.kind == "price", Job.project_id == project.id,
+                                       Job.status.in_(("queued", "running")))).first()
+    return MaterialListOut(pricing_source=project.pricing_source, pricing_note=project.pricing_note, rows=rows,
+                           market_job=job.status if job is not None else None)
+
+
+@router.post("/projects/{project_id}/market-pricing/refresh", status_code=202)
+def refresh_market_pricing(project_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    """Queue a price job. Not a mutation of anything an estimator owns,
+    so not through commit(); the job writes only item_market_prices."""
+    project = load_project(project_id, db, user)
+    job = queue.enqueue_price(db, project, user.id)
+    db.commit()
+    return {"queued": job is not None}
+
+
+@router.get("/company/market-pricing/usage")
+def get_market_usage(user: User = Depends(current_user), db: DbSession = Depends(get_db)):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func
+
+    from app.config import settings
+
+    start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    used = db.scalar(select(func.count()).select_from(MarketLookup).where(
+        MarketLookup.org_id == user.org_id, MarketLookup.billed.is_(True), MarketLookup.fetched_at >= start)) or 0
+    return {"used": used, "cap": settings.market_lookup_monthly_cap}
 
 
 @router.get("/company/labor-rates", response_model=CompanyLaborRatesOut)

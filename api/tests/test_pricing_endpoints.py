@@ -576,3 +576,57 @@ def test_patch_labor_adjustment_alone_leaves_the_row_missing(client, item, signe
     assert body["adjusted_hours"] is None
     assert body["labor_cost"] is None
     assert float(body["adjustment_percent"]) == 10.0
+
+
+def test_material_rows_carry_the_market_estimate(client, db, signed_in_user, project, sheet, item, org):
+    from datetime import datetime, timezone
+    from decimal import Decimal
+    from app.takeoff.models import ItemMarketPrice, MarketLookup
+    project.org_id = signed_in_user.org_id
+    lk = MarketLookup(source="shopping", query_key="current cvt8-lscs-mv", location_key="Austin, TX", status="priced",
+                      result={"sellers": [{"title": "t", "seller": "Codale", "price": 169.95, "link": "https://codale.example/x"}]},
+                      fetched_at=datetime(2026, 9, 18, tzinfo=timezone.utc), billed=True, org_id=org.id)
+    db.add(lk); db.flush()
+    db.add(ItemMarketPrice(item_id=item.id, lookup_id=lk.id, outcome="priced", source="shopping", query="Current CVT8-LSCS-MV",
+                           unit_price=Decimal("169.95"), price_low=Decimal("156.75"), price_high=Decimal("303.33"),
+                           unit="EA", location_label="Austin, TX", fetched_at=lk.fetched_at))
+    db.commit()
+    r = client.get(f"/api/projects/{project.id}/material-pricing")
+    row = r.json()["rows"][0]
+    assert row["source_label"] == "Market estimate" and row["status"] == "attention"
+    assert row["price_low"] == "156.75" and row["price_high"] == "303.33"
+    assert row["market_evidence"] == [{"seller": "Codale", "price": 169.95, "link": "https://codale.example/x"}]
+    assert row["basis_note"] == "Austin, TX, Sep 18" and row["market_warning"] is None
+
+
+def test_material_rows_carry_the_outcome_warning(client, db, signed_in_user, project, sheet, item):
+    from app.takeoff.models import ItemMarketPrice
+    project.org_id = signed_in_user.org_id
+    db.add(ItemMarketPrice(item_id=item.id, outcome="location_needed", source="onebuild", query="20A duplex receptacle"))
+    db.commit()
+    row = client.get(f"/api/projects/{project.id}/material-pricing").json()["rows"][0]
+    assert row["status"] == "missing" and row["market_outcome"] == "location_needed"
+    w = row["market_warning"]
+    assert w["title"] == "Project location needed" and set(w) == {"title", "found", "why", "fix", "where"}
+    assert w["where"].startswith("E2.1")
+
+
+def test_refresh_queues_one_price_job(client, db, signed_in_user, project):
+    from sqlalchemy import func, select
+    from app.takeoff.models import Job
+    project.org_id = signed_in_user.org_id; db.commit()
+    assert client.post(f"/api/projects/{project.id}/market-pricing/refresh").status_code == 202
+    assert client.post(f"/api/projects/{project.id}/market-pricing/refresh").json() == {"queued": False}
+    assert db.scalar(select(func.count()).select_from(Job).where(Job.kind == "price", Job.project_id == project.id)) == 1
+    assert client.get(f"/api/projects/{project.id}/material-pricing").json()["market_job"] == "queued"
+
+
+def test_usage_counts_billed_lookups_this_month(client, db, signed_in_user, org):
+    from datetime import datetime, timezone
+    from app.takeoff.models import MarketLookup
+    db.add(MarketLookup(source="onebuild", query_key="a", location_key="1", status="priced", result={},
+                        fetched_at=datetime.now(timezone.utc), billed=True, org_id=signed_in_user.org_id))
+    db.add(MarketLookup(source="onebuild", query_key="b", location_key="1", status="priced", result={},
+                        fetched_at=datetime.now(timezone.utc), billed=False, org_id=signed_in_user.org_id))
+    db.commit()
+    assert client.get("/api/company/market-pricing/usage").json() == {"used": 1, "cap": 2000}

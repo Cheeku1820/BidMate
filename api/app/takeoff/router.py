@@ -25,6 +25,7 @@ from app.auth.dependencies import current_user
 from app.db import get_db
 from app.errors import DomainError
 from app.identity.models import User
+from app.jobs import queue
 from app.takeoff import actions, snapshot as snapshot_module
 from app.takeoff.models import Item, Project, Sheet
 from app.takeoff.projects import create_project, list_projects, project_row
@@ -156,6 +157,8 @@ def patch_postal_code(
     actions.commit(db, actor=user, project_id=project.id, kind="project_edit",
                    label="Set project ZIP code" if body.postal_code else "Cleared project ZIP code",
                    before=before, after={"postal_code": project.postal_code})
+    if body.postal_code:
+        queue.enqueue_price(db, project, user.id)
     db.commit()
     row = project_row(db, user.org_id, project.id)
     return ProjectOut.model_validate(row, from_attributes=True)

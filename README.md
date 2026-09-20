@@ -64,7 +64,7 @@ Once you've uploaded and processed a drawing set, the workspace surfaces whateve
 
 **Fix a missing scale.** A sheet with no scale in its title block shows measured items as *Missing information*, drawn as dashed red polylines because they can't be measured with confidence. Set the scale, or calibrate against a known dimension on the plan, to clear the warning and flip the affected items to *Ready to review*.
 
-**Classify an unknown symbol.** A symbol that isn't in the legend stays visible and reviewable rather than being silently dropped. Edit it to assign a real classification.
+**Classify an unknown symbol.** A symbol that isn't in the legend stays visible and reviewable rather than being silently dropped. Type what it is in your own words — "2x4 LED troffer, type F on the E-501 schedule" — check what would change, and confirm: every one in the cluster is renamed and approved in one press, and the same tag elsewhere on the set is offered next. "Not a device" rejects with your reason.
 
 **Hit the blocking rule.** Click **Finish review** while any *Missing information* item remains. Completion is blocked, the blocking items are listed with direct links, and only *Needs attention* items can be carried forward — after an explicit acknowledgment checkbox.
 
@@ -131,6 +131,7 @@ src/
       NoteForm.jsx             add/edit, with the context/reference control
       ApplyNotesBanner.jsx     offers the re-run when context notes are pending
       noteVocabulary.js        a note's own words, distinct from the review labels
+    decision/                  the item panel's "What is this?" — box, proposal card, statement
     grid/                      the editable grid under Labor and Material pricing
       DataGrid.jsx             cells, in-place editors, validation, the Clear affordance
       useGridNavigation.js     the active-cell movement rules

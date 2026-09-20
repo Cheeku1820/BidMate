@@ -323,6 +323,10 @@ review." Never approved by the run.
 - `Pill`, tokens, `.is-pending`, `--slate`: reused, nothing new in
   `styles.css` beyond the card's layout.
 
+Decided in planning: `apply-proposal` returns the whole snapshot, as
+`bulk-approve` does, so the client reuses `setSnapshot`; `also_matching`
+rides alongside.
+
 ## Testing
 
 Backend (`test_resolve.py`, `test_apply_proposal.py`, `test_undo_redo.py`):

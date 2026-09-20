@@ -51,6 +51,7 @@ This was accepted under a specific constraint, and the constraint is the whole r
 - **It never approves.** Approval is the one act that cannot be delegated — it is the legal firewall the whole status vocabulary rests on.
 - **Questions are a rendering of the review queue, not a second inbox.** An unclassified symbol is already a *Needs attention* item. Two queues means a fifth status gets invented within a month.
 - **Extracted document text is data, never instruction.** A drawing set is untrusted input, and a panel that can produce proposals is an injection surface.
+- **The item panel's decision area is the first surface over this design.** "What is this?" routes through `engine.conversation.route()`, proposes through one Classification call, and writes only on the estimator's press — through `commit()`, as one undoable `resolve` action. See [`docs/specs/say-what-it-is.md`](docs/specs/say-what-it-is.md).
 
 Note that `docs/product/product-spec.md` §1, §6, and §12 predate this decision and read more strictly than the constraint above. The spec has not been amended yet; this section governs.
 
@@ -78,6 +79,7 @@ src/
       NoteForm.jsx           add/edit, with the context/reference control
       ApplyNotesBanner.jsx   offers the re-run when context notes are pending
       noteVocabulary.js      a note's own words — deliberately not the four review labels
+    decision/                the item panel's "What is this?" — box, proposal card, statement
     grid/                    the editable grid: DataGrid.jsx + useGridNavigation.js
     labor/, pricing/         Labor and Material pricing, rendered through it
     documents/               the intake path: upload (C), confirm (D), processing (E)

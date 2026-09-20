@@ -7,9 +7,10 @@ from decimal import Decimal
 from sqlalchemy import func, select
 
 from app.jobs import queue
-from app.takeoff.models import Item, ItemMarketPrice, MarketLookup, ReviewStatus
-from app.worker import market_sources, price_job
+from app.takeoff.models import Item, ItemMarketPrice, Job, MarketLookup, ReviewStatus
+from app.worker import __main__ as worker, market_sources, price_job
 from app.worker.market_sources import SourceError, SourceResult
+from tests.conftest import TestSession
 from tests.test_worker_read import _run_all, inline  # noqa: F401
 
 
@@ -187,3 +188,93 @@ def test_cap_is_reread_before_each_call_so_a_concurrent_jobs_row_counts(db, proj
     assert db.get(ItemMarketPrice, a.id).outcome == "priced"
     assert db.get(ItemMarketPrice, b.id).outcome == "over_budget"
     assert db.scalar(select(func.count()).select_from(MarketLookup).where(MarketLookup.billed.is_(True))) == 2
+
+
+def test_each_paid_call_is_committed_before_the_next_so_a_kill_keeps_it(db, project, sheet, dana, monkeypatch):
+    """The sandbox kills a price job past its wall clock, and a kill is a
+    rollback of whatever the child has not committed. If the whole job
+    were one transaction, every paid call -- the meter row and the
+    price it bought -- would be lost and re-spent on the retry. So the
+    rows a call writes are committed before the next call is made: at
+    the moment the second item's lookup runs, a *separate* session (the
+    view a kill would leave behind) already sees the first item's
+    billed lookup and its price."""
+    project.postal_code = "78701"
+    seen = []
+
+    class CommittedSource(FakeSource):
+        def lookup(self, query, unit, loc):
+            self.calls.append(query)
+            other = TestSession()
+            try:
+                seen.append((other.scalar(select(func.count()).select_from(MarketLookup).where(MarketLookup.billed.is_(True))),
+                             other.scalar(select(func.count()).select_from(ItemMarketPrice))))
+            finally:
+                other.close()
+            return self._answer
+
+    src = CommittedSource("onebuild", _priced())
+    _wire(monkeypatch, db, {"onebuild": src})
+    _item(db, project, sheet, "Item 1"); _item(db, project, sheet, "Item 2")
+    job = queue.enqueue_price(db, project, dana.id); _run_all(db)
+    db.refresh(job)
+    assert job.status == "done" and src.calls == ["Item 1", "Item 2"]
+    assert seen == [(0, 0), (1, 1)]
+
+
+def test_a_job_past_its_budget_stops_marks_itself_done_and_queues_the_remainder(db, project, sheet, dana, monkeypatch):
+    """Ninety seconds in, the loop stops on its own rather than letting
+    the sandbox's 120 s kill it: the items it has priced are written,
+    the job is done, and a second price job for the same project and
+    run is queued to carry on -- which, because a re-run skips items
+    with a fresh row, prices exactly the ones this job never reached."""
+    project.postal_code = "78701"
+    src = FakeSource("onebuild", _priced())
+    _wire(monkeypatch, db, {"onebuild": src})
+    # One reading at the start of the job, one at the top of each item:
+    # the third item is where the budget has run out.
+    over = price_job.PRICE_JOB_BUDGET_SECONDS + 1
+    ticks = iter([0, 0, 0, over])
+    monkeypatch.setattr(price_job, "_clock", lambda: next(ticks, over))
+    items = [_item(db, project, sheet, f"Item {n}") for n in range(4)]
+    run_id = uuid.uuid4()
+    first = queue.enqueue_price(db, project, dana.id, run_id=run_id)
+    db.commit()
+    assert worker.tick("t")
+    db.refresh(first)
+    assert first.status == "done" and src.calls == ["Item 0", "Item 1"]
+    assert [db.get(ItemMarketPrice, i.id) is not None for i in items] == [True, True, False, False]
+    queued = db.scalars(select(Job).where(Job.kind == "price", Job.project_id == project.id, Job.status == "queued")).one()
+    assert queued.id != first.id and queued.run_id == run_id and queued.requested_by == dana.id
+
+    # The follow-on job, with the clock back in budget, finishes the set
+    # without re-spending on the two already priced.
+    monkeypatch.setattr(price_job, "_clock", lambda: 0)
+    _run_all(db)
+    db.refresh(queued)
+    assert queued.status == "done" and src.calls == ["Item 0", "Item 1", "Item 2", "Item 3"]
+    assert all(db.get(ItemMarketPrice, i.id).outcome == "priced" for i in items)
+
+
+def test_refreshing_another_orgs_stale_row_moves_the_meter_to_the_org_that_paid(db, project, sheet, dana, org, monkeypatch):
+    """The cache is shared across orgs -- public market data -- but the
+    meter row counts against whoever paid for the call it records. A
+    stale row org B fetched, refreshed by org A's job, is org A's call
+    now: leaving `org_id` on B would bill B for A's lookup and leave
+    A's own cap untouched."""
+    from app.identity.models import Org
+    other = Org(name="Other Electric")
+    db.add(other); db.flush()
+    project.postal_code = "78701"
+    src = FakeSource("onebuild", _priced())
+    _wire(monkeypatch, db, {"onebuild": src})
+    stale = MarketLookup(source="onebuild", query_key="20a duplex receptacle", location_key="78701", status="priced",
+                         result={}, fetched_at=datetime.now(timezone.utc) - timedelta(days=31), billed=True, org_id=other.id)
+    db.add(stale); db.flush()
+    i = _item(db, project, sheet, "20A duplex receptacle")
+    queue.enqueue_price(db, project, dana.id); _run_all(db)
+    mp = db.get(ItemMarketPrice, i.id)
+    assert mp.lookup_id == stale.id and src.calls == ["20A duplex receptacle"]
+    db.refresh(stale)
+    assert stale.org_id == project.org_id == org.id and stale.billed is True
+    assert db.scalar(select(func.count()).select_from(MarketLookup)) == 1

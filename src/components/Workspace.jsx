@@ -22,7 +22,7 @@ export default function Workspace() {
   const {
     snapshot, loading, loadError, saved, toast, dismissToast,
     itemError, clearItemError, setPresenceTarget, refresh,
-    approveItem, rejectItem, deleteItem, editItem, setScale, undo, redo,
+    deleteItem, editItem, setScale, undo, redo, applyProposal,
     me, sheetId, setSheetId, selectedItemId, selectItem, project, projectId,
     store,
   } = useWorkspaceContext();
@@ -69,6 +69,12 @@ export default function Workspace() {
   const items = snapshot?.items ?? [];
   const sheet = sheets.find((s) => s.id === sheetId) ?? sheets[0] ?? null;
   const sel = items.find((i) => i.id === selectedItemId) ?? null;
+
+  const resolveForItem = (text) => store.resolveItem(sel.id, text);
+  const applyForItem = (proposal, opts) => applyProposal(sel.id, proposal, opts);
+  const alsoMatchingItemId = sel
+    ? (items.find((i) => i.sourceTag && i.sourceTag === sel.sourceTag && i.sheetId !== sel.sheetId && i.status !== "approved")?.id ?? null)
+    : null;
 
   useEffect(() => {
     setPresenceTarget(sheetId, selectedItemId);
@@ -160,11 +166,17 @@ export default function Workspace() {
         else doUndo();
         return;
       }
+      // The decision box autofocuses on every selection (say-what-it-is
+      // spec), which suppresses J/K/+/-/0 below since focus sits in a
+      // textarea. Escape while it holds focus blurs it -- one press and
+      // the single-key shortcuts work again -- before the typing
+      // early-return would otherwise swallow the Escape entirely.
+      if (e.key === "Escape" && t?.id === "decision-box") { t.blur(); return; }
       if (typing || e.metaKey || e.ctrlKey) return;
       if (e.key === "Escape") { setModal(null); setMenu(null); setEdit(null); return; }
-      if (e.key === "a" && sel) approveItem(sel.id, sel.version);
-      else if (e.key === "e" && sel) startEdit(sel);
-      else if (e.key === "r" && sel) rejectItem(sel.id, sel.version);
+      if (e.key === "a" && sel) window.dispatchEvent(new CustomEvent("decision-cmd", { detail: { type: "confirm" } }));
+      else if (e.key === "e" && sel) window.dispatchEvent(new CustomEvent("decision-cmd", { detail: { type: "focus" } }));
+      else if (e.key === "r" && sel) window.dispatchEvent(new CustomEvent("decision-cmd", { detail: { type: "reject" } }));
       else if (e.key === "j") step(1);
       else if (e.key === "k") step(-1);
       else if (e.key === "+" || e.key === "=") canvasCmd("in");
@@ -281,8 +293,11 @@ export default function Workspace() {
           onChangeEdit={setEdit}
           onSaveEdit={saveEdit}
           onCancelEdit={() => setEdit(null)}
-          onApprove={(item) => approveItem(item.id, item.version)}
-          onReject={(item) => rejectItem(item.id, item.version)}
+          onResolve={resolveForItem}
+          onApplyProposal={applyForItem}
+          onUndo={doUndo}
+          onSelectItem={(id) => { const it = items.find((i) => i.id === id); if (it) { setSheetId(it.sheetId); selectItem(id); } }}
+          alsoMatchingItemId={alsoMatchingItemId}
           onRequestDelete={(item) => setModal({ kind: "delete", item })}
           onShowEvidence={(item) => setModal({ kind: "evidence", item })}
           onStep={step}

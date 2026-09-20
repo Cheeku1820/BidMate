@@ -1028,6 +1028,11 @@ button {
   padding: 0 8px;
 }
 
+.overflow { position: relative; margin-left: auto; }
+.overflow summary { list-style: none; cursor: pointer; }
+.overflow summary::-webkit-details-marker { display: none; }
+.overflow__menu { position: absolute; right: 0; top: 100%; z-index: 5; background: var(--surface); border: 1px solid var(--line-2); border-radius: var(--r-md); padding: 6px; box-shadow: var(--shadow-2); }
+
 .detail__nav {
   flex: 0 0 auto;
   display: flex;

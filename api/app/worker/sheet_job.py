@@ -13,6 +13,7 @@ from app import db as db_module
 from app.engine import documents, sheet as sheet_mod
 from app.engine.contracts import Classification, DeviceCluster, Placement
 from app.jobs import queue
+from app.takeoff import symbol_library
 from app.takeoff import merge
 from app.takeoff.ingest import map_payload
 from app.takeoff.models import Classification as ClassificationRow, Document, Job, Project, Sheet
@@ -80,6 +81,7 @@ def run(db: Session, job: Job) -> None:
     # E0.1 is grounded, and a one-sheet payload alone would call it
     # fabricated and swap in the generic template.
     mapped = map_payload(payload, valid_sheet_numbers={s.number for s in all_sheets})
+    symbol_library.overlay(db, project.id, mapped.items)
     merge.merge_sheet(db, project=project, sheet=sheet, rows=mapped.items, ai_reading=mapped.sheets[0]["ai_reading"])
     # "unchecked" surfaces as copy.SCHEDULES_UNCHECKED on screen E; a
     # checked sheet clears the "checking" the side session wrote.

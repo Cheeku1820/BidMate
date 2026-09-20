@@ -23,3 +23,6 @@ bid_examples/
 # Root .env: docker compose reads it for ${ANTHROPIC_API_KEY:-} and the
 # like. It carries a real key, so it never lands in the repo.
 .env
+
+# Feature worktrees (superpowers:using-git-worktrees)
+.worktrees/

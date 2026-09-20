@@ -248,6 +248,14 @@ export function mapMaterialRow(r) {
     reason: r.reason ?? "",
     status: r.status,
     basisNote: r.basis_note ?? "",
+    priceLow: r.price_low == null ? null : Number(r.price_low),
+    priceHigh: r.price_high == null ? null : Number(r.price_high),
+    marketOutcome: r.market_outcome ?? null,
+    marketWarning: r.market_warning ?? null,
+    marketEvidence: r.market_evidence ?? [],
+    fetchedAt: r.fetched_at ?? null,
+    supplierName: r.supplier_name ?? "",
+    quoteDate: r.quote_date ?? null,
   };
 }
 

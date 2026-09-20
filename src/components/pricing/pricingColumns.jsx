@@ -14,6 +14,20 @@
    `pendingSource` is set by the screen while an Allowance choice waits
    on its reason -- rendered as the tag it will become, dashed, so the
    row shows what is about to happen without pretending it has.
+
+   Basis now also carries the market-pricing tiers (Market estimate,
+   Supplier quote) alongside the existing resolved tiers (Company
+   price, Regional baseline) and the two entry kinds above -- all of
+   them render as `.pill--tier`, a slate tag distinct from the four
+   status-pill colors (CLAUDE.md), never the plain `.pill--neutral`
+   marker used elsewhere for a non-tier badge. A Supplier quote row
+   also names the supplier, since that is the one tier a person, not a
+   lookup, provided.
+
+   A market-priced row additionally carries a warning (row-warning,
+   under the basis note) when the row couldn't be priced, and its
+   sellers/matched-item evidence as a details element -- both render
+   in the Material cell so they travel with the item they describe.
    ============================================================ */
 
 import Pill from "../Pill.jsx";
@@ -26,6 +40,36 @@ const BASIS_LABEL = { project_price: "Project price", allowance: "Allowance" };
 export const ALLOWANCE_REASON_MESSAGE =
   "An allowance needs a reason — say what it's standing in for, so the total can be traced back.";
 
+/** Market evidence is either a list of sellers (1build's price-comparison
+ *  results and Google Shopping's, both `{seller, price, link}`) or a
+ *  single matched catalog item (1build's own match, `{name, uom}`, with
+ *  no price of its own to show). Either shape is written by a market
+ *  source, not the estimator, so seller/item names render as text nodes
+ *  only -- never markup. */
+function MarketEvidence({ evidence }) {
+  const isSellers = "seller" in evidence[0];
+  return (
+    <details className="market-evidence">
+      <summary>{isSellers ? "Sellers" : "Matched item"}</summary>
+      <ul>
+        {evidence.map((e, i) => {
+          const text = isSellers ? (
+            <>
+              {e.seller} — {money(e.price)}
+            </>
+          ) : (
+            <>
+              {e.name}
+              {e.uom ? ` — ${e.uom}` : ""}
+            </>
+          );
+          return <li key={i}>{isSellers && e.link ? <a href={e.link} target="_blank" rel="noreferrer">{text}</a> : text}</li>;
+        })}
+      </ul>
+    </details>
+  );
+}
+
 export const COLUMNS = [
   { key: "status", label: "Status", align: "left", render: (row) => <Pill status={row.status} /> },
   {
@@ -34,6 +78,12 @@ export const COLUMNS = [
       <>
         {row.itemName}
         {row.basisNote ? <div className="muted">{row.basisNote}</div> : null}
+        {row.marketWarning ? (
+          <div className="row-warning">
+            <strong>{row.marketWarning.title}</strong> {row.marketWarning.fix}
+          </div>
+        ) : null}
+        {row.marketEvidence && row.marketEvidence.length > 0 ? <MarketEvidence evidence={row.marketEvidence} /> : null}
       </>
     ),
   },
@@ -48,11 +98,22 @@ export const COLUMNS = [
     },
   },
   {
+    key: "range", label: "Range", align: "right",
+    render: (row) => (row.priceLow != null && row.priceHigh != null && row.priceLow !== row.priceHigh
+      ? <span className="tabular">{money(row.priceLow)}–{money(row.priceHigh)}</span> : NONE),
+  },
+  {
     key: "source", label: "Basis", align: "left",
     className: (row) => (row.pendingSource ? "is-pending" : undefined),
     render: (row) => {
       const label = row.pendingSource ? BASIS_LABEL[row.pendingSource] : row.sourceLabel;
-      return label ? <span className="pill pill--neutral">{label}</span> : NONE;
+      if (!label) return NONE;
+      return (
+        <span className="pill pill--tier">
+          {label}
+          {row.sourceLabel === "Supplier quote" && row.supplierName ? ` — ${row.supplierName}` : null}
+        </span>
+      );
     },
     edit: {
       kind: "select",

@@ -6,6 +6,7 @@
 
 import { describe, expect, test, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import MaterialPricingWorkspace from "./MaterialPricingWorkspace.jsx";
 
@@ -304,5 +305,57 @@ describe("MaterialPricingWorkspace", () => {
     fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "Try again" }));
     await loaded();
     expect(store.getMaterialRows).toHaveBeenCalledTimes(2);
+  });
+
+  const marketRow = {
+    itemId: "i1", itemName: "2x4 LED troffer", quantity: 12, unitPrice: 169.95, source: null,
+    sourceLabel: "Market estimate", reason: "", status: "attention", basisNote: "Austin, TX, Sep 18",
+    priceLow: 156.75, priceHigh: 303.33, marketOutcome: "priced", marketWarning: null,
+    marketEvidence: [{ seller: "Codale", price: 169.95, link: "https://codale.example/x" }], fetchedAt: "2026-09-18T00:00:00Z",
+    supplierName: "", quoteDate: null,
+  };
+
+  test("shows the market estimate's range and tier tag beside the status pill", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    expect(screen.getByText("Market estimate")).toBeInTheDocument();
+    expect(screen.getByText("$156.75–$303.33")).toBeInTheDocument();
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
+  });
+
+  test("shows the outcome warning on an unpriced row", async () => {
+    const row = {
+      ...marketRow, unitPrice: null, sourceLabel: null, status: "missing", marketOutcome: "location_needed",
+      marketWarning: {
+        title: "Project location needed",
+        found: 'Looked for "2x4 LED troffer".',
+        why: "w",
+        fix: "Add the project ZIP code in project settings, then refresh market estimates.",
+        where: "E2.1",
+      },
+    };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [row], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    expect(screen.getByText("Project location needed")).toBeInTheDocument();
+    expect(screen.getByText(/Add the project ZIP code/)).toBeInTheDocument();
+  });
+
+  test("refresh queues the job and says so", async () => {
+    const refreshMarketEstimates = vi.fn().mockResolvedValue({ queued: true });
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+      refreshMarketEstimates,
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh market estimates" }));
+    expect(refreshMarketEstimates).toHaveBeenCalled();
+    expect(await screen.findByText(/Refreshing market estimates/)).toBeInTheDocument();
   });
 });

@@ -2820,3 +2820,60 @@ button {
   color: var(--ink-2);
   margin-right: 6px;
 }
+
+/* ---------------------------------------------------- market pricing */
+
+/* A row of page-level actions under a workspace's <h1> -- currently
+   just Material pricing's "Refresh market estimates", but generic so a
+   second action can join it without a rename. */
+.page-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+/* The Basis column's tier tag (Material pricing): Market estimate,
+   Supplier quote, Company price, Regional baseline, and the two entry
+   kinds all render with this one hue. Slate, not any of the four
+   status-pill colors (CLAUDE.md) and not `.pill--neutral` -- this tag
+   carries a tier, `.pill--neutral` a plain non-status badge. */
+.pill--tier {
+  background: var(--slate-tint);
+  color: var(--slate);
+  border-color: var(--slate-line);
+}
+
+/* A market row's outcome warning, under the basis note in the Material
+   cell -- title and fix only (the row's status pill already carries
+   the hue/icon; found/where stay in the API's warning object without a
+   place on the grid). Tokens match ItemDetailPanel's warncard title
+   and secondary text. */
+.row-warning {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.row-warning strong {
+  color: var(--ink-1);
+  font-weight: 700;
+}
+
+/* Sellers (or a 1build matched item) backing a market estimate,
+   collapsed by default so the row stays scannable. */
+.market-evidence {
+  margin-top: 4px;
+  font-size: 12.5px;
+}
+.market-evidence summary {
+  cursor: pointer;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+.market-evidence ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.market-evidence li {
+  margin-bottom: 2px;
+}

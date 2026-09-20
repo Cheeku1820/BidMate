@@ -579,7 +579,25 @@ export function createApiStore() {
 
   async function getMaterialRows(projectId) {
     const body = await request(`/api/projects/${projectId}/material-pricing`);
-    return { pricingSource: body.pricing_source, pricingNote: body.pricing_note, rows: body.rows.map(mapMaterialRow) };
+    return {
+      pricingSource: body.pricing_source,
+      pricingNote: body.pricing_note,
+      rows: body.rows.map(mapMaterialRow),
+      marketJob: body.market_job ?? null,
+    };
+  }
+
+  /** Queues a market-pricing refresh run for every material row on the
+   *  project; `{queued: false}` means one is already going (the screen
+   *  reads that as REFRESH_BUSY, not an error). */
+  async function refreshMarketEstimates(projectId) {
+    return request(`/api/projects/${projectId}/market-pricing/refresh`, { method: "POST" });
+  }
+
+  /** The company's monthly market-pricing call budget, for the usage
+   *  strip on the company pricing screens. */
+  async function getMarketUsage() {
+    return request("/api/company/market-pricing/usage");
   }
 
   async function setMaterialPrice(itemId, changes) {
@@ -670,6 +688,8 @@ export function createApiStore() {
     getMaterialRows,
     setMaterialPrice,
     clearMaterialPrice,
+    refreshMarketEstimates,
+    getMarketUsage,
     getCompanyLaborRates,
     setCompanyLaborRates,
     getCompanyMaterialPrices,

@@ -23,8 +23,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import DataGrid from "../grid/DataGrid.jsx";
 import { ALLOWANCE_REASON_MESSAGE, COLUMNS, money } from "./pricingColumns.jsx";
+import { REFRESHING, REFRESH_BUSY } from "./marketOutcomeCopy.js";
 import { saveStateText } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
+
+// Same cadence a market-pricing run polls at as ProcessingStatus.jsx
+// polls a takeoff run: a few seconds is fast enough to feel live without
+// hammering the API while a job works through every material row.
+const MARKET_JOB_POLL_MS = 5000;
 
 function toastFor(key, value, row, updated) {
   if (key === "unitPrice" && value === null) {
@@ -42,6 +48,7 @@ export default function MaterialPricingWorkspace() {
 
   const [rows, setRows] = useState(null); // null = loading
   const [pricingNote, setPricingNote] = useState("");
+  const [marketJob, setMarketJob] = useState(null); // "queued" | "running" | null
   const [loadError, setLoadError] = useState(null);
   const [saveError, setSaveError] = useState(null);
   const grid = useRef(null);
@@ -53,6 +60,7 @@ export default function MaterialPricingWorkspace() {
       .then((result) => {
         setRows(result.rows);
         setPricingNote(result.pricingNote);
+        setMarketJob(result.marketJob ?? null);
       })
       .catch((err) => setLoadError(err?.message || "Couldn't load material pricing. Check your connection and try again."));
   }, [store, projectId]);
@@ -60,6 +68,22 @@ export default function MaterialPricingWorkspace() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Poll while a market-pricing run is going, so rows update as they're
+  // priced; stop the moment it clears (load() itself reads the next
+  // marketJob off the wire) or the screen unmounts. Same shape as
+  // ProcessingStatus.jsx's run poll.
+  useEffect(() => {
+    if (!marketJob) return undefined;
+    const interval = setInterval(load, MARKET_JOB_POLL_MS);
+    return () => clearInterval(interval);
+  }, [marketJob, load]);
+
+  const refresh = async () => {
+    const { queued } = await store.refreshMarketEstimates(projectId);
+    if (queued) setMarketJob("queued");
+    else showToast(REFRESH_BUSY);
+  };
 
   const replaceRow = (itemId, next) =>
     setRows((current) => current.map((r) => (r.itemId === itemId ? next : r)));
@@ -148,6 +172,13 @@ export default function MaterialPricingWorkspace() {
 
       <div className="page page--fill">
         <h1 className="page-heading">Material pricing</h1>
+
+        <div className="page-actions">
+          <button type="button" className="btn" onClick={refresh} disabled={!!marketJob}>
+            Refresh market estimates
+          </button>
+        </div>
+        {marketJob ? <p className="muted">{REFRESHING}</p> : null}
 
         {loadError ? (
           <div className="load-error" role="alert">

@@ -150,10 +150,10 @@ describe("CompanyNav", () => {
 });
 
 describe("ProjectNav", () => {
-  it("lists all thirteen spec §4.2 workspaces, so the workflow's shape stays visible", () => {
+  it("lists all fourteen spec §4.2 workspaces plus the plan screen, so the workflow's shape stays visible", () => {
     renderProjectNav();
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
-    expect(within(nav).getAllByRole("link")).toHaveLength(13);
+    expect(within(nav).getAllByRole("link")).toHaveLength(14);
   });
 
   it("links only the built workspaces and disables the rest by name", () => {
@@ -171,9 +171,10 @@ describe("ProjectNav", () => {
     expect(within(nav).getByRole("link", { name: /^export/i })).toHaveAttribute("href", "/projects/p1/export");
 
     const disabled = disabledItems(nav);
-    // 13 workspaces total, minus the nine now built: overview, blueprint
+    // 14 workspaces total, minus the ten now built: overview, blueprint
     // takeoff, takeoff spreadsheet, documents (intake), notes &
-    // assumptions, labor, material pricing, export, and project settings.
+    // assumptions, project plan, labor, material pricing, export, and
+    // project settings.
     expect(disabled).toHaveLength(4);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
@@ -257,17 +258,17 @@ describe("ProjectNav's header card fallbacks", () => {
 describe("ProjectNav as the project's rail", () => {
   it("keeps the brand and the project card out of the workspace nav", () => {
     // Both sit in the rail but neither is a workspace. While they were
-    // inside the labelled <nav>, "Project workspaces" announced fourteen
-    // destinations for thirteen workspaces.
+    // inside the labelled <nav>, "Project workspaces" announced fifteen
+    // destinations for fourteen workspaces.
     renderProjectNav({ project: projectRow(), companyName: "Meridian Electric Co." });
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
 
-    expect(within(nav).getAllByRole("link")).toHaveLength(13);
+    expect(within(nav).getAllByRole("link")).toHaveLength(14);
     expect(within(nav).queryByText("BidMate")).toBeNull();
     expect(screen.getByRole("link", { name: /bidmate/i })).toHaveAttribute("href", "/projects");
   });
 
-  it("groups the thirteen without reordering them", () => {
+  it("groups the fourteen without reordering them", () => {
     renderProjectNav({ project: projectRow() });
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
 
@@ -283,6 +284,7 @@ describe("ProjectNav as the project's rail", () => {
       "Overview",
       "Documents",
       "Notes & assumptions",
+      "Project plan",
       "Blueprint takeoff",
       "Takeoff spreadsheet",
       "Assemblies",

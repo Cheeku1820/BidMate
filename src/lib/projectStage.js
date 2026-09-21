@@ -13,6 +13,7 @@
 export const STAGES = [
   { key: "setup", label: "Setup" },
   { key: "documents", label: "Documents" },
+  { key: "plan", label: "Plan" },
   { key: "processing", label: "Processing" },
   { key: "review", label: "Review" },
   { key: "pricing", label: "Pricing" },

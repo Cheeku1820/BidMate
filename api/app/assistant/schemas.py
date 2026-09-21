@@ -15,12 +15,12 @@ from pydantic import BaseModel, Field
 
 SCREEN_NAMES = (
     "overview", "documents", "confirm", "processing", "takeoff", "spreadsheet",
-    "notes", "labor", "pricing", "export", "settings",
+    "notes", "labor", "pricing", "export", "settings", "plan",
 )
 
 ScreenName = Literal[
     "overview", "documents", "confirm", "processing", "takeoff", "spreadsheet",
-    "notes", "labor", "pricing", "export", "settings",
+    "notes", "labor", "pricing", "export", "settings", "plan",
 ]
 
 # The four review labels the spreadsheet filters by; the server counts a

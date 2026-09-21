@@ -37,55 +37,57 @@ export default function PhaseSection({ phases, onDecide, onAdd, onRemove }) {
       });
   };
 
+  const addPhaseForm = (
+    <form
+      className="plan-add-phase"
+      onSubmit={(e) => {
+        e.preventDefault();
+        add();
+      }}
+    >
+      <label className="formfield-label" htmlFor="plan-add-phase-name">
+        Phase name
+      </label>
+      <div className="plan-add-phase__row">
+        <input id="plan-add-phase-name" className="field" value={name} disabled={saving} maxLength={100}
+               onChange={(e) => setName(e.target.value)} />
+        <button type="submit" className="btn" disabled={saving || !name.trim()}>
+          Add phase
+        </button>
+      </div>
+      <p className="scope-row__error" aria-live="polite">
+        {error || null}
+      </p>
+    </form>
+  );
+
   return (
-    <>
-      <PlanSection
-        id="plan-phases-heading"
-        title="Phasing"
-        description="Every phase the documents name, and where. Confirm the ones this bid is split by, or add a phase the documents don't state."
-        emptyText="The documents do not name any phase."
-      >
-        {phases.map((p) => (
-          <PlanLine
-            key={p.key}
-            line={p}
-            onDecide={(change) => onDecide(p.key, change)}
-            onRemove={p.added ? () => onRemove(p.phaseId) : null}
-          >
-            {p.places.length > 1 ? (
-              <ul className="plan-places">
-                {p.places.slice(1).map((place, i) => (
-                  <li key={i}>
-                    <Cite documentId={place.documentId} documentFilename={place.documentFilename} page={place.page} />
-                    <span className="muted"> — {place.quote}</span>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </PlanLine>
-        ))}
-      </PlanSection>
-      <form
-        className="plan-add-phase"
-        onSubmit={(e) => {
-          e.preventDefault();
-          add();
-        }}
-      >
-        <label className="formfield-label" htmlFor="plan-add-phase-name">
-          Phase name
-        </label>
-        <div className="plan-add-phase__row">
-          <input id="plan-add-phase-name" className="field" value={name} disabled={saving} maxLength={100}
-                 onChange={(e) => setName(e.target.value)} />
-          <button type="submit" className="btn" disabled={saving || !name.trim()}>
-            Add phase
-          </button>
-        </div>
-        <p className="scope-row__error" aria-live="polite">
-          {error || null}
-        </p>
-      </form>
-    </>
+    <PlanSection
+      id="plan-phases-heading"
+      title="Phasing"
+      description="Every phase the documents name, and where. Confirm the ones this bid is split by, or add a phase the documents don't state."
+      emptyText="The documents do not name any phase."
+      footer={addPhaseForm}
+    >
+      {phases.map((p) => (
+        <PlanLine
+          key={p.key}
+          line={p}
+          onDecide={(change) => onDecide(p.key, change)}
+          onRemove={p.added ? () => onRemove(p.phaseId) : null}
+        >
+          {p.places.length > 1 ? (
+            <ul className="plan-places">
+              {p.places.slice(1).map((place, i) => (
+                <li key={i}>
+                  <Cite documentId={place.documentId} documentFilename={place.documentFilename} page={place.page} />
+                  <span className="muted"> — {place.quote}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </PlanLine>
+      ))}
+    </PlanSection>
   );
 }

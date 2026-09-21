@@ -3,7 +3,7 @@
    on the page when empty so the shape of the plan is visible even when
    most of it is -- the scanned-set case. */
 
-export default function PlanSection({ id, title, description, emptyText, children }) {
+export default function PlanSection({ id, title, description, emptyText, children, footer = null }) {
   const items = Array.isArray(children) ? children.filter(Boolean) : children ? [children] : [];
   return (
     <section className="scope-card plan-section" aria-labelledby={id}>
@@ -12,6 +12,7 @@ export default function PlanSection({ id, title, description, emptyText, childre
         {description ? <p className="muted">{description}</p> : null}
       </header>
       {items.length === 0 ? <p className="muted scope-state">{emptyText}</p> : <ul className="scope-list">{items}</ul>}
+      {footer}
     </section>
   );
 }

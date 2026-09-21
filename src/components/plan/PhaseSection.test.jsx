@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PhaseSection from "./PhaseSection.jsx";
 
@@ -25,6 +25,12 @@ describe("PhaseSection", () => {
   it("says so when the documents state no phase", () => {
     render(<PhaseSection phases={[]} onDecide={vi.fn()} onAdd={vi.fn()} onRemove={vi.fn()} />);
     expect(screen.getByText("The documents do not name any phase.")).toBeInTheDocument();
+  });
+
+  it("puts the add-a-phase form inside the Phasing section", () => {
+    render(<PhaseSection phases={[]} onDecide={vi.fn()} onAdd={vi.fn()} onRemove={vi.fn()} />);
+    const region = screen.getByRole("region", { name: "Phasing" });
+    expect(within(region).getByRole("textbox", { name: "Phase name" })).toBeInTheDocument();
   });
 
   it("adds a phase by name, clears the field, and shows a refusal inline", async () => {

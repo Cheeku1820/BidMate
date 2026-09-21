@@ -3197,7 +3197,7 @@ def _csv(rows):
 
 def test_lead_time_is_optional_and_parsed_as_whole_weeks():
     data = _csv([["Item", "Unit price", "Lead time (weeks)", "Row key"],
-                 ["Switchboard MSB-1", "14500", "40", "k1"],
+                 ["Switchboard MSB-1", "12000", "40", "k1"],
                  ["Panel LP-2", "900", "", "k2"]])
     rows = parse_price_sheet(data, "quote.csv").rows
     assert rows[0].lead_weeks == 40 and rows[0].lead_error is None
@@ -3211,7 +3211,7 @@ def test_a_sheet_without_the_column_still_parses():
 
 
 def test_non_numeric_lead_time_is_named_by_row():
-    data = _csv([["Item", "Unit price", "Lead time (weeks)", "Row key"], ["Switchboard MSB-1", "14500", "12 wks", "k1"]])
+    data = _csv([["Item", "Unit price", "Lead time (weeks)", "Row key"], ["Switchboard MSB-1", "12000", "12 wks", "k1"]])
     rows = parse_price_sheet(data, "quote.csv").rows
     assert rows[0].lead_weeks is None and rows[0].lead_error == "Row 2: the lead time isn't a number of weeks"
 ```
@@ -3221,7 +3221,7 @@ Stream A's per-row `unreadable` group is where `lead_error` lands in the preview
 ```python
 def test_apply_writes_lead_time_and_undo_removes_it(client, signed_in_user, project, item, db, monkeypatch):
     # Reuse the file's existing helper that stores a preview on a price_sheet job for `project`; give the
-    # matched row for `item` "new_unit_price": "14500.00" and "lead_weeks": 40.
+    # matched row for `item` "new_unit_price": "12000.00" and "lead_weeks": 40.
     ...
     r = client.post(f"/api/projects/{project.id}/material-pricing/price-sheets/{doc_id}/apply",
                     json={"itemIds": [str(item.id)], "supplierName": "Graybar", "quoteDate": "2026-09-12"})

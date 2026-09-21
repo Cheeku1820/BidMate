@@ -5,13 +5,11 @@
    Sits between upload and processing. It reflects the set as the worker
    has read it (store.getProcessing): every uploaded document with what
    was made of it -- read, with the number of sheets found; still
-   reading; or failed, with the reason -- and the scope statements the
-   worker lifted out of the documents, for the estimator to settle
-   before the takeoff runs (ScopeSection.jsx, above the table). What the
-   estimator confirms here is surfaced in a Needs attention section
-   ABOVE the table rather than buried in a row (spec §5): documents
-   whose type wasn't recognized, and whether a drawing set is present at
-   all. Types stay editable here, through store.setDocumentType.
+   reading; or failed, with the reason. What the estimator confirms
+   here is surfaced in a Needs attention section ABOVE the table rather
+   than buried in a row (spec §5): documents whose type wasn't
+   recognized, and whether a drawing set is present at all. Types stay
+   editable here, through store.setDocumentType.
 
    While any document is still being read this screen polls
    store.getProcessing every few seconds, the same way screen C does, so
@@ -25,18 +23,13 @@
    with an icon and words, never a colour alone, and never with the
    four review labels: a sheet's readability is not an item's evidence.
 
-   "Start takeoff" asks the server to start a run (store.startTakeoff)
-   and then goes to processing. It is disabled while a drawing set is
-   still being read -- its sheets would be left out of the run silently,
-   and the server refuses the same case (`drawings_still_reading`),
-   shown inline if it ever lands. A specification, addendum, or scope
-   document still reading does not hold Start back: it is context the
-   takeoff doesn't read sheets from, so making the estimator wait on it
-   would be waiting on nothing the run needs. A run
-   already in flight is treated as already started -- the estimator
-   lands on the same processing screen either way. A set with nothing
-   readable is a message to show here, inline, next to the documents
-   that need replacing; not a page to leave.
+   "Review the plan" goes to the project plan (src/components/plan/),
+   which owns Start takeoff and the rules that used to live here -- a
+   drawing set still being read holds Start back there, with the same
+   sentence the server answers with. The scope statements this screen
+   used to show above the table live on the plan too, alongside the
+   spec sections, schedules, phasing and open questions the plan
+   derives from the same read.
 
    Sheet-level detail (revisions, per-sheet scale) is detected when the
    engine reads the drawings, so it belongs to processing, not this
@@ -59,10 +52,9 @@
    ============================================================ */
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, FileText, Loader2 } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import ScopeSection from "../plan/ScopeSection.jsx";
 import { DOC_TYPES } from "../../lib/detectDocType.js";
 
 // How often to ask again while a document is still being read. Matches
@@ -73,11 +65,6 @@ const READ_POLL_MS = 3000;
 // no reason -- the server's own words are preferred; this is only the
 // floor under an empty one.
 const FAILED_FALLBACK = "This file couldn't be read. Upload it again, or replace it.";
-
-// Why Start is disabled while a document is still being read. The same
-// sentence the server answers with (copy.DRAWINGS_READING) when a start
-// reaches it in that state, so the two never disagree.
-const READING_HELP = "A drawing set is still being read. Wait for it to finish before starting the takeoff.";
 
 // A spec or an addendum can genuinely carry no drawing sheets -- that's
 // not a failure, so 0 reads as plain "Read" rather than "Read · 0
@@ -180,13 +167,10 @@ function ChecklistRow({ state, title, detail }) {
 
 export default function ConfirmDrawings({ store }) {
   const { projectId } = useParams();
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [startError, setStartError] = useState("");
 
   // Sticks at false once the component unmounts, so a getProcessing
   // result that lands late is a no-op rather than a
@@ -245,12 +229,10 @@ export default function ConfirmDrawings({ store }) {
   // -- and stop the moment nothing is. Keyed on the boolean so the
   // interval restarts only when reading starts or stops, not on every
   // unrelated row change. A poll that fails is left alone: the rows
-  // keep their last known state and the next tick tries again. This is
-  // deliberately broader than drawingsReading below: a specification,
-  // addendum, or scope document still reading doesn't hold Start back,
-  // but its row still needs to hear back from the worker -- polling
-  // only while a drawing set reads would leave its "Reading…" row
-  // stuck until a manual reload.
+  // keep their last known state and the next tick tries again. Every
+  // document type polls here, drawing set or not, so a specification's
+  // or addendum's "Reading…" row still hears back from the worker
+  // rather than sticking until a manual reload.
   const anyReading = rows.some((r) => r.state === "reading");
   useEffect(() => {
     if (!anyReading) return undefined;
@@ -268,20 +250,12 @@ export default function ConfirmDrawings({ store }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyReading, store, projectId]);
 
-  // Only a drawing set still reading holds Start back -- its sheets are
-  // what the run would leave out. A specification, addendum, or scope
-  // document still reading is context the worker hasn't finished with
-  // yet, not something the run itself needs; gating Start on it would
-  // make the estimator wait on a document the takeoff doesn't read.
-  const drawingsReading = rows.some((r) => r.state === "reading" && r.docType === "Drawings");
-
   // The select follows the server. It shows the new type at once, but a
   // write the server refuses reverts it and puts the server's own words
   // on the row -- otherwise the select shows a type the server never
-  // accepted, "Start takeoff" enables on a drawing set that does not
-  // exist server-side, and processing reads the old type. The row stays
-  // in every count either way: the document is still there, and can be
-  // retyped again. Same behaviour as UploadDocuments.setDocType.
+  // accepted, and processing reads the old type. The row stays in every
+  // count either way: the document is still there, and can be retyped
+  // again. Same behaviour as UploadDocuments.setDocType.
   const setType = (id, docType) => {
     const previous = rows.find((r) => r.id === id)?.docType;
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, docType, pendingType: docType, error: undefined } : r)));
@@ -305,35 +279,6 @@ export default function ConfirmDrawings({ store }) {
   const hasDrawings = drawings.length > 0;
 
   const sheetsRead = rows.reduce((n, r) => n + (r.sheetCount || 0), 0);
-  // Start waits for every drawing set's read to land. A drawing set the
-  // worker has not finished with would be left out of the run, and its
-  // sheets would then sit at "Waiting" under a run that has finished.
-  const canStart = hasDrawings && !drawingsReading && !starting;
-
-  // The server decides whether a run can start. A run already in flight
-  // is the outcome the estimator wanted -- processing is where they were
-  // headed -- so it is not an error here. Anything else stays on this
-  // screen with the server's own words next to the documents.
-  const start = () => {
-    if (!canStart) return;
-    setStarting(true);
-    setStartError("");
-    store
-      .startTakeoff(projectId)
-      .then(() => {
-        if (!aliveRef.current) return;
-        navigate(`/projects/${projectId}/processing`);
-      })
-      .catch((err) => {
-        if (!aliveRef.current) return;
-        if (err?.code === "run_in_flight") {
-          navigate(`/projects/${projectId}/processing`);
-          return;
-        }
-        setStarting(false);
-        setStartError(err?.message || "Couldn't start the takeoff. Check the connection and try again.");
-      });
-  };
 
   const addDocumentsLink = (
     <Link className="btn" to={`/projects/${projectId}/documents`}>
@@ -440,15 +385,9 @@ export default function ConfirmDrawings({ store }) {
         title="Confirm documents"
         breadcrumb={[{ label: "Projects", to: "/projects" }, { label: "Documents" }]}
         primaryAction={
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={!canStart}
-            aria-describedby={drawingsReading ? "start-takeoff-help" : undefined}
-            onClick={start}
-          >
-            Start takeoff
-          </button>
+          <Link className="btn btn--primary" to={`/projects/${projectId}/plan`}>
+            Review the plan
+          </Link>
         }
       >
         {addDocumentsLink}
@@ -473,15 +412,6 @@ export default function ConfirmDrawings({ store }) {
             </div>
           ) : null}
 
-          {startError ? (
-            <div className="warncard warncard--missing" role="alert">
-              <h4>
-                <AlertTriangle aria-hidden="true" size={16} /> Couldn't start the takeoff
-              </h4>
-              <p>{startError}</p>
-            </div>
-          ) : null}
-
           {unrecognized.length > 0 ? (
             <div className="warncard warncard--attention" role="status">
               <h4>
@@ -496,8 +426,6 @@ export default function ConfirmDrawings({ store }) {
               </p>
             </div>
           ) : null}
-
-          <ScopeSection store={store} projectId={projectId} />
 
           <div className="filecard">
             <table className="data-table filetable">
@@ -610,20 +538,9 @@ export default function ConfirmDrawings({ store }) {
             Back to documents
           </Link>
           <div className="footer-primary">
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={!canStart}
-              aria-describedby={drawingsReading ? "start-takeoff-help" : undefined}
-              onClick={start}
-            >
-              Start takeoff
-            </button>
-            {/* Always in the tree so the id resolves the moment a read
-                starts; empty when nothing is reading. */}
-            <p id="start-takeoff-help" className="footer-help">
-              {drawingsReading ? READING_HELP : null}
-            </p>
+            <Link className="btn btn--primary" to={`/projects/${projectId}/plan`}>
+              Review the plan
+            </Link>
           </div>
         </div>
       </footer>

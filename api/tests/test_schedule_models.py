@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.schedule.defaults import ensure_defaults, load_company
 from app.schedule.stages import LONG_LEAD_WORDS, STAGES, STAGE_LABELS, long_lead_class
 from app.takeoff.models import (
     CompanyStageSplit, ItemLeadTime, Phase, PhaseLine, PhaseStagePlan, Sheet, Item,
@@ -72,3 +73,24 @@ def test_deleting_a_phase_nulls_sheet_and_item_references(db, project, sheet, it
     db.delete(phase); db.flush()
     db.refresh(sheet); db.refresh(item)
     assert sheet.phase_id is None and item.phase_id is None
+
+
+def test_ensure_defaults_seeds_once(db, org):
+    ensure_defaults(db, org.id)
+    ensure_defaults(db, org.id)
+    tables = load_company(db, org.id)
+    assert set(tables.crews) == set(STAGES)
+    assert "*" in tables.splits and "devices" in tables.splits
+    assert all(not s.firm_edited for s in tables.splits.values())
+    assert [t.label for t in tables.templates] == ["Final and daily cleanup", "Project planning, coordination and layout"]
+    assert tables.settings.lead_time_stale_days == 60
+    assert tables.lead_times == {}
+
+
+def test_ensure_defaults_keeps_a_firm_edit(db, org):
+    ensure_defaults(db, org.id)
+    row = load_company(db, org.id).splits["devices"]
+    row.rough_in, row.trim, row.firm_edited = Decimal("50"), Decimal("20"), True
+    db.flush()
+    ensure_defaults(db, org.id)
+    assert load_company(db, org.id).splits["devices"].rough_in == Decimal("50")

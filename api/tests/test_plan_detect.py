@@ -36,6 +36,9 @@ def test_each_number_form_is_one_section():
     assert lines[0].key == "spec:d1:260519"
     assert lines[0].place.quote == "SECTION 26 05 19 - LOW-VOLTAGE ELECTRICAL POWER CONDUCTORS AND CABLES"
     assert lines[0].place.page is None and lines[0].place.document_filename == "Spec.pdf"
+    # The 28 31 00 entry's title comes from the next line, so its quote is
+    # the number line and the title line joined -- not the number alone.
+    assert lines[3].place.quote == "28 31 00 FIRE DETECTION AND ALARM"
 
 
 def test_a_repeated_section_is_one_line_and_other_divisions_are_ignored():
@@ -52,6 +55,31 @@ def test_drawings_and_unprocessed_documents_contribute_no_sections():
 
 def test_a_bare_number_with_no_title_anywhere_is_dropped():
     assert spec_sections([doc(context_text="26 05 19\n\n")]) == []
+
+
+def test_dot_leaders_and_trailing_column_are_cut_from_a_same_line_title():
+    text = "26 05 19 LOW VOLTAGE CONDUCTORS ............. CDG\n"
+    lines = spec_sections([doc(context_text=text)])
+    assert [l.text for l in lines] == ["26 05 19 — LOW VOLTAGE CONDUCTORS"]
+    # The quote is evidence, kept verbatim leaders and all.
+    assert lines[0].place.quote == "26 05 19 LOW VOLTAGE CONDUCTORS ............. CDG"
+
+
+def test_dot_leaders_are_cut_from_a_next_line_title_and_the_quote_joins_both_lines():
+    text = "26 05 01\nGENERAL PROVISIONS  .......... CDG\n"
+    lines = spec_sections([doc(context_text=text)])
+    assert [l.text for l in lines] == ["26 05 01 — GENERAL PROVISIONS"]
+    assert lines[0].place.quote == "26 05 01 GENERAL PROVISIONS  .......... CDG"
+
+
+def test_a_page_number_column_without_leaders_is_also_cut():
+    text = "26 05 26 GROUNDING AND BONDING   26 05 26-1\n"
+    lines = spec_sections([doc(context_text=text)])
+    assert [l.text for l in lines] == ["26 05 26 — GROUNDING AND BONDING"]
+
+
+def test_a_leaders_only_next_line_leaves_no_title_and_is_dropped():
+    assert spec_sections([doc(context_text="26 05 01\n..........\n")]) == []
 
 
 # --- schedules ---

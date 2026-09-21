@@ -31,6 +31,18 @@ SCHEDULE_HEADINGS = ("PANEL SCHEDULE", "LUMINAIRE SCHEDULE", "FIXTURE SCHEDULE",
 # "the next phase of the work" is not a phase.
 _PHASE = re.compile(r"\bPHASE\s+(\d{1,2}|[A-Z]|I{1,3}|IV|V)\b", re.IGNORECASE)
 
+# A table-of-contents dot leader run, or an unleadered page-number column
+# (two-plus spaces then a digit, e.g. "GROUNDING AND BONDING   26 05 26-1").
+# Whichever comes first in the title marks where the real title ends.
+_TOC_TRAILER = re.compile(r"\.{3,}|\ {2,}\d")
+
+
+def _cut_toc_trailer(title: str) -> str:
+    m = _TOC_TRAILER.search(title)
+    if m:
+        title = title[:m.start()]
+    return title.rstrip(" .:-")
+
 
 @dataclass(frozen=True)
 class DocIn:
@@ -107,19 +119,25 @@ def spec_sections(docs: list[DocIn]) -> list[Line]:
             if not m:
                 continue
             division, a, b, title = m.group(1), m.group(2), m.group(3), m.group(4).strip()
+            quote = raw.strip()
             if not title:
                 nxt = next((l.strip() for l in lines[i + 1:i + 3] if l.strip()), "")
                 if not nxt or _SECTION.match(nxt):
                     continue
                 title = nxt
+                # The quote is evidence: both verbatim lines, leaders and all.
+                quote = f"{quote} {nxt}"
+            title = _cut_toc_trailer(title)
+            if not title:
+                continue
             number = f"{division}{a}{b}"
             if number in seen:
                 continue
             seen.add(number)
             out.append(Line(
                 key=f"spec:{d.id}:{number}", kind="spec_section",
-                text=f"{division} {a} {b} — {title.rstrip(' .:-')}",
-                place=Place(d.id, d.filename, None, raw.strip()[:600]), division=division,
+                text=f"{division} {a} {b} — {title}",
+                place=Place(d.id, d.filename, None, quote[:600]), division=division,
             ))
     return out
 

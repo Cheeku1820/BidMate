@@ -46,7 +46,8 @@ def test_split_matches_case_insensitively():
 
 
 def test_working_days_skip_weekends():
-    assert next_working_day(date(2026, 9, 25)) == date(2026, 9, 28)   # Fri -> Mon
+    assert next_working_day(date(2026, 9, 26)) == date(2026, 9, 28)   # Sat -> Mon; a weekday is returned unchanged
+    assert next_working_day(date(2026, 9, 28)) == date(2026, 9, 28)
     assert working_days_after(date(2026, 9, 24), 2) == date(2026, 9, 28)  # Thu + 2 -> Mon
 
 

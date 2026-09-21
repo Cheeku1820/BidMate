@@ -127,14 +127,14 @@ existing `--blue` focus ring. Keys:
 
 | Key | Moves |
 |---|---|
-| ← → ↑ ↓ | one editable cell in that direction; ↑/↓ stay in the column |
+| ← → ↑ ↓ | one cell in that direction, any column — see [spreadsheet-grid.md](spreadsheet-grid.md) |
 | Tab / Shift+Tab | next / previous editable cell, wrapping to the next / previous row |
 | Enter | opens the editor (see below); in an editor, commits and moves down |
 | Home / End | first / last editable cell in the row |
 | Any printable character | opens the editor with that character as the whole value |
 | F2 | opens the editor with the current value, caret at the end |
 
-Only editable cells participate. On the labor screen Tab walks
+On the labor screen Tab walks
 hours → rate → adjustment % → reason → next row's hours; Status, Item,
 Quantity, the two source tags, Adj. hours and Labor cost are stepped
 over. Tab out of the last editable cell of the last row leaves the grid.

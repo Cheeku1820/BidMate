@@ -622,3 +622,43 @@ describe("clipboard, fill, clear, undo", () => {
     expect(onUndo).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("fill handle", () => {
+  const handle = () => document.querySelector(".grid-fill-handle");
+
+  test("renders only in the range's bottom-right cell", () => {
+    setup();
+    expect(cell(0, HOURS).contains(handle())).toBe(true);
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowRight", shiftKey: true });
+    expect(cell(0, NOTE).contains(handle())).toBe(true);
+    expect(document.querySelectorAll(".grid-fill-handle")).toHaveLength(1);
+  });
+
+  test("dragging down repeats the source rows onto the rows passed, then extends the selection", () => {
+    const onCommitRange = vi.fn();
+    setup({ onCommitRange });
+    fireEvent.mouseDown(handle());
+    fireEvent.mouseEnter(cell(1, HOURS));
+    expect(cell(1, HOURS)).toHaveAttribute("data-fill-target");
+    fireEvent.mouseEnter(cell(2, HOURS));
+    expect(cell(2, HOURS)).toHaveAttribute("data-fill-target");
+    fireEvent.mouseUp(document);
+    expect(onCommitRange).toHaveBeenCalledWith(
+      [{ row: rows[1], key: "hours", value: 0.5 }, { row: rows[2], key: "hours", value: 0.5 }],
+      { kind: "fill" },
+    );
+    expect(document.querySelectorAll('[aria-selected="true"]')).toHaveLength(3);
+    expect(cell(2, HOURS)).toHaveAttribute("data-active");
+    expect(cell(2, HOURS)).not.toHaveAttribute("data-fill-target");
+  });
+
+  test("releasing on the source row, or above it, fills nothing", () => {
+    const onCommitRange = vi.fn();
+    setup({ onCommitRange });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown" });
+    fireEvent.mouseDown(handle());
+    fireEvent.mouseEnter(cell(0, HOURS));
+    fireEvent.mouseUp(document);
+    expect(onCommitRange).not.toHaveBeenCalled();
+  });
+});

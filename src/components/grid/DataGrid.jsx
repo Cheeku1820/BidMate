@@ -74,6 +74,14 @@ const DataGrid = forwardRef(function DataGrid(
   // `editing`, yanking focus back into the grid out from under
   // whatever the estimator does with it.
   const reopenedDuringCommit = useRef(false);
+  // The fill handle drag. `fillDrag` is the source range while the
+  // mouse is down (null otherwise); `fillTo` is the last row the pointer
+  // entered -- state so the target cells re-render with their dashed
+  // outline, mirrored in a ref so the mouseup handler reads the latest
+  // value without a stale closure.
+  const fillDrag = useRef(null);
+  const fillToRef = useRef(null);
+  const [fillTo, setFillTo] = useState(null);
 
   useEffect(() => {
     if (focusPending.current && active && !editing) {
@@ -137,6 +145,36 @@ const DataGrid = forwardRef(function DataGrid(
 
   function copyText() {
     return range ? toTsv(range, columns, rows) : "";
+  }
+
+  function startFill(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!range) return;
+    fillDrag.current = range;
+    fillToRef.current = range.r1;
+    setFillTo(range.r1);
+    const onUp = () => {
+      document.removeEventListener("mouseup", onUp);
+      const source = fillDrag.current;
+      const to = fillToRef.current;
+      fillDrag.current = null;
+      fillToRef.current = null;
+      setFillTo(null);
+      if (source && to != null && to > source.r1) {
+        dispatchRange(fillChanges(source, columns, rows, { to }), "fill");
+        focusPending.current = true;
+        setAnchor({ row: source.r0, col: columns[source.c0].key });
+        setActive({ row: to, col: columns[source.c1].key });
+      }
+    };
+    document.addEventListener("mouseup", onUp);
+  }
+
+  function onCellMouseEnter(row) {
+    if (!fillDrag.current) return;
+    fillToRef.current = row;
+    setFillTo(row);
   }
 
   function onCopy(event) {
@@ -489,6 +527,9 @@ const DataGrid = forwardRef(function DataGrid(
     const ci = columns.indexOf(column);
     const inRange = Boolean(range && row >= range.r0 && row <= range.r1 && ci >= range.c0 && ci <= range.c1);
     const showClear = isActive && !isRange && !isEditing && editable && column.edit.hasEntry && column.edit.hasEntry(r);
+    const showHandle = Boolean(range && row === range.r1 && ci === range.c1 && !isEditing);
+    const drag = fillDrag.current;
+    const fillTarget = Boolean(drag && fillTo != null && row > drag.r1 && row <= fillTo && ci >= drag.c0 && ci <= drag.c1);
     return (
       <Tag
         key={column.key}
@@ -500,10 +541,12 @@ const DataGrid = forwardRef(function DataGrid(
         data-active={isActive || undefined}
         data-editable={editable || undefined}
         data-clearable={showClear || undefined}
+        data-fill-target={fillTarget || undefined}
         className={className}
         style={{ textAlign: column.align }}
         onClick={(event) => onCellClick(event, row, column)}
         onKeyDown={(event) => onCellKeyDown(event, row, column)}
+        onMouseEnter={() => onCellMouseEnter(row)}
       >
         {isEditing ? (
           renderEditor(row, column)
@@ -524,6 +567,7 @@ const DataGrid = forwardRef(function DataGrid(
                 <X size={14} aria-hidden="true" />
               </button>
             ) : null}
+            {showHandle ? <div className="grid-fill-handle" aria-hidden="true" onMouseDown={startFill} /> : null}
           </>
         )}
       </Tag>

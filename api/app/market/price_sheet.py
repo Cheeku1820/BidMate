@@ -2,7 +2,13 @@
 that reads the filled sheet back (estimate-first-pricing §6). Pure:
 bytes in, records out. Only two cells are interpreted -- the price (a
 number) and the row key (an id the caller checks belongs to the
-project). Everything else is text, carried as text."""
+project). Everything else is text, carried as text.
+
+A row the parser can't read is reported, never raised: it lands in
+`ParsedSheet.unreadable` with its line and a reason in the estimator's
+words, so a supplier's "call for price" or a NaN cell names its own row
+in the preview instead of failing the whole upload. A blank price is
+not unreadable -- it is an unpriced row, as before."""
 from __future__ import annotations
 
 import csv
@@ -33,9 +39,22 @@ _PLAIN_NUMBER_RE = re.compile(r"^-?\d+(\.\d+)?$")
 # from the bid. Either reads back as unpriced, never as a number.
 PRICE_LIMIT = Decimal("100000000")
 
+REFUSED_ALL_UNREADABLE = "None of the rows could be read. Start from Download price request."
+# The reasons a row can be unreadable, as the preview lists them
+# ("Row 14 -- the price isn't a number").
+NOT_A_NUMBER = "the price isn't a number"
+NO_ITEM_NAME = "the row has no item name"
+ROW_UNREADABLE = "the row couldn't be read"
+
 
 def price_in_range(value: Decimal) -> bool:
-    return Decimal(0) <= value < PRICE_LIMIT
+    # NaN survives quantize and raises on comparison; ask first.
+    return value.is_finite() and Decimal(0) <= value < PRICE_LIMIT
+
+
+class RowUnreadable(Exception):
+    """A row the parser can't read; str(exc) is the reason, in the
+    estimator's words."""
 
 
 class ParsedRow(NamedTuple):
@@ -50,6 +69,7 @@ class ParsedRow(NamedTuple):
 class ParsedSheet(NamedTuple):
     rows: list[ParsedRow]
     refused: str | None
+    unreadable: list[tuple[int, str]] = []   # (line, reason)
 
 
 def build_request_workbook(rows: list[dict]) -> bytes:
@@ -69,19 +89,20 @@ def build_request_workbook(rows: list[dict]) -> bytes:
     return out.getvalue()
 
 
-def _price(v) -> Decimal | None:
+def _read_price(v) -> Decimal | None:
     """The one cell besides the row key that's interpreted rather than
     carried as text -- so a wrong number here is the failure this
-    module exists to prevent. A number (int/float/Decimal, but not
-    bool: `True`/`False` are never a price) converts directly. A string
-    is accepted only when, after stripping a `$`, surrounding
-    whitespace, and a leading or trailing currency word, what remains
-    is unambiguously a plain or US-grouped decimal number -- scientific
-    notation ("1e3"), a European "2.250,00", "call for price", or
-    anything else non-numeric returns None (unpriced) rather than
-    guessing. So does a number outside `price_in_range`: a negative
-    price or one the price column can't hold is listed as unpriced,
-    not carried to the apply step to fail there."""
+    module exists to prevent. Blank (None or "") is None: an unpriced
+    row. A number (int/float/Decimal, but not bool: `True`/`False` are
+    never a price) converts directly. A string is accepted only when,
+    after stripping a `$`, surrounding whitespace, and a leading or
+    trailing currency word, what remains is unambiguously a plain or
+    US-grouped decimal number. Anything else present in the cell --
+    scientific notation ("1e3"), a European "2.250,00", "call for
+    price", NaN, infinity -- raises RowUnreadable(NOT_A_NUMBER) rather
+    than guessing. A number outside `price_in_range` (negative, or one
+    the price column can't hold) returns None: the row is listed as
+    unpriced, not carried to the apply step to fail there."""
     if isinstance(v, bool):
         return None
     if v is None or v == "":
@@ -89,22 +110,35 @@ def _price(v) -> Decimal | None:
     if isinstance(v, (int, float, Decimal)):
         try:
             d = Decimal(str(v)).quantize(Decimal("0.01"))
-        except InvalidOperation:   # inf, nan
-            return None
+        except InvalidOperation:   # inf, sNaN
+            raise RowUnreadable(NOT_A_NUMBER) from None
+        if not d.is_finite():      # a quiet NaN survives quantize
+            raise RowUnreadable(NOT_A_NUMBER)
         return d if price_in_range(d) else None
     s = str(v).strip()
+    if not s:
+        return None
     s = _CURRENCY_WORD_LEAD_RE.sub("", s)
     s = _CURRENCY_WORD_TRAIL_RE.sub("", s)
     s = s.replace("$", "").strip()
     if _THOUSANDS_RE.match(s):
         s = s.replace(",", "")
     elif not _PLAIN_NUMBER_RE.match(s):
-        return None
+        raise RowUnreadable(NOT_A_NUMBER)
     try:
         d = Decimal(s).quantize(Decimal("0.01"))
     except InvalidOperation:
-        return None
+        raise RowUnreadable(NOT_A_NUMBER) from None
     return d if price_in_range(d) else None
+
+
+def _price(v) -> Decimal | None:
+    """`_read_price` with the refusal folded into None -- the price, or
+    nothing usable."""
+    try:
+        return _read_price(v)
+    except RowUnreadable:
+        return None
 
 
 def _grid(data: bytes, filename: str) -> list[list]:
@@ -138,20 +172,29 @@ def parse_price_sheet(data: bytes, filename: str) -> ParsedSheet:
                                f"The price request download has them in place.")
     hi, cols = found
     rows: list[ParsedRow] = []
+    unreadable: list[tuple[int, str]] = []
     for n, row in enumerate(grid[hi + 1:], start=hi + 2):
         def cell(name):
             j = cols.get(name.lower())
             return row[j] if j is not None and j < len(row) else None
-        name = cell("Item")
-        if name is None or not str(name).strip():
-            continue
-        key = cell("Row key")
-        rows.append(ParsedRow(
-            row_key=str(key).strip() if key not in (None, "") else None,
-            item_name=str(name).strip(),
-            unit_price=_price(cell("Unit price")),
-            part_no=str(cell("Supplier part no.") or "").strip()[:100],
-            notes=str(cell("Notes") or "").strip()[:500],
-            line=n,
-        ))
-    return ParsedSheet(rows, None)
+        if all(c is None or not str(c).strip() for c in row):
+            continue   # a formatted-but-empty row, not an unreadable one
+        try:
+            name = cell("Item")
+            if name is None or not str(name).strip():
+                raise RowUnreadable(NO_ITEM_NAME)
+            key = cell("Row key")
+            rows.append(ParsedRow(
+                row_key=str(key).strip() if key not in (None, "") else None,
+                item_name=str(name).strip(),
+                unit_price=_read_price(cell("Unit price")),
+                part_no=str(cell("Supplier part no.") or "").strip()[:100],
+                notes=str(cell("Notes") or "").strip()[:500],
+                line=n,
+            ))
+        except RowUnreadable as exc:
+            unreadable.append((n, str(exc)))
+        except Exception:   # noqa: BLE001 -- one bad row is listed, never the whole upload lost
+            unreadable.append((n, ROW_UNREADABLE))
+    refused = REFUSED_ALL_UNREADABLE if unreadable and not rows else None
+    return ParsedSheet(rows, refused, unreadable)

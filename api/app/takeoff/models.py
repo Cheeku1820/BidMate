@@ -22,6 +22,7 @@ import app.identity.models  # noqa: E402, F401
 # nothing from app, so this direction adds no cycle.
 from app.documents.schemas import DOC_STATUSES
 from app.jobs.schemas import JOB_KINDS, JOB_STATUSES, RENDER_STATUSES
+from app.schedule.stages import STAGES
 from app.scope.schemas import SCOPE_KINDS, SCOPE_STATUSES
 
 
@@ -128,6 +129,9 @@ class Project(Base):
     # existed) is treated identically to "deterministic" everywhere.
     pricing_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
     pricing_note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # Phases-and-timeline §3.6: both estimator-typed, neither derived.
+    expected_award_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    mobilization_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
 class Sheet(Base):
@@ -185,6 +189,10 @@ class Sheet(Base):
     render_status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
     render_error: Mapped[str] = mapped_column(Text, default="", server_default="")
     max_zoom: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Which phase this sheet's items belong to (§3.1). NULL reads as the
+    # project's first phase; SET NULL on phase delete so a sheet is never
+    # orphaned by a cascade the service did not plan.
+    phase_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("phases.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class Document(Base):
@@ -378,6 +386,10 @@ class Item(Base):
     # `app.takeoff.concurrency` and every module that mutates an `Item`.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # A per-item phase override (§3.1). NULL inherits the sheet's phase.
+    # A person's judgment: captured by the delete snapshot like
+    # ProjectLaborLine, and never touched by merge.py.
+    phase_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("phases.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class ItemEvidenceImage(Base):
@@ -762,3 +774,186 @@ class ItemMarketPrice(Base):
     location_label: Mapped[str] = mapped_column(String(100), default="", server_default="")
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+
+_STAGE_CHECK = "stage in ('" + "', '".join(STAGES) + "')"
+
+
+class Phase(Base):
+    """One area or stage of a job the GC has split the bid into
+    (phases-and-timeline.md §3.1). A grouping of sheets and items that
+    already exist; owns no quantity and no status. The first phase is
+    implicit -- a project with no rows behaves exactly as before."""
+
+    __tablename__ = "phases"
+    __table_args__ = (
+        UniqueConstraint("project_id", "sort_order", name="uq_phase_order", deferrable=True, initially="DEFERRED"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    required_finish_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PhaseLine(Base):
+    """A general-conditions lump sum per phase, from the firm's template
+    (§3.2). Hours are computed from `percent_of_direct_hours` until the
+    estimator types `hours_override`."""
+
+    __tablename__ = "phase_lines"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    phase_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("phases.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(30), default="general_conditions", server_default="general_conditions")
+    label: Mapped[str] = mapped_column(String(200))
+    percent_of_direct_hours: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    hours_override: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PhaseStagePlan(Base):
+    """Sparse per-phase overrides of one stage's crew, hours, and dates
+    (§3.5). Every field nullable and independent; null is 'computed'.
+    Same shape and undo coverage as ProjectLaborLine."""
+
+    __tablename__ = "phase_stage_plans"
+    __table_args__ = (
+        UniqueConstraint("phase_id", "stage", name="uq_phase_stage"),
+        CheckConstraint(_STAGE_CHECK, name="ck_phase_stage_plans_stage"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    phase_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("phases.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    foreman: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    journeyman: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    apprentice: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    productive_hours_per_day: Mapped[Decimal | None] = mapped_column(Numeric(4, 2), nullable=True)
+    hours_override: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ItemLeadTime(Base):
+    """The long-lead flag and quoted lead time on one item (§3.7). One
+    row at most; `source` is only ever a supplier's quote or the
+    estimator's own dated entry -- the company table is resolved at read
+    time and never copied here. Cascades with the item, so the delete
+    snapshot captures it and undo restores it."""
+
+    __tablename__ = "item_lead_times"
+    __table_args__ = (
+        CheckConstraint("needed_for_" + _STAGE_CHECK, name="ck_item_lead_times_stage"),
+        CheckConstraint("source is null or source in ('supplier_quote', 'estimator')", name="ck_item_lead_times_source"),
+    )
+
+    item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
+    flagged: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    lead_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    source_label: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    quoted_at: Mapped[date | None] = mapped_column(Date, nullable=True)
+    needed_for_stage: Mapped[str] = mapped_column(String(20), default="gear", server_default="gear")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyStageSplit(Base):
+    """How an item category's hours divide across the six stages (§3.3).
+    `category_key` is casefolded; "*" is the fallback row. Seeded per
+    org by schedule.defaults with firm_edited = false, which the screen
+    reads as 'default split -- set yours'."""
+
+    __tablename__ = "company_stage_splits"
+    __table_args__ = (
+        UniqueConstraint("org_id", "category_key", name="uq_company_stage_split"),
+        CheckConstraint("demolition + rough_in + wire_pull + gear + trim + closeout = 100", name="ck_company_stage_split_sum"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    category_key: Mapped[str] = mapped_column(String(100))
+    category_label: Mapped[str] = mapped_column(String(100))
+    demolition: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
+    rough_in: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
+    wire_pull: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
+    gear: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
+    trim: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
+    closeout: Mapped[Decimal] = mapped_column(Numeric(5, 2), default=0)
+    firm_edited: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyStageCrew(Base):
+    """The firm's default crew and productivity per stage (§3.3)."""
+
+    __tablename__ = "company_stage_crews"
+    __table_args__ = (
+        UniqueConstraint("org_id", "stage", name="uq_company_stage_crew"),
+        CheckConstraint(_STAGE_CHECK, name="ck_company_stage_crews_stage"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    stage: Mapped[str] = mapped_column(String(20))
+    foreman: Mapped[int] = mapped_column(Integer, default=0)
+    journeyman: Mapped[int] = mapped_column(Integer, default=0)
+    apprentice: Mapped[int] = mapped_column(Integer, default=0)
+    productive_hours_per_day: Mapped[Decimal] = mapped_column(Numeric(4, 2), default=6, server_default="6")
+    productivity_factor: Mapped[Decimal] = mapped_column(Numeric(5, 3), default=1, server_default="1")
+    max_crew: Mapped[int] = mapped_column(Integer, default=6, server_default="6")
+    firm_edited: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyScheduleSettings(Base):
+    """Singleton per org, like CompanyLaborRate (§3.7)."""
+
+    __tablename__ = "company_schedule_settings"
+
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), primary_key=True)
+    lead_time_stale_days: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyPhaseLineTemplate(Base):
+    """The general-conditions lines every new phase starts with (§3.4)."""
+
+    __tablename__ = "company_phase_line_templates"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(200))
+    percent_of_direct_hours: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CompanyLeadTime(Base):
+    """The firm's own dated lead time per long-lead class (§7.2)."""
+
+    __tablename__ = "company_lead_times"
+    __table_args__ = (UniqueConstraint("org_id", "item_class", name="uq_company_lead_time"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    item_class: Mapped[str] = mapped_column(String(50))
+    lead_weeks: Mapped[int] = mapped_column(Integer)
+    source_label: Mapped[str] = mapped_column(String(200))
+    quoted_at: Mapped[date] = mapped_column(Date)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

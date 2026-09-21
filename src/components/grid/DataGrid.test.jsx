@@ -623,6 +623,45 @@ describe("clipboard, fill, clear, undo", () => {
   });
 });
 
+describe("sort", () => {
+  const names = () => screen.getAllByRole("rowheader").map((h) => h.textContent);
+  const header = (label) => screen.getByRole("columnheader", { name: label });
+
+  test("a header click cycles ascending, descending, off, with aria-sort and a reordered body", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(header("Hours")).toHaveAttribute("aria-sort", "ascending");
+    expect(names()).toEqual(["One", "Three", "Two"]); // 0.5, 1, null last
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(header("Hours")).toHaveAttribute("aria-sort", "descending");
+    expect(names()).toEqual(["Three", "One", "Two"]);
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(header("Hours")).not.toHaveAttribute("aria-sort");
+    expect(names()).toEqual(["One", "Two", "Three"]);
+  });
+
+  test("editing a sorted cell does not move its row; a reload with the same keys keeps the order; a new key appends", () => {
+    const { rerender } = render(<DataGrid columns={columns} rows={rows} rowKey={(r) => r.id} rowLabel={(r) => r.name} onCommit={() => {}} caption="t" />);
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(names()).toEqual(["One", "Three", "Two"]);
+    const edited = rows.map((r) => (r.id === "r1" ? { ...r, hours: 99 } : r));
+    rerender(<DataGrid columns={columns} rows={edited} rowKey={(r) => r.id} rowLabel={(r) => r.name} onCommit={() => {}} caption="t" />);
+    expect(names()).toEqual(["One", "Three", "Two"]);
+    const added = [...edited, { id: "r4", name: "Four", qty: 4, hours: 0, entered: false, note: "", basis: "a" }];
+    rerender(<DataGrid columns={columns} rows={added} rowKey={(r) => r.id} rowLabel={(r) => r.name} onCommit={() => {}} caption="t" />);
+    expect(names()).toEqual(["Four", "Three", "One", "Two"]); // re-sorted: the key set changed
+  });
+
+  test("selection and commits follow the displayed order", () => {
+    const { onCommit } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    // Displayed row 1 is "Three" now.
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown" });
+    fireEvent.keyDown(cell(1, HOURS), { key: "Delete" });
+    expect(onCommit).toHaveBeenCalledWith(rows[2], "hours", null);
+  });
+});
+
 describe("fill handle", () => {
   const handle = () => document.querySelector(".grid-fill-handle");
 

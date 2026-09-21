@@ -27,9 +27,9 @@
    ============================================================ */
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { ArrowDown, ArrowUp, X } from "lucide-react";
 import { isEditable, useGridNavigation } from "./useGridNavigation.js";
-import { clearChanges, extend, fillChanges, normalize, parseClipboard, pasteChanges, selectAll, toTsv } from "./useGridSelection.js";
+import { clearChanges, extend, fillChanges, normalize, parseClipboard, pasteChanges, selectAll, sortRows, toTsv } from "./useGridSelection.js";
 
 const cellId = (row, col) => `${row}:${col}`;
 
@@ -41,9 +41,55 @@ function parseNumber(raw, edit) {
 }
 
 const DataGrid = forwardRef(function DataGrid(
-  { columns, rows, rowKey, rowLabel, onCommit, onCommitRange, onCancel, onUndo, onRedo, footer, caption },
+  { columns, rows: sourceRows, rowKey, rowLabel, onCommit, onCommitRange, onCancel, onUndo, onRedo, footer, caption },
   ref,
 ) {
+  // Sorting reorders once, Sheets-style: `order` (row keys) is set when
+  // a header is clicked and again only when the set of keys changes (a
+  // reload). A cell edit that changes the sorted value does not move
+  // its row until the header is clicked again -- rows jumping under an
+  // estimator mid-Tab is the failure this avoids.
+  const [sort, setSort] = useState(null); // { key, direction } | null
+  const [order, setOrder] = useState(null); // row keys | null = load order
+  const keysSignature = sourceRows.map(rowKey).join("\n");
+  const rows = useMemo(() => {
+    if (!order) return sourceRows;
+    const byKey = new Map(sourceRows.map((r) => [rowKey(r), r]));
+    const out = [];
+    for (const k of order) {
+      if (byKey.has(k)) {
+        out.push(byKey.get(k));
+        byKey.delete(k);
+      }
+    }
+    return [...out, ...byKey.values()];
+  }, [sourceRows, order, rowKey]);
+
+  const applySort = (next) => {
+    setSort(next);
+    if (!next) {
+      setOrder(null);
+      return;
+    }
+    const column = columns.find((c) => c.key === next.key);
+    setOrder(sortRows(sourceRows, column, next.direction).map(rowKey));
+  };
+
+  const firstSignature = useRef(keysSignature);
+  useEffect(() => {
+    if (firstSignature.current === keysSignature) return;
+    firstSignature.current = keysSignature;
+    if (sort) applySort(sort);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keysSignature]);
+
+  function onSortClick(column) {
+    const cur = sort && sort.key === column.key ? sort.direction : null;
+    const next = cur === null ? "ascending" : cur === "ascending" ? "descending" : null;
+    setAnchor(null);
+    applySort(next ? { key: column.key, direction: next } : null);
+  }
+
   const { active, setActive, move } = useGridNavigation(columns, rows);
   // The other end of the selection. null means "same as the active
   // cell" -- a single-cell selection, the state every earlier
@@ -603,11 +649,18 @@ const DataGrid = forwardRef(function DataGrid(
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr role="row">
-            {columns.map((c) => (
-              <th key={c.key} scope="col" role="columnheader" style={{ textAlign: c.align }}>
-                {c.label}
-              </th>
-            ))}
+            {columns.map((c) => {
+              const dir = sort && sort.key === c.key ? sort.direction : null;
+              return (
+                <th key={c.key} scope="col" role="columnheader" aria-sort={dir || undefined} style={{ textAlign: c.align }}>
+                  <button type="button" className="grid-sort" onClick={() => onSortClick(c)}>
+                    {c.label}
+                    {dir === "ascending" ? <ArrowUp size={12} aria-hidden="true" /> : null}
+                    {dir === "descending" ? <ArrowDown size={12} aria-hidden="true" /> : null}
+                  </button>
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>

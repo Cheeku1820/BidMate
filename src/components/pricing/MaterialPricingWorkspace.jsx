@@ -35,6 +35,18 @@ import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 // hammering the API while a job works through every material row.
 const MARKET_JOB_POLL_MS = 5000;
 
+// A row's source can be "supplier_quote" (an accepted price-sheet
+// line), but the write endpoint's source is a project price or an
+// allowance, never a supplier quote (MaterialPriceUpdateIn.source,
+// api/app/takeoff/schemas.py) -- retyping a price is a project price
+// now, and the API itself clears the row's supplier provenance on
+// that transition (pricing_router.py:241). Anything a commit sends
+// as `source` folds a supplier quote down to a project price first,
+// so a single edit or a paste over quoted rows never 422s.
+function asWritableSource(source) {
+  return source === "supplier_quote" ? "project_price" : source;
+}
+
 function toastFor(key, value, row, updated) {
   if (key === "unitPrice" && value === null) {
     return `Cleared price on ${row.itemName} — ${updated.sourceLabel ? "now " + updated.sourceLabel : "nothing else is set"}`;
@@ -149,7 +161,7 @@ export default function MaterialPricingWorkspace() {
     }
     const next = {
       priceOverride: key === "unitPrice" ? value : row.unitPrice,
-      source: key === "source" ? value : row.pendingSource || row.source || "project_price",
+      source: asWritableSource(key === "source" ? value : row.pendingSource || row.source) || "project_price",
       reason: key === "reason" ? value : row.reason,
     };
     if (next.source === "allowance" && !next.reason.trim()) {
@@ -216,7 +228,7 @@ export default function MaterialPricingWorkspace() {
         restore(row);
         continue;
       } else {
-        const next = { priceOverride: merged.unitPrice, source: merged.source || "project_price", reason: merged.reason || "" };
+        const next = { priceOverride: merged.unitPrice, source: asWritableSource(merged.source) || "project_price", reason: merged.reason || "" };
         if (next.source === "allowance" && !next.reason.trim()) {
           skipped += 1;
           restore(row);

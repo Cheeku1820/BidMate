@@ -136,6 +136,27 @@ describe("MaterialPricingWorkspace", () => {
     );
   });
 
+  test("retyping the price on a Supplier quote row sends it as a project price, not a supplier quote", async () => {
+    // The write endpoint's source is a project price or an allowance,
+    // never a supplier quote -- a retyped price is a project price now,
+    // and the API clears the row's supplier provenance on that
+    // transition. Without the fold this 422s on the API.
+    const quoteRow = { ...projectRow, source: "supplier_quote", sourceLabel: "Supplier quote", supplierName: "codale" };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [quoteRow] }),
+      setMaterialPrice: vi.fn().mockResolvedValue({ ...quoteRow, unitPrice: 20, source: "project_price", sourceLabel: "Project price", supplierName: null }),
+    };
+    renderMaterial({ store });
+    await loaded();
+    const price = cellFor("20A duplex receptacle", "Unit price");
+    fireEvent.keyDown(price, { key: "2" });
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "20" } });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    await waitFor(() =>
+      expect(store.setMaterialPrice).toHaveBeenCalledWith("i1", { priceOverride: 20, source: "project_price", reason: "" }),
+    );
+  });
+
   test("Basis becomes a select once an entry exists; choosing Allowance with a reason sends the trio", async () => {
     const allowanceRow = { ...projectRow, source: "allowance", sourceLabel: "Allowance", reason: "No vendor quote yet" };
     const store = {
@@ -343,6 +364,23 @@ describe("MaterialPricingWorkspace", () => {
     ]);
     await waitFor(() => expect(review.showToast).toHaveBeenCalledWith("Pasted 4 cells on 2 rows"));
     expect(cellFor("High bay fixture", "Line total")).toHaveTextContent("$80.00");
+  });
+
+  test("a paste of just the price over Supplier quote rows sends each as a project price", async () => {
+    const quoteRow1 = { ...projectRow, source: "supplier_quote", sourceLabel: "Supplier quote", supplierName: "codale" };
+    const quoteRow2 = { ...projectRow, itemId: "i2", itemName: "High bay fixture", source: "supplier_quote", sourceLabel: "Supplier quote", supplierName: "codale" };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [quoteRow1, quoteRow2], marketJob: null }),
+      setMaterialPrice: vi.fn((itemId, next) => Promise.resolve({ ...quoteRow1, itemId, unitPrice: next.priceOverride, source: next.source, reason: next.reason })),
+    };
+    renderMaterial({ store });
+    await loaded(/20A duplex receptacle/);
+    fireEvent.paste(cellFor("20A duplex receptacle", "Unit price"), pasteEvent("9\n8"));
+    await waitFor(() => expect(store.setMaterialPrice).toHaveBeenCalledTimes(2));
+    expect(store.setMaterialPrice.mock.calls).toEqual([
+      ["i1", { priceOverride: 9, source: "project_price", reason: "" }],
+      ["i2", { priceOverride: 8, source: "project_price", reason: "" }],
+    ]);
   });
 
   test("a pasted empty price on an entry clears it; a pasted basis on a row with no entry sends nothing", async () => {

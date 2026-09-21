@@ -669,6 +669,7 @@ export function createApiStore() {
       })),
       unmatched: (p.unmatched ?? []).map((u) => ({ itemName: u.item_name, unitPrice: u.unit_price, line: u.line })),
       unpriced: (p.unpriced ?? []).map((u) => ({ itemId: u.item_id, itemName: u.item_name })),
+      unreadable: (p.unreadable ?? []).map((u) => ({ line: u.line, reason: u.reason })),
     };
   }
 

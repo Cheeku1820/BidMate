@@ -7,10 +7,14 @@
      idle    -- a labelled file input, nothing uploaded yet
      reading -- uploaded; polling getPriceSheetPreview every 2s while
                 the worker's price_sheet job is still queued/running
-     ready   -- the worker's answer: three groups (matched / unmatched
-                / unpriced) when the sheet parsed, or just the refusal
-                reason when it didn't (refused sheets come back as
-                state "ready" with matched: [] -- not a fourth state)
+     ready   -- the worker's answer: four groups (matched / unmatched
+                / unpriced / unreadable) when the sheet parsed, or just
+                the refusal reason when it didn't (refused sheets come
+                back as state "ready" with matched: [] -- not a fifth
+                state). The unreadable group names each row the parser
+                could not read by its line and a one-line reason, so a
+                supplier's "call for price" is explained rather than
+                quietly listed as unpriced.
 
    Applying sends only the ticked matched rows -- unmatched/unpriced
    rows have nothing an apply could write. The apply itself is one
@@ -250,6 +254,19 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
               <ul className="pricesheet-plainlist">
                 {preview.unpriced.map((row) => (
                   <li key={row.itemId}>{row.itemName}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {(preview.unreadable ?? []).length > 0 ? (
+            <div className="pricesheet-group">
+              <h4><CountLabel n={preview.unreadable.length} singular="row couldn't be read" plural="rows couldn't be read" /></h4>
+              <ul className="pricesheet-plainlist">
+                {preview.unreadable.map((row) => (
+                  <li key={row.line}>
+                    Row <span className="tabular">{row.line}</span> — {row.reason}
+                  </li>
                 ))}
               </ul>
             </div>

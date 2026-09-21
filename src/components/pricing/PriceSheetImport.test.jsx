@@ -8,6 +8,7 @@ const preview = {
   matched: [{ itemId: "i1", itemName: "20A duplex receptacle", currentUnitPrice: null, currentSourceLabel: null, newUnitPrice: "9.10", partNo: "HBL5362", notes: "", line: 2 }],
   unmatched: [{ itemName: "Something extra", unitPrice: "4", line: 3 }],
   unpriced: [{ itemId: "i2", itemName: "Panelboard" }],
+  unreadable: [],
 };
 
 function store(overrides = {}) {
@@ -152,5 +153,33 @@ describe("PriceSheetImport", () => {
 
       expect(getPriceSheetPreview).toHaveBeenCalledTimes(1);
     });
+  });
+  it("lists the rows that couldn't be read, with the line and the reason", async () => {
+    // A row the parser could not read is named, not silently dropped
+    // under "left unpriced" -- and it takes nothing away from the rows
+    // that did read: Apply still offers the matched one.
+    const s = store({ getPriceSheetPreview: vi.fn().mockResolvedValue({
+      ...preview, unreadable: [{ line: 4, reason: "the price isn't a number" }, { line: 7, reason: "the row has no item name" }],
+    }) });
+    render(<PriceSheetImport projectId="p1" store={s} onApplied={vi.fn()} onClose={() => {}} />);
+    const file = new File(["x"], "codale.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    await userEvent.upload(screen.getByLabelText("Price sheet"), file);
+    expect(await screen.findByText(withText("h4", "2 rows couldn't be read"))).toBeInTheDocument();
+    expect(screen.getByText(withText("li", "Row 4 — the price isn't a number"))).toBeInTheDocument();
+    expect(screen.getByText(withText("li", "Row 7 — the row has no item name"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply 1 price" })).toBeInTheDocument();
+  });
+
+  it("shows the refusal when none of the rows could be read, with nothing to apply", async () => {
+    const s = store({ getPriceSheetPreview: vi.fn().mockResolvedValue({
+      state: "ready", refused: "None of the rows could be read. Start from Download price request.",
+      matched: [], unmatched: [], unpriced: [], unreadable: [{ line: 2, reason: "the price isn't a number" }],
+      supplierName: "", quoteDate: null,
+    }) });
+    render(<PriceSheetImport projectId="p1" store={s} onApplied={vi.fn()} onClose={() => {}} />);
+    const file = new File(["x"], "codale.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    await userEvent.upload(screen.getByLabelText("Price sheet"), file);
+    expect(await screen.findByRole("alert")).toHaveTextContent("None of the rows could be read. Start from Download price request.");
+    expect(screen.queryByRole("button", { name: /Apply/ })).not.toBeInTheDocument();
   });
 });

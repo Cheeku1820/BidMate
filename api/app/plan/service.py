@@ -229,6 +229,10 @@ def answer(db: DbSession, *, actor: User, project: Project, key: str, body: str)
     if what != "question":
         raise not_found()
 
+    existing = db.scalar(select(PlanDecision).where(PlanDecision.project_id == project.id, PlanDecision.entry_key == key))
+    if existing is not None and existing.status == "answered" and existing.note_id is not None:
+        raise DomainError("plan_question_answered", "This question already has an answer. Reopen it to answer it again.", status=422)
+
     note = notes_service.create_note(db, actor=actor, project=project, fields={
         "scope": "project", "scope_ref": None, "title": target.title[:300], "body": cleaned,
         "category": _NOTE_CATEGORY.get(target.rule, "customer_instruction"), "status": "confirmed",

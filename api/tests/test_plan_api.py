@@ -237,3 +237,20 @@ def test_the_note_category_follows_the_question(client, db, project, dana, signe
     scanned = next(q for q in plan["questions"] if q["title"] == "Pages that could not be read")
     out = client.post(f"/api/projects/{project.id}/plan/questions/{scanned['key']}/answer", json={"body": "Two phases: shop, office."}).json()
     assert db.get(Note, uuid.UUID(out["note_id"])).category == "customer_instruction"
+
+
+def test_answering_an_already_answered_question_is_refused_until_reopened(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "questions")
+    client.post(f"/api/projects/{project.id}/plan/questions/{key}/answer", json={"body": "One phase."})
+    r = client.post(f"/api/projects/{project.id}/plan/questions/{key}/answer", json={"body": "Two phases."})
+    assert r.status_code == 422
+    notes = list(db.scalars(select(Note).where(Note.project_id == project.id)))
+    assert len(notes) == 1
+    note_adds = [a for a in db.scalars(select(Action).where(Action.project_id == project.id)) if a.kind == "note_add"]
+    assert len(note_adds) == 1
+
+    client.patch(f"/api/projects/{project.id}/plan/lines/{key}", json={"status": "found"})
+    out = client.post(f"/api/projects/{project.id}/plan/questions/{key}/answer", json={"body": "Two phases."}).json()
+    assert out["status"] == "answered"
+    notes = list(db.scalars(select(Note).where(Note.project_id == project.id)))
+    assert len(notes) == 2

@@ -62,6 +62,9 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "placements": list,
     "ai_confirmed": bool,
     "source_tag": str,
+    # The per-item phase override (phases-and-timeline §3.1). Nullable --
+    # None when the item inherits its sheet's phase.
+    "phase_id": uuid.UUID,
     "updated_at": datetime,
     "warnings": list,
     # Both optional, `None` when the item never had that override.

@@ -384,12 +384,12 @@ describe("pasteChanges", () => {
   test("a block anchors at the top-left, clamps, skips read-only targets, and is row-major", () => {
     const clip = [["1", "5", "Allowance"], ["2", "6", "Allowance"], ["3", "7", "Allowance"], ["4", "8", "Allowance"]];
     const changes = pasteChanges(clip, { r0: 1, c0: 1, r1: 1, c1: 1 }, columns, rows); // top-left on Quantity
-    // Columns from Quantity: qty (read-only, skipped), price, basis. Row 1's
-    // basis is locked; row 2's is already "allowance"; the clip's fourth
-    // line falls off the grid.
+    // Columns from Quantity: qty (read-only, skipped), price, basis. Clip
+    // line 1 lands on row 1, line 2 on row 2; lines 3 and 4 fall off the
+    // grid. Row 1's basis is locked; row 2's is already "allowance".
     expect(changes).toEqual([
       { row: rows[1], key: "price", value: 5 },
-      { row: rows[2], key: "price", value: 7 },
+      { row: rows[2], key: "price", value: 6 },
     ]);
   });
   test("an empty pasted cell clears an entry and nothing is emitted when nothing applies", () => {

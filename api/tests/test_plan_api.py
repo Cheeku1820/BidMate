@@ -195,3 +195,45 @@ def test_a_decision_survives_a_re_read_that_finds_the_same_line(client, db, proj
     seeded["spec"].context_text = ""
     db.flush()
     assert client.get(f"/api/projects/{project.id}/plan").json()["specs"] == []
+
+
+# --- answering a question ---
+
+def test_an_answer_becomes_a_context_note_and_marks_the_question(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "questions")
+    r = client.post(f"/api/projects/{project.id}/plan/questions/{key}/answer", json={"body": "Use 1/8 inch, same as E2.1."})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["status"] == "answered" and out["note_id"]
+    note = db.get(Note, uuid.UUID(out["note_id"]))
+    assert note.usage == "context" and note.scope == "project" and note.status == "confirmed"
+    assert note.title == out["title"] and note.body == "Use 1/8 inch, same as E2.1." and note.source_ref == out["where"]
+    assert note.category == "existing_condition"
+    kinds = [a.kind for a in db.scalars(select(Action).where(Action.project_id == project.id).order_by(Action.seq))]
+    assert kinds == ["note_add", "plan_decide"]
+    plan = client.get(f"/api/projects/{project.id}/plan").json()
+    assert plan["questions"][0]["status"] == "answered" and plan["undecided"] == 5
+
+
+def test_deleting_the_note_reopens_the_question(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "questions")
+    out = client.post(f"/api/projects/{project.id}/plan/questions/{key}/answer", json={"body": "One phase."}).json()
+    assert client.delete(f"/api/notes/{out['note_id']}").status_code == 204
+    plan = client.get(f"/api/projects/{project.id}/plan").json()
+    assert plan["questions"][0]["status"] == "found" and plan["questions"][0]["note_id"] is None
+
+
+def test_an_empty_answer_and_a_line_key_are_refused(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "questions")
+    assert client.post(f"/api/projects/{project.id}/plan/questions/{key}/answer", json={"body": "  "}).status_code == 422
+    spec_key = _key(client, project, "specs")
+    assert client.post(f"/api/projects/{project.id}/plan/questions/{spec_key}/answer", json={"body": "x"}).status_code == 404
+
+
+def test_the_note_category_follows_the_question(client, db, project, dana, signed_in_user):
+    d = _doc(db, project, dana, filename="Gerber.pdf", doc_type="Drawings", page_count=1)
+    _sheet(db, project, d, number="", title="Scanned sheet", kind="other", unreadable_reason="scan", scale="")
+    plan = client.get(f"/api/projects/{project.id}/plan").json()
+    scanned = next(q for q in plan["questions"] if q["title"] == "Pages that could not be read")
+    out = client.post(f"/api/projects/{project.id}/plan/questions/{scanned['key']}/answer", json={"body": "Two phases: shop, office."}).json()
+    assert db.get(Note, uuid.UUID(out["note_id"])).category == "customer_instruction"

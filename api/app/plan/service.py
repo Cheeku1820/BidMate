@@ -19,11 +19,17 @@ from app.plan.schemas import PlaceOut, PlanLineOut, PlanOut, QuestionOut
 from app.scope import service as scope_service
 from app.scope.router import _out as scope_out
 from app.takeoff import actions
+from app.takeoff import notes as notes_service
 from app.takeoff.models import Document, Note, Project, Sheet
 from app.takeoff.router import not_found
 
 _MAX_TEXT = 500
 _MAX_PHASE = 100
+
+_NOTE_CATEGORY = {
+    "scanned": "customer_instruction", "no_specs": "customer_instruction", "no_scope": "customer_instruction",
+    "no_phasing": "customer_instruction", "no_scale": "existing_condition", "no_schedule": "existing_condition",
+}
 
 
 def _inputs(db: DbSession, project: Project) -> tuple[list[detect.DocIn], list[detect.SheetIn], list[Document]]:
@@ -213,3 +219,27 @@ def decide(db: DbSession, *, actor: User, project: Project, key: str, status: st
     if what == "added":
         return _added_phase_out(target, row)
     return _line_out(target, row)
+
+
+def answer(db: DbSession, *, actor: User, project: Project, key: str, body: str) -> QuestionOut:
+    cleaned = (body or "").strip()
+    if not cleaned:
+        raise DomainError("invalid_plan_answer", "Write the answer before saving it.", status=422)
+    what, target, docs = _find_line(db, project, key)
+    if what != "question":
+        raise not_found()
+
+    note = notes_service.create_note(db, actor=actor, project=project, fields={
+        "scope": "project", "scope_ref": None, "title": target.title[:300], "body": cleaned,
+        "category": _NOTE_CATEGORY.get(target.rule, "customer_instruction"), "status": "confirmed",
+        "rfi_needed": False, "usage": "context", "source_ref": target.where[:300], "obsolete_after_revision": "",
+    })
+
+    row = _decision_row(db, project, key)
+    before = _snapshot(row)
+    row.status, row.note_id = "answered", note.id
+    row.decided_by, row.decided_at = actor.id, datetime.now(timezone.utc)
+    db.flush()
+    actions.commit(db, actor=actor, project_id=project.id, kind="plan_decide", label=f"Answered: {target.title}",
+                   before=before, after=_snapshot(row))
+    return _question_out(target, row, {str(d.id): d.filename for d in docs})

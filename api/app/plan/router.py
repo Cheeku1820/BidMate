@@ -32,3 +32,12 @@ def patch_line(project_id: uuid.UUID, key: str, payload: LineDecisionIn, user: U
     out = service.decide(db, actor=user, project=project, key=key, status=payload.status, edited_text=payload.edited_text)
     db.commit()
     return out
+
+
+@router.post("/projects/{project_id}/plan/questions/{key}/answer", response_model=QuestionOut)
+def post_answer(project_id: uuid.UUID, key: str, payload: AnswerIn, user: User = Depends(current_user),
+                db: DbSession = Depends(get_db)) -> QuestionOut:
+    project = load_project(project_id, db, user)
+    out = service.answer(db, actor=user, project=project, key=key, body=payload.body)
+    db.commit()
+    return out

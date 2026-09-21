@@ -105,7 +105,11 @@ export default function PlanWorkspace() {
           return;
         }
         setStarting(false);
-        setStartError(err?.message || "Couldn't start the takeoff. Check the connection and try again.");
+        setStartError(
+          typeof err?.code === "string" && err.message
+            ? err.message
+            : "Couldn't start the takeoff. Check the connection and try again.",
+        );
       });
   };
 

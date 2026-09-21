@@ -118,6 +118,15 @@ describe("PlanWorkspace", () => {
     expect(screen.queryByText("processing")).toBeNull();
   });
 
+  it("shows a generic message for a bare network failure, never the raw error text", async () => {
+    const store = makeStore();
+    store.startTakeoff.mockRejectedValue(new TypeError("Failed to fetch"));
+    mount(store);
+    await userEvent.click(await screen.findByRole("button", { name: "Start takeoff" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't start the takeoff. Check the connection and try again.");
+    expect(screen.queryByText("processing")).toBeNull();
+  });
+
   // Every write is followed by a re-read (store.getPlan), so each of the
   // next four cases sets what that re-read answers before acting.
   it("a decision follows the server's answer and the undecided count drops", async () => {

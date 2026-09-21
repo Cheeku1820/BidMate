@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.plan.models import PlanDecision, PlanPhase
 from app.takeoff.models import Action, Document, Note, ScopeStatement, Sheet
@@ -106,3 +106,17 @@ def test_get_does_not_move_the_stage_while_drawings_are_reading(client, db, proj
     client.get(f"/api/projects/{project.id}/plan")
     db.refresh(project)
     assert project.stage == "setup"
+
+
+def test_get_does_not_move_the_stage_backward_when_the_row_moved_underneath_it(client, db, project, dana, signed_in_user, seeded):
+    """The in-session `project` object was loaded (and is still "setup"
+    in Python) when another process -- the worker, with no lock --
+    advances the row itself to "processing". The GET must not clobber
+    that forward progress back to "plan": the conditional UPDATE's WHERE
+    clause, not the stale in-session attribute, is what decides."""
+    assert project.stage == "setup"
+    db.execute(text("update projects set stage = 'processing' where id = :id"), {"id": str(project.id)})
+    db.flush()
+    client.get(f"/api/projects/{project.id}/plan")
+    db.refresh(project)
+    assert project.stage == "processing"

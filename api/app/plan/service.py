@@ -8,7 +8,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
 from app.errors import DomainError
@@ -124,8 +124,17 @@ def build_plan(db: DbSession, project: Project) -> PlanOut:
                      + sum(1 for q in out.questions if q.status == "found"))
 
     # The stage moves forward once, here, because this is the one place
-    # that knows the project has reached the plan. Never backward.
-    if project.stage in ("setup", "documents") and drawings and not reading and any(d.status == "processed" for d in drawings):
-        project.stage = "plan"
+    # that knows the project has reached the plan. Never backward: the
+    # WHERE clause is the only source of truth on the current stage --
+    # not `project.stage` on the in-session object, which can be stale
+    # if the worker (a different process, no lock) advanced the row to
+    # "processing" between this object's load and this write.
+    if drawings and not reading and any(d.status == "processed" for d in drawings):
+        db.execute(
+            update(Project)
+            .where(Project.id == project.id, Project.stage.in_(("setup", "documents")))
+            .values(stage="plan")
+        )
         db.flush()
+        db.expire(project, ["stage"])
     return out

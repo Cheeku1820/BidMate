@@ -28,7 +28,7 @@ describe("PhaseSection", () => {
   });
 
   it("adds a phase by name, clears the field, and shows a refusal inline", async () => {
-    const onAdd = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce({ message: "That phase is already on the plan." });
+    const onAdd = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce({ code: "duplicate_plan_phase", message: "That phase is already on the plan." });
     render(<PhaseSection phases={[]} onDecide={vi.fn()} onAdd={onAdd} onRemove={vi.fn()} />);
     const field = screen.getByRole("textbox", { name: "Phase name" });
     const button = screen.getByRole("button", { name: "Add phase" });
@@ -40,6 +40,14 @@ describe("PhaseSection", () => {
     await userEvent.type(field, "Phase 2");
     await userEvent.click(screen.getByRole("button", { name: "Add phase" }));
     expect(await screen.findByText("That phase is already on the plan.")).toBeInTheDocument();
+  });
+
+  it("shows the generic refusal when the failure is a bare network error", async () => {
+    const onAdd = vi.fn().mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    render(<PhaseSection phases={[]} onDecide={vi.fn()} onAdd={onAdd} onRemove={vi.fn()} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Phase name" }), "Phase 2");
+    await userEvent.click(screen.getByRole("button", { name: "Add phase" }));
+    expect(await screen.findByText("Couldn't add that phase. Try again.")).toBeInTheDocument();
   });
 
   it("routes a decision and a removal to the right handler", async () => {

@@ -56,6 +56,20 @@ describe("QuestionLine", () => {
     expect(screen.getByText("Found")).toBeInTheDocument();
   });
 
+  it("shows a server refusal's own message when it carries a code", async () => {
+    const h = mount(q(), {
+      onAnswer: vi.fn().mockRejectedValue({
+        code: "plan_question_answered",
+        message: "This question already has an answer. Reopen it to answer it again.",
+      }),
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Answer" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Your answer" }), "One phase, whole shop at once.");
+    await userEvent.click(screen.getByRole("button", { name: "Save answer" }));
+    expect(h.onAnswer).toHaveBeenCalled();
+    expect(await screen.findByText("This question already has an answer. Reopen it to answer it again.")).toBeInTheDocument();
+  });
+
   it("never uses the review-status classes", () => {
     const { container } = render(<MemoryRouter><QuestionLine question={q({ status: "dismissed" })} notesHref="/n" onAnswer={vi.fn()} onDismiss={vi.fn()} onReopen={vi.fn()} /></MemoryRouter>);
     expect(container.querySelector(".pill--approved, .pill--ready, .pill--attention, .pill--missing")).toBeNull();

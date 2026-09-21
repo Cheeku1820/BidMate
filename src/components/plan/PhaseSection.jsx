@@ -33,7 +33,7 @@ export default function PhaseSection({ phases, onDecide, onAdd, onRemove }) {
       })
       .catch((err) => {
         setSaving(false);
-        setError(err?.message || ADD_FAILED);
+        setError(typeof err?.code === "string" && err.message ? err.message : ADD_FAILED);
       });
   };
 

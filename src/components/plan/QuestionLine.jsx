@@ -38,9 +38,9 @@ export default function QuestionLine({ question, onAnswer, onDismiss, onReopen, 
         setSaving(false);
         return true;
       })
-      .catch(() => {
+      .catch((err) => {
         setSaving(false);
-        setError(DECIDE_FAILED);
+        setError(typeof err?.code === "string" && err.message ? err.message : DECIDE_FAILED);
         return false;
       });
   };

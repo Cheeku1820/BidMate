@@ -259,15 +259,21 @@ def test_answering_an_already_answered_question_is_refused_until_reopened(client
 # --- stated phases ---
 
 def test_add_and_remove_a_stated_phase(client, db, project, dana, signed_in_user, seeded):
+    undecided_before = client.get(f"/api/projects/{project.id}/plan").json()["undecided"]
     r = client.post(f"/api/projects/{project.id}/plan/phases", json={"name": "Phase 3 — office"})
     assert r.status_code == 201, r.text
     out = r.json()
     assert out["added"] is True and out["text"] == "Phase 3 — office" and out["key"] == f"phase:added:{out['phase_id']}"
     assert out["document_id"] is None and out["page"] is None and out["quote"] is None
+    # A phase the estimator typed is their own statement, so it starts
+    # confirmed -- it is not something the documents left uncertain.
+    assert out["status"] == "confirmed"
     plan = client.get(f"/api/projects/{project.id}/plan").json()
     assert [p["text"] for p in plan["phases"]] == ["Phase 1", "Phase 2", "Phase 3 — office"]
-    # A stated phase can be confirmed like any line.
-    assert client.patch(f"/api/projects/{project.id}/plan/lines/{out['key']}", json={"status": "confirmed"}).json()["status"] == "confirmed"
+    assert plan["undecided"] == undecided_before
+    # A decision row still governs when one is recorded: a stated phase
+    # can be dismissed like any line.
+    assert client.patch(f"/api/projects/{project.id}/plan/lines/{out['key']}", json={"status": "dismissed"}).json()["status"] == "dismissed"
     assert client.delete(f"/api/projects/{project.id}/plan/phases/{out['phase_id']}").status_code == 204
     assert [p["text"] for p in client.get(f"/api/projects/{project.id}/plan").json()["phases"]] == ["Phase 1", "Phase 2"]
     labels = [a.label for a in db.scalars(select(Action).where(Action.kind.in_(("plan_phase_add", "plan_phase_remove"))).order_by(Action.seq))]

@@ -71,7 +71,10 @@ def _line_out(line: detect.Line, decision: PlanDecision | None) -> PlanLineOut:
 
 
 def _added_phase_out(phase: PlanPhase, decision: PlanDecision | None) -> PlanLineOut:
-    status = decision.status if decision and decision.status in ("found", "confirmed", "dismissed") else "found"
+    # A phase the estimator typed is their own statement, not something the
+    # documents left uncertain -- it starts confirmed. A decision row, when
+    # one exists, still governs: reopen and dismiss keep working.
+    status = decision.status if decision and decision.status in ("found", "confirmed", "dismissed") else "confirmed"
     edited = decision.edited_text if decision else None
     return PlanLineOut(key=f"phase:added:{phase.id}", kind="phase", text=edited or phase.name, found_text=phase.name,
                        edited_text=edited, status=status, document_id=None, document_filename=None, page=None, quote=None,

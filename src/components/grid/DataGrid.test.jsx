@@ -89,24 +89,44 @@ describe("DataGrid markup", () => {
 });
 
 describe("moving the active cell", () => {
-  test("arrow keys move over editable cells only and focus follows", () => {
+  test("arrow keys move one cell in any direction, read-only cells included, and focus follows", () => {
     setup();
     fireEvent.keyDown(cell(0, HOURS), { key: "ArrowRight" });
     expect(cell(0, NOTE)).toHaveAttribute("aria-selected", "true");
     expect(document.activeElement).toBe(cell(0, NOTE));
     fireEvent.keyDown(cell(0, NOTE), { key: "ArrowDown" });
     expect(cell(1, NOTE)).toHaveAttribute("aria-selected", "true");
-    fireEvent.keyDown(cell(1, NOTE), { key: "ArrowRight" }); // row 2's basis is disabled
-    expect(cell(1, NOTE)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(cell(1, NOTE), { key: "ArrowRight" }); // row 2's basis is disabled, still reachable
+    expect(cell(1, BASIS)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(cell(1, BASIS), { key: "ArrowLeft" });
+    fireEvent.keyDown(cell(1, NOTE), { key: "ArrowLeft" });
+    fireEvent.keyDown(cell(1, HOURS), { key: "ArrowLeft" });
+    expect(cell(1, 0)).toHaveAttribute("aria-selected", "true"); // the read-only Quantity cell
+    expect(document.activeElement).toBe(cell(1, 0));
   });
 
-  test("Home from the last editable cell lands on the first", () => {
+  test("Home and End reach the row's first and last cell; Tab from a read-only cell goes to the next editable one", () => {
     setup();
     fireEvent.keyDown(cell(0, HOURS), { key: "End" });
     expect(cell(0, BASIS)).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(cell(0, BASIS), { key: "Home" });
+    const header = screen.getAllByRole("rowheader")[0];
+    expect(header).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(header);
+    fireEvent.keyDown(header, { key: "Tab" });
     expect(cell(0, HOURS)).toHaveAttribute("aria-selected", "true");
-    expect(document.activeElement).toBe(cell(0, HOURS));
+  });
+
+  test("Enter, a printable key, and Delete do nothing on a read-only cell", () => {
+    const { onCommit } = setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowLeft" }); // onto Quantity
+    expect(cell(0, 0)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(cell(0, 0), { key: "Enter" });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.keyDown(cell(0, 0), { key: "5" });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.keyDown(cell(0, 0), { key: "Delete" });
+    expect(onCommit).not.toHaveBeenCalled();
   });
 
   test("Tab wraps to the next row and Shift+Tab back", () => {

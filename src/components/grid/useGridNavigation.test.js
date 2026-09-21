@@ -41,19 +41,19 @@ describe("firstEditable", () => {
 });
 
 describe("moveActive", () => {
-  test("left and right step within the row over editable cells only, and stop at the edges", () => {
-    expect(moveActive({ row: 0, col: "hours" }, "right", columns, rows)).toEqual({ row: 0, col: "note" });
-    expect(moveActive({ row: 0, col: "note" }, "right", columns, rows)).toEqual({ row: 0, col: "basis" });
+  test("left and right step one column, read-only and disabled cells included, and stop at the edges", () => {
+    expect(moveActive({ row: 0, col: "name" }, "right", columns, rows)).toEqual({ row: 0, col: "qty" });
+    expect(moveActive({ row: 0, col: "qty" }, "right", columns, rows)).toEqual({ row: 0, col: "hours" });
     expect(moveActive({ row: 0, col: "basis" }, "right", columns, rows)).toEqual({ row: 0, col: "basis" });
-    expect(moveActive({ row: 0, col: "hours" }, "left", columns, rows)).toEqual({ row: 0, col: "hours" });
-    // Row 2's basis is disabled, so right from note stays on note.
-    expect(moveActive({ row: 1, col: "note" }, "right", columns, rows)).toEqual({ row: 1, col: "note" });
+    expect(moveActive({ row: 0, col: "name" }, "left", columns, rows)).toEqual({ row: 0, col: "name" });
+    // Row 2's basis is disabled for editing, but an arrow still lands on it.
+    expect(moveActive({ row: 1, col: "note" }, "right", columns, rows)).toEqual({ row: 1, col: "basis" });
   });
 
-  test("up and down stay in the column and skip rows where it is not editable", () => {
+  test("up and down stay in the column, one row at a time, whatever the cell is", () => {
     expect(moveActive({ row: 0, col: "hours" }, "down", columns, rows)).toEqual({ row: 1, col: "hours" });
-    expect(moveActive({ row: 0, col: "basis" }, "down", columns, rows)).toEqual({ row: 2, col: "basis" });
-    expect(moveActive({ row: 2, col: "basis" }, "up", columns, rows)).toEqual({ row: 0, col: "basis" });
+    expect(moveActive({ row: 0, col: "basis" }, "down", columns, rows)).toEqual({ row: 1, col: "basis" });
+    expect(moveActive({ row: 2, col: "qty" }, "up", columns, rows)).toEqual({ row: 1, col: "qty" });
     expect(moveActive({ row: 0, col: "hours" }, "up", columns, rows)).toEqual({ row: 0, col: "hours" });
     expect(moveActive({ row: 2, col: "hours" }, "down", columns, rows)).toEqual({ row: 2, col: "hours" });
   });
@@ -65,9 +65,14 @@ describe("moveActive", () => {
     expect(moveActive({ row: 0, col: "hours" }, "prev", columns, rows)).toBeNull();
   });
 
-  test("home and end go to the row's first and last editable cell", () => {
-    expect(moveActive({ row: 1, col: "note" }, "home", columns, rows)).toEqual({ row: 1, col: "hours" });
-    expect(moveActive({ row: 1, col: "hours" }, "end", columns, rows)).toEqual({ row: 1, col: "note" });
+  test("home and end go to the row's first and last cell of any kind", () => {
+    expect(moveActive({ row: 1, col: "note" }, "home", columns, rows)).toEqual({ row: 1, col: "name" });
+    expect(moveActive({ row: 1, col: "hours" }, "end", columns, rows)).toEqual({ row: 1, col: "basis" });
+  });
+
+  test("next and prev from a read-only cell go to the nearest editable cell in that direction", () => {
+    expect(moveActive({ row: 0, col: "name" }, "next", columns, rows)).toEqual({ row: 0, col: "hours" });
+    expect(moveActive({ row: 1, col: "qty" }, "prev", columns, rows)).toEqual({ row: 0, col: "basis" });
   });
 
   test("a null active cell moves nowhere", () => {

@@ -20,7 +20,7 @@ from app.scope import service as scope_service
 from app.scope.router import _out as scope_out
 from app.takeoff import actions
 from app.takeoff import notes as notes_service
-from app.takeoff.models import Document, Note, Project, Sheet
+from app.takeoff.models import Document, Project, Sheet
 from app.takeoff.router import not_found
 
 _MAX_TEXT = 500
@@ -247,3 +247,33 @@ def answer(db: DbSession, *, actor: User, project: Project, key: str, body: str)
     actions.commit(db, actor=actor, project_id=project.id, kind="plan_decide", label=f"Answered: {target.title}",
                    before=before, after=_snapshot(row))
     return _question_out(target, row, {str(d.id): d.filename for d in docs})
+
+
+def add_phase(db: DbSession, *, actor: User, project: Project, name: str) -> PlanLineOut:
+    cleaned = (name or "").strip()
+    if not cleaned or len(cleaned) > _MAX_PHASE:
+        raise DomainError("invalid_plan_phase", f"A phase name can't be empty and must be {_MAX_PHASE} characters or fewer.", status=422)
+    _docs, _scope, _specs, _scheds, phase_lines, added, _qs = derive(db, project)
+    taken = {l.text.lower() for l in phase_lines} | {p.name.lower() for p in added}
+    if cleaned.lower() in taken:
+        raise DomainError("duplicate_plan_phase", "That phase is already on the plan.", status=422)
+    phase = PlanPhase(project_id=project.id, name=cleaned, created_by=actor.id)
+    db.add(phase)
+    db.flush()
+    actions.commit(db, actor=actor, project_id=project.id, kind="plan_phase_add", label=f"Added phase: {cleaned}",
+                   before={}, after={"phase_id": str(phase.id), "name": cleaned})
+    return _added_phase_out(phase, None)
+
+
+def remove_phase(db: DbSession, *, actor: User, project: Project, phase_id: uuid.UUID) -> None:
+    phase = db.scalar(select(PlanPhase).where(PlanPhase.project_id == project.id, PlanPhase.id == phase_id))
+    if phase is None:
+        raise not_found()
+    key = f"phase:added:{phase.id}"
+    decision = db.scalar(select(PlanDecision).where(PlanDecision.project_id == project.id, PlanDecision.entry_key == key))
+    if decision is not None:
+        db.delete(decision)
+    db.delete(phase)
+    db.flush()
+    actions.commit(db, actor=actor, project_id=project.id, kind="plan_phase_remove", label=f"Removed phase: {phase.name}",
+                   before={"phase_id": str(phase.id), "name": phase.name}, after={})

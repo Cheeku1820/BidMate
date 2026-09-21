@@ -254,3 +254,42 @@ def test_answering_an_already_answered_question_is_refused_until_reopened(client
     assert out["status"] == "answered"
     notes = list(db.scalars(select(Note).where(Note.project_id == project.id)))
     assert len(notes) == 2
+
+
+# --- stated phases ---
+
+def test_add_and_remove_a_stated_phase(client, db, project, dana, signed_in_user, seeded):
+    r = client.post(f"/api/projects/{project.id}/plan/phases", json={"name": "Phase 3 — office"})
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["added"] is True and out["text"] == "Phase 3 — office" and out["key"] == f"phase:added:{out['phase_id']}"
+    assert out["document_id"] is None and out["page"] is None and out["quote"] is None
+    plan = client.get(f"/api/projects/{project.id}/plan").json()
+    assert [p["text"] for p in plan["phases"]] == ["Phase 1", "Phase 2", "Phase 3 — office"]
+    # A stated phase can be confirmed like any line.
+    assert client.patch(f"/api/projects/{project.id}/plan/lines/{out['key']}", json={"status": "confirmed"}).json()["status"] == "confirmed"
+    assert client.delete(f"/api/projects/{project.id}/plan/phases/{out['phase_id']}").status_code == 204
+    assert [p["text"] for p in client.get(f"/api/projects/{project.id}/plan").json()["phases"]] == ["Phase 1", "Phase 2"]
+    labels = [a.label for a in db.scalars(select(Action).where(Action.kind.in_(("plan_phase_add", "plan_phase_remove"))).order_by(Action.seq))]
+    assert labels == ["Added phase: Phase 3 — office", "Removed phase: Phase 3 — office"]
+
+
+def test_a_stated_phase_silences_the_no_phasing_question(client, db, project, dana, signed_in_user):
+    d = _doc(db, project, dana, filename="E.pdf", doc_type="Drawings", page_count=1)
+    _sheet(db, project, d)
+    assert any(q["title"] == "No phasing was stated" for q in client.get(f"/api/projects/{project.id}/plan").json()["questions"])
+    client.post(f"/api/projects/{project.id}/plan/phases", json={"name": "Phase 1"})
+    assert not any(q["title"] == "No phasing was stated" for q in client.get(f"/api/projects/{project.id}/plan").json()["questions"])
+
+
+def test_phase_names_are_validated_and_unique(client, db, project, dana, signed_in_user, seeded):
+    url = f"/api/projects/{project.id}/plan/phases"
+    assert client.post(url, json={"name": " "}).status_code == 422
+    assert client.post(url, json={"name": "x" * 101}).status_code == 422
+    assert client.post(url, json={"name": "phase 1"}).status_code == 422  # detected already
+    assert client.post(url, json={"name": "Phase 4"}).status_code == 201
+    assert client.post(url, json={"name": "PHASE 4"}).status_code == 422  # stated already
+
+
+def test_removing_a_detected_phase_or_a_stranger_is_404(client, db, project, dana, signed_in_user, seeded):
+    assert client.delete(f"/api/projects/{project.id}/plan/phases/{uuid.uuid4()}").status_code == 404

@@ -41,3 +41,18 @@ def post_answer(project_id: uuid.UUID, key: str, payload: AnswerIn, user: User =
     out = service.answer(db, actor=user, project=project, key=key, body=payload.body)
     db.commit()
     return out
+
+
+@router.post("/projects/{project_id}/plan/phases", response_model=PlanLineOut, status_code=201)
+def post_phase(project_id: uuid.UUID, payload: PhaseIn, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> PlanLineOut:
+    project = load_project(project_id, db, user)
+    out = service.add_phase(db, actor=user, project=project, name=payload.name)
+    db.commit()
+    return out
+
+
+@router.delete("/projects/{project_id}/plan/phases/{phase_id}", status_code=204)
+def delete_phase(project_id: uuid.UUID, phase_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> None:
+    project = load_project(project_id, db, user)
+    service.remove_phase(db, actor=user, project=project, phase_id=phase_id)
+    db.commit()

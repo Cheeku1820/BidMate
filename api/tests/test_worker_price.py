@@ -278,3 +278,73 @@ def test_refreshing_another_orgs_stale_row_moves_the_meter_to_the_org_that_paid(
     db.refresh(stale)
     assert stale.org_id == project.org_id == org.id and stale.billed is True
     assert db.scalar(select(func.count()).select_from(MarketLookup)) == 1
+
+
+def test_a_run_whose_source_calls_all_failed_stops_without_a_follow_on(db, project, sheet, dana, monkeypatch):
+    """A source that is down turns every run into `failed` rows and a
+    follow-on that does the same -- forever, with Refresh disabled the
+    whole time. At the budget, a run that got no answer from any source
+    call marks itself done and queues nothing: the rows read 'Market
+    estimate didn't complete', and Refresh is the estimator's retry."""
+    project.postal_code = "78701"
+    src = FakeSource("onebuild", SourceError("timeout"))
+    _wire(monkeypatch, db, {"onebuild": src})
+    over = price_job.PRICE_JOB_BUDGET_SECONDS + 1
+    ticks = iter([0, 0, 0, over])
+    monkeypatch.setattr(price_job, "_clock", lambda: next(ticks, over))
+    items = [_item(db, project, sheet, f"Item {n}") for n in range(4)]
+    first = queue.enqueue_price(db, project, dana.id)
+    db.commit()
+    assert worker.tick("t")
+    db.refresh(first)
+    assert first.status == "done" and src.calls == ["Item 0", "Item 1"]
+    assert db.scalar(select(func.count()).select_from(Job).where(Job.kind == "price", Job.project_id == project.id)) == 1
+    rows = [db.get(ItemMarketPrice, i.id) for i in items]
+    assert [r.outcome if r is not None else None for r in rows] == ["failed", "failed", None, None]
+
+
+def test_a_run_with_one_answer_among_failures_still_queues_the_follow_on(db, project, sheet, dana, monkeypatch):
+    project.postal_code = "78701"
+    answers = iter([SourceError("timeout"), SourceError("timeout"), _priced()])
+
+    class Flaky(FakeSource):
+        def lookup(self, query, unit, loc):
+            self.calls.append(query)
+            a = next(answers)
+            if isinstance(a, Exception):
+                raise a
+            return a
+
+    src = Flaky("onebuild")
+    _wire(monkeypatch, db, {"onebuild": src})
+    over = price_job.PRICE_JOB_BUDGET_SECONDS + 1
+    ticks = iter([0, 0, 0, 0, over])
+    monkeypatch.setattr(price_job, "_clock", lambda: next(ticks, over))
+    for n in range(5):
+        _item(db, project, sheet, f"Item {n}")
+    first = queue.enqueue_price(db, project, dana.id)
+    db.commit()
+    assert worker.tick("t")
+    db.refresh(first)
+    assert first.status == "done" and len(src.calls) == 3
+    assert db.scalar(select(func.count()).select_from(Job).where(
+        Job.kind == "price", Job.project_id == project.id, Job.status == "queued")) == 1
+
+
+def test_a_run_past_budget_that_made_no_source_call_still_queues_the_follow_on(db, project, sheet, dana, monkeypatch):
+    """Nothing this run did was the problem -- quote-required items cost
+    no call -- so the remainder is safe to continue."""
+    project.postal_code = "78701"
+    src = FakeSource("onebuild", _priced())
+    _wire(monkeypatch, db, {"onebuild": src})
+    over = price_job.PRICE_JOB_BUDGET_SECONDS + 1
+    ticks = iter([0, 0, 0, over])
+    monkeypatch.setattr(price_job, "_clock", lambda: next(ticks, over))
+    _item(db, project, sheet, "Switch Board MSBS"); _item(db, project, sheet, "Transformer T1"); _item(db, project, sheet, "Item 2")
+    first = queue.enqueue_price(db, project, dana.id)
+    db.commit()
+    assert worker.tick("t")
+    db.refresh(first)
+    assert first.status == "done" and src.calls == []
+    assert db.scalar(select(func.count()).select_from(Job).where(
+        Job.kind == "price", Job.project_id == project.id, Job.status == "queued")) == 1

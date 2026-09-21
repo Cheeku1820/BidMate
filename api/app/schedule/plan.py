@@ -250,19 +250,28 @@ def build_phase(
                 duration, sources["duration_days"] = ov.duration_days, "estimator"
             note = ""
 
+        pinned_here = ov.start_date is not None
+        if pinned_here:
+            cursor, sources["start"] = next_working_day(ov.start_date), "estimator"
+            if origin is None:
+                origin = cursor
+
         if no_crew:
-            # No crew means nothing is scheduled on this stage: no dates,
-            # and the timeline cursor holds so later stages are unaffected.
-            start = end = None
-            if cursor is not None:
-                start_week = end_week = _week_of(cursor, origin)
+            # No crew means nothing is scheduled on this stage: no
+            # duration, and the timeline cursor holds so later stages
+            # are unaffected -- unless the estimator pinned this stage
+            # to a date, in which case that date still shows (it's what
+            # they typed) and the cursor moves there for what follows.
+            if pinned_here:
+                start, end = cursor, None
+                start_week = end_week = _week_of(start, origin)
             else:
-                start_week = end_week = day_cursor // 5 + 1
+                start = end = None
+                if cursor is not None:
+                    start_week = end_week = _week_of(cursor, origin)
+                else:
+                    start_week = end_week = day_cursor // 5 + 1
         else:
-            if ov.start_date is not None:
-                cursor, sources["start"] = next_working_day(ov.start_date), "estimator"
-                if origin is None:
-                    origin = cursor
             if cursor is not None:
                 start = cursor
                 end = working_days_after(start, duration - 1)

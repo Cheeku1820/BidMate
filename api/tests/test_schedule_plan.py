@@ -178,3 +178,15 @@ def test_pinned_stage_with_no_phase_start_anchors_the_phase():
     assert by["wire_pull"].start == date(2026, 10, 19)
     assert plan.start == date(2026, 10, 12)
     assert all(b.start is not None and b.end is not None for b in plan.bars)
+
+
+def test_pinned_zero_crew_stage_keeps_its_date_and_moves_the_cursor():
+    crews = dict(CREWS); crews["wire_pull"] = CrewRule(0, 0, 0, D("6"), D("1"), 6, True)
+    items = [ItemHours(uuid.uuid4(), PID, "Devices", D("300"))]
+    ov = {"wire_pull": StageOverride(start_date=date(2026, 11, 2))}   # a Monday
+    plan = build_phase(phase(overrides=ov), items, SPLITS, crews, phase_start=date(2026, 10, 5), relative_week_start=1)
+    by = {b.stage: b for b in plan.bars}
+    assert by["wire_pull"].start == date(2026, 11, 2) and by["wire_pull"].end is None
+    assert by["wire_pull"].note == NO_CREW
+    assert by["wire_pull"].sources["start"] == "estimator"
+    assert by["trim"].start == date(2026, 11, 2)

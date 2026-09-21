@@ -3,7 +3,7 @@ database, no PDF. Every rule here is asserted on synthetic text; the
 corpus assertions live in test_plan_corpus.py."""
 
 from app.plan import copy
-from app.plan.detect import DocIn, SheetIn, phases, questions, schedules, spec_sections
+from app.plan.detect import DocIn, SheetIn, normalise_phase, phase_display, phases, questions, schedules, spec_sections
 
 
 def doc(**o):
@@ -96,6 +96,13 @@ def test_phases_group_across_titles_notes_and_specs():
     assert [p.page for p in first.places] == [1, 2]
     # "the next phase of" carries no number or letter, so it is not a phase.
     assert all("of" not in l.text for l in lines)
+
+
+def test_normalise_phase_accepts_a_bare_token_or_a_phase_prefixed_label():
+    assert normalise_phase("1") == "PHASE 1"
+    assert normalise_phase("phase 1") == "PHASE 1"
+    assert normalise_phase("PHASE  A") == "PHASE A"
+    assert phase_display("PHASE II") == "Phase II"
 
 
 # --- questions ---

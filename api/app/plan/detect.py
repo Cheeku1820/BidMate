@@ -151,7 +151,8 @@ def schedules(sheets: list[SheetIn], docs: list[DocIn]) -> list[Line]:
 
 
 def normalise_phase(label: str) -> str:
-    return "PHASE " + label.strip().upper()
+    token = re.sub(r"(?i)^\s*PHASE\s+", "", label.strip()).strip()
+    return "PHASE " + token.upper()
 
 
 def phase_display(norm: str) -> str:

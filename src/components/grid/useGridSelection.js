@@ -45,9 +45,14 @@ export function extend(selection, direction, columns, rows) {
 
 export function selectAll(columns, rows) {
   if (!rows.length || !columns.length) return null;
+  // Focus -- the one active cell, where the grid scrolls to keep it in
+  // view -- is the first cell of the first row, not the last: Ctrl/Cmd+A
+  // on a long grid must not jump the estimator to the bottom. normalize()
+  // works out the range from anchor and focus regardless of which end
+  // each one names, so the selected range is unaffected.
   return {
-    anchor: { row: 0, col: columns[0].key },
-    focus: { row: rows.length - 1, col: columns[columns.length - 1].key },
+    anchor: { row: rows.length - 1, col: columns[columns.length - 1].key },
+    focus: { row: 0, col: columns[0].key },
   };
 }
 

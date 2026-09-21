@@ -57,8 +57,12 @@ describe("extend", () => {
 });
 
 describe("selectAll", () => {
-  test("covers the grid, and is null with no rows", () => {
-    expect(selectAll(columns, rows)).toEqual(sel(0, "name", 2, "evidence"));
+  test("covers the grid, focused on the first cell of the first row so a long grid does not scroll to the bottom", () => {
+    // anchor is the last cell of the last row, focus the first cell of
+    // the first row -- normalize() below still resolves the same range
+    // regardless of which end is which.
+    expect(selectAll(columns, rows)).toEqual(sel(2, "evidence", 0, "name"));
+    expect(normalize(selectAll(columns, rows), columns)).toEqual({ r0: 0, c0: 0, r1: 2, c1: 5 });
     expect(selectAll(columns, [])).toBeNull();
   });
 });

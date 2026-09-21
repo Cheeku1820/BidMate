@@ -108,9 +108,17 @@ rectangle.
 | Tab / Shift+Tab, Enter/Tab out of an editor | the next cell in the entry flow (below) | same |
 | Shift+arrow | unchanged | one cell in that direction, clamped to the grid |
 | Shift+click | unchanged | the clicked cell |
-| Ctrl/Cmd+A | first cell of the first row | last cell of the last row |
+| Ctrl/Cmd+A | last cell of the last row | first cell of the first row |
 | Escape (not editing) | the focus | the focus |
-| Any commit, sort, or reload | collapses to the focus | |
+| Any single-cell commit, sort, or reload | collapses to the focus | |
+
+Ctrl/Cmd+A's focus lands on the first cell of the first row, not the
+last: the focus is what the grid scrolls to keep in view, so putting it
+at the end would jump a long grid straight to the bottom the moment an
+estimator selects everything. A paste, a fill, or a clear is not in
+this table — it leaves the range exactly where it landed rather than
+collapsing it, so the same range can be acted on again (the toast's
+Undo, a second paste over the same block).
 
 **Arrows visit every cell, as in Sheets.** ← → ↑ ↓ move one cell in
 that direction over every column, read-only ones included, clamped at

@@ -331,7 +331,7 @@ describe("range selection", () => {
     expect(cell(1, HOURS)).toHaveAttribute("data-active");
   });
 
-  test("Shift+click extends from the anchor; Ctrl+A covers the grid", () => {
+  test("Shift+click extends from the anchor; Ctrl+A covers the grid, focused on the first cell of the first row", () => {
     setup();
     fireEvent.click(cell(2, NOTE), { shiftKey: true });
     expect(selected()).toHaveLength(6); // rows 0–2 × hours, note
@@ -339,6 +339,11 @@ describe("range selection", () => {
     fireEvent.keyDown(cell(2, NOTE), { key: "a", ctrlKey: true });
     expect(selected()).toHaveLength(15); // 3 rows × 5 columns, rowheaders included
     expect(screen.queryByRole("textbox")).toBeNull();
+    // Focus lands on the first cell of the first row (the row header),
+    // not the last -- Ctrl/Cmd+A on a long grid must not scroll the
+    // estimator to the bottom.
+    expect(screen.getAllByRole("rowheader")[0]).toHaveAttribute("data-active");
+    expect(cell(2, NOTE)).not.toHaveAttribute("data-active");
   });
 
   test("clicking a read-only cell makes it active with no editor; clicking a link inside a cell does not", () => {
@@ -356,6 +361,20 @@ describe("range selection", () => {
     expect(cell(2, 0)).not.toHaveAttribute("data-active");
     expect(document.activeElement).toBe(link);
     expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  test("the nested-interactive Tab guard still holds with a selection active", () => {
+    // Same guard as "clicking a link... does not", but with a range
+    // selected first: the guard reads event.target, not whether a
+    // selection exists, so it must hold either way.
+    const withLink = [...columns];
+    withLink[1] = { ...columns[1], render: (r) => <a href="https://example.test">{r.qty}</a> };
+    setup({ columns: withLink });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    const link = screen.getAllByRole("link")[0];
+    link.focus();
+    fireEvent.keyDown(link, { key: "Tab" });
+    expect(document.activeElement).toBe(link);
   });
 
   test("the Clear button never renders over a multi-cell range", () => {

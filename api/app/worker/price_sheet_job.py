@@ -1,7 +1,11 @@
 """price_sheet: read an uploaded supplier price sheet into a preview on
 the job's payload. Nothing is applied here -- the estimator does that
 from the preview (estimate-first-pricing §6). A refused sheet is a
-completed job carrying the reason, not a failure."""
+completed job carrying the reason, not a failure, and a row the parser
+could not read is a line in the preview's `unreadable` group, not a
+failure either. A job that does fail -- storage, a workbook that opens
+and then blows up, the timeout -- lands copy.PRICE_SHEET_FAILED through
+queue.terminal_copy, never the PDF wording."""
 from __future__ import annotations
 
 import os
@@ -80,5 +84,6 @@ def run(db: Session, job: Job) -> None:
     supplier, date = _supplier_and_date(doc.filename)
     job.payload = {**(job.payload or {}), "preview": {
         "matched": matched, "unmatched": unmatched, "unpriced": unpriced, "refused": parsed.refused,
+        "unreadable": [{"line": line, "reason": reason} for line, reason in parsed.unreadable],
         "supplier_name": supplier, "quote_date": date}}
     db.flush()

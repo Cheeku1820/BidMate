@@ -543,6 +543,7 @@ class PriceSheetPreviewOut(BaseModel):
     refused: str | None = None
     supplier_name: str = ""
     quote_date: date | None = None
+    unreadable: list[dict] = []    # [{line, reason}] -- rows the parser could not read
     model_config = MODEL_CONFIG
 
 

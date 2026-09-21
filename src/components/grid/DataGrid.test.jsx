@@ -348,7 +348,7 @@ describe("range selection", () => {
 
   test("clicking a read-only cell makes it active with no editor; clicking a link inside a cell does not", () => {
     const withLink = [...columns];
-    withLink[1] = { ...columns[1], render: (r) => <a href="https://example.test">{r.qty}</a> };
+    withLink[1] = { ...columns[1], render: (r) => <a href="#seller">{r.qty}</a> };
     const { onCommit } = setup({ columns: withLink });
     fireEvent.click(cell(1, 0));
     expect(cell(1, 0)).toHaveAttribute("data-active");
@@ -368,7 +368,7 @@ describe("range selection", () => {
     // selected first: the guard reads event.target, not whether a
     // selection exists, so it must hold either way.
     const withLink = [...columns];
-    withLink[1] = { ...columns[1], render: (r) => <a href="https://example.test">{r.qty}</a> };
+    withLink[1] = { ...columns[1], render: (r) => <a href="#seller">{r.qty}</a> };
     setup({ columns: withLink });
     fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
     const link = screen.getAllByRole("link")[0];

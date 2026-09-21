@@ -2974,3 +2974,4 @@ button {
 .plan-add-phase { margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
 .plan-add-phase__row { display: flex; gap: 8px; }
 .plan-add-phase__row .field { flex: 1; }
+.note-status--answered { background: var(--slate-tint); color: var(--slate); border-color: var(--slate-line); }

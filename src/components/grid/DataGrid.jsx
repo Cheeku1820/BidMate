@@ -19,11 +19,17 @@
    Number editors are text inputs with inputmode="decimal", not
    type="number": the spinner and the browser's own validation get in
    the way of Tab-through entry, and the grid validates itself.
+
+   Shift+arrow and Shift+click grow a range from an anchor; the focus
+   is still the one active cell. Every cell in the range is
+   aria-selected; only the focus carries data-active and the ring, so
+   a range reads as a wash and never as a status.
    ============================================================ */
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { isEditable, useGridNavigation } from "./useGridNavigation.js";
+import { extend, normalize, selectAll } from "./useGridSelection.js";
 
 const cellId = (row, col) => `${row}:${col}`;
 
@@ -39,6 +45,14 @@ const DataGrid = forwardRef(function DataGrid(
   ref,
 ) {
   const { active, setActive, move } = useGridNavigation(columns, rows);
+  // The other end of the selection. null means "same as the active
+  // cell" -- a single-cell selection, the state every earlier
+  // behaviour was written for. Shift+arrow and Shift+click set it;
+  // every plain move, click, commit, or Escape clears it.
+  const [anchor, setAnchor] = useState(null);
+  const selection = useMemo(() => (active ? { anchor: anchor || active, focus: active } : null), [anchor, active]);
+  const range = useMemo(() => (selection ? normalize(selection, columns) : null), [selection, columns]);
+  const isRange = Boolean(range && (range.r0 !== range.r1 || range.c0 !== range.c1));
   // { row, col, value, message, caret } while an editor is open.
   const [editing, setEditing] = useState(null);
   const cells = useRef(new Map());
@@ -69,6 +83,10 @@ const DataGrid = forwardRef(function DataGrid(
     }
   }, [active, editing]);
 
+  useEffect(() => {
+    if (anchor && anchor.row >= rows.length) setAnchor(null);
+  }, [anchor, rows.length]);
+
   // Runs once per editor *open*, not on every keystroke: keying this on
   // `editing` itself re-fired on every value/message change (a new
   // object each time setEditing is called), which forced the caret to
@@ -92,7 +110,20 @@ const DataGrid = forwardRef(function DataGrid(
   function activate(next) {
     if (!next) return;
     focusPending.current = true;
+    setAnchor(null);
     setActive(next);
+  }
+
+  // Moves the focus and keeps the anchor -- Shift+arrow, Shift+click.
+  function extendTo(next) {
+    if (!next || !active) return;
+    focusPending.current = true;
+    if (!anchor) setAnchor(active);
+    setActive(next);
+  }
+
+  function collapse() {
+    setAnchor(null);
   }
 
   function startEdit(row, col, { value, caret, message } = {}) {
@@ -113,6 +144,7 @@ const DataGrid = forwardRef(function DataGrid(
     closing.current = false;
     reopenedDuringCommit.current = true;
     setActive({ row, col });
+    setAnchor(null);
     setEditing({ row, col, value: value ?? String(current ?? ""), caret, message: message || null });
   }
 
@@ -272,9 +304,29 @@ const DataGrid = forwardRef(function DataGrid(
     if (event.target !== event.currentTarget && event.target.closest("a, button, summary, input, select, textarea, [contenteditable]")) {
       return;
     }
+    const SHIFT_MOVES = { ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down" };
+    if (event.shiftKey && SHIFT_MOVES[event.key] && selection) {
+      event.preventDefault();
+      extendTo(extend(selection, SHIFT_MOVES[event.key], columns, rows).focus);
+      return;
+    }
     if (MOVES[event.key]) {
       event.preventDefault();
       activate(move(MOVES[event.key]));
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      const all = selectAll(columns, rows);
+      if (all) {
+        focusPending.current = true;
+        setAnchor(all.anchor);
+        setActive(all.focus);
+      }
+      return;
+    }
+    if (event.key === "Escape") {
+      collapse();
       return;
     }
     if (event.key === "Tab") {
@@ -302,11 +354,21 @@ const DataGrid = forwardRef(function DataGrid(
     }
   }
 
-  function onCellClick(row, column) {
-    if (!isEditable(column, rows[row])) return;
+  function onCellClick(event, row, column) {
+    // A click on interactive content inside a cell -- the seller
+    // <details>, a link -- belongs to that content: it neither moves
+    // focus onto the cell nor selects it.
+    if (event.target !== event.currentTarget && event.target.closest("a, button, summary, input, select, textarea, [contenteditable]")) {
+      return;
+    }
+    const next = { row, col: column.key };
+    if (event.shiftKey) {
+      extendTo(next);
+      return;
+    }
     const isActive = active && active.row === row && active.col === column.key;
-    if (isActive && !editing) startEdit(row, column.key, { caret: "end" });
-    else if (!isActive) activate({ row, col: column.key });
+    if (isActive && !editing && !anchor && isEditable(column, rows[row])) startEdit(row, column.key, { caret: "end" });
+    else if (!isActive || anchor) activate(next);
   }
 
   function renderEditor(row, column) {
@@ -373,7 +435,9 @@ const DataGrid = forwardRef(function DataGrid(
     const Tag = column.header ? "th" : "td";
     const extra = column.className ? column.className(r) : undefined;
     const className = [column.align === "right" ? "tabular" : "", extra || ""].join(" ").trim() || undefined;
-    const showClear = isActive && !isEditing && editable && column.edit.hasEntry && column.edit.hasEntry(r);
+    const ci = columns.indexOf(column);
+    const inRange = Boolean(range && row >= range.r0 && row <= range.r1 && ci >= range.c0 && ci <= range.c1);
+    const showClear = isActive && !isRange && !isEditing && editable && column.edit.hasEntry && column.edit.hasEntry(r);
     return (
       <Tag
         key={column.key}
@@ -381,12 +445,13 @@ const DataGrid = forwardRef(function DataGrid(
         role={column.header ? "rowheader" : "gridcell"}
         ref={(el) => (el ? cells.current.set(id, el) : cells.current.delete(id))}
         tabIndex={isActive ? 0 : -1}
-        aria-selected={isActive || undefined}
+        aria-selected={inRange || undefined}
+        data-active={isActive || undefined}
         data-editable={editable || undefined}
         data-clearable={showClear || undefined}
         className={className}
         style={{ textAlign: column.align }}
-        onClick={() => onCellClick(row, column)}
+        onClick={(event) => onCellClick(event, row, column)}
         onKeyDown={(event) => onCellKeyDown(event, row, column)}
       >
         {isEditing ? (
@@ -421,7 +486,7 @@ const DataGrid = forwardRef(function DataGrid(
   // pricing pages fill the shell (.page--fill) so it has a height.
   return (
     <div className="grid-scroll">
-      <table className="data-table takeoff-table grid" role="grid">
+      <table className="data-table takeoff-table grid" role="grid" aria-multiselectable="true">
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr role="row">

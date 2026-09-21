@@ -68,6 +68,8 @@ describe("DataGrid markup", () => {
     expect(tabbable).toHaveLength(1);
     expect(tabbable[0]).toBe(cell(0, HOURS));
     expect(cell(0, HOURS)).toHaveAttribute("aria-selected", "true");
+    expect(cell(0, HOURS)).toHaveAttribute("data-active");
+    expect(screen.getByRole("grid")).toHaveAttribute("aria-multiselectable", "true");
   });
 
   test("marks editable cells and not read-only or disabled ones", () => {
@@ -298,6 +300,69 @@ describe("footer", () => {
   test("renders the footer row inside tfoot", () => {
     setup({ footer: <tr><td colSpan={5}>Total 1.5</td></tr> });
     expect(screen.getByText("Total 1.5").closest("tfoot")).not.toBeNull();
+  });
+});
+
+describe("range selection", () => {
+  const selected = () => document.querySelectorAll('[aria-selected="true"]');
+
+  test("Shift+ArrowRight extends over a read-only cell; the focus alone is data-active", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowLeft" }); // Quantity
+    fireEvent.keyDown(cell(0, 0), { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    expect(selected()).toHaveLength(4);
+    expect(cell(0, 0)).toHaveAttribute("aria-selected", "true");
+    expect(cell(1, HOURS)).toHaveAttribute("aria-selected", "true");
+    expect(document.querySelectorAll("[data-active]")).toHaveLength(1);
+    expect(cell(1, HOURS)).toHaveAttribute("data-active");
+    expect(document.activeElement).toBe(cell(1, HOURS));
+  });
+
+  test("a plain arrow collapses the range, and so does Escape", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    expect(selected()).toHaveLength(2);
+    fireEvent.keyDown(cell(1, HOURS), { key: "ArrowUp" });
+    expect(selected()).toHaveLength(1);
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(1, HOURS), { key: "Escape" });
+    expect(selected()).toHaveLength(1);
+    expect(cell(1, HOURS)).toHaveAttribute("data-active");
+  });
+
+  test("Shift+click extends from the anchor; Ctrl+A covers the grid", () => {
+    setup();
+    fireEvent.click(cell(2, NOTE), { shiftKey: true });
+    expect(selected()).toHaveLength(6); // rows 0–2 × hours, note
+    expect(cell(2, NOTE)).toHaveAttribute("data-active");
+    fireEvent.keyDown(cell(2, NOTE), { key: "a", ctrlKey: true });
+    expect(selected()).toHaveLength(15); // 3 rows × 5 columns, rowheaders included
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  test("clicking a read-only cell makes it active with no editor; clicking a link inside a cell does not", () => {
+    const withLink = [...columns];
+    withLink[1] = { ...columns[1], render: (r) => <a href="https://example.test">{r.qty}</a> };
+    const { onCommit } = setup({ columns: withLink });
+    fireEvent.click(cell(1, 0));
+    expect(cell(1, 0)).toHaveAttribute("data-active");
+    expect(document.activeElement).toBe(cell(1, 0));
+    fireEvent.click(cell(1, 0));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    const link = screen.getAllByRole("link")[2];
+    link.focus();
+    fireEvent.click(link);
+    expect(cell(2, 0)).not.toHaveAttribute("data-active");
+    expect(document.activeElement).toBe(link);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  test("the Clear button never renders over a multi-cell range", () => {
+    setup();
+    expect(screen.getByRole("button", { name: "Clear entry" })).toBeInTheDocument();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    expect(screen.queryByRole("button", { name: "Clear entry" })).toBeNull();
   });
 });
 

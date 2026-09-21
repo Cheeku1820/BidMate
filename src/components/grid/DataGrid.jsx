@@ -103,6 +103,11 @@ const DataGrid = forwardRef(function DataGrid(
   const [editing, setEditing] = useState(null);
   const cells = useRef(new Map());
   const editorRef = useRef(null);
+  // The table element, so a copy can tell a real text selection an
+  // estimator drag-selected inside a cell (a seller name, a basis note)
+  // apart from the grid's own cell/range selection, which carries no
+  // window selection at all.
+  const tableRef = useRef(null);
   // Set before any change that should end with the active cell focused
   // -- a key move, a commit, a cancel -- and consumed by the effect
   // below. Not set on mount, so rendering the grid never steals focus.
@@ -283,8 +288,18 @@ const DataGrid = forwardRef(function DataGrid(
     setFillTo(row);
   }
 
+  // True when the browser has a real, non-collapsed text selection
+  // inside this table -- an estimator drag-selecting a seller name or a
+  // basis note, say -- which a copy must leave to the browser's own
+  // default handling rather than overwriting with the range's TSV.
+  function hasTextSelectionInTable() {
+    const sel = window.getSelection();
+    return Boolean(sel && !sel.isCollapsed && tableRef.current && tableRef.current.contains(sel.anchorNode));
+  }
+
   function onCopy(event) {
     if (editing || !range) return; // the input's own copy
+    if (hasTextSelectionInTable()) return;
     event.clipboardData.setData("text/plain", copyText());
     event.preventDefault();
   }
@@ -518,7 +533,9 @@ const DataGrid = forwardRef(function DataGrid(
       // Browsers differ on whether Ctrl/Cmd+C fires `copy` on a focused
       // non-editable element with no text selection; the copy handler
       // above covers the ones that do, this covers the rest. Both may
-      // run and write the same text.
+      // run and write the same text. Same guard as onCopy: a real text
+      // selection inside the table wins.
+      if (hasTextSelectionInTable()) return;
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) navigator.clipboard.writeText(copyText()).catch(() => {});
       return;
     }
@@ -695,6 +712,7 @@ const DataGrid = forwardRef(function DataGrid(
   return (
     <div className="grid-scroll">
       <table
+        ref={tableRef}
         className={"data-table takeoff-table grid" + (resizing ? " is-resizing" : "")}
         role="grid"
         aria-multiselectable="true"

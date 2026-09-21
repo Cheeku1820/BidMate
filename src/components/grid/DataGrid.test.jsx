@@ -546,6 +546,24 @@ describe("clipboard, fill, clear, undo", () => {
     expect(prevented).toBe(false);
   });
 
+  test("a real text selection inside the table wins over the range copy", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowLeft" }); // Quantity
+    fireEvent.keyDown(cell(0, 0), { key: "ArrowRight", shiftKey: true });
+    // An estimator drag-selected a note's own text -- a real, non-collapsed
+    // window selection anchored inside the grid's table -- rather than
+    // using the grid's own cell/range selection.
+    const spy = vi.spyOn(window, "getSelection").mockReturnValue({
+      isCollapsed: false,
+      anchorNode: cell(0, NOTE),
+    });
+    const ev = clipboardEvent("copy");
+    const prevented = !fireEvent.copy(screen.getByRole("grid"), ev);
+    expect(prevented).toBe(false);
+    expect(ev._store["text/plain"]).toBeUndefined();
+    spy.mockRestore();
+  });
+
   test("paste maps the clip through onCommitRange and never through onCommit", () => {
     const onCommitRange = vi.fn();
     const { onCommit } = setup({ onCommitRange });

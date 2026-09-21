@@ -8,7 +8,7 @@
 
 import { describe, expect, test } from "vitest";
 import {
-  cellText, clearChanges, coerce, extend, fillChanges, normalize, parseClipboard, pasteChanges, selectAll, toTsv,
+  cellText, clearChanges, coerce, extend, fillChanges, normalize, parseClipboard, pasteChanges, selectAll, sortRows, toTsv,
 } from "./useGridSelection.js";
 
 const columns = [
@@ -168,5 +168,26 @@ describe("clearChanges", () => {
       { row: rows[1], key: "note", value: null },
       { row: rows[2], key: "price", value: null },
     ]);
+  });
+});
+
+describe("sortRows", () => {
+  test("sorts numbers numerically and strings by locale, nulls last both ways, stable on ties", () => {
+    const price = columns[2], name = columns[0];
+    const rs = [
+      { name: "b", price: 10 }, { name: "a", price: null }, { name: "c", price: 2 }, { name: "d", price: 10 },
+    ];
+    expect(sortRows(rs, price, "ascending").map((r) => r.name)).toEqual(["c", "b", "d", "a"]);
+    expect(sortRows(rs, price, "descending").map((r) => r.name)).toEqual(["b", "d", "c", "a"]);
+    expect(sortRows(rs, name, "ascending").map((r) => r.name)).toEqual(["a", "b", "c", "d"]);
+    expect(rs.map((r) => r.name)).toEqual(["b", "a", "c", "d"]); // untouched
+  });
+  test("sortValue wins over the default, and an empty string counts as missing", () => {
+    const status = { key: "status", label: "Status", render: (r) => r.status, sortValue: (r) => ["missing", "ready", "approved"].indexOf(r.status) };
+    const rs = [{ status: "approved" }, { status: "missing" }, { status: "ready" }];
+    expect(sortRows(rs, status, "ascending").map((r) => r.status)).toEqual(["missing", "ready", "approved"]);
+    const note = columns[4];
+    const ns = [{ note: "" }, { note: "z" }, { note: "a" }];
+    expect(sortRows(ns, note, "descending").map((r) => r.note)).toEqual(["z", "a", ""]);
   });
 });

@@ -172,3 +172,30 @@ export function clearChanges(range, columns, rows) {
   }
   return changes;
 }
+
+function sortValueOf(column, row) {
+  if (column.sortValue) return column.sortValue(row);
+  if (column.edit) return column.edit.value(row);
+  return row[column.key];
+}
+
+const missing = (v) => v == null || v === "";
+
+/** A sorted copy. Numbers numerically, strings with localeCompare,
+ *  missing values last whichever way, ties in their existing order. */
+export function sortRows(rows, column, direction) {
+  const sign = direction === "descending" ? -1 : 1;
+  return rows
+    .map((row, i) => ({ row, i, v: sortValueOf(column, row) }))
+    .sort((a, b) => {
+      const am = missing(a.v), bm = missing(b.v);
+      if (am && bm) return a.i - b.i;
+      if (am) return 1;
+      if (bm) return -1;
+      let cmp;
+      if (typeof a.v === "number" && typeof b.v === "number") cmp = a.v - b.v;
+      else cmp = String(a.v).localeCompare(String(b.v), undefined, { numeric: true, sensitivity: "base" });
+      return cmp !== 0 ? cmp * sign : a.i - b.i;
+    })
+    .map((e) => e.row);
+}

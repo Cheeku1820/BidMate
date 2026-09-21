@@ -44,13 +44,13 @@ function setup(extra = {}) {
   const onCommit = vi.fn();
   const onCancel = vi.fn();
   const ref = createRef();
-  render(
+  const { unmount } = render(
     <DataGrid
       ref={ref} columns={columns} rows={rows} rowKey={(r) => r.id} rowLabel={(r) => r.name}
       onCommit={onCommit} onCancel={onCancel} caption="Test grid" {...extra}
     />,
   );
-  return { onCommit, onCancel, ref };
+  return { onCommit, onCancel, ref, unmount };
 }
 
 /** gridcell at (row index, column among qty/hours/note/basis). */
@@ -658,6 +658,16 @@ describe("fill handle", () => {
     fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown" });
     fireEvent.mouseDown(handle());
     fireEvent.mouseEnter(cell(0, HOURS));
+    fireEvent.mouseUp(document);
+    expect(onCommitRange).not.toHaveBeenCalled();
+  });
+
+  test("unmounting mid-drag removes the document mouseup listener", () => {
+    const onCommitRange = vi.fn();
+    const { unmount } = setup({ onCommitRange });
+    fireEvent.mouseDown(handle());
+    fireEvent.mouseEnter(cell(1, HOURS));
+    unmount();
     fireEvent.mouseUp(document);
     expect(onCommitRange).not.toHaveBeenCalled();
   });

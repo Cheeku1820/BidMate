@@ -82,6 +82,16 @@ const DataGrid = forwardRef(function DataGrid(
   const fillDrag = useRef(null);
   const fillToRef = useRef(null);
   const [fillTo, setFillTo] = useState(null);
+  // The in-flight mouseup listener, so an unmount mid-drag can remove
+  // it -- otherwise it stays on `document` with a stale closure and
+  // still fires a dispatch against a grid that no longer exists.
+  const fillUp = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (fillUp.current) document.removeEventListener("mouseup", fillUp.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (focusPending.current && active && !editing) {
@@ -156,6 +166,7 @@ const DataGrid = forwardRef(function DataGrid(
     setFillTo(range.r1);
     const onUp = () => {
       document.removeEventListener("mouseup", onUp);
+      fillUp.current = null;
       const source = fillDrag.current;
       const to = fillToRef.current;
       fillDrag.current = null;
@@ -168,6 +179,7 @@ const DataGrid = forwardRef(function DataGrid(
         setActive({ row: to, col: columns[source.c1].key });
       }
     };
+    fillUp.current = onUp;
     document.addEventListener("mouseup", onUp);
   }
 

@@ -21,7 +21,12 @@
    combined request; see docs/specs/spreadsheet-grid.md, "What the
    screens do with a range". The toast's Undo reverses however many
    calls the operation made, through useUndoCount, so it still reads
-   as one press whether it undoes a single cell or a pasted block.
+   as one press whether it undoes a single cell or a pasted block --
+   but only for the toast that count was remembered for. useUndoCount
+   is told the toast's own text alongside the count, and the button
+   hands back whatever text is on screen when it is pressed, so a
+   later toast this screen never remembered (an "Undid …" from
+   Ctrl+Z, say) reverses just itself.
    ============================================================ */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -86,8 +91,9 @@ export default function LaborWorkspace() {
     try {
       const updated = await runMutation(() => store.setLaborLine(row.itemId, { [field.wire]: wire }));
       replaceRow(row.itemId, updated);
-      undoCount.remember({ calls: 1, cells: 1 });
-      showToast(toastFor(key, value, row, updated));
+      const label = toastFor(key, value, row, updated);
+      undoCount.remember({ calls: 1, cells: 1, text: label });
+      showToast(label);
     } catch (err) {
       // Only the edited field, on the row as it is now -- not the whole
       // captured row, which would undo a later commit on the same row
@@ -136,8 +142,9 @@ export default function LaborWorkspace() {
     }
     if (failed) setSaveError(rangeFailure(failed, changes.length));
     if (done) {
-      undoCount.remember({ calls: done, cells: done });
-      showToast(rangeToast(kind, done, touched.size));
+      const label = rangeToast(kind, done, touched.size);
+      undoCount.remember({ calls: done, cells: done, text: label });
+      showToast(label);
     }
   };
 
@@ -229,7 +236,7 @@ export default function LaborWorkspace() {
           <button
             type="button"
             onClick={() => {
-              undoCount.undoLast().catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
+              undoCount.undoLast(toast.text).catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
               dismissToast();
             }}
           >

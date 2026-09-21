@@ -126,8 +126,9 @@ export default function MaterialPricingWorkspace() {
     try {
       const updated = await runMutation(request);
       replaceRow(row.itemId, updated);
-      undoCount.remember({ calls: 1, cells: 1 });
-      showToast(toastFor(key, value, row, updated));
+      const label = toastFor(key, value, row, updated);
+      undoCount.remember({ calls: 1, cells: 1, text: label });
+      showToast(label);
     } catch (err) {
       setRows((cur) =>
         cur.map((r) => {
@@ -235,8 +236,9 @@ export default function MaterialPricingWorkspace() {
     }
     if (failedCells) setSaveError(rangeFailure(failedCells, changes.length));
     if (calls) {
-      undoCount.remember({ calls, cells });
-      showToast(rangeToast(kind, cells, calls, { skipped, skippedWhy: "an allowance needs a reason" }));
+      const label = rangeToast(kind, cells, calls, { skipped, skippedWhy: "an allowance needs a reason" });
+      undoCount.remember({ calls, cells, text: label });
+      showToast(label);
     }
   };
 
@@ -354,7 +356,7 @@ export default function MaterialPricingWorkspace() {
           <button
             type="button"
             onClick={() => {
-              undoCount.undoLast().catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
+              undoCount.undoLast(toast.text).catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
               dismissToast();
             }}
           >

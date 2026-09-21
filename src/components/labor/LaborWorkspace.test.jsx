@@ -424,6 +424,29 @@ describe("LaborWorkspace", () => {
     expect(review.dismissToast).toHaveBeenCalled();
   });
 
+  test("a paste's remembered count is not spent by a differently-worded toast's Undo", async () => {
+    // The grid still fires the paste's own N = 2 into useUndoCount, but
+    // the toast actually on screen belongs to something else entirely --
+    // here, standing in for the review store's own "Undid …" toast that
+    // a Ctrl+Z elsewhere in the app could have left up. Its Undo button
+    // must reverse one action, not replay the paste's remembered count.
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow, rowTwo] }),
+      setLaborLine: vi.fn((itemId, changes) => Promise.resolve({ ...(itemId === "i1" ? baseRow : rowTwo), hoursPerUnit: changes.hoursOverride, hoursSourceLabel: "Estimator entered" })),
+    };
+    const undo = vi.fn().mockResolvedValue({ performed: true });
+    const review = renderLabor({
+      store,
+      extra: { undo, toast: { id: "t1", text: "Undid Set hours to 0.5 on 20A duplex receptacle" } },
+    });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    fireEvent.paste(cellFor("20A duplex receptacle", "Hours/unit"), pasteEvent("0.5\n0.75"));
+    await waitFor(() => expect(store.setLaborLine).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(undo).toHaveBeenCalledTimes(1));
+    expect(review.dismissToast).toHaveBeenCalled();
+  });
+
   test("Ctrl+Z on a cell reverses one action and reloads; Ctrl+Shift+Z redoes", async () => {
     const store = {
       getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),

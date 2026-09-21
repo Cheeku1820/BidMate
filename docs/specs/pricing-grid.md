@@ -505,7 +505,8 @@ Named so the next person does not read absence as oversight:
   jobs run one crew and a per-item count is the exception. That is a
   small backend addition (three counts on `Project`, one step in
   `resolve_rate`) and its own slice. Notes stay per-item and unbuilt.
-- **Range selection, fill-down, paste**, the next natural step toward a
-  spreadsheet and the one that makes a 400-row hospital set tolerable.
-- **Sort and status filter chips** on these two screens.
+- **Range selection, fill-down, paste, sort, column resize** — now
+  designed in [`spreadsheet-grid.md`](spreadsheet-grid.md), which
+  extends this grid rather than replacing it.
+- **Status filter chips** on these two screens.
 - **Screen G on the grid.**

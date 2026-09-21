@@ -1,12 +1,13 @@
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from app.schedule.copy import NO_CREW
 from app.schedule.plan import (
-    CrewRule, ItemHours, PhaseInput, SplitRule, StageOverride,
-    build_phase, next_working_day, split_hours, working_days_after,
+    CrewRule, ItemHours, LeadInput, PhaseInput, SplitRule, StageOverride,
+    build_phase, build_schedule, needed_crew, next_working_day, split_hours, working_days_after,
 )
+from app.schedule.copy import DEFAULT_SPLIT_NOTE, order_date_passed, stale_lead_time_warning
 from app.schedule.stages import STAGES
 
 D = Decimal
@@ -190,3 +191,114 @@ def test_pinned_zero_crew_stage_keeps_its_date_and_moves_the_cursor():
     assert by["wire_pull"].note == NO_CREW
     assert by["wire_pull"].sources["start"] == "estimator"
     assert by["trim"].start == date(2026, 11, 2)
+
+
+P2 = uuid.uuid4()
+
+
+def two_phases(items_a=D("300"), items_b=D("120"), **kw):
+    phases = [phase(), phase(phase_id=P2, name="Phase 2", sort_order=1, **kw)]
+    items = [ItemHours(uuid.uuid4(), PID, "Devices", items_a), ItemHours(uuid.uuid4(), P2, "Devices", items_b)]
+    return phases, items
+
+
+def test_needed_crew():
+    assert needed_crew(D("120"), 4, D("6")) == 5
+    assert needed_crew(D("120"), 2, D("6")) == 10
+
+
+def test_reverse_solve_marks_over_max_and_writes_nothing():
+    phases, items = two_phases(required_finish_date=date(2026, 11, 6))
+    sched = build_schedule(phases, items, SPLITS, CREWS, [], mobilization=date(2026, 10, 5),
+                           expected_award=None, today=date(2026, 9, 21), stale_days=60)
+    p2 = sched.phases[1]
+    assert all(b.needed_crew is not None for b in p2.bars)
+    assert sched.phases[0].bars[0].needed_crew is None      # no window on phase 1
+    tight = build_schedule([phases[0], phase(phase_id=P2, name="Phase 2", sort_order=1, required_finish_date=date(2026, 10, 22))],
+                           items, SPLITS, CREWS, [], mobilization=date(2026, 10, 5), expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    assert any(b.over_max for b in tight.phases[1].bars)
+
+
+def test_second_phase_follows_first_unless_dated():
+    phases, items = two_phases()
+    sched = build_schedule(phases, items, SPLITS, CREWS, [], mobilization=date(2026, 10, 5), expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    assert sched.phases[1].start == date(2026, 10, 21)
+    dated = build_schedule([phases[0], phase(phase_id=P2, name="Phase 2", sort_order=1, start_date=date(2026, 11, 2))],
+                           items, SPLITS, CREWS, [], mobilization=date(2026, 10, 5), expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    assert dated.phases[1].start == date(2026, 11, 2)
+
+
+def test_manpower_sums_overlapping_phases_by_role():
+    phases = [phase(), phase(phase_id=P2, name="Phase 2", sort_order=1, start_date=date(2026, 10, 5))]
+    items = [ItemHours(uuid.uuid4(), PID, "Devices", D("300")), ItemHours(uuid.uuid4(), P2, "Devices", D("300"))]
+    sched = build_schedule(phases, items, SPLITS, CREWS, [], mobilization=date(2026, 10, 5), expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    week1 = sched.manpower[0]
+    assert (week1.foreman, week1.journeyman, week1.apprentice) == (2, 4, 4)
+    assert sched.peak_crew == 10 and sched.relative is False
+
+
+def test_relative_schedule_when_nothing_is_dated():
+    phases, items = two_phases()
+    sched = build_schedule(phases, items, SPLITS, CREWS, [], mobilization=None, expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    assert sched.relative is True and sched.manpower[0].start is None and sched.manpower[0].week == 1
+
+
+def test_only_second_phase_dated_stays_relative():
+    phases, items = two_phases(start_date=date(2026, 11, 2))
+    sched = build_schedule(phases, items, SPLITS, CREWS, [], mobilization=None, expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    assert sched.relative is True
+
+
+def lead(**kw):
+    base = dict(item_id=uuid.uuid4(), item_name="Switchboard MSB-1", phase_id=PID, flagged=True, lead_weeks=40,
+                source="supplier_quote", source_label="Graybar", quoted_at=date(2026, 9, 12), needed_for_stage="gear")
+    base.update(kw)
+    return LeadInput(**base)
+
+
+def gear_items():
+    return [ItemHours(uuid.uuid4(), PID, "Distribution", D("100"))]   # gear bar exists
+
+
+def test_order_by_counts_back_from_the_stage_it_is_needed_for():
+    sched = build_schedule([phase(start_date=date(2027, 2, 22))], gear_items(), SPLITS | {"distribution": rule(0, 20, 10, 60, 5, 5)},
+                           CREWS, [lead()], mobilization=None, expected_award=date(2026, 9, 1), today=date(2026, 9, 21), stale_days=60)
+    out = sched.leads[0]
+    gear_start = {b.stage: b for b in sched.phases[0].bars}["gear"].start
+    assert out.needed_by == gear_start
+    assert out.order_by == gear_start - timedelta(weeks=40)
+    assert out.passed is True and "Order date has passed" in out.note and "40 weeks" in out.note
+
+
+def test_order_by_without_award_compares_to_today():
+    sched = build_schedule([phase(start_date=date(2027, 9, 6))], gear_items(), SPLITS | {"distribution": rule(0, 20, 10, 60, 5, 5)},
+                           CREWS, [lead(lead_weeks=10)], mobilization=None, expected_award=None, today=date(2026, 9, 21), stale_days=60)
+    assert sched.leads[0].passed is False and sched.leads[0].note == ""
+
+
+def test_no_weeks_means_no_date():
+    sched = build_schedule([phase(start_date=date(2027, 2, 22))], gear_items(), SPLITS | {"distribution": rule(0, 20, 10, 60, 5, 5)},
+                           CREWS, [lead(lead_weeks=None, source=None, source_label="", quoted_at=None)],
+                           mobilization=None, expected_award=None, today=date(2026, 9, 21), stale_days=60)
+    out = sched.leads[0]
+    assert out.order_by is None and out.needed_by is not None and out.passed is False and out.stale is False
+
+
+def test_stale_lead_time():
+    sched = build_schedule([phase(start_date=date(2027, 2, 22))], gear_items(), SPLITS | {"distribution": rule(0, 20, 10, 60, 5, 5)},
+                           CREWS, [lead(quoted_at=date(2026, 7, 1))], mobilization=None, expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    assert sched.leads[0].stale is True
+    w = stale_lead_time_warning(82, "Graybar")
+    assert set(w) == {"title", "found", "why", "fix", "where"} and "82 days" in w["found"] and "Graybar" in w["found"]
+
+
+def test_copy_is_sentence_case_and_carries_no_bare_week_number():
+    assert order_date_passed(40, "Gear", date(2027, 2, 22)).startswith("Order date has passed")
+    assert DEFAULT_SPLIT_NOTE[0].isupper() and "!" not in DEFAULT_SPLIT_NOTE and "recommended" not in DEFAULT_SPLIT_NOTE.lower()

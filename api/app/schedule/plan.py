@@ -11,8 +11,8 @@ from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
-from app.schedule.copy import NO_CREW
-from app.schedule.stages import STAGES
+from app.schedule.copy import NO_CREW, order_date_passed
+from app.schedule.stages import STAGE_LABELS, STAGES
 
 CENTS = Decimal("0.01")
 FALLBACK_KEY = "*"
@@ -293,3 +293,180 @@ def build_phase(
         end=bars[-1].end if bars else None,
         end_week=bars[-1].end_week if bars else relative_week_start,
     )
+
+
+@dataclass(frozen=True)
+class LeadInput:
+    item_id: uuid.UUID
+    item_name: str
+    phase_id: uuid.UUID
+    flagged: bool
+    lead_weeks: int | None
+    source: str | None
+    source_label: str
+    quoted_at: date | None
+    needed_for_stage: str
+
+
+@dataclass
+class LeadOut:
+    item_id: uuid.UUID
+    item_name: str
+    phase_id: uuid.UUID
+    lead_weeks: int | None
+    source: str | None
+    source_label: str
+    quoted_at: date | None
+    needed_for_stage: str
+    needed_by: date | None
+    order_by: date | None
+    order_by_week: int | None
+    passed: bool
+    stale: bool
+    note: str
+
+
+@dataclass
+class ManpowerWeek:
+    week: int
+    start: date | None
+    foreman: int
+    journeyman: int
+    apprentice: int
+
+    @property
+    def crew(self) -> int:
+        return self.foreman + self.journeyman + self.apprentice
+
+
+@dataclass
+class Schedule:
+    phases: list[PhasePlan]
+    manpower: list[ManpowerWeek]
+    peak_crew: int
+    average_crew: Decimal
+    leads: list[LeadOut]
+    relative: bool
+
+
+def needed_crew(hours: Decimal, days_available: int, per_day: Decimal) -> int:
+    if days_available <= 0 or per_day <= 0:
+        return 0
+    return math.ceil(hours / (Decimal(days_available) * per_day))
+
+
+def _working_days_between(a: date, b: date) -> int:
+    """Working days from a to b inclusive; 0 when b < a."""
+    n, d = 0, a
+    while d <= b:
+        if d.weekday() < 5:
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
+def build_schedule(
+    phases: list[PhaseInput],
+    items: list[ItemHours],
+    splits: dict[str, SplitRule],
+    crews: dict[str, CrewRule],
+    leads: list[LeadInput],
+    *,
+    mobilization: date | None,
+    expected_award: date | None,
+    today: date,
+    stale_days: int,
+) -> Schedule:
+    """The whole project's schedule: one PhasePlan per phase chained in
+    sort order, the weekly manpower sum across every active bar, and the
+    long-lead order-by dates counted back from the stage that installs
+    each item.
+
+    Calendar vs. relative is decided once, by the first phase only: the
+    schedule is in calendar mode iff mobilization is set, or the first
+    phase (lowest sort_order) has a start_date, or the first phase has a
+    pinned-stage override -- never by a later phase's date alone, so
+    relative and calendar week numbers never mix in one schedule."""
+    by_phase: dict[uuid.UUID, list[ItemHours]] = {}
+    for it in items:
+        by_phase.setdefault(it.phase_id, []).append(it)
+
+    ordered = sorted(phases, key=lambda p: p.sort_order)
+    first = ordered[0] if ordered else None
+    calendar_mode = mobilization is not None or (
+        first is not None
+        and (first.start_date is not None or any(o.start_date is not None for o in first.overrides.values()))
+    )
+    origin = mobilization or (first.start_date if first else None)
+
+    plans: list[PhasePlan] = []
+    cursor_date = mobilization
+    cursor_week = 1
+    for p in ordered:
+        start = (p.start_date or cursor_date) if calendar_mode else None
+        plan = build_phase(p, by_phase.get(p.phase_id, []), splits, crews,
+                           phase_start=start, relative_week_start=cursor_week, week_origin=origin)
+        if origin is None and plan.start is not None:
+            origin = plan.start
+
+        if p.required_finish_date is not None and plan.bars:
+            finish = p.required_finish_date
+            phase_start = plan.start or start
+            if phase_start is not None:
+                days_available = _working_days_between(phase_start, finish)
+                total = sum(b.hours for b in plan.bars)
+                for b in plan.bars:
+                    share_days = max(1, math.floor(days_available * (b.hours / total))) if total > 0 else 0
+                    b.needed_crew = needed_crew(b.hours, share_days, b.productive_hours_per_day)
+                    b.over_max = b.needed_crew > crews[b.stage].max_crew
+
+        plans.append(plan)
+        if plan.end is not None:
+            cursor_date = working_days_after(plan.end, 1)
+        cursor_week = plan.end_week + 1
+
+    # Manpower: one row per week the schedule spans. A phase's own bars
+    # never truly overlap in time (build_phase chains them on a single
+    # cursor), so a bar that only shares a week bucket with the next one
+    # across a weekend boundary isn't concurrent crew -- take the busiest
+    # single bar per phase for that week, then sum across phases, since
+    # separate phases genuinely can run at once. A zero-crew bar
+    # (duration_days == 0) has nothing to contribute.
+    last_week = max((p.end_week for p in plans), default=0)
+    weeks: list[ManpowerWeek] = []
+    for w in range(1, last_week + 1):
+        row = ManpowerWeek(w, (origin + timedelta(weeks=w - 1)) if (calendar_mode and origin) else None, 0, 0, 0)
+        for p in plans:
+            touching = [b for b in p.bars if b.duration_days > 0 and b.start_week <= w <= b.end_week]
+            if touching:
+                busiest = max(touching, key=lambda b: b.crew)
+                row.foreman += busiest.foreman
+                row.journeyman += busiest.journeyman
+                row.apprentice += busiest.apprentice
+        weeks.append(row)
+    peak = max((r.crew for r in weeks), default=0)
+    average = q(Decimal(sum(r.crew for r in weeks)) / Decimal(len(weeks))) if weeks else Decimal("0")
+
+    # Long-lead: order-by counted back from the stage bar that installs it.
+    bars_by_phase = {p.phase_id: {b.stage: b for b in p.bars} for p in plans}
+    leads_out: list[LeadOut] = []
+    for L in leads:
+        if not L.flagged:
+            continue
+        bar = bars_by_phase.get(L.phase_id, {}).get(L.needed_for_stage)
+        needed_by = bar.start if bar else None
+        order_by = order_by_week = None
+        passed = False
+        note = ""
+        if L.lead_weeks is not None and needed_by is not None:
+            order_by = needed_by - timedelta(weeks=L.lead_weeks)
+            order_by_week = _week_of(order_by, origin) if origin else None
+            threshold = expected_award or today
+            passed = order_by < threshold
+            if passed:
+                note = order_date_passed(L.lead_weeks, STAGE_LABELS[L.needed_for_stage], needed_by)
+        stale = L.lead_weeks is not None and L.quoted_at is not None and (today - L.quoted_at).days > stale_days
+        leads_out.append(LeadOut(L.item_id, L.item_name, L.phase_id, L.lead_weeks, L.source, L.source_label, L.quoted_at,
+                                 L.needed_for_stage, needed_by, order_by, order_by_week, passed, stale, note))
+
+    return Schedule(plans, weeks, peak, average, leads_out, relative=not calendar_mode)

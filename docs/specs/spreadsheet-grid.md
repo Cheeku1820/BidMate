@@ -60,7 +60,7 @@ row per catalog item and eleven columns.
 ```
 src/components/grid/
   DataGrid.jsx              the component: cells, editors, now selection, clipboard, fill, sort, resize
-  useGridNavigation.js      the active cell and single-cell movement (unchanged rules, one relaxation below)
+  useGridNavigation.js      the active cell and single-cell movement: arrows over every cell, Tab over editable ones
   useGridSelection.js       NEW — pure functions: ranges, TSV, paste/fill/clear mapping, sort
   DataGrid.test.jsx
   useGridNavigation.test.js
@@ -103,41 +103,49 @@ rectangle.
 | Gesture | Anchor | Focus |
 |---|---|---|
 | Click a cell | that cell | that cell |
-| Arrow, Tab, Home, End, Enter/Tab out of an editor | the new cell | the new cell |
+| Arrow | the neighbouring cell in that direction, any column | same |
+| Home / End | the row's first / last cell, any column | same |
+| Tab / Shift+Tab, Enter/Tab out of an editor | the next cell in the entry flow (below) | same |
 | Shift+arrow | unchanged | one cell in that direction, clamped to the grid |
 | Shift+click | unchanged | the clicked cell |
 | Ctrl/Cmd+A | first cell of the first row | last cell of the last row |
 | Escape (not editing) | the focus | the focus |
 | Any commit, sort, or reload | collapses to the focus | |
 
-Two deliberate asymmetries, both because typing is the common case and
-selecting the occasional one:
+**Arrows visit every cell, as in Sheets.** ← → ↑ ↓ move one cell in
+that direction over every column, read-only ones included, clamped at
+the grid's edges; Home and End go to the row's first and last cell.
+This replaces `pricing-grid.md`'s rule that arrows step over read-only
+columns. An estimator can arrow onto Item to read a basis note, onto
+Status, onto a line total — and copy any of them.
 
-- **Plain arrows and Tab keep skipping read-only cells.** Tab still walks
-  hours → rate → adjustment → reason → next row's hours; that is the
-  entry flow `pricing-grid.md` fixed and it is unchanged. `moveActive`
-  keeps its rules, with one relaxation: from a read-only active cell
-  (reached by click) left/right go to the nearest editable cell in that
-  direction by column index, and up/down go to the same column in the
-  next row that has the cell, editable or not.
-- **Shift+arrow moves the focus one column in either direction across
-  every column**, so a range can include Item and Quantity next to
-  Unit price. A selection is for copying and clearing; it does not need
-  the entry flow's skipping.
+**Tab is the entry flow, and it is unchanged.** Tab / Shift+Tab still
+walk editable cells only — hours → rate → adjustment → reason → next
+row's hours — wrapping at row ends and leaving the grid past the last
+editable cell, exactly as `pricing-grid.md` fixed them. Enter in an
+editor still commits and moves **down** one row in the same column;
+Tab in an editor still commits and moves to the next editable cell.
+Typing a column of rates is Enter-Enter-Enter; typing a row is
+Tab-Tab-Tab; neither lands on a cell that cannot take the value.
+
+In `useGridNavigation.js` this is the split between the two kinds of
+move: `left / right / up / down / home / end` move over all cells and
+never return `null`, `next / prev` move over editable cells and return
+`null` past the grid's ends (the one case Tab is allowed to leave).
+Enter and F2, a printable character, Space on a select, Delete and
+Backspace do nothing on a read-only cell; a second click on it does
+nothing. The Clear `×` never renders on one.
 
 ### Clicking read-only cells
 
-Any cell can be the active cell by click, so a name or quantity can be
-copied. A click whose target is inside interactive content within the
+Any cell can be the active cell by click as well as by arrow. A click
+whose target is inside interactive content within the
 cell — the same `a, button, summary, input, select, textarea,
 [contenteditable]` set the key handler already guards — does **not**
 activate the cell or move focus: the seller `<details>` opens and closes
 on its own, and its link is a link. This is what keeps the "Tab from
 inside the market evidence details is not hijacked" regression test in
 `MaterialPricingWorkspace.test.jsx` green.
-
-A click on a read-only cell never opens an editor; a second click on it
-does nothing.
 
 ### Markup and visuals
 
@@ -433,9 +441,9 @@ editor is open; the nested-interactive guard runs first, as today.
 
 | Key | Does |
 |---|---|
-| ← → ↑ ↓ | move the active cell (skipping read-only cells), collapse the selection |
+| ← → ↑ ↓, Home / End | move the active cell one step over every column; collapse the selection |
 | Shift + ← → ↑ ↓ | extend the selection by one cell, over every column |
-| Tab / Shift+Tab, Home / End | as today; collapse the selection |
+| Tab / Shift+Tab | next / previous editable cell, as today; collapse the selection |
 | Enter, F2, printable, Space on a select | open the editor on the active cell; the selection collapses to it |
 | Delete / Backspace | single cell: clear it (as today); range: clear every entry in it |
 | Ctrl/Cmd+C | copy the range as TSV |
@@ -498,9 +506,19 @@ rows:
 - `sortRows`: numeric and string, nulls last both ways, stable ties,
   `sortValue` wins over the default
 
-**`DataGrid.test.jsx`** — existing tests updated for `data-active` (one
-per grid) and `aria-selected` on the range, plus:
+**`useGridNavigation.test.js`** — the arrow cases now assert movement
+over every column and clamping at the edges; `next`/`prev` cases are
+unchanged.
 
+**`DataGrid.test.jsx`** — existing tests updated for `data-active` (one
+per grid), `aria-selected` on the range, and arrows that no longer skip
+read-only cells, plus:
+
+- ArrowRight from an editable cell lands on the read-only cell beside
+  it; arrows clamp at the grid's edges; Home/End reach the row's first
+  and last cell; Tab from that read-only cell goes to the next editable
+  cell; Enter, a printable key, and Delete on a read-only cell do
+  nothing and open no editor
 - Shift+ArrowRight from an editable cell selects two cells including a
   read-only one; Shift+click extends; a plain arrow collapses; Escape
   collapses; Ctrl+A covers the grid

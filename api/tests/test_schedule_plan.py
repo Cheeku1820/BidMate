@@ -214,10 +214,22 @@ def test_reverse_solve_marks_over_max_and_writes_nothing():
     p2 = sched.phases[1]
     assert all(b.needed_crew is not None for b in p2.bars)
     assert sched.phases[0].bars[0].needed_crew is None      # no window on phase 1
+    plain = build_schedule([phases[0], phase(phase_id=P2, name="Phase 2", sort_order=1)],
+                           items, SPLITS, CREWS, [], mobilization=date(2026, 10, 5), expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    for b, pb in zip(p2.bars, plain.phases[1].bars):    # the solve writes needed_crew/over_max only
+        assert (b.foreman, b.journeyman, b.apprentice, b.duration_days) == (pb.foreman, pb.journeyman, pb.apprentice, pb.duration_days)
     tight = build_schedule([phases[0], phase(phase_id=P2, name="Phase 2", sort_order=1, required_finish_date=date(2026, 10, 22))],
                            items, SPLITS, CREWS, [], mobilization=date(2026, 10, 5), expected_award=None,
                            today=date(2026, 9, 21), stale_days=60)
     assert any(b.over_max for b in tight.phases[1].bars)
+
+
+def test_finish_before_start_reports_no_crew():
+    phases, items = two_phases(required_finish_date=date(2026, 10, 1))   # phase 2 starts Oct 21, well after
+    sched = build_schedule(phases, items, SPLITS, CREWS, [], mobilization=date(2026, 10, 5),
+                           expected_award=None, today=date(2026, 9, 21), stale_days=60)
+    assert all(b.needed_crew is None and b.over_max is False for b in sched.phases[1].bars)
 
 
 def test_second_phase_follows_first_unless_dated():
@@ -253,6 +265,37 @@ def test_only_second_phase_dated_stays_relative():
     sched = build_schedule(phases, items, SPLITS, CREWS, [], mobilization=None, expected_award=None,
                            today=date(2026, 9, 21), stale_days=60)
     assert sched.relative is True
+
+
+def test_later_phase_pinned_stage_stays_relative():
+    phases, items = two_phases(overrides={"trim": StageOverride(start_date=date(2026, 11, 2))})
+    sched = build_schedule(phases, items, SPLITS, CREWS, [], mobilization=None, expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    assert sched.relative is True
+    assert all(b.start is None for p in sched.phases for b in p.bars)
+    assert sched.phases[1].bars[0].start_week >= sched.phases[0].end_week + 1
+
+
+def test_manpower_peak_is_the_busiest_day_not_the_sum_of_phase_peaks():
+    PA, PB = uuid.uuid4(), uuid.uuid4()
+    crews = dict(CREWS)
+    crews["rough_in"] = CrewRule(1, 4, 5, D("6"), D("1"), 10, False)   # crew 10, cap 60/day
+    crews["trim"] = CrewRule(0, 3, 2, D("6"), D("1"), 10, False)        # crew 5, cap 30/day
+    splits = {"rough": rule(0, 100, 0, 0, 0, 0), "trim": rule(0, 0, 0, 0, 100, 0), "*": rule(0, 0, 0, 0, 0, 100)}
+    phases = [
+        phase(phase_id=PA, name="Phase A", sort_order=0),
+        phase(phase_id=PB, name="Phase B", sort_order=1, start_date=date(2026, 10, 7)),
+    ]
+    items = [
+        ItemHours(uuid.uuid4(), PA, "rough", D("120")),   # phase A rough-in: 2 days, Oct 5-6
+        ItemHours(uuid.uuid4(), PA, "trim", D("90")),     # phase A trim: 3 days, Oct 7-9
+        ItemHours(uuid.uuid4(), PB, "rough", D("180")),   # phase B rough-in: 3 days, Oct 7-9 (pinned)
+    ]
+    sched = build_schedule(phases, items, splits, crews, [], mobilization=date(2026, 10, 5), expected_award=None,
+                           today=date(2026, 9, 21), stale_days=60)
+    week1 = sched.manpower[0]   # Oct 5-9 is the whole schedule: Oct 7-9 has trim(0,3,2) + rough(1,4,5) = 15, not 20
+    assert (week1.foreman, week1.journeyman, week1.apprentice) == (1, 7, 7)
+    assert sched.peak_crew == 15
 
 
 def lead(**kw):

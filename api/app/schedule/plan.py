@@ -86,6 +86,8 @@ class StageBar:
     needed_crew: int | None = None
     over_max: bool = False
     note: str = ""
+    start_day: int | None = None
+    end_day: int | None = None
 
     @property
     def crew(self) -> int:
@@ -256,6 +258,7 @@ def build_phase(
             if origin is None:
                 origin = cursor
 
+        start_day = end_day = None
         if no_crew:
             # No crew means nothing is scheduled on this stage: no
             # duration, and the timeline cursor holds so later stages
@@ -277,14 +280,24 @@ def build_phase(
                 end = working_days_after(start, duration - 1)
                 start_week = _week_of(start, origin)
                 end_week = _week_of(end, origin)
+                # Working-day offsets from the shared schedule origin (not
+                # the calendar-week bucket above), 0-based -- what
+                # build_schedule sums manpower by, day by day, so a bar
+                # that spans a weekend into the next week bucket never
+                # gets double-counted against the bar that follows it.
+                start_day = _working_days_between(origin, start) - 1
+                end_day = _working_days_between(origin, end) - 1
                 cursor = working_days_after(end, 1)
             else:
                 start = end = None
                 start_week = day_cursor // 5 + 1
                 end_week = (day_cursor + duration - 1) // 5 + 1
+                start_day = day_cursor
+                end_day = day_cursor + duration - 1
                 day_cursor += duration
         bars.append(StageBar(stage, q(hours), foreman, journeyman, apprentice, per_day, duration,
-                             start, end, start_week, end_week, sources, note=note))
+                             start, end, start_week, end_week, sources, note=note,
+                             start_day=start_day, end_day=end_day))
 
     return PhasePlan(
         phase_id=phase.phase_id, name=phase.name, direct_hours=q(direct), general_conditions_hours=q(gc_total),
@@ -403,10 +416,22 @@ def build_schedule(
     cursor_date = mobilization
     cursor_week = 1
     for p in ordered:
-        start = (p.start_date or cursor_date) if calendar_mode else None
-        plan = build_phase(p, by_phase.get(p.phase_id, []), splits, crews,
+        if calendar_mode:
+            start = p.start_date or cursor_date
+            phase_for_build = p
+        else:
+            # Relative mode is decided by the first phase alone (see
+            # above); a later phase's own start_date is already ignored
+            # via `start = None` below, but build_phase would still
+            # anchor a phase to a calendar date on its own if any of its
+            # stages carries a pinned override -- strip those pins too,
+            # so a fully relative schedule never grows a calendar-dated
+            # island (and never seeds `origin` from one).
+            start = None
+            phase_for_build = replace(p, overrides=_strip_pins(p.overrides))
+        plan = build_phase(phase_for_build, by_phase.get(p.phase_id, []), splits, crews,
                            phase_start=start, relative_week_start=cursor_week, week_origin=origin)
-        if origin is None and plan.start is not None:
+        if calendar_mode and origin is None and plan.start is not None:
             origin = plan.start
 
         if p.required_finish_date is not None and plan.bars:
@@ -414,35 +439,48 @@ def build_schedule(
             phase_start = plan.start or start
             if phase_start is not None:
                 days_available = _working_days_between(phase_start, finish)
-                total = sum(b.hours for b in plan.bars)
-                for b in plan.bars:
-                    share_days = max(1, math.floor(days_available * (b.hours / total))) if total > 0 else 0
-                    b.needed_crew = needed_crew(b.hours, share_days, b.productive_hours_per_day)
-                    b.over_max = b.needed_crew > crews[b.stage].max_crew
+                if days_available > 0:
+                    total = sum(b.hours for b in plan.bars)
+                    for b in plan.bars:
+                        share_days = max(1, math.floor(days_available * (b.hours / total))) if total > 0 else 0
+                        b.needed_crew = needed_crew(b.hours, share_days, b.productive_hours_per_day)
+                        b.over_max = b.needed_crew > crews[b.stage].max_crew
+                # days_available == 0: the required finish is already
+                # behind the phase's start. There's no window to solve
+                # for, so every bar keeps its default needed_crew=None,
+                # over_max=False rather than reporting a crew nobody asked for.
 
         plans.append(plan)
         if plan.end is not None:
             cursor_date = working_days_after(plan.end, 1)
         cursor_week = plan.end_week + 1
 
-    # Manpower: one row per week the schedule spans. A phase's own bars
-    # never truly overlap in time (build_phase chains them on a single
-    # cursor), so a bar that only shares a week bucket with the next one
-    # across a weekend boundary isn't concurrent crew -- take the busiest
-    # single bar per phase for that week, then sum across phases, since
-    # separate phases genuinely can run at once. A zero-crew bar
-    # (duration_days == 0) has nothing to contribute.
-    last_week = max((p.end_week for p in plans), default=0)
+    # Manpower: one row per week the schedule spans, built from the
+    # actual working-day totals rather than per-bar week ranges. A
+    # phase's own bars never truly overlap in time (build_phase chains
+    # them on one cursor), but two *different* bars can each touch the
+    # same calendar-week bucket without ever sharing a day -- e.g. a bar
+    # that runs across a weekend into the next stage's first day. Summing
+    # by week bucket double-counts that; summing by actual working day,
+    # across every phase, does not. A week's row is the busiest single
+    # day within it, since that's the real peak headcount that week --
+    # not the sum of two stages that never ran at once.
+    active_bars = [b for p in plans for b in p.bars if b.duration_days > 0 and b.start_day is not None]
+    day_totals: dict[int, tuple[int, int, int]] = {}
+    for b in active_bars:
+        for d in range(b.start_day, b.end_day + 1):
+            f, j, a = day_totals.get(d, (0, 0, 0))
+            day_totals[d] = (f + b.foreman, j + b.journeyman, a + b.apprentice)
+    last_week = (max(b.end_day for b in active_bars) // 5 + 1) if active_bars else 0
     weeks: list[ManpowerWeek] = []
     for w in range(1, last_week + 1):
-        row = ManpowerWeek(w, (origin + timedelta(weeks=w - 1)) if (calendar_mode and origin) else None, 0, 0, 0)
-        for p in plans:
-            touching = [b for b in p.bars if b.duration_days > 0 and b.start_week <= w <= b.end_week]
-            if touching:
-                busiest = max(touching, key=lambda b: b.crew)
-                row.foreman += busiest.foreman
-                row.journeyman += busiest.journeyman
-                row.apprentice += busiest.apprentice
+        day_lo, day_hi = (w - 1) * 5, w * 5 - 1
+        best = (0, 0, 0)
+        for d in range(day_lo, day_hi + 1):
+            tot = day_totals.get(d)
+            if tot is not None and sum(tot) > sum(best):
+                best = tot
+        row = ManpowerWeek(w, (origin + timedelta(weeks=w - 1)) if (calendar_mode and origin) else None, *best)
         weeks.append(row)
     peak = max((r.crew for r in weeks), default=0)
     average = q(Decimal(sum(r.crew for r in weeks)) / Decimal(len(weeks))) if weeks else Decimal("0")

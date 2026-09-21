@@ -78,6 +78,20 @@ def test_a_page_number_column_without_leaders_is_also_cut():
     assert [l.text for l in lines] == ["26 05 26 — GROUNDING AND BONDING"]
 
 
+def test_a_short_page_number_column_is_also_cut():
+    text = "26 05 26 GROUNDING AND BONDING   12\n"
+    lines = spec_sections([doc(context_text=text)])
+    assert [l.text for l in lines] == ["26 05 26 — GROUNDING AND BONDING"]
+
+
+def test_a_double_space_inside_a_real_title_is_not_mistaken_for_a_toc_trailer():
+    # "20A AND 15A" is the title's own wording, not a page reference --
+    # a bare "two-plus spaces then a digit" rule would wrongly cut it.
+    text = "26 27 26 WIRING DEVICES  20A AND 15A\n"
+    lines = spec_sections([doc(context_text=text)])
+    assert [l.text for l in lines] == ["26 27 26 — WIRING DEVICES  20A AND 15A"]
+
+
 def test_a_leaders_only_next_line_leaves_no_title_and_is_dropped():
     assert spec_sections([doc(context_text="26 05 01\n..........\n")]) == []
 

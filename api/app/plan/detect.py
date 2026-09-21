@@ -37,9 +37,13 @@ SCHEDULE_HEADINGS = ("PANEL SCHEDULE", "LUMINAIRE SCHEDULE", "FIXTURE SCHEDULE",
 _PHASE = re.compile(r"\bPHASE\s+(\d{1,2}|[A-Z]|I{1,3}|IV|V)\b", re.IGNORECASE)
 
 # A table-of-contents dot leader run, or an unleadered page-number column
-# (two-plus spaces then a digit, e.g. "GROUNDING AND BONDING   26 05 26-1").
-# Whichever comes first in the title marks where the real title ends.
-_TOC_TRAILER = re.compile(r"\.{3,}|\ {2,}\d")
+# (two-plus spaces then a page reference running to the end of the line,
+# e.g. "GROUNDING AND BONDING   26 05 26-1" or "...BONDING   12"). The
+# page reference must reach the end of the line, or a title's own wording
+# with a double space in it -- "WIRING DEVICES  20A AND 15A" -- would be
+# mistaken for one. Whichever alternative comes first marks where the
+# real title ends.
+_TOC_TRAILER = re.compile(r"\.{3,}|\ {2,}(?:\d{2}\s?\d{2}\s?\d{2}(?:\.\d{2})?(?:\s*-\s*\d+)?|\d{1,3})\s*$")
 
 
 def _cut_toc_trailer(title: str) -> str:

@@ -62,7 +62,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, Clock, FileText, Loader2 } from "lucide-react";
 import AppTopBar from "../shell/AppTopBar.jsx";
-import ScopeSection from "./ScopeSection.jsx";
+import ScopeSection from "../plan/ScopeSection.jsx";
 import { DOC_TYPES } from "../../lib/detectDocType.js";
 
 // How often to ask again while a document is still being read. Matches

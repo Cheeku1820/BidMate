@@ -40,7 +40,8 @@ describe("ScopeSection", () => {
     expect(store.listScope).toHaveBeenCalledWith("p");
     await userEvent.click(screen.getAllByRole("button", { name: "View source" })[0]);
     expect(screen.getByText("- Site lighting and pole bases.")).toBeInTheDocument();
-    expect(screen.getByText("scope.pdf, page 3")).toBeInTheDocument();
+    expect(screen.getAllByText("scope.pdf, page 3")).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: "Open page" })[0]).toHaveAttribute("href", "/api/documents/d/content#page=3");
   });
 
   it("confirms, dismisses, and edits through the store", async () => {
@@ -51,7 +52,7 @@ describe("ScopeSection", () => {
     render(<ScopeSection store={store} projectId="p" />);
     await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
     expect(decideScope).toHaveBeenCalledWith("s1", { status: "confirmed" });
-    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     const box = screen.getByRole("textbox", { name: "Statement" });
     await userEvent.clear(box);
     await userEvent.type(box, "Site lighting excluded; pole bases by GC.");
@@ -65,7 +66,7 @@ describe("ScopeSection", () => {
     const decideScope = vi.fn().mockImplementation((id, change) => Promise.resolve(stmt({ ...change, status: change.status ?? "found" })));
     const store = { listScope: vi.fn().mockResolvedValue([stmt()]), decideScope };
     render(<ScopeSection store={store} projectId="p" />);
-    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Correct" }));
     const box = screen.getByRole("textbox", { name: "Statement" });
     await userEvent.clear(box);
     await userEvent.type(box, "Pole bases by GC.");
@@ -73,15 +74,15 @@ describe("ScopeSection", () => {
     expect(await screen.findByText("Pole bases by GC.")).toBeInTheDocument();
     expect(screen.getByText("Original: Site lighting and pole bases.")).toBeInTheDocument();
 
-    // Confirmed: Dismiss and Edit remain, Confirm goes.
+    // Confirmed: Dismiss and Correct remain, Confirm goes.
     await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByText("Confirmed")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Correct" })).toBeInTheDocument();
     expect(screen.getByText("2 statements found · 1 confirmed · 0 dismissed".replace("2 statements", "1 statement"))).toBeInTheDocument();
 
-    // Dismissed: Confirm and Edit remain, Dismiss goes.
+    // Dismissed: Confirm and Correct remain, Dismiss goes.
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(await screen.findByText("Dismissed")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
@@ -93,7 +94,7 @@ describe("ScopeSection", () => {
     const decideScope = vi.fn().mockRejectedValue({ code: "network", message: "down" });
     const store = { listScope: vi.fn().mockResolvedValue([stmt()]), decideScope };
     render(<ScopeSection store={store} projectId="p" />);
-    await userEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Correct" }));
     await userEvent.type(screen.getByRole("textbox", { name: "Statement" }), " more");
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(decideScope).not.toHaveBeenCalled();
@@ -123,5 +124,28 @@ describe("ScopeSection", () => {
     render(<ScopeSection store={{ listScope: vi.fn().mockRejectedValue(new Error("x")) }} projectId="p" />);
     expect(await screen.findByText("Couldn't load the scope statements. Check the connection and try again.")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByText(/loading/i)).toBeNull());
+  });
+
+  it("renders a given list without fetching, filters by kind, and hands a decision up", async () => {
+    const decideScope = vi.fn().mockResolvedValue(stmt({ status: "confirmed" }));
+    const onDecided = vi.fn();
+    const store = { listScope: vi.fn(), decideScope };
+    render(
+      <ScopeSection
+        store={store}
+        projectId="p"
+        statements={[stmt(), stmt({ id: "s2", kind: "included", text: "Provide all lighting." })]}
+        onDecided={onDecided}
+        kinds={["excluded", "by_others"]}
+        title="Exclusions"
+        headingId="exclusions-heading"
+      />,
+    );
+    expect(store.listScope).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Exclusions" })).toBeInTheDocument();
+    expect(screen.queryByText("Provide all lighting.")).toBeNull();
+    expect(screen.getByText("1 statement found · 0 confirmed · 0 dismissed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(onDecided).toHaveBeenCalledWith(stmt({ status: "confirmed" })));
   });
 });

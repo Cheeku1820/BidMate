@@ -673,7 +673,14 @@ const DataGrid = forwardRef(function DataGrid(
                 <X size={14} aria-hidden="true" />
               </button>
             ) : null}
-            {showHandle ? <div className="grid-fill-handle" aria-hidden="true" onMouseDown={startFill} /> : null}
+            {showHandle ? (
+              <div
+                className="grid-fill-handle"
+                aria-hidden="true"
+                onMouseDown={startFill}
+                onClick={(event) => event.stopPropagation()}
+              />
+            ) : null}
           </>
         )}
       </Tag>
@@ -721,7 +728,12 @@ const DataGrid = forwardRef(function DataGrid(
                     {dir === "ascending" ? <ArrowUp size={12} aria-hidden="true" /> : null}
                     {dir === "descending" ? <ArrowDown size={12} aria-hidden="true" /> : null}
                   </button>
-                  <div className="grid-resize" role="presentation" onMouseDown={(event) => startResize(event, c.key)} />
+                  <div
+                    className="grid-resize"
+                    role="presentation"
+                    onMouseDown={(event) => startResize(event, c.key)}
+                    onClick={(event) => event.stopPropagation()}
+                  />
                 </th>
               );
             })}

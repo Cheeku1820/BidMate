@@ -710,6 +710,14 @@ describe("fill handle", () => {
     fireEvent.mouseUp(document);
     expect(onCommitRange).not.toHaveBeenCalled();
   });
+
+  test("a click on the handle with no drag neither opens the editor nor collapses the range", () => {
+    setup();
+    const before = document.querySelectorAll('[aria-selected="true"]').length;
+    fireEvent.click(handle());
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[aria-selected="true"]')).toHaveLength(before);
+  });
 });
 
 describe("resize", () => {
@@ -750,5 +758,11 @@ describe("resize", () => {
       fireEvent.mouseMove(document, { clientX: 300 });
       fireEvent.mouseUp(document);
     }).not.toThrow();
+  });
+
+  test("a click on the resize handle with no drag does not sort its column", () => {
+    setup();
+    fireEvent.click(handles()[2]); // Hours
+    expect(screen.getByRole("columnheader", { name: "Hours" })).not.toHaveAttribute("aria-sort");
   });
 });

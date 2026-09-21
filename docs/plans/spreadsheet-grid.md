@@ -1873,7 +1873,9 @@ and tests:
     };
     const review = renderLabor({ store });
     await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
-    fireEvent.paste(cellFor("20A duplex receptacle", "Hours/unit"), pasteEvent("0.5\t60\n0.75\t70"));
+    // Columns from Hours/unit: Hours/unit, Hours source (read-only), Rate
+    // -- so the clip carries an empty second column.
+    fireEvent.paste(cellFor("20A duplex receptacle", "Hours/unit"), pasteEvent("0.5\t\t60\n0.75\t\t70"));
     // Local state moved before any response.
     expect(cellFor("High bay fixture", "Rate")).toHaveTextContent("$70.00/hr");
     expect(calls).toHaveLength(1); // the second waits on the first
@@ -1899,7 +1901,7 @@ and tests:
     };
     const review = renderLabor({ store });
     await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
-    fireEvent.paste(cellFor("20A duplex receptacle", "Hours/unit"), pasteEvent("0.5\t60\n0.75\t70"));
+    fireEvent.paste(cellFor("20A duplex receptacle", "Hours/unit"), pasteEvent("0.5\t\t60\n0.75\t\t70"));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("1 of 4 cells couldn't be saved. Try again."));
     expect(cellFor("20A duplex receptacle", "Rate")).toHaveTextContent("—");
     expect(cellFor("High bay fixture", "Rate")).toHaveTextContent("$70.00/hr");

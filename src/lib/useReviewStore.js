@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PRESENCE_BEAT_MS } from "./store/api.js";
+import { useSaveFeedback } from "./useSaveFeedback.js";
 
 /* ============================================================
    useReviewStore.js — the snapshot hook (task-16-brief.md's suggested
@@ -23,13 +24,17 @@ import { PRESENCE_BEAT_MS } from "./store/api.js";
    on top of whatever changed (task-16-brief.md §4).
    ============================================================ */
 
-const uid = (p) => p + "_" + Math.random().toString(36).slice(2, 9);
-
 export function useReviewStore(store, { onSignedOut } = {}) {
   const [snapshot, setSnapshot] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [saved, setSaved] = useState({ state: "saved", at: Date.now() });
-  const [toast, setToast] = useState(null);
+  // The generic Saving…/Saved tracker and five-second toast (now shared
+  // with ProjectSettings.jsx via useSaveFeedback.js) -- this hook starts
+  // "saved" rather than useSaveFeedback's own default of nothing shown,
+  // since the review workspace's top bar has always read "Saved <time>"
+  // from first render, before any mutation.
+  const { saved, toast, showToast, dismissToast, runMutation } = useSaveFeedback({
+    initialSaved: { state: "saved", at: Date.now() },
+  });
   const [itemError, setItemError] = useState(null);
   const presenceRef = useRef({ sheetId: null, itemId: null });
 
@@ -91,36 +96,7 @@ export function useReviewStore(store, { onSignedOut } = {}) {
     [store]
   );
 
-  const showToast = useCallback((text) => {
-    const id = uid("t");
-    setToast({ id, text });
-    setTimeout(() => setToast((t) => (t && t.id === id ? null : t)), 5000);
-  }, []);
-
-  const dismissToast = useCallback(() => setToast(null), []);
   const clearItemError = useCallback(() => setItemError(null), []);
-
-  // Autosave status (DESIGN.md): Saving… while the request is in
-  // flight, Saved <time> once it lands. A stale-version refusal is not
-  // a save failure — nothing was lost, the write was correctly refused
-  // — so it resolves straight back to "saved" rather than the retrying
-  // copy, which is reserved for an actual technical failure.
-  const runMutation = useCallback(async (fn) => {
-    setSaved({ state: "saving", at: Date.now() });
-    try {
-      const result = await fn();
-      setSaved({ state: "saved", at: Date.now() });
-      return result;
-    } catch (err) {
-      if (err?.code === "stale_item_version") {
-        setSaved({ state: "saved", at: Date.now() });
-      } else {
-        setSaved({ state: "error", at: Date.now() });
-        setTimeout(() => setSaved((s) => (s.state === "error" ? { state: "saved", at: Date.now() } : s)), 2600);
-      }
-      throw err;
-    }
-  }, []);
 
   function patchItem(item, version) {
     setSnapshot((snap) => (snap ? { ...snap, version, items: snap.items.map((i) => (i.id === item.id ? item : i)) } : snap));

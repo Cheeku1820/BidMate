@@ -6,8 +6,10 @@
 
 import { describe, expect, test, vi } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import MaterialPricingWorkspace from "./MaterialPricingWorkspace.jsx";
+import { NO_ZIP, REFRESH_BUSY } from "./marketOutcomeCopy.js";
 
 const baseRow = {
   itemId: "i1", itemName: "20A duplex receptacle", quantity: 10, unitPrice: null, source: null,
@@ -31,7 +33,20 @@ function renderMaterial({ store, extra = {} }) {
     dismissToast: vi.fn(),
     undo: vi.fn().mockResolvedValue(undefined),
   };
-  context = { store, projectId: "p1", ...review, ...extra };
+  // Every existing test's `store` fixture predates the price-sheet
+  // round trip (task 11) and only stubs the methods it exercises --
+  // priceRequestUrl is called unconditionally by the header actions
+  // row, so it needs a default here rather than in each of those.
+  const storeWithDefaults = {
+    priceRequestUrl: (id, { onlyMissing = false } = {}) =>
+      `/api/projects/${id}/material-pricing/price-request${onlyMissing ? "?only=missing" : ""}`,
+    // The usage line is optional context: a store that can't answer
+    // (as these older fixtures can't) leaves it off, and nothing else
+    // on the screen depends on it.
+    getMarketUsage: () => Promise.reject(new Error("no usage in this fixture")),
+    ...store,
+  };
+  context = { store: storeWithDefaults, projectId: "p1", ...review, ...extra };
   render(
     <MemoryRouter>
       <MaterialPricingWorkspace />
@@ -304,5 +319,207 @@ describe("MaterialPricingWorkspace", () => {
     fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "Try again" }));
     await loaded();
     expect(store.getMaterialRows).toHaveBeenCalledTimes(2);
+  });
+
+  const marketRow = {
+    itemId: "i1", itemName: "2x4 LED troffer", quantity: 12, unitPrice: 169.95, source: null,
+    sourceLabel: "Market estimate", reason: "", status: "attention", basisNote: "Austin, TX, Sep 18",
+    priceLow: 156.75, priceHigh: 303.33, marketOutcome: "priced", marketWarning: null,
+    marketEvidence: [{ seller: "Codale", price: 169.95, link: "https://codale.example/x" }], fetchedAt: "2026-09-18T00:00:00Z",
+    supplierName: "", quoteDate: null,
+  };
+
+  test("shows the market estimate's range and tier tag beside the status pill", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    expect(screen.getByText("Market estimate")).toBeInTheDocument();
+    expect(screen.getByText("$156.75–$303.33")).toBeInTheDocument();
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
+  });
+
+  test("shows the outcome warning on an unpriced row", async () => {
+    const row = {
+      ...marketRow, unitPrice: null, sourceLabel: null, status: "missing", marketOutcome: "location_needed",
+      marketWarning: {
+        title: "Project location needed",
+        found: 'Looked for "2x4 LED troffer".',
+        why: "w",
+        fix: "Add the project ZIP code in project settings, then refresh market estimates.",
+        where: "E2.1",
+      },
+    };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [row], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    expect(screen.getByText("Project location needed")).toBeInTheDocument();
+    // The row's own fix; the page-level ZIP line under the heading is
+    // separate (and asserted on its own below).
+    expect(within(screen.getByRole("grid")).getByText(/Add the project ZIP code/)).toBeInTheDocument();
+  });
+
+  test("refresh queues the job and says so", async () => {
+    const refreshMarketEstimates = vi.fn().mockResolvedValue({ queued: true });
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+      refreshMarketEstimates,
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh market estimates" }));
+    expect(refreshMarketEstimates).toHaveBeenCalled();
+    expect(await screen.findByText(/Refreshing market estimates/)).toBeInTheDocument();
+  });
+
+  test("refresh already running shows the busy toast instead of a poll", async () => {
+    const showToast = vi.fn();
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+      refreshMarketEstimates: vi.fn().mockResolvedValue({ queued: false }),
+    };
+    renderMaterial({ store, extra: { showToast } });
+    await loaded(/2x4 LED troffer/);
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh market estimates" }));
+    expect(showToast).toHaveBeenCalledWith(REFRESH_BUSY);
+    expect(screen.queryByText(/Refreshing market estimates/)).not.toBeInTheDocument();
+  });
+
+  test("a failed refresh shows the same inline error style as other actions", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+      refreshMarketEstimates: vi.fn().mockRejectedValue(new Error()),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh market estimates" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't refresh market estimates. Check your connection and try again.",
+    );
+  });
+
+  test("shows sellers as evidence with seller — price text and an external link", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    expect(screen.getByText("Sellers")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: /Codale — \$169\.95/ });
+    expect(link).toHaveAttribute("href", "https://codale.example/x");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
+  });
+
+  test("Tab from inside the market evidence details is not hijacked back onto the grid", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    const summary = screen.getByText("Sellers");
+    summary.focus();
+    expect(document.activeElement).toBe(summary);
+    fireEvent.keyDown(summary, { key: "Tab" });
+    // The grid's own Tab handling must not have fired: focus stays put
+    // (jsdom does not itself move focus on Tab) rather than jumping to
+    // whatever cell the grid's roving-tabindex logic would pick next.
+    expect(document.activeElement).not.toHaveAttribute("role", "gridcell");
+    expect(document.activeElement).toBe(summary);
+  });
+
+  test("uploads a price sheet through the modal and applying it moves the screen into the refreshing state", async () => {
+    const previewResult = {
+      state: "ready", refused: null, supplierName: "codale", quoteDate: "2026-09-18",
+      matched: [{ itemId: "i1", itemName: "20A duplex receptacle", currentUnitPrice: null, currentSourceLabel: null, newUnitPrice: "9.10", partNo: "HBL5362", notes: "", line: 2 }],
+      unmatched: [], unpriced: [],
+    };
+    const applied = {
+      pricingSource: null, pricingNote: "",
+      marketJob: "queued", // a supplier quote can be exactly what an idle market run was waiting on
+      rows: [{ ...baseRow, unitPrice: 9.1, source: "supplier_quote", sourceLabel: "Supplier quote", status: "approved" }],
+    };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow], marketJob: null }),
+      priceRequestUrl: vi.fn().mockReturnValue("/api/projects/p1/material-pricing/price-request"),
+      uploadPriceSheet: vi.fn().mockResolvedValue({ documentId: "d1" }),
+      getPriceSheetPreview: vi.fn().mockResolvedValue(previewResult),
+      applyPriceSheet: vi.fn().mockResolvedValue(applied),
+    };
+    renderMaterial({ store });
+    await loaded();
+
+    expect(screen.getByRole("link", { name: "Download price request" })).toHaveAttribute(
+      "href",
+      "/api/projects/p1/material-pricing/price-request",
+    );
+    // The second download asks the store for the unpriced-rows variant.
+    expect(store.priceRequestUrl).toHaveBeenCalledWith("p1", { onlyMissing: true });
+    expect(screen.getByRole("link", { name: "Download price request for unpriced rows" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Upload supplier pricing" }));
+    expect(screen.getByLabelText("Price sheet")).toBeInTheDocument();
+
+    const file = new File(["x"], "codale.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    await userEvent.upload(screen.getByLabelText("Price sheet"), file);
+    await userEvent.click(await screen.findByRole("button", { name: "Apply 1 price" }));
+
+    await waitFor(() => expect(store.applyPriceSheet).toHaveBeenCalled());
+    expect(screen.queryByLabelText("Price sheet")).not.toBeInTheDocument();
+    expect(await screen.findByText(/Refreshing market estimates/)).toBeInTheDocument();
+  });
+
+  test("shows the month's market lookups against the cap, in tabular numerals", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),
+      getMarketUsage: vi.fn().mockResolvedValue({ used: 1234, cap: 2000 }),
+    };
+    renderMaterial({ store });
+    await loaded();
+    const line = await screen.findByText(/Market lookups this month/);
+    expect(line.textContent.replace(/\s+/g, " ")).toBe("Market lookups this month: 1,234 of 2,000");
+    const numerals = Array.from(line.querySelectorAll(".tabular")).map((el) => el.textContent);
+    expect(numerals).toEqual(["1,234", "2,000"]);
+    expect(store.getMarketUsage).toHaveBeenCalledTimes(1);
+  });
+
+  test("leaves the usage line off when the request fails", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),
+      getMarketUsage: vi.fn().mockRejectedValue(new Error("network")),
+    };
+    renderMaterial({ store });
+    await loaded();
+    await waitFor(() => expect(store.getMarketUsage).toHaveBeenCalled());
+    expect(screen.queryByText(/Market lookups this month/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("says to add the project ZIP code once, under the heading, when any row needs a location", async () => {
+    const located = { ...baseRow, itemId: "i2", itemName: "Panelboard", marketOutcome: "no_match" };
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({
+        pricingSource: null, pricingNote: "",
+        rows: [{ ...baseRow, marketOutcome: "location_needed" }, located],
+      }),
+    };
+    renderMaterial({ store });
+    await loaded();
+    expect(screen.getAllByText(NO_ZIP)).toHaveLength(1);
+    expect(screen.getByText(NO_ZIP).tagName).toBe("P");
+  });
+
+  test("shows no ZIP line when every row has a location", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({
+        pricingSource: null, pricingNote: "", rows: [{ ...baseRow, marketOutcome: "no_match" }],
+      }),
+    };
+    renderMaterial({ store });
+    await loaded();
+    expect(screen.queryByText(NO_ZIP)).toBeNull();
   });
 });

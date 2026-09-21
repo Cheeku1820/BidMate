@@ -102,7 +102,14 @@ function parseEvent(block) {
 
 async function request(path, { method = "GET", body, headers = {} } = {}) {
   const init = { method, credentials: "include", headers: { ...headers } };
-  if (body !== undefined) {
+  if (body instanceof FormData) {
+    // Let the browser set the multipart Content-Type (with its boundary)
+    // itself -- setting one here would leave the boundary off and the
+    // server unable to split the parts. uploadPriceSheet is the one
+    // caller that sends a FormData body through this path (uploadDocument
+    // uses its own XHR, for upload progress).
+    init.body = body;
+  } else if (body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
@@ -343,6 +350,7 @@ export function createApiStore() {
   async function createProject({
     name,
     location,
+    postalCode = "",
     number = "",
     customer = "",
     bidDueDate = null,
@@ -359,6 +367,7 @@ export function createApiStore() {
       body: {
         name,
         location,
+        postalCode,
         number,
         customer,
         bidDueDate,
@@ -367,6 +376,20 @@ export function createApiStore() {
       },
     });
     return mapProject(raw);
+  }
+
+  /** PATCH /api/projects/{id}/postal-code -- the one project field an
+   *  estimator edits after creation today (ProjectSettings.jsx). Unlike
+   *  ProjectCreateIn/ProjectOut, this route's body is snake_case
+   *  (PostalCodeIn uses MODEL_CONFIG, not CAMEL_MODEL_CONFIG), so the
+   *  request body below is deliberately not camelCase. */
+  async function setPostalCode(projectId, postalCode) {
+    const p = await request(`/api/projects/${projectId}/postal-code`, {
+      method: "PATCH",
+      body: { postal_code: postalCode },
+    });
+    invalidateCache();
+    return mapProject(p);
   }
 
   /** Starts a takeoff run behind the API (B2) -- the client no longer
@@ -563,7 +586,25 @@ export function createApiStore() {
 
   async function getMaterialRows(projectId) {
     const body = await request(`/api/projects/${projectId}/material-pricing`);
-    return { pricingSource: body.pricing_source, pricingNote: body.pricing_note, rows: body.rows.map(mapMaterialRow) };
+    return {
+      pricingSource: body.pricing_source,
+      pricingNote: body.pricing_note,
+      rows: body.rows.map(mapMaterialRow),
+      marketJob: body.market_job ?? null,
+    };
+  }
+
+  /** Queues a market-pricing refresh run for every material row on the
+   *  project; `{queued: false}` means one is already going (the screen
+   *  reads that as REFRESH_BUSY, not an error). */
+  async function refreshMarketEstimates(projectId) {
+    return request(`/api/projects/${projectId}/market-pricing/refresh`, { method: "POST" });
+  }
+
+  /** The company's monthly market-pricing call budget, for the usage
+   *  strip on the company pricing screens. */
+  async function getMarketUsage() {
+    return request("/api/company/market-pricing/usage");
   }
 
   async function setMaterialPrice(itemId, changes) {
@@ -581,6 +622,51 @@ export function createApiStore() {
     const result = await request(`/api/items/${itemId}/material-price`, { method: "DELETE" });
     invalidateCache();
     return mapMaterialRow(result);
+  }
+
+  // The price-request download is a plain link, not a fetch -- the
+  // browser drives the download itself off this URL (Content-Disposition:
+  // attachment, task-10-brief.md), so there is nothing here to await.
+  function priceRequestUrl(projectId, { onlyMissing = false } = {}) {
+    return `/api/projects/${projectId}/material-pricing/price-request${onlyMissing ? "?only=missing" : ""}`;
+  }
+
+  async function uploadPriceSheet(projectId, file) {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await request(`/api/projects/${projectId}/material-pricing/price-sheets`, { method: "POST", body: form });
+    return { documentId: r.document_id };
+  }
+
+  async function getPriceSheetPreview(projectId, documentId) {
+    const p = await request(`/api/projects/${projectId}/material-pricing/price-sheets/${documentId}/preview`);
+    return {
+      state: p.state,
+      error: p.error ?? "",
+      refused: p.refused ?? null,
+      supplierName: p.supplier_name ?? "",
+      quoteDate: p.quote_date ?? null,
+      matched: (p.matched ?? []).map((m) => ({
+        itemId: m.item_id, itemName: m.item_name, currentUnitPrice: m.current_unit_price,
+        currentSourceLabel: m.current_source_label, newUnitPrice: m.new_unit_price, partNo: m.part_no,
+        notes: m.notes, line: m.line,
+      })),
+      unmatched: (p.unmatched ?? []).map((u) => ({ itemName: u.item_name, unitPrice: u.unit_price, line: u.line })),
+      unpriced: (p.unpriced ?? []).map((u) => ({ itemId: u.item_id, itemName: u.item_name })),
+    };
+  }
+
+  async function applyPriceSheet(projectId, documentId, { itemIds, supplierName, quoteDate, saveToCompany }) {
+    const body = await request(`/api/projects/${projectId}/material-pricing/price-sheets/${documentId}/apply`, {
+      method: "POST",
+      body: { item_ids: itemIds, supplier_name: supplierName, quote_date: quoteDate, save_to_company: saveToCompany },
+    });
+    // Same cache-bust setMaterialPrice/clearMaterialPrice perform above:
+    // applying a price sheet changes materialCost/totalCost on every
+    // ticked item, so the next snapshot poll must not answer from the
+    // pre-apply cache.
+    invalidateCache();
+    return { pricingSource: body.pricing_source, pricingNote: body.pricing_note, marketJob: body.market_job ?? null, rows: body.rows.map(mapMaterialRow) };
   }
 
   async function getCompanyLaborRates() {
@@ -634,6 +720,7 @@ export function createApiStore() {
     redo,
     listProjects,
     createProject,
+    setPostalCode,
     startTakeoff,
     getProcessing,
     listScope,
@@ -653,6 +740,12 @@ export function createApiStore() {
     getMaterialRows,
     setMaterialPrice,
     clearMaterialPrice,
+    priceRequestUrl,
+    uploadPriceSheet,
+    getPriceSheetPreview,
+    applyPriceSheet,
+    refreshMarketEstimates,
+    getMarketUsage,
     getCompanyLaborRates,
     setCompanyLaborRates,
     getCompanyMaterialPrices,

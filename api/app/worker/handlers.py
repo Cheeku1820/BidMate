@@ -1,7 +1,12 @@
 """Runs inside the child. Opens its own session, runs the handler for the
 job's kind, marks the job done in the same transaction, commits. A
 Transient/Terminal escapes to the sandbox after a rollback; the parent
-applies the failure (queue.requeue / queue.mark_failed)."""
+applies the failure (queue.requeue / queue.mark_failed).
+
+A handler may commit part-way (price_job does, once per paid source
+call) or mark itself done (sheet_job and price_job do): the job row is
+re-read after the handler returns, so a mid-way commit only means the
+rollback on failure covers what came after it."""
 from __future__ import annotations
 
 import contextlib
@@ -28,8 +33,8 @@ def register(kind: str):
 
 
 def _load_handlers() -> None:
-    # The four handler modules register themselves on import.
-    for name in ("read_job", "classify_job", "sheet_job", "render_job"):
+    # The handler modules register themselves on import.
+    for name in ("read_job", "classify_job", "sheet_job", "render_job", "price_job", "price_sheet_job"):
         __import__(f"app.worker.{name}")
 
 

@@ -233,6 +233,8 @@ The tier tag stays its own element beside the status pill, `--slate`, as `labor-
 
 **Coverage, after the keys exist** — `python -m eval.pricing_coverage`, run from `api/`, with the corpus present: takes every per-unit Division 26 line from the two workbooks, classifies it as the job would, calls both sources for the FedEx and Gerber ZIPs, and prints a table — lines, priced by 1build, priced by shopping, quote-required, no-match — and, for priced lines, the market figure beside the firm's own unit cost with the ratio. No price lands in the repo (the output goes to `bid_examples/_derived/`, gitignored). This is the number that decides whether both sources stay in the design; the spec is amended with the result.
 
+Result: pending — run after keys are configured.
+
 ## 11. Dependencies and configuration
 
 - `openpyxl` added to `api/requirements.txt`.

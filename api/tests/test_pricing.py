@@ -2,7 +2,7 @@
 functions, no database. Each tier is tested in isolation and confirmed
 to be correctly skipped when a higher tier is present.
 """
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -248,3 +248,60 @@ def test_labor_hours_and_rate_entries_together_are_approved_with_a_cost():
     assert result.status == "approved"
     assert result.adjusted_hours == Decimal("5")
     assert result.labor_cost == Decimal("310")
+
+
+# ---- Market estimate and supplier quote (estimate-first-pricing §5) ----
+
+def _market(outcome="priced", price="10", low="8", high="12"):
+    return type("M", (), {"outcome": outcome, "unit_price": Decimal(price), "price_low": Decimal(low),
+                          "price_high": Decimal(high), "location_label": "Travis County, TX",
+                          "fetched_at": datetime(2026, 9, 18, 12, 0),
+                          "source": "onebuild"})()
+
+
+def test_supplier_quote_outranks_company_price():
+    item, project = FakeItem(), FakeProject()
+    override = type("O", (), {"price_override": Decimal("9.10"), "source": "supplier_quote",
+                              "supplier_name": "Codale", "quote_date": date(2026, 9, 18)})()
+    company = type("C", (), {"unit_price": Decimal("13"), "effective_date": date.today()})()
+    result = resolve_material_price(item, project, override, company, market=_market())
+    assert result.unit_price == Decimal("9.10")
+    assert result.source_label == "Supplier quote" and result.status == "approved"
+    assert result.basis_note == "Codale, Sep 18, 2026"
+
+
+def test_company_price_outranks_market_estimate():
+    item, project = FakeItem(), FakeProject(pricing_source=None)
+    company = type("C", (), {"unit_price": Decimal("13"), "effective_date": date.today()})()
+    result = resolve_material_price(item, project, None, company, market=_market())
+    assert result.source_label == "Company price" and result.unit_price == Decimal("13")
+
+
+def test_market_estimate_outranks_regional_baseline():
+    item, project = FakeItem(), FakeProject(pricing_source="llm")
+    result = resolve_material_price(item, project, None, None, market=_market())
+    assert result.source_label == "Market estimate" and result.unit_price == Decimal("10")
+    assert result.status == "ready"
+    assert result.price_low == Decimal("8") and result.price_high == Decimal("12")
+    assert result.basis_note == "Travis County, TX, Sep 18"
+
+
+def test_market_estimate_wide_range_is_attention_at_the_boundary():
+    item, project = FakeItem(), FakeProject(pricing_source=None)
+    narrow = resolve_material_price(item, project, None, None, market=_market(price="100", low="76", high="125"))
+    assert narrow.status == "ready"                      # (125-76)/100 = 0.49
+    wide = resolve_material_price(item, project, None, None, market=_market(price="100", low="75", high="126"))
+    assert wide.status == "attention"                    # 0.51
+
+
+def test_unpriced_market_outcome_falls_through():
+    item, project = FakeItem(material_cost=Decimal("0")), FakeProject(pricing_source=None)
+    result = resolve_material_price(item, project, None, None, market=_market(outcome="quote_required"))
+    assert result.status == "missing" and result.unit_price is None
+    assert result.market_outcome == "quote_required"
+
+
+def test_unpriced_market_outcome_still_reaches_regional_baseline():
+    item, project = FakeItem(), FakeProject(pricing_source="llm")
+    result = resolve_material_price(item, project, None, None, market=_market(outcome="no_match"))
+    assert result.source_label == "Regional baseline"

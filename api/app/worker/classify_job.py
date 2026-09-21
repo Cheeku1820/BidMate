@@ -156,6 +156,10 @@ def _finish_project(db: Session, project: Project, classify_job: Job) -> None:
         project.pricing_source = row.source
         project.pricing_note = basis_note({"location_note": row.location_note, "wiring_note": row.wiring_note,
                                            "unmatched_note": row.unmatched_note})
+    # The market estimates are owed to the run whoever started it: a
+    # requester since deleted (requested_by SET NULL) still gets the
+    # items priced, so this goes before the actor check below.
+    queue.enqueue_price(db, project, classify_job.requested_by, run_id=classify_job.run_id)
     actor = db.get(User, classify_job.requested_by) if classify_job.requested_by else None
     if actor is None:
         # The action log needs a person; a run nobody is recorded as

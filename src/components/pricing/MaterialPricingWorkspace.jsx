@@ -22,9 +22,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import DataGrid from "../grid/DataGrid.jsx";
+import PriceSheetImport from "./PriceSheetImport.jsx";
 import { ALLOWANCE_REASON_MESSAGE, COLUMNS, money } from "./pricingColumns.jsx";
+import { NO_ZIP, REFRESHING, REFRESH_BUSY } from "./marketOutcomeCopy.js";
 import { saveStateText } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
+
+// Same cadence a market-pricing run polls at as ProcessingStatus.jsx
+// polls a takeoff run: a few seconds is fast enough to feel live without
+// hammering the API while a job works through every material row.
+const MARKET_JOB_POLL_MS = 5000;
 
 function toastFor(key, value, row, updated) {
   if (key === "unitPrice" && value === null) {
@@ -42,9 +49,29 @@ export default function MaterialPricingWorkspace() {
 
   const [rows, setRows] = useState(null); // null = loading
   const [pricingNote, setPricingNote] = useState("");
+  const [marketJob, setMarketJob] = useState(null); // "queued" | "running" | null
   const [loadError, setLoadError] = useState(null);
   const [saveError, setSaveError] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [usage, setUsage] = useState(null); // { used, cap } | null = not shown
   const grid = useRef(null);
+
+  // The month's market-lookup meter, once per visit. It is context, not
+  // a control: a request that fails just leaves the line off rather
+  // than putting an error in front of the grid. (Promise.resolve() so a
+  // store without the method fails the same way as a request would.)
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => store.getMarketUsage())
+      .then((result) => {
+        if (!cancelled && result && typeof result.used === "number" && typeof result.cap === "number") setUsage(result);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [store]);
 
   const load = useCallback(() => {
     setLoadError(null);
@@ -53,6 +80,7 @@ export default function MaterialPricingWorkspace() {
       .then((result) => {
         setRows(result.rows);
         setPricingNote(result.pricingNote);
+        setMarketJob(result.marketJob ?? null);
       })
       .catch((err) => setLoadError(err?.message || "Couldn't load material pricing. Check your connection and try again."));
   }, [store, projectId]);
@@ -60,6 +88,27 @@ export default function MaterialPricingWorkspace() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Poll while a market-pricing run is going, so rows update as they're
+  // priced; stop the moment it clears (load() itself reads the next
+  // marketJob off the wire) or the screen unmounts. Same shape as
+  // ProcessingStatus.jsx's run poll.
+  useEffect(() => {
+    if (!marketJob) return undefined;
+    const interval = setInterval(load, MARKET_JOB_POLL_MS);
+    return () => clearInterval(interval);
+  }, [marketJob, load]);
+
+  const refresh = async () => {
+    setSaveError(null);
+    try {
+      const { queued } = await store.refreshMarketEstimates(projectId);
+      if (queued) setMarketJob("queued");
+      else showToast(REFRESH_BUSY);
+    } catch (err) {
+      setSaveError(err?.message || "Couldn't refresh market estimates. Check your connection and try again.");
+    }
+  };
 
   const replaceRow = (itemId, next) =>
     setRows((current) => current.map((r) => (r.itemId === itemId ? next : r)));
@@ -128,6 +177,11 @@ export default function MaterialPricingWorkspace() {
     };
   }, [rows]);
 
+  // A row the market job could not place: the project has no ZIP code.
+  // Each such row carries its own warning; this is the one line under
+  // the heading that says the fix once rather than per row.
+  const locationNeeded = useMemo(() => (rows || []).some((r) => r.marketOutcome === "location_needed"), [rows]);
+
   const footer = totals ? (
     <tr>
       <td colSpan={COLUMNS.length - 1}>
@@ -148,6 +202,29 @@ export default function MaterialPricingWorkspace() {
 
       <div className="page page--fill">
         <h1 className="page-heading">Material pricing</h1>
+        {locationNeeded ? <p className="muted">{NO_ZIP}</p> : null}
+
+        <div className="page-actions">
+          <button type="button" className="btn" onClick={refresh} disabled={!!marketJob}>
+            Refresh market estimates
+          </button>
+          <a className="btn" href={store.priceRequestUrl(projectId)} download>
+            Download price request
+          </a>
+          <a className="btn" href={store.priceRequestUrl(projectId, { onlyMissing: true })} download>
+            Download price request for unpriced rows
+          </a>
+          <button type="button" className="btn" onClick={() => setImporting(true)}>
+            Upload supplier pricing
+          </button>
+        </div>
+        {marketJob ? <p className="muted">{REFRESHING}</p> : null}
+        {usage ? (
+          <p className="muted">
+            Market lookups this month: <span className="tabular">{usage.used.toLocaleString()}</span> of{" "}
+            <span className="tabular">{usage.cap.toLocaleString()}</span>
+          </p>
+        ) : null}
 
         {loadError ? (
           <div className="load-error" role="alert">
@@ -211,6 +288,26 @@ export default function MaterialPricingWorkspace() {
             Undo
           </button>
         </div>
+      ) : null}
+
+      {importing ? (
+        <PriceSheetImport
+          projectId={projectId}
+          store={store}
+          onClose={() => setImporting(false)}
+          onApplied={(result, n) => {
+            // applyPriceSheet returns the same MaterialListOut shape
+            // load() consumes -- pricingNote and marketJob can both move
+            // (a supplier quote can be exactly what a stalled market run
+            // was missing), so the basis note and the poll effect must
+            // pick up the new values here too, not just the rows.
+            setRows(result.rows);
+            setPricingNote(result.pricingNote);
+            setMarketJob(result.marketJob ?? null);
+            setImporting(false);
+            showToast(`Applied supplier pricing for ${n} item${n === 1 ? "" : "s"}`);
+          }}
+        />
       ) : null}
     </>
   );

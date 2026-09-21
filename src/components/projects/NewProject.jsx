@@ -29,6 +29,7 @@ export default function NewProject({ store }) {
     number: "",
     customer: "",
     location: "",
+    postalCode: "",
     bidDueDate: "",
     constructionType: "Not sure",
   });
@@ -53,6 +54,7 @@ export default function NewProject({ store }) {
       const created = await store.createProject({
         name: values.name.trim(),
         location: values.location.trim(),
+        postalCode: values.postalCode.trim(),
         number: values.number.trim(),
         customer: values.customer.trim(),
         bidDueDate: values.bidDueDate || null,
@@ -126,6 +128,15 @@ export default function NewProject({ store }) {
             error={fieldErrors.location}
           />
           <Field
+            id="project-zip"
+            label="ZIP code"
+            hint="Used to price materials for the project's location"
+            inputMode="numeric"
+            pattern="\d{5}"
+            value={values.postalCode}
+            onChange={set("postalCode")}
+          />
+          <Field
             id="project-bid-date"
             label="Bid due date"
             type="date"
@@ -165,7 +176,7 @@ export default function NewProject({ store }) {
   );
 }
 
-function Field({ id, label, hint, error, required, type = "text", value, onChange }) {
+function Field({ id, label, hint, error, required, type = "text", value, onChange, inputMode, pattern }) {
   const hintId = hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
   return (
@@ -185,6 +196,8 @@ function Field({ id, label, hint, error, required, type = "text", value, onChang
         type={type}
         value={value}
         onChange={onChange}
+        inputMode={inputMode}
+        pattern={pattern}
         aria-describedby={[hintId, errorId].filter(Boolean).join(" ") || undefined}
         aria-invalid={error ? "true" : undefined}
       />

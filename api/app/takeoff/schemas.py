@@ -164,6 +164,7 @@ class ProjectOut(BaseModel):
     number: str
     customer: str
     location: str
+    postal_code: str | None
     bid_due_date: date | None
     stage: str
     revision_set_label: str
@@ -198,6 +199,10 @@ class ProjectCreateIn(BaseModel):
 
     name: str = Field(min_length=1, max_length=300)
     location: str = Field(min_length=1, max_length=300)
+    # Five digits or empty. Empty means "parse one from location if it
+    # ends in one" -- see create_project. Camel-cased on the wire like
+    # the rest of this schema (postalCode).
+    postal_code: str = Field(default="", pattern=r"^(\d{5})?$")
     number: str = Field(default="", max_length=100)
     customer: str = Field(default="", max_length=300)
     bid_due_date: date | None = None
@@ -216,6 +221,12 @@ class ProjectCreateIn(BaseModel):
         return stripped
 
     model_config = CAMEL_MODEL_CONFIG
+
+
+class PostalCodeIn(BaseModel):
+    postal_code: str = Field(pattern=r"^(\d{5})?$")
+
+    model_config = MODEL_CONFIG
 
 
 class ProjectDetailOut(BaseModel):
@@ -500,6 +511,14 @@ class MaterialRowOut(BaseModel):
     reason: str = ""
     status: str
     basis_note: str = ""
+    price_low: Decimal | None = None
+    price_high: Decimal | None = None
+    market_outcome: str | None = None
+    market_warning: dict | None = None
+    market_evidence: list[dict] = []
+    fetched_at: datetime | None = None
+    supplier_name: str = ""
+    quote_date: date | None = None
 
     model_config = MODEL_CONFIG
 
@@ -508,7 +527,28 @@ class MaterialListOut(BaseModel):
     pricing_source: str | None
     pricing_note: str
     rows: list[MaterialRowOut]
+    market_job: str | None = None
 
+    model_config = MODEL_CONFIG
+
+
+class PriceSheetPreviewOut(BaseModel):
+    state: str                     # "reading" | "ready" | "failed"
+    error: str = ""
+    matched: list[dict] = []
+    unmatched: list[dict] = []
+    unpriced: list[dict] = []
+    refused: str | None = None
+    supplier_name: str = ""
+    quote_date: date | None = None
+    model_config = MODEL_CONFIG
+
+
+class PriceSheetApplyIn(BaseModel):
+    item_ids: list[uuid.UUID]
+    supplier_name: str = Field(min_length=1, max_length=200)
+    quote_date: date
+    save_to_company: bool = False
     model_config = MODEL_CONFIG
 
 

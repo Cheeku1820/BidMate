@@ -239,3 +239,11 @@ def test_a_takeoff_run_is_claimed_ahead_of_older_render_jobs(db, project, dana):
     queue.mark_done(db, second); db.commit()
     third = queue.claim_next(db, "w1"); db.commit()
     assert third.id == renders[0].id, "renders still go oldest-first among themselves"
+
+
+def test_enqueue_price_is_one_in_flight_per_project(db, project, dana):
+    from app.jobs import queue
+    a = queue.enqueue_price(db, project, dana.id)
+    b = queue.enqueue_price(db, project, dana.id)
+    assert a is not None and b is None
+    assert a.kind == "price" and a.requested_by == dana.id

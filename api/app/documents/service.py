@@ -31,10 +31,12 @@ _CHUNK = 1024 * 1024
 _MAX_FILENAME = 300
 
 
-def storage_key(project: Project, document_id: uuid.UUID) -> str:
+def storage_key(project: Project, document_id: uuid.UUID, extension: str = "pdf") -> str:
     """Tenant-scoped by construction: built from the project the caller
-    owns, never from anything the client sent."""
-    return f"orgs/{project.org_id}/projects/{project.id}/documents/{document_id}.pdf"
+    owns, never from anything the client sent. `extension` is chosen
+    server-side from the validated doc_type/filename (see
+    `_extension_for`), never from the raw upload name."""
+    return f"orgs/{project.org_id}/projects/{project.id}/documents/{document_id}.{extension}"
 
 
 def _row_fields(d: Document) -> dict:
@@ -46,6 +48,38 @@ def _row_fields(d: Document) -> dict:
 
 def _is_pdf(filename: str, content_type: str) -> bool:
     return filename.lower().endswith(".pdf") and content_type == "application/pdf"
+
+
+def _is_spreadsheet(filename: str) -> bool:
+    return filename.lower().endswith((".xlsx", ".csv"))
+
+
+_XLSX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_CSV_CONTENT_TYPE = "text/csv"
+
+
+def _extension_for(filename: str, doc_type: str) -> str:
+    """The stored blob's real extension. A Pricing upload is either an
+    .xlsx or a .csv (store_upload already refused anything else); every
+    other doc_type is a PDF (store_upload's _is_pdf already refused
+    anything else there too), so this never falls through to a mismatch
+    between what was validated and what gets stored."""
+    if doc_type == "Pricing" and filename.lower().endswith(".csv"):
+        return "csv"
+    if doc_type == "Pricing":
+        return "xlsx"
+    return "pdf"
+
+
+def _content_type_for(filename: str, doc_type: str) -> str:
+    """The content type actually stored and served -- not the client-
+    supplied `upload.content_type`, which is only used to gate the PDF
+    check above and is otherwise untrusted."""
+    if doc_type == "Pricing" and filename.lower().endswith(".csv"):
+        return _CSV_CONTENT_TYPE
+    if doc_type == "Pricing":
+        return _XLSX_CONTENT_TYPE
+    return "application/pdf"
 
 
 def _duplicate_error(existing: Document) -> DomainError:
@@ -61,7 +95,14 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     content_type = upload.content_type or ""
     if doc_type not in DOC_TYPES:
         raise DomainError("invalid_doc_type", f"Document type must be one of {', '.join(DOC_TYPES)}.", status=422)
-    if not _is_pdf(filename, content_type):
+    if doc_type == "Pricing":
+        if not _is_spreadsheet(filename):
+            raise DomainError(
+                "unsupported_document",
+                f"{filename} isn't a spreadsheet. Upload the .xlsx or .csv your supplier filled in.",
+                status=415,
+            )
+    elif not _is_pdf(filename, content_type):
         raise DomainError(
             "unsupported_document",
             f"{filename} isn't a PDF. Upload PDF drawings, specifications, addenda, and scope documents.",
@@ -95,12 +136,13 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     if existing is not None:
         raise _duplicate_error(existing)
 
+    stored_content_type = _content_type_for(filename, doc_type)
     document = Document(
         id=uuid.uuid4(), project_id=project.id, filename=filename, doc_type=doc_type,
-        content_type="application/pdf", size_bytes=size, sha256=sha, storage_key="",
+        content_type=stored_content_type, size_bytes=size, sha256=sha, storage_key="",
         uploaded_by=actor.id,
     )
-    document.storage_key = storage_key(project, document.id)
+    document.storage_key = storage_key(project, document.id, _extension_for(filename, doc_type))
     db.add(document)
     try:
         db.flush()
@@ -121,11 +163,15 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     # uncommitted -- the route never reaches its own db.commit() -- so a
     # storage failure never leaves an orphan blob or a half-written
     # document.
-    store.put(document.storage_key, upload.file, "application/pdf", size)
+    store.put(document.storage_key, upload.file, stored_content_type, size)
     # The read is queued in the same transaction as the row, so a
     # document never exists without the job that will read it. The
     # audit row below therefore records the document as `processing`.
-    queue.enqueue_read(db, document)
+    # A price sheet isn't read by the worker's PDF parser at all -- its
+    # rows come back through the price-sheet parser instead (Task 10),
+    # so no job is queued and it never leaves `uploaded`.
+    if document.doc_type != "Pricing":
+        queue.enqueue_read(db, document)
     actions.commit(
         db, actor=actor, project_id=project.id, kind="document_add",
         label=f"Uploaded {filename} as {doc_type}", before={}, after=_row_fields(document),
@@ -133,8 +179,17 @@ def store_upload(db: DbSession, *, actor: User, project: Project, upload: Upload
     return document
 
 
-def list_documents(db: DbSession, project: Project) -> list[Document]:
-    return list(db.scalars(select(Document).where(Document.project_id == project.id).order_by(Document.created_at, Document.id)))
+def list_documents(db: DbSession, project: Project, *, include_pricing: bool = False) -> list[Document]:
+    """The project's documents, oldest first. A Pricing upload is left
+    out by default: a supplier price sheet is not part of the drawing
+    set -- it is never read, so it stays `uploaded` for good, and the
+    intake screens would show it as a drawing that never finishes
+    reading. It lives on the Material pricing workspace, which loads
+    it by id."""
+    q = select(Document).where(Document.project_id == project.id)
+    if not include_pricing:
+        q = q.where(Document.doc_type != "Pricing")
+    return list(db.scalars(q.order_by(Document.created_at, Document.id)))
 
 
 def load_document(document_id: uuid.UUID, db: DbSession, user: User) -> Document:
@@ -155,15 +210,27 @@ def set_doc_type(db: DbSession, *, actor: User, document: Document, doc_type: st
         raise DomainError("run_in_flight", copy.RETYPE_DURING_RUN, status=409)
     if doc_type not in DOC_TYPES:
         raise DomainError("invalid_doc_type", f"Document type must be one of {', '.join(DOC_TYPES)}.", status=422)
+    # A price sheet is never opened by the worker's PDF parser, and a
+    # PDF is never read by the price-sheet parser -- so a retype across
+    # that line would either queue a read job that can't succeed, or
+    # leave a spreadsheet stuck as if it were still a drawing.
+    if (document.doc_type == "Pricing") != (doc_type == "Pricing"):
+        raise DomainError(
+            "invalid_doc_type",
+            "A price sheet can't be used as a drawing, and a drawing can't be used as a price sheet.",
+            status=422,
+        )
     before = _row_fields(document)
     document.doc_type = doc_type
     # A retyped file is read again: Other -> Specifications now
     # contributes context; Drawings -> Other drops its sheets (the read
-    # job's non-Drawings branch treats every page as vanished).
-    # Idempotent while a read is already in flight, and queued before
-    # the audit row so `after` records the document as `processing`,
-    # exactly as `store_upload`'s does.
-    queue.enqueue_read(db, document)
+    # job's non-Drawings branch treats every page as vanished). Pricing
+    # never queues a read (see store_upload). Idempotent while a read is
+    # already in flight, and queued before the audit row so `after`
+    # records the document as `processing`, exactly as `store_upload`'s
+    # does.
+    if document.doc_type != "Pricing":
+        queue.enqueue_read(db, document)
     db.flush()
     actions.commit(
         db, actor=actor, project_id=document.project_id, kind="document_type",

@@ -357,6 +357,22 @@ def test_the_real_engine_counts_the_page_the_sheet_row_points_at(db, project, da
     assert project.stage == "review" and project.pricing_source == "deterministic"
 
 
+def test_a_run_whose_requester_was_deleted_still_queues_its_price_job(db, project, dana, inline, monkeypatch, fake_engine):
+    """`requested_by` is SET NULL when the person is deleted. The ingest
+    action needs a person and is rightly skipped then -- but the market
+    estimates are owed to the run regardless, so the price job has to be
+    queued before that early return, not after it."""
+    import uuid
+    from app.worker.classify_job import _finish_project
+    classify = Job(org_id=project.org_id, project_id=project.id, kind="classify", run_id=uuid.uuid4(),
+                   requested_by=None, status="done")
+    db.add(classify); db.flush()
+    _finish_project(db, project, classify)
+    price = db.scalars(select(Job).where(Job.kind == "price", Job.project_id == project.id)).one()
+    assert price.status == "queued" and price.run_id == classify.run_id and price.requested_by is None
+    assert db.scalars(select(Action).where(Action.kind == "ingest")).first() is None
+
+
 def test_a_project_with_no_readable_drawings_fails_the_run_with_copy(db, project, dana, inline, monkeypatch, fake_engine):
     monkeypatch.setattr("app.db.SessionLocal", lambda: db)
     queue.enqueue_classify(db, project, dana.id); _run_all(db)

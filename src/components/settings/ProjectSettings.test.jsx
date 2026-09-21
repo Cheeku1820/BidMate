@@ -3,7 +3,7 @@
    the override chain with "Restore company default" on every override.
    ============================================================ */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -15,6 +15,7 @@ const project = {
   number: "26-0207",
   customer: "Bellweather Construction",
   location: "Stockton, CA",
+  postalCode: null,
   bidDueDate: null,
   revisionSetLabel: "E1.1 Rev 3",
   archivedAt: null,
@@ -22,11 +23,11 @@ const project = {
 
 const store = { listProjects: async () => [project] };
 
-const renderSettings = () =>
+const renderSettings = ({ store: storeOverride } = {}) =>
   render(
     <MemoryRouter initialEntries={["/projects/p1/settings"]}>
       <Routes>
-        <Route path="/projects/:projectId/settings" element={<ProjectSettings store={store} />} />
+        <Route path="/projects/:projectId/settings" element={<ProjectSettings store={storeOverride ?? store} />} />
         <Route path="/projects/:projectId/takeoff" element={<p>review</p>} />
       </Routes>
     </MemoryRouter>,
@@ -57,5 +58,26 @@ describe("ProjectSettings", () => {
 
     await userEvent.click(restore);
     expect(screen.queryByRole("button", { name: /restore company default/i })).toBeNull();
+  });
+
+  it("saves the ZIP code on blur", async () => {
+    const setPostalCode = vi.fn().mockResolvedValue({ ...project, postalCode: "78701" });
+    renderSettings({ store: { ...store, setPostalCode } });
+    const zip = await screen.findByLabelText("ZIP code");
+    await userEvent.clear(zip);
+    await userEvent.type(zip, "78701");
+    await userEvent.tab();
+    expect(setPostalCode).toHaveBeenCalledWith(project.id, "78701");
+  });
+
+  it("shows an inline error for a malformed ZIP and does not save it", async () => {
+    const setPostalCode = vi.fn();
+    renderSettings({ store: { ...store, setPostalCode } });
+    const zip = await screen.findByLabelText("ZIP code");
+    await userEvent.clear(zip);
+    await userEvent.type(zip, "1234");
+    await userEvent.tab();
+    expect(await screen.findByText("Enter a five-digit ZIP code")).toBeTruthy();
+    expect(setPostalCode).not.toHaveBeenCalled();
   });
 });

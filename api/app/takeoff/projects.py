@@ -37,6 +37,7 @@ class ProjectRow:
     number: str
     customer: str
     location: str
+    postal_code: str | None
     bid_due_date: datetime.date | None
     stage: str
     revision_set_label: str
@@ -158,6 +159,7 @@ def list_projects(
                 number=project.number,
                 customer=project.customer,
                 location=project.location,
+                postal_code=project.postal_code,
                 bid_due_date=project.bid_due_date,
                 stage=project.stage,
                 revision_set_label=project.revision_set_label,
@@ -197,6 +199,7 @@ def create_project(
     *,
     name: str,
     location: str,
+    postal_code: str | None = None,
     number: str = "",
     customer: str = "",
     bid_due_date: datetime.date | None = None,
@@ -226,10 +229,14 @@ def create_project(
         if estimator is None or estimator.org_id != org_id:
             raise _estimator_not_found()
 
+    from app.market.classify import parse_zip
+    postal_code = postal_code or parse_zip(location)
+
     project = Project(
         org_id=org_id,
         name=name,
         location=location,
+        postal_code=postal_code,
         number=number,
         customer=customer,
         bid_due_date=bid_due_date,

@@ -409,3 +409,31 @@ def test_projects_list_carries_the_number_of_sheets_read(db, org, project, sheet
     assert rows[0].sheets_total == 1
     body = client.get("/api/projects").json()
     assert body[0]["sheetsTotal"] == 1
+
+
+def test_create_project_parses_zip_from_location_when_not_given(client, signed_in_user):
+    r = client.post("/api/projects", json={"name": "Unalaska Bid", "location": "Unalaska, AK 99685"})
+    assert r.status_code == 201, r.text
+    assert r.json()["postalCode"] == "99685"
+
+
+def test_create_project_takes_an_explicit_zip(client, signed_in_user):
+    r = client.post("/api/projects", json={"name": "FedEx Office", "location": "Austin, TX", "postalCode": "78701"})
+    assert r.status_code == 201 and r.json()["postalCode"] == "78701"
+
+
+def test_create_project_refuses_a_malformed_zip(client, signed_in_user):
+    r = client.post("/api/projects", json={"name": "X", "location": "Austin, TX", "postalCode": "7870"})
+    assert r.status_code == 422
+
+
+def test_patch_postal_code_is_audited(client, db, signed_in_user, project):
+    project.org_id = signed_in_user.org_id; db.flush(); db.commit()
+    r = client.patch(f"/api/projects/{project.id}/postal-code", json={"postal_code": "78701"})
+    assert r.status_code == 200 and r.json()["postalCode"] == "78701"
+    from app.takeoff.models import Action
+    from sqlalchemy import select
+    a = db.scalars(select(Action).where(Action.project_id == project.id, Action.kind == "project_edit")).first()
+    assert a is not None and a.after == {"postal_code": "78701"}
+    r = client.patch(f"/api/projects/{project.id}/postal-code", json={"postal_code": ""})
+    assert r.status_code == 200 and r.json()["postalCode"] is None

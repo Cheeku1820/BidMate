@@ -1,6 +1,8 @@
 """PATCH /api/items/{item_id}/labor and /material-price -- the two
 project-level override mutations -- plus the five company-scoped pricing
 mutations and their audit log (CompanyAction)."""
+import uuid
+
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import InternalError, ProgrammingError
@@ -35,6 +37,24 @@ def test_patch_material_price_creates_a_row(client, db, item, signed_in_user):
     assert response.status_code == 200, response.text
     row = db.get(ProjectMaterialPrice, item.id)
     assert row is not None and float(row.price_override) == 15.5 and row.source == "project_price"
+
+
+def test_patch_material_price_over_a_supplier_quote_clears_the_supplier_and_quote_date(client, db, item, signed_in_user):
+    """A supplier quote retyped as a project price is the estimator's
+    number: the supplier and the date were the quote's provenance and
+    would mislabel the new price (the row out reads them back)."""
+    from datetime import date
+    db.add(ProjectMaterialPrice(item_id=item.id, price_override=9.10, source="supplier_quote",
+                                supplier_name="Codale", quote_date=date(2026, 9, 18), updated_by_user_id=signed_in_user.id))
+    db.commit()
+    response = client.patch(f"/api/items/{item.id}/material-price", json={"priceOverride": 15.5, "source": "project_price"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["source_label"] == "Project price" and body["supplier_name"] == "" and body["quote_date"] is None
+    db.refresh(item)
+    row = db.get(ProjectMaterialPrice, item.id)
+    db.refresh(row)
+    assert row.source == "project_price" and row.supplier_name == "" and row.quote_date is None
 
 
 def test_patch_material_price_allowance_requires_a_reason(client, item, signed_in_user):
@@ -576,3 +596,293 @@ def test_patch_labor_adjustment_alone_leaves_the_row_missing(client, item, signe
     assert body["adjusted_hours"] is None
     assert body["labor_cost"] is None
     assert float(body["adjustment_percent"]) == 10.0
+
+
+def test_material_rows_carry_the_market_estimate(client, db, signed_in_user, project, sheet, item, org):
+    from datetime import datetime, timezone
+    from decimal import Decimal
+    from app.takeoff.models import ItemMarketPrice, MarketLookup
+    project.org_id = signed_in_user.org_id
+    lk = MarketLookup(source="shopping", query_key="current cvt8-lscs-mv", location_key="Austin, TX", status="priced",
+                      result={"sellers": [{"title": "t", "seller": "Codale", "price": 169.95, "link": "https://codale.example/x"}]},
+                      fetched_at=datetime(2026, 9, 18, tzinfo=timezone.utc), billed=True, org_id=org.id)
+    db.add(lk); db.flush()
+    db.add(ItemMarketPrice(item_id=item.id, lookup_id=lk.id, outcome="priced", source="shopping", query="Current CVT8-LSCS-MV",
+                           unit_price=Decimal("169.95"), price_low=Decimal("156.75"), price_high=Decimal("303.33"),
+                           unit="EA", location_label="Austin, TX", fetched_at=lk.fetched_at))
+    db.commit()
+    r = client.get(f"/api/projects/{project.id}/material-pricing")
+    row = r.json()["rows"][0]
+    assert row["source_label"] == "Market estimate" and row["status"] == "attention"
+    assert row["price_low"] == "156.75" and row["price_high"] == "303.33"
+    assert row["market_evidence"] == [{"seller": "Codale", "price": 169.95, "link": "https://codale.example/x"}]
+    assert row["basis_note"] == "Austin, TX, Sep 18"
+    # (303.33 - 156.75) / 169.95 > 0.5: the amber pill has to say why.
+    assert row["market_warning"] == {
+        "title": "Wide price range",
+        "found": "Sellers quoted between $156.75 and $303.33.",
+        "why": "The market price for this item is uncertain by more than half.",
+        "fix": "Check the sellers listed under the item, then enter a price or upload a supplier price sheet.",
+        "where": "Austin, TX, Sep 18",
+    }
+
+
+def test_a_narrow_market_estimate_carries_no_warning(client, db, signed_in_user, project, sheet, item, org):
+    from datetime import datetime, timezone
+    from decimal import Decimal
+    from app.takeoff.models import ItemMarketPrice, MarketLookup
+    project.org_id = signed_in_user.org_id
+    lk = MarketLookup(source="onebuild", query_key="20a duplex receptacle", location_key="78701", status="priced",
+                      result={"matched": {"name": "Duplex receptacle", "uom": "EA"}},
+                      fetched_at=datetime(2026, 9, 18, tzinfo=timezone.utc), billed=True, org_id=org.id)
+    db.add(lk); db.flush()
+    db.add(ItemMarketPrice(item_id=item.id, lookup_id=lk.id, outcome="priced", source="onebuild", query="20A duplex receptacle",
+                           unit_price=Decimal("12.40"), price_low=Decimal("12.40"), price_high=Decimal("12.40"),
+                           unit="EA", location_label="Travis County, TX", fetched_at=lk.fetched_at))
+    db.commit()
+    row = client.get(f"/api/projects/{project.id}/material-pricing").json()["rows"][0]
+    assert row["source_label"] == "Market estimate" and row["status"] == "ready" and row["market_warning"] is None
+
+
+def test_material_rows_carry_the_outcome_warning(client, db, signed_in_user, project, sheet, item):
+    from app.takeoff.models import ItemMarketPrice
+    project.org_id = signed_in_user.org_id
+    db.add(ItemMarketPrice(item_id=item.id, outcome="location_needed", source="onebuild", query="20A duplex receptacle"))
+    db.commit()
+    row = client.get(f"/api/projects/{project.id}/material-pricing").json()["rows"][0]
+    assert row["status"] == "missing" and row["market_outcome"] == "location_needed"
+    w = row["market_warning"]
+    assert w["title"] == "Project location needed" and set(w) == {"title", "found", "why", "fix", "where"}
+    assert w["where"].startswith("E2.1")
+
+
+def test_refresh_queues_one_price_job(client, db, signed_in_user, project):
+    from sqlalchemy import func, select
+    from app.takeoff.models import Job
+    project.org_id = signed_in_user.org_id; db.commit()
+    assert client.post(f"/api/projects/{project.id}/market-pricing/refresh").status_code == 202
+    assert client.post(f"/api/projects/{project.id}/market-pricing/refresh").json() == {"queued": False}
+    assert db.scalar(select(func.count()).select_from(Job).where(Job.kind == "price", Job.project_id == project.id)) == 1
+    assert client.get(f"/api/projects/{project.id}/material-pricing").json()["market_job"] == "queued"
+
+
+def test_usage_counts_billed_lookups_this_month(client, db, signed_in_user, org):
+    from datetime import datetime, timezone
+    from app.takeoff.models import MarketLookup
+    db.add(MarketLookup(source="onebuild", query_key="a", location_key="1", status="priced", result={},
+                        fetched_at=datetime.now(timezone.utc), billed=True, org_id=signed_in_user.org_id))
+    db.add(MarketLookup(source="onebuild", query_key="b", location_key="1", status="priced", result={},
+                        fetched_at=datetime.now(timezone.utc), billed=False, org_id=signed_in_user.org_id))
+    db.commit()
+    assert client.get("/api/company/market-pricing/usage").json() == {"used": 1, "cap": 2000}
+
+
+def test_price_request_download_is_an_xlsx_with_one_row_per_item(client, db, signed_in_user, project, item):
+    import io, openpyxl
+    project.org_id = signed_in_user.org_id; db.commit()
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-request")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.openxmlformats")
+    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+    assert ws.cell(2, 1).value == item.name and ws.cell(2, 8).value == str(item.id)
+
+
+def test_apply_writes_supplier_quotes_as_one_undoable_action(client, db, signed_in_user, project, item):
+    from datetime import date
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.takeoff.models import Action, Document, Job, ProjectMaterialPrice
+    project.org_id = signed_in_user.org_id
+    d = Document(project_id=project.id, filename="codale.xlsx", doc_type="Pricing", content_type="x", size_bytes=1,
+                 sha256="a" * 64, storage_key="k", uploaded_by=signed_in_user.id)
+    db.add(d); db.flush()
+    job = Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=d.id, status="done",
+              payload={"preview": {"matched": [{"item_id": str(item.id), "item_name": item.name, "current_unit_price": None,
+                                                "current_source_label": None, "new_unit_price": "9.10", "part_no": "", "notes": "", "line": 2}],
+                                   "unmatched": [], "unpriced": [], "refused": None, "supplier_name": "codale", "quote_date": None}})
+    db.add(job); db.commit()
+    r = client.post(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/apply",
+                    json={"item_ids": [str(item.id)], "supplier_name": "Codale", "quote_date": "2026-09-18", "save_to_company": True})
+    assert r.status_code == 200, r.text
+    row = r.json()["rows"][0]
+    assert row["source_label"] == "Supplier quote" and row["unit_price"] == "9.10" and row["status"] == "approved"
+    pm = db.get(ProjectMaterialPrice, item.id)
+    assert pm.source == "supplier_quote" and pm.supplier_name == "Codale" and pm.quote_date == date(2026, 9, 18)
+    a = db.scalars(select(Action).where(Action.project_id == project.id, Action.kind == "supplier_quote_apply")).one()
+    assert a.label == "Applied supplier pricing from Codale for 1 item" and a.before == {"rows": {str(item.id): {}}}
+    from app.takeoff.models import CompanyMaterialPrice
+    cp = db.scalars(select(CompanyMaterialPrice).where(CompanyMaterialPrice.item_name == item.name)).one()
+    assert cp.unit_price == Decimal("9.10") and cp.effective_date == date(2026, 9, 18)
+
+
+def test_apply_refuses_an_item_not_in_the_preview(client, db, signed_in_user, project, item):
+    import uuid
+    from app.takeoff.models import Document, Job
+    project.org_id = signed_in_user.org_id
+    d = Document(project_id=project.id, filename="q.csv", doc_type="Pricing", content_type="x", size_bytes=1,
+                 sha256="b" * 64, storage_key="k2", uploaded_by=signed_in_user.id)
+    db.add(d); db.flush()
+    db.add(Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=d.id, status="done",
+               payload={"preview": {"matched": [], "unmatched": [], "unpriced": [], "refused": None, "supplier_name": "", "quote_date": None}}))
+    db.commit()
+    r = client.post(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/apply",
+                    json={"item_ids": [str(item.id)], "supplier_name": "X", "quote_date": "2026-09-18", "save_to_company": False})
+    assert r.status_code == 422
+
+
+def _preview_doc(db, project, user, matched, name="codale.xlsx"):
+    from app.takeoff.models import Document, Job
+    d = Document(project_id=project.id, filename=name, doc_type="Pricing", content_type="x", size_bytes=1,
+                 sha256=uuid.uuid4().hex * 2, storage_key=f"k-{uuid.uuid4()}", uploaded_by=user.id)
+    db.add(d); db.flush()
+    db.add(Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=d.id, status="done",
+               payload={"preview": {"matched": matched, "unmatched": [], "unpriced": [], "refused": None,
+                                    "supplier_name": "codale", "quote_date": None}}))
+    db.commit()
+    return d
+
+
+@pytest.mark.parametrize("bad", ["-9.10", "123456789012.00", "100000000"])
+def test_apply_refuses_a_negative_or_oversized_price_before_writing_anything(client, db, signed_in_user, project, item, sheet, bad):
+    """The preview is worker-written, but the parser's bounds and this
+    route's are the same rule stated twice on purpose: a negative price
+    would land in the bid, and one Numeric(10, 2) can't hold fails the
+    flush as a 500 after earlier rows in the same apply have gone in.
+    Refused up front, with no row written and no action recorded."""
+    from sqlalchemy import func, select
+    from app.takeoff.models import Action, Item, ProjectMaterialPrice, ReviewStatus
+    project.org_id = signed_in_user.org_id
+    other = Item(project_id=project.id, sheet_id=sheet.id, symbol="panel", name="Panelboard", system="Distribution",
+                 category="Equipment", quantity=1, unit="EA", status=ReviewStatus.READY, x=1, y=1)
+    db.add(other); db.flush()
+    good = {"item_id": str(item.id), "item_name": item.name, "current_unit_price": None, "current_source_label": None,
+            "new_unit_price": "9.10", "part_no": "", "notes": "", "line": 2}
+    d = _preview_doc(db, project, signed_in_user, [good, {**good, "item_id": str(other.id), "item_name": other.name, "new_unit_price": bad, "line": 3}])
+    r = client.post(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/apply",
+                    json={"item_ids": [str(item.id), str(other.id)], "supplier_name": "Codale", "quote_date": "2026-09-18", "save_to_company": False})
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"] == {"code": "price_sheet_price", "message": "A price must be zero or more and under 100,000,000."}
+    assert db.scalar(select(func.count()).select_from(ProjectMaterialPrice)) == 0
+    assert db.scalar(select(func.count()).select_from(Action).where(Action.kind == "supplier_quote_apply")) == 0
+
+
+def test_price_request_download_survives_a_quote_and_non_latin1_character_in_the_project_name(client, db, signed_in_user, project, item):
+    """A raw f-string Content-Disposition would let a `"` in the project
+    name split the header, and a non-latin-1 character (Starlette encodes
+    header values as latin-1) would raise inside the response layer as a
+    500 -- both real project names, not adversarial input. The download
+    route reuses documents/router.py's `_content_disposition()`, which
+    percent-encodes the real name into `filename*=` and ships an
+    ASCII-only fallback in `filename=`, so this must come back 200."""
+    project.org_id = signed_in_user.org_id
+    project.name = 'Ünalaska "Bid"'
+    db.commit()
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-request")
+    assert r.status_code == 200, r.text
+
+
+# --- Task 10 review: success-path coverage for upload and preview ---
+
+
+@pytest.fixture
+def store():
+    """A `MemoryBlobStore` wired as the app's blob-store dependency, the
+    same pattern test_documents_upload.py uses -- so a price sheet
+    posted through the real HTTP route actually lands somewhere the test
+    (or, with the worker also pointed at this same instance, an inline
+    job run) can read back."""
+    from app.documents import blobstore
+    from app.main import app
+
+    s = blobstore.MemoryBlobStore()
+    app.dependency_overrides[blobstore.get_blob_store] = lambda: s
+    yield s
+    app.dependency_overrides.pop(blobstore.get_blob_store, None)
+
+
+def _upload_price_sheet(client, project_id, item_name, price="9.10", name="codale.csv"):
+    import io
+    data = f"Item,Unit price\n{item_name},{price}\n".encode()
+    return client.post(f"/api/projects/{project_id}/material-pricing/price-sheets",
+                       files={"file": (name, io.BytesIO(data), "text/csv")})
+
+
+def test_uploading_a_price_sheet_stores_a_pricing_document_and_queues_one_job(client, db, signed_in_user, project, item, store):
+    import uuid
+    from sqlalchemy import func, select
+    from app.takeoff.models import Document, Job
+    project.org_id = signed_in_user.org_id; db.commit()
+
+    r = _upload_price_sheet(client, project.id, item.name)
+    assert r.status_code == 202, r.text
+
+    doc = db.get(Document, uuid.UUID(r.json()["document_id"]))
+    assert doc is not None and doc.doc_type == "Pricing"
+    assert db.scalar(select(func.count()).select_from(Job).where(
+        Job.kind == "price_sheet", Job.document_id == doc.id)) == 1
+
+
+def test_preview_reads_as_reading_while_its_job_is_still_queued(client, db, signed_in_user, project, item, store):
+    project.org_id = signed_in_user.org_id; db.commit()
+
+    document_id = _upload_price_sheet(client, project.id, item.name).json()["document_id"]
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-sheets/{document_id}/preview")
+    assert r.status_code == 200 and r.json()["state"] == "reading"
+
+
+def test_preview_reads_as_ready_with_the_matched_row_once_the_worker_runs(client, db, signed_in_user, project, item, store, monkeypatch):
+    from tests.test_worker_read import _run_all
+    from app.worker import blobs
+    # The upload route wrote its blob to `store` above (the app's real
+    # blob-store dependency); the worker looks up its own store at call
+    # time (app.worker.blobs.get_blob_store), so it has to be pointed at
+    # that same instance -- otherwise the job would fail to find bytes
+    # that are, in fact, sitting right there.
+    monkeypatch.setattr(blobs, "get_blob_store", lambda: store)
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    monkeypatch.setenv("WORKER_INLINE", "1")
+    project.org_id = signed_in_user.org_id; db.commit()
+
+    document_id = _upload_price_sheet(client, project.id, item.name).json()["document_id"]
+    _run_all(db)
+
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-sheets/{document_id}/preview")
+    body = r.json()
+    assert body["state"] == "ready"
+    assert [m["item_id"] for m in body["matched"]] == [str(item.id)]
+
+
+def test_preview_with_an_impossible_date_in_the_filename_reads_with_no_quote_date(client, db, signed_in_user, project, item, store, monkeypatch):
+    """"2026-13-45" matches the filename date pattern and is not a date.
+    Carried through as a string, PriceSheetPreviewOut.quote_date (a
+    `date`) would refuse it and the preview route would 500 -- the
+    worker leaves it None instead, and the estimator types the date."""
+    from tests.test_worker_read import _run_all
+    from app.worker import blobs
+    monkeypatch.setattr(blobs, "get_blob_store", lambda: store)
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    monkeypatch.setenv("WORKER_INLINE", "1")
+    project.org_id = signed_in_user.org_id; db.commit()
+
+    document_id = _upload_price_sheet(client, project.id, item.name, name="codale_2026-13-45.csv").json()["document_id"]
+    _run_all(db)
+
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-sheets/{document_id}/preview")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["state"] == "ready" and body["quote_date"] is None and body["supplier_name"] == "codale"
+
+
+def test_preview_reads_as_failed_with_the_jobs_error(client, db, signed_in_user, project, item):
+    from app.takeoff.models import Document, Job
+    project.org_id = signed_in_user.org_id
+    d = Document(project_id=project.id, filename="codale.csv", doc_type="Pricing", content_type="text/csv",
+                 size_bytes=1, sha256="c" * 64, storage_key="k3", uploaded_by=signed_in_user.id)
+    db.add(d); db.flush()
+    db.add(Job(org_id=project.org_id, project_id=project.id, kind="price_sheet", document_id=d.id,
+               status="failed", error="This file couldn't be read as a spreadsheet."))
+    db.commit()
+
+    r = client.get(f"/api/projects/{project.id}/material-pricing/price-sheets/{d.id}/preview")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "failed" and body["error"] == "This file couldn't be read as a spreadsheet."

@@ -25,10 +25,18 @@ from app.auth.dependencies import current_user
 from app.db import get_db
 from app.errors import DomainError
 from app.identity.models import User
-from app.takeoff import snapshot as snapshot_module
+from app.jobs import queue
+from app.takeoff import actions, snapshot as snapshot_module
 from app.takeoff.models import Item, Project, Sheet
 from app.takeoff.projects import create_project, list_projects, project_row
-from app.takeoff.schemas import ProjectCreateIn, ProjectDetailOut, ProjectOut, SnapshotOut, TotalsOut
+from app.takeoff.schemas import (
+    PostalCodeIn,
+    ProjectCreateIn,
+    ProjectDetailOut,
+    ProjectOut,
+    SnapshotOut,
+    TotalsOut,
+)
 from app.takeoff.snapshot import sheet_out
 from app.takeoff.totals import approved_totals
 
@@ -120,12 +128,37 @@ def post_project(
         user.org_id,
         name=payload.name,
         location=payload.location,
+        postal_code=payload.postal_code or None,
         number=payload.number,
         customer=payload.customer,
         bid_due_date=payload.bid_due_date,
         estimator_user_id=payload.estimator_user_id,
         created_by_user_id=user.id,
     )
+    db.commit()
+    row = project_row(db, user.org_id, project.id)
+    return ProjectOut.model_validate(row, from_attributes=True)
+
+
+@router.patch("/projects/{project_id}/postal-code", response_model=ProjectOut)
+def patch_postal_code(
+    project_id: uuid.UUID,
+    body: PostalCodeIn,
+    db: DbSession = Depends(get_db),
+    user: User = Depends(current_user),
+) -> ProjectOut:
+    """The one project field an estimator edits after creation today.
+    Audited, not undoable: a ZIP is settings, and the market job that
+    reads it is queued by the pricing router, not here."""
+    project = load_project(project_id, db, user)
+    before = {"postal_code": project.postal_code}
+    project.postal_code = body.postal_code or None
+    db.flush()
+    actions.commit(db, actor=user, project_id=project.id, kind="project_edit",
+                   label="Set project ZIP code" if body.postal_code else "Cleared project ZIP code",
+                   before=before, after={"postal_code": project.postal_code})
+    if body.postal_code:
+        queue.enqueue_price(db, project, user.id)
     db.commit()
     row = project_row(db, user.org_id, project.id)
     return ProjectOut.model_validate(row, from_attributes=True)

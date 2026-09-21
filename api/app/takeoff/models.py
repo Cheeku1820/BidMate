@@ -90,6 +90,10 @@ class Project(Base):
     number: Mapped[str] = mapped_column(String(100), default="", server_default="")
     customer: Mapped[str] = mapped_column(String(300), default="", server_default="")
     location: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    # The ZIP both market sources want. Parsed from `location` once by
+    # migration 0024, editable on project settings. None means every
+    # market lookup is "location_needed" -- never a national number.
+    postal_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
     bid_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     estimator_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
@@ -503,8 +507,12 @@ class ProjectMaterialPrice(Base):
 
     item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
     price_override: Mapped[Decimal] = mapped_column(Numeric(10, 2))
-    source: Mapped[str] = mapped_column(String(20))  # "project_price" | "allowance"
+    source: Mapped[str] = mapped_column(String(20))  # "project_price" | "allowance" | "supplier_quote"
     reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    # source == "supplier_quote" only: who quoted and when, for the
+    # row's basis note. Blank/None on the other two sources.
+    supplier_name: Mapped[str] = mapped_column(String(200), default="", server_default="")
+    quote_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -679,3 +687,49 @@ class Note(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MarketLookup(Base):
+    """One call to one market source, cached (estimate-first-pricing
+    §4). Org-independent by design: public market data keyed by what
+    was asked and where, reused across projects and orgs. The row is
+    also the meter -- `billed` rows count against `org_id`'s cap."""
+
+    __tablename__ = "market_lookups"
+    __table_args__ = (
+        UniqueConstraint("source", "query_key", "location_key", name="uq_market_lookup"),
+        Index("ix_market_lookups_org_fetched", "org_id", "fetched_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source: Mapped[str] = mapped_column(String(20))        # "onebuild" | "shopping"
+    query_key: Mapped[str] = mapped_column(String(300))
+    location_key: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20))        # "priced" | "no_match" | "failed"
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    billed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+
+
+class ItemMarketPrice(Base):
+    """The market estimate for one item, one row per item at most --
+    derived, not a person's judgment, so outside ITEM_SNAPSHOT_TYPES
+    like ItemEvidenceImage. `outcome` is the closed set in
+    app/market/copy.py; only "priced" resolves in the chain."""
+
+    __tablename__ = "item_market_prices"
+
+    item_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), primary_key=True)
+    lookup_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("market_lookups.id", ondelete="SET NULL"), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(20))
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    query: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    unit_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    price_low: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    price_high: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    labor_rate_per_unit: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    unit: Mapped[str] = mapped_column(String(10), default="", server_default="")
+    location_label: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)

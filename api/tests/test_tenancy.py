@@ -231,6 +231,12 @@ TENANCY_TABLE = [
     ("POST", "/api/projects/{project_id}/conversation/messages",
      lambda p, s, i: f"/api/projects/{p.id}/conversation/messages",
      lambda p, s, i: {"text": "test", "screen": {"name": "export"}}, None),
+    ("PATCH", "/api/projects/{project_id}/postal-code",
+     lambda p, s, i: f"/api/projects/{p.id}/postal-code", lambda p, s, i: {"postal_code": "78701"}, None),
+    ("POST", "/api/projects/{project_id}/market-pricing/refresh",
+     lambda p, s, i: f"/api/projects/{p.id}/market-pricing/refresh", None, None),
+    ("GET", "/api/projects/{project_id}/material-pricing/price-request",
+     lambda p, s, i: f"/api/projects/{p.id}/material-pricing/price-request", None, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]
@@ -263,6 +269,17 @@ DOCUMENT_TENANCY_TABLE = [
      lambda d: f"/api/documents/{d.id}", None, None),
     ("GET", "/api/documents/{document_id}/content",
      lambda d: f"/api/documents/{d.id}/content", None, None),
+    # The price-sheet preview/apply routes are keyed by both project_id
+    # and document_id in the path, but the `document` fixture already
+    # carries both -- `d.project_id` gives the first. load_project()
+    # runs before either route ever looks at doc_type, so a rival-org
+    # caller 404s the same way regardless of this fixture's Drawings
+    # doc_type never being "Pricing".
+    ("GET", "/api/projects/{project_id}/material-pricing/price-sheets/{document_id}/preview",
+     lambda d: f"/api/projects/{d.project_id}/material-pricing/price-sheets/{d.id}/preview", None, None),
+    ("POST", "/api/projects/{project_id}/material-pricing/price-sheets/{document_id}/apply",
+     lambda d: f"/api/projects/{d.project_id}/material-pricing/price-sheets/{d.id}/apply",
+     lambda d: {"item_ids": [], "supplier_name": "x", "quote_date": "2026-09-18", "save_to_company": False}, None),
 ]
 
 DOCUMENT_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE]
@@ -304,6 +321,9 @@ MULTIPART_TENANCY_TABLE = [
          "files": {"file": ("E-set.pdf", io.BytesIO(PDF), "application/pdf")},
          "data": {"doc_type": "Drawings"},
      }),
+    ("POST", "/api/projects/{project_id}/material-pricing/price-sheets",
+     lambda p: f"/api/projects/{p.id}/material-pricing/price-sheets",
+     lambda p: {"files": {"file": ("q.csv", io.BytesIO(b"Item,Unit price\nx,1\n"), "text/csv")}}),
 ]
 
 MULTIPART_TENANCY_IDS = [f"{method} {template}" for method, template, _, _ in MULTIPART_TENANCY_TABLE]
@@ -339,6 +359,7 @@ NON_PROJECT_SCOPED_ROUTES = {
     ("GET", "/api/company/labor-hours-overrides"),
     ("PUT", "/api/company/labor-hours-overrides/{item_name}"),
     ("DELETE", "/api/company/labor-hours-overrides/{item_name}"),
+    ("GET", "/api/company/market-pricing/usage"),
     # FastAPI's own framework routes -- docs UI, its OAuth2 redirect
     # target, the OpenAPI schema, and ReDoc. None of these take a
     # project id or touch tenant data; they exist the moment `FastAPI()`

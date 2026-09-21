@@ -3,13 +3,15 @@ phase, the one resolution, and every mutation audited and undoable
 through the same action log as approve and edit. Nothing here reads
 or writes a quantity or a status -- the last test says so."""
 from datetime import date
+from decimal import Decimal
 
 import pytest
 
 from app.errors import DomainError
+from app.schedule import overrides
 from app.schedule import phases as svc
 from app.takeoff import undo
-from app.takeoff.models import Action, Item, Phase, PhaseLine, Sheet
+from app.takeoff.models import Action, Item, ItemLeadTime, Phase, PhaseLine, PhaseStagePlan, Sheet
 from app.takeoff.totals import approved_totals
 
 
@@ -265,3 +267,48 @@ def test_create_snapshots_who_set_each_line(db, project, dana):
     assert all("updated_by_user_id" in line for line in action.after["lines"])
     assert action.before["order"] == [str(first.id)]
     assert len(action.after["order"]) == 2
+
+
+def test_line_hours_override_and_reset(db, project, dana):
+    first = svc.first_phase(db, project, create=True)
+    line = db.query(PhaseLine).filter_by(phase_id=first.id).order_by(PhaseLine.sort_order).first()
+    overrides.set_line_hours(db, actor=dana, line=line, hours=Decimal("12"))
+    db.commit()
+    assert line.hours_override == Decimal("12.00")
+    overrides.set_line_hours(db, actor=dana, line=line, hours=None)
+    db.commit()
+    assert line.hours_override is None
+    undo.undo(db, actor=dana, project_id=project.id); db.commit(); db.refresh(line)
+    assert line.hours_override == Decimal("12.00")
+
+
+def test_stage_plan_is_sparse_and_clears_per_field(db, project, dana):
+    first = svc.first_phase(db, project, create=True)
+    row = overrides.set_stage_plan(db, actor=dana, phase=first, stage="rough_in", changes={"journeyman": 4, "start_date": date(2026, 10, 19)})
+    db.commit()
+    assert row.journeyman == 4 and row.foreman is None
+    overrides.set_stage_plan(db, actor=dana, phase=first, stage="rough_in", changes={"journeyman": None})
+    db.commit(); db.refresh(row)
+    assert row.journeyman is None and row.start_date == date(2026, 10, 19)
+    with pytest.raises(DomainError):
+        overrides.set_stage_plan(db, actor=dana, phase=first, stage="painting", changes={"journeyman": 1})
+
+
+def test_lead_time_needs_a_source_and_clears_together(db, project, item, dana):
+    with pytest.raises(DomainError) as e:
+        overrides.set_lead_time(db, actor=dana, item=item, changes={"lead_weeks": 40}, today=date(2026, 9, 21))
+    assert e.value.code == "lead_time_source_needed"
+    row = overrides.set_lead_time(db, actor=dana, item=item, changes={"lead_weeks": 40, "source_label": "Eaton rep"}, today=date(2026, 9, 21))
+    db.commit()
+    assert (row.source, row.quoted_at, row.flagged) == ("estimator", date(2026, 9, 21), True)
+    overrides.set_lead_time(db, actor=dana, item=item, changes={"lead_weeks": None}, today=date(2026, 9, 21))
+    db.commit(); db.refresh(row)
+    assert row.lead_weeks is None and row.source is None and row.source_label == "" and row.quoted_at is None
+    undo.undo(db, actor=dana, project_id=project.id); db.commit(); db.refresh(row)
+    assert row.lead_weeks == 40 and row.source_label == "Eaton rep"
+
+
+def test_unflag_keeps_the_row_but_hides_it(db, project, item, dana):
+    row = overrides.set_lead_time(db, actor=dana, item=item, changes={"flagged": False}, today=date(2026, 9, 21))
+    db.commit()
+    assert row.flagged is False

@@ -2,12 +2,14 @@
 phase, the one resolution, and every mutation audited and undoable
 through the same action log as approve and edit. Nothing here reads
 or writes a quantity or a status -- the last test says so."""
+from datetime import date
+
 import pytest
 
 from app.errors import DomainError
 from app.schedule import phases as svc
 from app.takeoff import undo
-from app.takeoff.models import Action, Phase, PhaseLine, Sheet
+from app.takeoff.models import Action, Item, Phase, PhaseLine, Sheet
 from app.takeoff.totals import approved_totals
 
 
@@ -101,3 +103,165 @@ def test_phases_change_no_total(db, project, sheet, item, dana):
     svc.assign_sheets(db, actor=dana, phase=second, sheet_ids=[sheet.id])
     db.commit()
     assert approved_totals(db, project.id) == before
+
+
+# --- Every kind, both directions ---
+
+
+def _order(db, project):
+    return [p.id for p in svc.phases_for(db, project.id)]
+
+
+def test_replaying_creates_restores_the_order_they_changed(db, project, dana):
+    """Three phases created after the first, each shifting the others up;
+    two undos then two redos have to land every phase back where it
+    was, or the deferred uq_phase_order fails at commit -- long after
+    the flush, as a 500."""
+    first = svc.first_phase(db, project, create=True)
+    p2 = svc.create_phase(db, actor=dana, project=project, name="P2", after_phase_id=first.id)
+    p3 = svc.create_phase(db, actor=dana, project=project, name="P3", after_phase_id=first.id)
+    p4 = svc.create_phase(db, actor=dana, project=project, name="P4", after_phase_id=first.id)
+    db.commit()
+    assert _order(db, project) == [first.id, p4.id, p3.id, p2.id]
+    undo.undo(db, actor=dana, project_id=project.id); db.commit()
+    undo.undo(db, actor=dana, project_id=project.id); db.commit()
+    assert _order(db, project) == [first.id, p2.id]
+    undo.redo(db, actor=dana, project_id=project.id); db.commit()
+    undo.redo(db, actor=dana, project_id=project.id); db.commit()
+    db.expire_all()
+    assert _order(db, project) == [first.id, p4.id, p3.id, p2.id]
+    assert [p.sort_order for p in svc.phases_for(db, project.id)] == [0, 1, 2, 3]
+
+
+def test_edit_is_undoable_and_redoable(db, project, dana):
+    first = svc.first_phase(db, project, create=True)
+    second = svc.create_phase(db, actor=dana, project=project, name="Phase 2", after_phase_id=first.id)
+    svc.edit_phase(db, actor=dana, phase=second,
+                   changes={"name": "Area B", "start_date": date(2026, 10, 1), "notes": None})
+    db.commit()
+    assert (second.name, second.start_date, second.notes) == ("Area B", date(2026, 10, 1), "")
+    assert db.query(Action).filter_by(kind="phase_edit").one().label == "Renamed Phase 2 to Area B"
+    undo.undo(db, actor=dana, project_id=project.id); db.commit(); db.refresh(second)
+    assert (second.name, second.start_date) == ("Phase 2", None)
+    undo.redo(db, actor=dana, project_id=project.id); db.commit(); db.refresh(second)
+    assert (second.name, second.start_date) == ("Area B", date(2026, 10, 1))
+
+
+def test_edit_labels_a_notes_only_change_and_refuses_an_empty_name(db, project, dana):
+    first = svc.first_phase(db, project, create=True)
+    svc.edit_phase(db, actor=dana, phase=first, changes={"notes": "Existing to remain on the west wing"})
+    assert db.query(Action).filter_by(kind="phase_edit").one().label == "Changed notes on Phase 1"
+    svc.edit_phase(db, actor=dana, phase=first, changes={"required_finish_date": date(2027, 1, 15)})
+    assert db.query(Action).filter_by(kind="phase_edit").order_by(Action.seq.desc()).first().label == "Changed dates on Phase 1"
+    with pytest.raises(DomainError) as e:
+        svc.edit_phase(db, actor=dana, phase=first, changes={"name": "   "})
+    assert e.value.code == "phase_name_needed"
+    with pytest.raises(DomainError) as e:
+        svc.edit_phase(db, actor=dana, phase=first, changes={"sort_order": 3})
+    assert e.value.code == "no_changes_to_apply"
+
+
+def test_reorder_is_undoable_and_redoable_and_refuses_a_no_op(db, project, dana):
+    first = svc.first_phase(db, project, create=True)
+    second = svc.create_phase(db, actor=dana, project=project, name="Phase 2", after_phase_id=first.id)
+    svc.reorder_phase(db, actor=dana, phase=second, sort_order=0)
+    db.commit()
+    assert _order(db, project) == [second.id, first.id]
+    with pytest.raises(DomainError) as e:
+        svc.reorder_phase(db, actor=dana, phase=second, sort_order=0)
+    assert e.value.code == "no_changes_to_apply"
+    undo.undo(db, actor=dana, project_id=project.id); db.commit()
+    assert _order(db, project) == [first.id, second.id]
+    undo.redo(db, actor=dana, project_id=project.id); db.commit()
+    assert _order(db, project) == [second.id, first.id]
+
+
+def test_delete_is_redoable(db, project, sheet, item, dana):
+    first = svc.first_phase(db, project, create=True)
+    second = svc.create_phase(db, actor=dana, project=project, name="Phase 2", after_phase_id=first.id)
+    svc.assign_sheets(db, actor=dana, phase=second, sheet_ids=[sheet.id])
+    svc.set_item_phase(db, actor=dana, item=item, phase_id=second.id)
+    svc.delete_phase(db, actor=dana, phase=second)
+    db.commit()
+    undo.undo(db, actor=dana, project_id=project.id); db.commit()
+    assert db.get(Phase, second.id) is not None
+    undo.redo(db, actor=dana, project_id=project.id); db.commit()
+    db.refresh(sheet); db.refresh(item)
+    assert db.get(Phase, second.id) is None
+    assert sheet.phase_id == first.id and item.phase_id is None
+    assert _order(db, project) == [first.id]
+
+
+def test_deleting_the_first_phase_promotes_the_next_and_replays(db, project, sheet, dana):
+    first = svc.first_phase(db, project, create=True)
+    second = svc.create_phase(db, actor=dana, project=project, name="Phase 2", after_phase_id=first.id)
+    db.commit()
+    assert sheet.phase_id is None  # on the first phase, written as null
+    svc.delete_phase(db, actor=dana, phase=first)
+    db.commit()
+    db.refresh(sheet)
+    assert _order(db, project) == [second.id]
+    assert svc.phases_for(db, project.id)[0].sort_order == 0
+    assert sheet.phase_id is None and svc.phase_of(Item(), sheet, svc.first_phase(db, project)) == second.id
+    undo.undo(db, actor=dana, project_id=project.id); db.commit()
+    assert _order(db, project) == [first.id, second.id]
+    undo.redo(db, actor=dana, project_id=project.id); db.commit()
+    assert _order(db, project) == [second.id]
+
+
+def test_item_phase_set_is_undoable_and_redoable(db, project, sheet, item, dana):
+    first = svc.first_phase(db, project, create=True)
+    second = svc.create_phase(db, actor=dana, project=project, name="Phase 2", after_phase_id=first.id)
+    svc.set_item_phase(db, actor=dana, item=item, phase_id=second.id)
+    db.commit()
+    assert db.query(Action).filter_by(kind="item_phase_set").one().label == "Moved 20A duplex receptacle to Phase 2"
+    undo.undo(db, actor=dana, project_id=project.id); db.commit(); db.refresh(item)
+    assert item.phase_id is None
+    undo.redo(db, actor=dana, project_id=project.id); db.commit(); db.refresh(item)
+    assert item.phase_id == second.id
+    svc.set_item_phase(db, actor=dana, item=item, phase_id=None)
+    db.commit()
+    assert item.phase_id is None
+
+
+def test_item_phase_set_undo_on_a_deleted_item_is_a_domain_error(db, project, sheet, item, dana):
+    first = svc.first_phase(db, project, create=True)
+    second = svc.create_phase(db, actor=dana, project=project, name="Phase 2", after_phase_id=first.id)
+    svc.set_item_phase(db, actor=dana, item=item, phase_id=second.id)
+    db.commit()
+    db.delete(item); db.commit()
+    with pytest.raises(DomainError) as e:
+        undo.undo(db, actor=dana, project_id=project.id)
+    assert e.value.code == "item_no_longer_exists" and e.value.status == 409
+
+
+def test_assign_sheets_treats_null_and_the_first_phase_as_one_place(db, project, sheet, dana):
+    first = svc.first_phase(db, project, create=True)
+    with pytest.raises(DomainError) as e:
+        svc.assign_sheets(db, actor=dana, phase=first, sheet_ids=[sheet.id])
+    assert e.value.code == "no_changes_to_apply"
+    second = svc.create_phase(db, actor=dana, project=project, name="Phase 2", after_phase_id=first.id)
+    svc.assign_sheets(db, actor=dana, phase=second, sheet_ids=[sheet.id])
+    db.commit()
+    # Assigning the first phase's full set: the sheet comes back as null,
+    # and that is the only change recorded.
+    svc.assign_sheets(db, actor=dana, phase=first, sheet_ids=[sheet.id])
+    db.commit()
+    db.refresh(sheet)
+    assert sheet.phase_id is None
+    action = db.query(Action).filter_by(kind="sheet_phase_set").order_by(Action.seq.desc()).first()
+    assert action.before["sheets"] == {str(sheet.id): str(second.id)}
+    assert action.after["sheets"] == {str(sheet.id): None}
+    # Removing it from the first phase's set is not a move anywhere.
+    with pytest.raises(DomainError) as e:
+        svc.assign_sheets(db, actor=dana, phase=first, sheet_ids=[])
+    assert e.value.code == "no_changes_to_apply"
+
+
+def test_create_snapshots_who_set_each_line(db, project, dana):
+    first = svc.first_phase(db, project, create=True)
+    svc.create_phase(db, actor=dana, project=project, name="Phase 2", after_phase_id=first.id)
+    action = db.query(Action).filter_by(kind="phase_create").one()
+    assert all("updated_by_user_id" in line for line in action.after["lines"])
+    assert action.before["order"] == [str(first.id)]
+    assert len(action.after["order"]) == 2

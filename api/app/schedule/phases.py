@@ -29,7 +29,8 @@ def _snapshot_phase(phase: Phase) -> dict:
 def _lines_snapshot(db: DbSession, phase_id: uuid.UUID) -> list[dict]:
     rows = db.scalars(select(PhaseLine).where(PhaseLine.phase_id == phase_id).order_by(PhaseLine.sort_order))
     return [encode_snapshot({"id": r.id, "kind": r.kind, "label": r.label, "percent_of_direct_hours": r.percent_of_direct_hours,
-                             "hours_override": r.hours_override, "sort_order": r.sort_order}) for r in rows]
+                             "hours_override": r.hours_override, "sort_order": r.sort_order,
+                             "updated_by_user_id": r.updated_by_user_id}) for r in rows]
 
 
 def _plans_snapshot(db: DbSession, phase_id: uuid.UUID) -> list[dict]:
@@ -73,6 +74,12 @@ def create_phase(db: DbSession, *, actor: User, project: Project, name: str, aft
     if not ordered:
         first_phase(db, project, create=True)
         ordered = phases_for(db, project.id)
+    # Creating a phase in the middle shifts every later one up, so the
+    # order is part of what this action changed: undo puts the others
+    # back where they were, redo shifts them again. Without it, two
+    # undos and two redos land two phases on one sort_order and the
+    # deferred uq_phase_order fails at commit, not at flush.
+    order_before = [str(p.id) for p in ordered]
     position = len(ordered)
     if after_phase_id is not None:
         idx = next((i for i, p in enumerate(ordered) if p.id == after_phase_id), None)
@@ -87,7 +94,9 @@ def create_phase(db: DbSession, *, actor: User, project: Project, name: str, aft
     _add_template_lines(db, project.org_id, phase)
     db.flush()
     actions.commit(db, actor=actor, project_id=project.id, kind="phase_create", label=f"Added {phase.name}",
-                   before={}, after={"phase": _snapshot_phase(phase), "lines": _lines_snapshot(db, phase.id)})
+                   before={"order": order_before},
+                   after={"phase": _snapshot_phase(phase), "lines": _lines_snapshot(db, phase.id),
+                          "order": [str(p.id) for p in phases_for(db, project.id)]})
     return phase
 
 
@@ -95,15 +104,22 @@ def edit_phase(db: DbSession, *, actor: User, phase: Phase, changes: dict) -> Ph
     changes = {k: v for k, v in changes.items() if k in EDITABLE}
     if not changes:
         raise DomainError("no_changes_to_apply", "This update has no changes. Include at least one field, such as the name or a date.")
+    if "name" in changes and not (changes["name"] or "").strip():
+        raise DomainError("phase_name_needed", "Give the phase a name.")
     before = _snapshot_phase(phase)
     for k, v in changes.items():
         if k == "name":
-            v = (v or "").strip()
+            v = v.strip()
         elif k == "notes":
             v = v if v is not None else ""
         setattr(phase, k, v)
     db.flush()
-    label = f"Renamed {before['name']} to {phase.name}" if "name" in changes else f"Changed dates on {phase.name}"
+    if "name" in changes:
+        label = f"Renamed {before['name']} to {phase.name}"
+    elif set(changes) == {"notes"}:
+        label = f"Changed notes on {phase.name}"
+    else:
+        label = f"Changed dates on {phase.name}"
     actions.commit(db, actor=actor, project_id=phase.project_id, kind="phase_edit", label=label,
                    before={"phase": before}, after={"phase": _snapshot_phase(phase)})
     return phase
@@ -117,6 +133,8 @@ def reorder_phase(db: DbSession, *, actor: User, phase: Phase, sort_order: int) 
     before = {"order": [str(p.id) for p in ordered]}
     ordered.remove(phase)
     ordered.insert(max(0, min(sort_order, len(ordered))), phase)
+    if [str(p.id) for p in ordered] == before["order"]:
+        raise DomainError("no_changes_to_apply", f"{phase.name} is already there.")
     for i, p in enumerate(ordered):
         p.sort_order = i
     db.flush()
@@ -162,7 +180,15 @@ def delete_phase(db: DbSession, *, actor: User, phase: Phase) -> None:
 
 def assign_sheets(db: DbSession, *, actor: User, phase: Phase, sheet_ids: list[uuid.UUID]) -> Phase:
     """`sheet_ids` is the full set the phase should own: sheets not in
-    it that are currently on this phase move back to the first phase."""
+    it that are currently on this phase move back to the first phase.
+
+    Compared on the resolved phase, not the stored column: a null
+    `phase_id` *is* the first phase, so assigning such a sheet to the
+    first phase changes nothing, and the first phase is always written
+    back as null -- one spelling for one place."""
+    first = phases_for(db, phase.project_id)[0]
+    is_first = phase.id == first.id
+    write_value = None if is_first else phase.id
     wanted = set(sheet_ids)
     project_sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == phase.project_id)))
     unknown = wanted - {s.id for s in project_sheets}
@@ -171,12 +197,13 @@ def assign_sheets(db: DbSession, *, actor: User, phase: Phase, sheet_ids: list[u
     before, after = {}, {}
     for s in project_sheets:
         current = s.phase_id
-        if s.id in wanted and current != phase.id:
+        resolved = current if current is not None else first.id
+        if s.id in wanted and resolved != phase.id:
             before[str(s.id)] = str(current) if current else None
-            s.phase_id = phase.id
-            after[str(s.id)] = str(phase.id)
-        elif s.id not in wanted and current == phase.id:
-            before[str(s.id)] = str(current)
+            s.phase_id = write_value
+            after[str(s.id)] = str(write_value) if write_value else None
+        elif s.id not in wanted and resolved == phase.id and not is_first:
+            before[str(s.id)] = str(current) if current else None
             s.phase_id = None
             after[str(s.id)] = None
     if not before:

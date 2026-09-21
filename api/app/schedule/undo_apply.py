@@ -12,7 +12,9 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
+from app.errors import DomainError
 from app.takeoff.models import Action, Item, Phase, PhaseLine, PhaseStagePlan, Sheet
+from app.takeoff.undo_apply import _ITEM_GONE_MESSAGE
 
 
 def _uuid(v):
@@ -54,7 +56,8 @@ def _restore_phase(db: DbSession, snap: dict, lines: list[dict], plans: list[dic
         if _get_or_expunge(db, PhaseLine, _uuid(l["id"])) is None:
             db.add(PhaseLine(id=_uuid(l["id"]), phase_id=phase.id, kind=l["kind"], label=l["label"],
                              percent_of_direct_hours=Decimal(l["percent_of_direct_hours"]),
-                             hours_override=_decimal(l.get("hours_override")), sort_order=l["sort_order"]))
+                             hours_override=_decimal(l.get("hours_override")), sort_order=l["sort_order"],
+                             updated_by_user_id=_uuid(l.get("updated_by_user_id"))))
     for p in plans:
         if _get_or_expunge(db, PhaseStagePlan, _uuid(p["id"])) is None:
             row = PhaseStagePlan(id=_uuid(p["id"]), phase_id=phase.id, stage=p["stage"])
@@ -96,14 +99,30 @@ def _apply_refs(db: DbSession, sheets: dict, items: dict) -> None:
     db.flush()
 
 
+def _set_item_phase(db: DbSession, item_id: uuid.UUID, phase_id: str | None) -> None:
+    """One item's override, for `item_phase_set` -- the same 409 the
+    other item-scoped kinds raise when the item was deleted since."""
+    item = db.execute(
+        select(Item).where(Item.id == item_id).with_for_update().execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if item is None:
+        raise DomainError("item_no_longer_exists", _ITEM_GONE_MESSAGE, status=409)
+    item.phase_id = _uuid(phase_id)
+    db.flush()
+
+
 def apply(db: DbSession, action: Action, direction: str) -> None:
     state = action.before if direction == "before" else action.after
     kind = action.kind
     if kind == "phase_create":
+        # The order is restored in both directions: creating in the
+        # middle shifted the later phases, so undo and redo both have
+        # to put every phase back on the sort_order it had.
         if direction == "before":
             _delete_phase_if_present(db, _uuid(action.after["phase"]["id"]))
         else:
             _restore_phase(db, action.after["phase"], action.after.get("lines", []), [])
+        _apply_order(db, state.get("order", []))
     elif kind == "phase_edit":
         _restore_phase(db, state["phase"], [], [])
     elif kind == "phase_reorder":
@@ -120,7 +139,7 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
     elif kind == "sheet_phase_set":
         _apply_refs(db, state["sheets"], {})
     elif kind == "item_phase_set":
-        _apply_refs(db, {}, {str(action.item_id): state["phase_id"]})
+        _set_item_phase(db, action.item_id, state["phase_id"])
     elif kind == "phase_propose_apply":
         if direction == "before":
             _apply_refs(db, action.before["sheets"], {})

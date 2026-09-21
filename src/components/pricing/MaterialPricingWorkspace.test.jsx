@@ -65,6 +65,11 @@ async function loaded(name = /20A duplex receptacle/) {
   await waitFor(() => expect(screen.getByRole("rowheader", { name })).toBeInTheDocument());
 }
 
+function pasteEvent(text) {
+  const store = { "text/plain": text };
+  return { clipboardData: { getData: (t) => store[t] ?? "", setData: () => {}, types: ["text/plain"] } };
+}
+
 describe("MaterialPricingWorkspace", () => {
   test("renders a row per item with the Missing information status when nothing resolves", async () => {
     const store = { getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }) };
@@ -319,6 +324,71 @@ describe("MaterialPricingWorkspace", () => {
     fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "Try again" }));
     await loaded();
     expect(store.getMaterialRows).toHaveBeenCalledTimes(2);
+  });
+
+  test("a pasted price and reason on one row send one PATCH with both; two rows send two, in order", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [projectRow, { ...projectRow, itemId: "i2", itemName: "High bay fixture" }], marketJob: null }),
+      setMaterialPrice: vi.fn((itemId, next) => Promise.resolve({ ...projectRow, itemId, itemName: itemId === "i1" ? projectRow.itemName : "High bay fixture", unitPrice: next.priceOverride, source: next.source, reason: next.reason })),
+    };
+    const review = renderMaterial({ store });
+    await loaded(/20A duplex receptacle/);
+    // Columns from Unit price: Unit price, Range (read-only), Basis, Reason
+    // -- so the clip carries an empty second column.
+    fireEvent.paste(cellFor("20A duplex receptacle", "Unit price"), pasteEvent("9\t\tProject price\tquote A\n8\t\tProject price\tquote B"));
+    await waitFor(() => expect(store.setMaterialPrice).toHaveBeenCalledTimes(2));
+    expect(store.setMaterialPrice.mock.calls).toEqual([
+      ["i1", { priceOverride: 9, source: "project_price", reason: "quote A" }],
+      ["i2", { priceOverride: 8, source: "project_price", reason: "quote B" }],
+    ]);
+    await waitFor(() => expect(review.showToast).toHaveBeenCalledWith("Pasted 4 cells on 2 rows"));
+    expect(cellFor("High bay fixture", "Line total")).toHaveTextContent("$80.00");
+  });
+
+  test("a pasted empty price on an entry clears it; a pasted basis on a row with no entry sends nothing", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [projectRow, { ...companyRow, itemId: "i2", itemName: "High bay fixture" }], marketJob: null }),
+      setMaterialPrice: vi.fn(),
+      clearMaterialPrice: vi.fn().mockResolvedValue({ ...companyRow, sourceLabel: "Company price" }),
+    };
+    const review = renderMaterial({ store });
+    await loaded(/20A duplex receptacle/);
+    // Row 1: an empty price on an entry. Row 2: nothing on price or range,
+    // "Allowance" on Basis -- disabled there, since the row has no entry.
+    fireEvent.paste(cellFor("20A duplex receptacle", "Unit price"), pasteEvent("\n\t\tAllowance"));
+    await waitFor(() => expect(store.clearMaterialPrice).toHaveBeenCalledWith("i1"));
+    expect(store.setMaterialPrice).not.toHaveBeenCalled();
+    await waitFor(() => expect(review.showToast).toHaveBeenCalledWith("Pasted 1 cell on 1 row"));
+  });
+
+  test("a paste that makes a row an allowance without a reason skips that row and says so", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [projectRow, { ...projectRow, itemId: "i2", itemName: "High bay fixture" }], marketJob: null }),
+      setMaterialPrice: vi.fn((itemId, next) => Promise.resolve({ ...projectRow, itemId, itemName: "High bay fixture", unitPrice: next.priceOverride, source: next.source, reason: next.reason, sourceLabel: "Allowance" })),
+    };
+    const review = renderMaterial({ store });
+    await loaded(/20A duplex receptacle/);
+    // Unit price is the first editable cell and thus active on mount;
+    // move onto Basis first so the paste's range starts there.
+    fireEvent.click(cellFor("20A duplex receptacle", "Basis"));
+    fireEvent.paste(cellFor("20A duplex receptacle", "Basis"), pasteEvent("Allowance\t\nAllowance\tstand-in"));
+    await waitFor(() => expect(store.setMaterialPrice).toHaveBeenCalledTimes(1));
+    expect(store.setMaterialPrice).toHaveBeenCalledWith("i2", { priceOverride: 15.5, source: "allowance", reason: "stand-in" });
+    expect(cellFor("20A duplex receptacle", "Basis")).toHaveTextContent("Project price"); // restored
+    await waitFor(() =>
+      expect(review.showToast).toHaveBeenCalledWith("Pasted 2 cells on 1 row — 1 row skipped, an allowance needs a reason"),
+    );
+  });
+
+  test("clicking the market evidence summary does not make its cell active", async () => {
+    const store = {
+      getMaterialRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [marketRow], marketJob: null }),
+    };
+    renderMaterial({ store });
+    await loaded(/2x4 LED troffer/);
+    const summary = screen.getByText("Sellers");
+    fireEvent.click(summary);
+    expect(summary.closest("[role='rowheader']")).not.toHaveAttribute("data-active");
   });
 
   const marketRow = {

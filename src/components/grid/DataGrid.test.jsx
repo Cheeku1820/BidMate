@@ -511,3 +511,114 @@ describe("fix round: minor items", () => {
     expect(onCommit).not.toHaveBeenCalled();
   });
 });
+
+function clipboardEvent(type, data = {}) {
+  // jsdom has no ClipboardEvent constructor with clipboardData; a plain
+  // Event with the property attached is what fireEvent passes through.
+  const store = { ...data };
+  return {
+    clipboardData: {
+      getData: (t) => store[t] ?? "",
+      setData: (t, v) => { store[t] = v; },
+      types: Object.keys(store),
+    },
+    _store: store,
+  };
+}
+
+describe("clipboard, fill, clear, undo", () => {
+  test("copy writes the range as TSV and prevents the default", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowLeft" }); // Quantity
+    fireEvent.keyDown(cell(0, 0), { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    const ev = clipboardEvent("copy");
+    const prevented = !fireEvent.copy(screen.getByRole("grid"), ev);
+    expect(prevented).toBe(true);
+    expect(ev._store["text/plain"]).toBe("1\t0.5\n2\t");
+  });
+
+  test("copy inside an open editor is left to the input", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    const ev = clipboardEvent("copy");
+    const prevented = !fireEvent.copy(screen.getByRole("textbox"), ev);
+    expect(prevented).toBe(false);
+  });
+
+  test("paste maps the clip through onCommitRange and never through onCommit", () => {
+    const onCommitRange = vi.fn();
+    const { onCommit } = setup({ onCommitRange });
+    fireEvent.paste(cell(0, HOURS), clipboardEvent("paste", { "text/plain": "2\tfirst\r\n3\tsecond\r\n" }));
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCommitRange).toHaveBeenCalledTimes(1);
+    expect(onCommitRange).toHaveBeenCalledWith(
+      [
+        { row: rows[0], key: "hours", value: 2 },
+        { row: rows[0], key: "note", value: "first" },
+        { row: rows[1], key: "hours", value: 3 },
+        { row: rows[1], key: "note", value: "second" },
+      ],
+      { kind: "paste" },
+    );
+  });
+
+  test("a paste with nothing applicable calls nothing; a paste while editing is left to the input", () => {
+    const onCommitRange = vi.fn();
+    const { onCommit } = setup({ onCommitRange });
+    fireEvent.paste(cell(0, HOURS), clipboardEvent("paste", { "text/plain": "abc" }));
+    expect(onCommitRange).not.toHaveBeenCalled();
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    fireEvent.paste(screen.getByRole("textbox"), clipboardEvent("paste", { "text/plain": "7" }));
+    expect(onCommitRange).not.toHaveBeenCalled();
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  test("without onCommitRange a paste goes through onCommit once per change, in order", () => {
+    const { onCommit } = setup();
+    fireEvent.paste(cell(0, HOURS), clipboardEvent("paste", { "text/plain": "2\n3" }));
+    expect(onCommit.mock.calls).toEqual([[rows[0], "hours", 2], [rows[1], "hours", 3]]);
+  });
+
+  test("Ctrl+D fills the top row down the range; on one cell it does nothing", () => {
+    const onCommitRange = vi.fn();
+    setup({ onCommitRange });
+    fireEvent.keyDown(cell(0, HOURS), { key: "d", ctrlKey: true });
+    expect(onCommitRange).not.toHaveBeenCalled();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(1, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(2, HOURS), { key: "d", metaKey: true });
+    expect(onCommitRange).toHaveBeenCalledWith(
+      [{ row: rows[1], key: "hours", value: 0.5 }, { row: rows[2], key: "hours", value: 0.5 }],
+      { kind: "fill" },
+    );
+  });
+
+  test("Delete over a range clears every entry through onCommitRange; on one cell it still uses onCommit", () => {
+    const onCommitRange = vi.fn();
+    const { onCommit } = setup({ onCommitRange });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(1, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(2, HOURS), { key: "Delete" });
+    expect(onCommitRange).toHaveBeenCalledWith(
+      [{ row: rows[0], key: "hours", value: null }, { row: rows[2], key: "hours", value: null }],
+      { kind: "clear" },
+    );
+    expect(onCommit).not.toHaveBeenCalled();
+    fireEvent.keyDown(cell(2, HOURS), { key: "Escape" });
+    fireEvent.keyDown(cell(2, HOURS), { key: "Backspace" });
+    expect(onCommit).toHaveBeenCalledWith(rows[2], "hours", null);
+  });
+
+  test("Ctrl+Z and Ctrl+Shift+Z call onUndo and onRedo on a cell, never inside an editor", () => {
+    const onUndo = vi.fn(), onRedo = vi.fn();
+    setup({ onUndo, onRedo });
+    fireEvent.keyDown(cell(0, HOURS), { key: "z", metaKey: true });
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(cell(0, HOURS), { key: "Z", ctrlKey: true, shiftKey: true });
+    expect(onRedo).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "z", metaKey: true });
+    expect(onUndo).toHaveBeenCalledTimes(1);
+  });
+});

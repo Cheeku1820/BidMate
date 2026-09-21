@@ -29,7 +29,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { isEditable, useGridNavigation } from "./useGridNavigation.js";
-import { extend, normalize, selectAll } from "./useGridSelection.js";
+import { clearChanges, extend, fillChanges, normalize, parseClipboard, pasteChanges, selectAll, toTsv } from "./useGridSelection.js";
 
 const cellId = (row, col) => `${row}:${col}`;
 
@@ -41,7 +41,7 @@ function parseNumber(raw, edit) {
 }
 
 const DataGrid = forwardRef(function DataGrid(
-  { columns, rows, rowKey, rowLabel, onCommit, onCancel, footer, caption },
+  { columns, rows, rowKey, rowLabel, onCommit, onCommitRange, onCancel, onUndo, onRedo, footer, caption },
   ref,
 ) {
   const { active, setActive, move } = useGridNavigation(columns, rows);
@@ -124,6 +124,32 @@ const DataGrid = forwardRef(function DataGrid(
 
   function collapse() {
     setAnchor(null);
+  }
+
+  /** Every range operation ends here: the screen gets the whole list
+   *  once (onCommitRange) or, on a grid without it, one onCommit per
+   *  change in order. An empty list is nothing -- no call, no toast. */
+  function dispatchRange(changes, kind) {
+    if (!changes.length) return;
+    if (onCommitRange) onCommitRange(changes, { kind });
+    else for (const c of changes) onCommit(c.row, c.key, c.value);
+  }
+
+  function copyText() {
+    return range ? toTsv(range, columns, rows) : "";
+  }
+
+  function onCopy(event) {
+    if (editing || !range) return; // the input's own copy
+    event.clipboardData.setData("text/plain", copyText());
+    event.preventDefault();
+  }
+
+  function onPaste(event) {
+    if (editing || !range) return;
+    event.preventDefault();
+    const text = event.clipboardData.getData("text/plain");
+    dispatchRange(pasteChanges(parseClipboard(text), range, columns, rows), "paste");
   }
 
   function startEdit(row, col, { value, caret, message } = {}) {
@@ -337,6 +363,31 @@ const DataGrid = forwardRef(function DataGrid(
       }
       return; // null: let Tab leave the grid
     }
+    const mod = event.ctrlKey || event.metaKey;
+    if (mod && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) onRedo?.();
+      else onUndo?.();
+      return;
+    }
+    if (mod && event.key.toLowerCase() === "c") {
+      // Browsers differ on whether Ctrl/Cmd+C fires `copy` on a focused
+      // non-editable element with no text selection; the copy handler
+      // above covers the ones that do, this covers the rest. Both may
+      // run and write the same text.
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) navigator.clipboard.writeText(copyText()).catch(() => {});
+      return;
+    }
+    if (mod && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      if (range && range.r1 > range.r0) dispatchRange(fillChanges(range, columns, rows), "fill");
+      return;
+    }
+    if ((event.key === "Delete" || event.key === "Backspace") && isRange) {
+      event.preventDefault();
+      dispatchRange(clearChanges(range, columns, rows), "clear");
+      return;
+    }
     if (!isEditable(column, rows[row])) return;
     const kind = column.edit.kind;
     if (event.key === "Enter" || event.key === "F2") {
@@ -486,7 +537,13 @@ const DataGrid = forwardRef(function DataGrid(
   // pricing pages fill the shell (.page--fill) so it has a height.
   return (
     <div className="grid-scroll">
-      <table className="data-table takeoff-table grid" role="grid" aria-multiselectable="true">
+      <table
+        className="data-table takeoff-table grid"
+        role="grid"
+        aria-multiselectable="true"
+        onCopy={onCopy}
+        onPaste={onPaste}
+      >
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr role="row">

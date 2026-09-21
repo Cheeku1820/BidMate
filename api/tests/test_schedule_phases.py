@@ -312,3 +312,76 @@ def test_unflag_keeps_the_row_but_hides_it(db, project, item, dana):
     row = overrides.set_lead_time(db, actor=dana, item=item, changes={"flagged": False}, today=date(2026, 9, 21))
     db.commit()
     assert row.flagged is False
+
+
+def test_phase_line_edit_undo_survives_a_cascade(db, project, dana):
+    """PhaseLine cascades with its phase at the DB level only (ON DELETE
+    CASCADE FK, never an ORM relationship) -- deleting the Phase row
+    directly, so the ORM's own delete-tracking never touches PhaseLine
+    at all. Combined with this session's expire_on_commit=False, `line`'s
+    identity-mapped object stays a live-looking Python instance here
+    even though its row is gone: exactly the trap db.get() falls into,
+    and the one _get_or_expunge/_exists helpers exist elsewhere to avoid.
+    apply_undo must re-query rather than trust db.get()'s identity-map
+    fast path for this row."""
+    from sqlalchemy import delete as sa_delete
+
+    first = svc.first_phase(db, project, create=True)
+    line = db.query(PhaseLine).filter_by(phase_id=first.id).order_by(PhaseLine.sort_order).first()
+    line_id = line.id
+    overrides.set_line_hours(db, actor=dana, line=line, hours=Decimal("12"))
+    db.commit()
+    # Delete the phase by a raw statement, not svc.delete_phase() or
+    # db.delete() -- so nothing tells the ORM that phase_lines cascaded
+    # away underneath it. `line` stays in the identity map, unexpired.
+    db.execute(sa_delete(Phase).where(Phase.id == first.id))
+    db.commit()
+    undo.undo(db, actor=dana, project_id=project.id)
+    db.commit()
+    # A real query never finds the row either way.
+    assert db.query(PhaseLine).filter_by(id=line_id).one_or_none() is None
+    # The stale in-memory object must be left alone -- never silently
+    # rewritten (and flushed) to describe a row that no longer exists.
+    assert line.hours_override == Decimal("12.00")
+
+
+def test_lead_time_label_without_weeks_is_refused(db, project, item, dana):
+    with pytest.raises(DomainError) as e:
+        overrides.set_lead_time(db, actor=dana, item=item, changes={"source_label": "Eaton rep"}, today=date(2026, 9, 21))
+    assert e.value.code == "lead_time_weeks_needed"
+
+
+def test_lead_time_quoted_at_without_weeks_is_refused(db, project, item, dana):
+    overrides.set_lead_time(db, actor=dana, item=item, changes={"flagged": False}, today=date(2026, 9, 21))
+    db.commit()
+    with pytest.raises(DomainError) as e:
+        overrides.set_lead_time(db, actor=dana, item=item, changes={"quoted_at": date(2026, 1, 1)}, today=date(2026, 9, 21))
+    assert e.value.code == "lead_time_weeks_needed"
+
+
+def test_lead_time_no_op_is_refused_and_not_recorded(db, project, item, dana):
+    overrides.set_lead_time(db, actor=dana, item=item, changes={"needed_for_stage": "trim"}, today=date(2026, 9, 21))
+    db.commit()
+    with pytest.raises(DomainError) as e:
+        overrides.set_lead_time(db, actor=dana, item=item, changes={"needed_for_stage": "trim"}, today=date(2026, 9, 21))
+    assert e.value.code == "no_changes_to_apply"
+    db.commit()
+    assert db.query(Action).filter_by(kind="lead_time_edit").count() == 1
+
+
+def test_stage_plan_undo_restores_who_set_it(db, project, org, dana):
+    from app.auth.passwords import hash_password
+    from app.identity.models import User
+
+    other = User(org_id=org.id, email="sam@example.com", password_hash=hash_password("correct-horse"),
+                 name="Sam Ortiz", color="#7a4b8f")
+    db.add(other); db.flush()
+    first = svc.first_phase(db, project, create=True)
+    row = overrides.set_stage_plan(db, actor=dana, phase=first, stage="rough_in", changes={"journeyman": 4})
+    db.commit()
+    assert row.updated_by_user_id == dana.id
+    overrides.set_stage_plan(db, actor=other, phase=first, stage="rough_in", changes={"journeyman": 6})
+    db.commit()
+    assert row.updated_by_user_id == other.id
+    undo.undo(db, actor=dana, project_id=project.id); db.commit(); db.refresh(row)
+    assert row.journeyman == 4 and row.updated_by_user_id == dana.id

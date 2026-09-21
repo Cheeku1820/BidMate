@@ -109,7 +109,7 @@ class ItemMarketPrice(Base):
     run_id: Mapped[uuid.UUID | None]
 ```
 
-`ProjectMaterialPrice.source` gains a third value, `"supplier_quote"`, beside `"project_price"` and `"allowance"`. Two nullable columns join it: `supplier_name: String(200)` and `quote_date: Date`. Migration `0024_market_pricing` adds both tables, the `postal_code` column and its backfill, and the two `project_material_prices` columns.
+`ProjectMaterialPrice.source` gains a third value, `"supplier_quote"`, beside `"project_price"` and `"allowance"`. Two nullable columns join it: `supplier_name: String(200)` and `quote_date: Date`. Migration `0025_market_pricing` (written as 0024, renumbered at integration behind the resolve migration) adds both tables, the `postal_code` column and its backfill, and the two `project_material_prices` columns.
 
 ## 5. Precedence resolution, changed
 

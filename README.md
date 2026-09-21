@@ -66,7 +66,7 @@ Once you've uploaded and processed a drawing set, the workspace surfaces whateve
 
 **Fix a missing scale.** A sheet with no scale in its title block shows measured items as *Missing information*, drawn as dashed red polylines because they can't be measured with confidence. Set the scale, or calibrate against a known dimension on the plan, to clear the warning and flip the affected items to *Ready to review*.
 
-**Classify an unknown symbol.** A symbol that isn't in the legend stays visible and reviewable rather than being silently dropped. Edit it to assign a real classification.
+**Classify an unknown symbol.** A symbol that isn't in the legend stays visible and reviewable rather than being silently dropped. Type what it is in your own words — "2x4 LED troffer, type F on the E-501 schedule" — check what would change, and confirm: every one in the cluster is renamed and approved in one press, and the same tag elsewhere on the set is offered next. "Not a device" rejects with your reason.
 
 **Hit the blocking rule.** Click **Finish review** while any *Missing information* item remains. Completion is blocked, the blocking items are listed with direct links, and only *Needs attention* items can be carried forward — after an explicit acknowledgment checkbox.
 
@@ -133,6 +133,7 @@ src/
       NoteForm.jsx             add/edit, with the context/reference control
       ApplyNotesBanner.jsx     offers the re-run when context notes are pending
       noteVocabulary.js        a note's own words, distinct from the review labels
+    decision/                  the item panel's "What is this?" — box, proposal card, statement
     grid/                      the editable grid under Labor and Material pricing
       DataGrid.jsx             cells, in-place editors, validation, the Clear affordance
       useGridNavigation.js     the active-cell movement rules
@@ -190,7 +191,7 @@ Further reading: [`DESIGN.md`](DESIGN.md) covers the interaction rules — bluep
 
 Targets WCAG 2.2 AA. Visible focus rings on every control, symbol markers reachable by keyboard with `Enter`/`Space` to select, `aria-label`s naming the item and its status, form fields with persistent visible labels, `prefers-reduced-motion` respected, and no status conveyed by color alone.
 
-Single-key shortcuts (<kbd>A</kbd> approve, <kbd>E</kbd> edit, <kbd>R</kbd> reject, <kbd>J</kbd>/<kbd>K</kbd> step, <kbd>+</kbd>/<kbd>−</kbd>/<kbd>0</kbd> zoom) are suppressed while focus is in a text field.
+Single-key shortcuts (<kbd>A</kbd> approve, <kbd>E</kbd> edit, <kbd>R</kbd> reject, <kbd>J</kbd>/<kbd>K</kbd> step, <kbd>+</kbd>/<kbd>−</kbd>/<kbd>0</kbd> zoom) are suppressed while focus is in a text field. The item panel's "What is this?" box takes focus by itself only on an unclassified item — a symbol not in the legend — so stepping through classified items never swallows a key; press <kbd>E</kbd> to type on any other item, and <kbd>Esc</kbd> to leave the box.
 
 Below 1024px the workspace shows a "use a larger screen" message rather than degrading the three-panel layout. This is deliberate — reviewing drawings on a phone is not a supported task.
 

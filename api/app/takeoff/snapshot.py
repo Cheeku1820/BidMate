@@ -119,6 +119,8 @@ def _item_out(item: Item, warnings: list[Warning], approved_by_name: str | None)
         y=item.y,
         path=item.path,
         notes=item.notes,
+        reject_reason=item.reject_reason,
+        resolve_note=item.resolve_note,
         evidence=item.evidence,
         warnings=[_warning_out(w) for w in warnings],
         material_cost=item.material_cost,

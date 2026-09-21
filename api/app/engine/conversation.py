@@ -31,7 +31,12 @@ from .contracts import Proposal
 INTENTS = ("reclassify", "exclude", "set_context", "unknown")
 
 _EXCLUDE = ("ignore", "is existing", "existing to remain", "not in contract",
-            "not doing", "exclude", "out of scope", "by others")
+            "not doing", "exclude", "out of scope", "by others",
+            # A shape Counting clustered that turns out not to be a device
+            # at all -- a room-name label, a grid bubble, a revision cloud
+            # -- reads as the same "take this out of the takeoff" request
+            # as a scope exclusion, so it routes the same way.
+            "not a device")
 _RECLASSIFY = ("are all", "is a", "are type", "all type", "these are", "should be")
 _CONTEXT = ("ceiling", "feet", "height", "mounting", "voltage", "in here")
 

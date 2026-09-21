@@ -91,7 +91,7 @@ class Project(Base):
     customer: Mapped[str] = mapped_column(String(300), default="", server_default="")
     location: Mapped[str] = mapped_column(String(300), default="", server_default="")
     # The ZIP both market sources want. Parsed from `location` once by
-    # migration 0024, editable on project settings. None means every
+    # migration 0025, editable on project settings. None means every
     # market lookup is "location_needed" -- never a national number.
     postal_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
     bid_due_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -340,6 +340,12 @@ class Item(Base):
     y: Mapped[int | None] = mapped_column(Integer, nullable=True)
     path: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # The estimator's own words at the moment of decision (say-what-it-is
+    # spec). A rejection's reason and a reclassification's note live on
+    # the item so the spreadsheet and the export can show them; the
+    # action log carries them too, as provenance.
+    reject_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolve_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Cost, carried for the spreadsheet and export. The engine stops at
     # total direct cost -- markup, overhead, and profit are an
@@ -413,6 +419,26 @@ class ItemEvidenceImage(Base):
     )
     png: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SymbolResolution(Base):
+    """What this firm read a cluster tag as, on this project -- written
+    only when an estimator applies a proposal, never by the engine. The
+    sheet job overlays it on a later run so the tag arrives already
+    named, at Ready to review, never approved. One row per (project,
+    tag); a second resolution of the same tag replaces the first."""
+    __tablename__ = "symbol_resolutions"
+    __table_args__ = (UniqueConstraint("project_id", "tag", name="uq_symbol_resolution_project_tag"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    tag: Mapped[str] = mapped_column(String(50))
+    name: Mapped[str] = mapped_column(String(300))
+    system: Mapped[str] = mapped_column(String(100))
+    category: Mapped[str] = mapped_column(String(100))
+    catalog_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    resolved_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class CompanyLaborRate(Base):
@@ -574,6 +600,9 @@ class Action(Base):
     label: Mapped[str] = mapped_column(String(300))
     before: Mapped[dict] = mapped_column(JSONB, default=dict)
     after: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # The estimator's own sentence when the action came from the decision
+    # area (say-what-it-is spec) -- stored, never interpreted again.
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
     undoes_action_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("actions.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 

@@ -52,6 +52,8 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "y": int,
     "path": list,
     "notes": str,
+    "reject_reason": str,
+    "resolve_note": str,
     "evidence": dict,
     "material_cost": Decimal,
     "labor_hours": Decimal,
@@ -116,6 +118,19 @@ MATERIAL_PRICE_SNAPSHOT_TYPES: dict[str, type] = {
     "quote_date": date,
     "updated_by_user_id": uuid.UUID,
     "updated_at": datetime,
+}
+
+SYMBOL_RESOLUTION_SNAPSHOT_TYPES: dict[str, type] = {
+    "id": uuid.UUID,
+    "org_id": uuid.UUID,
+    "project_id": uuid.UUID,
+    "tag": str,
+    "name": str,
+    "system": str,
+    "category": str,
+    "catalog_id": str,
+    "resolved_by_user_id": uuid.UUID,
+    "resolved_at": datetime,
 }
 
 # The key `before`/`after` nest a list of per-item snapshots under, for

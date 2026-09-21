@@ -80,6 +80,8 @@ class ItemOut(BaseModel):
     y: int | None = None
     path: list | None = None
     notes: str
+    reject_reason: str | None = None
+    resolve_note: str | None = None
     evidence: dict | None = None
     # A list, not a single optional warning: an item can carry more than
     # one live warning at once (Task 9's scale-and-legend case is the
@@ -597,5 +599,73 @@ class CompanyLaborHoursOverrideOut(BaseModel):
     item_name: str
     hours_per_unit: Decimal
     updated_at: datetime
+
+    model_config = MODEL_CONFIG
+
+
+class ResolveIn(BaseModel):
+    text: str = Field(default="", max_length=2000)
+    cluster: bool = True
+
+    model_config = {**MODEL_CONFIG, "extra": "forbid"}
+
+
+class ScheduleMatchOut(BaseModel):
+    sheet: str
+    line: str
+
+    model_config = MODEL_CONFIG
+
+
+class ProposalOut(BaseModel):
+    """What the estimator's sentence would change -- shown, not written.
+    Shape-constrained on purpose (say-what-it-is spec): there is no
+    field a drawing set could steer into an action.
+
+    The same shape comes back as `ApplyProposalIn.proposal`, so the text
+    fields carry their columns' widths (`Item.name` and
+    `symbol_resolutions.name` are String(300); `system` and `category`
+    String(100)). Membership in the closed system/category sets and the
+    non-blank/quantity rules are the apply route's
+    (`resolve_apply._validate_reclassify`), with the copy `PATCH
+    /items/{id}` uses -- an exclude or couldn't-read proposal echoes the
+    item's current values, which a hand edit may have set outside those
+    sets, and that echo must still serialize."""
+    intent: str  # "reclassify" | "exclude" | "unknown"
+    target_item_ids: list[uuid.UUID]
+    name: str = Field(max_length=300)
+    system: str = Field(max_length=100)
+    category: str = Field(max_length=100)
+    unit: str
+    catalog_id: str | None = None
+    schedule_match: ScheduleMatchOut | None = None
+    quantity: int | None = None
+    reject_reason: str | None = None
+    summary: str
+    source: str  # "read" | "typed"
+    versions: dict[uuid.UUID, int]
+
+    model_config = MODEL_CONFIG
+
+
+class ApplyProposalIn(BaseModel):
+    proposal: ProposalOut
+    approve: bool = False
+    note: str = Field(default="", max_length=2000)
+
+    model_config = {**MODEL_CONFIG, "extra": "forbid"}
+
+
+class AlsoMatchingOut(BaseModel):
+    count: int
+    sheet_numbers: list[str]
+
+    model_config = MODEL_CONFIG
+
+
+class ApplyProposalOut(BaseModel):
+    label: str
+    snapshot: SnapshotOut
+    also_matching: AlsoMatchingOut
 
     model_config = MODEL_CONFIG

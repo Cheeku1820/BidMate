@@ -46,7 +46,7 @@ api/app/
   worker/price_job.py                @register("price")
   worker/price_sheet_job.py          @register("price_sheet")
   worker/classify_job.py             _finish_project queues price
-  migrations/versions/0024_market_pricing.py
+  migrations/versions/0025_market_pricing.py
   eval/pricing_coverage.py           the after-the-fact coverage test
 api/tests/
   test_market_classify.py, test_market_price_sheet.py, test_pricing.py (+), test_pricing_endpoints.py (+),
@@ -67,7 +67,7 @@ src/
 
 **Files:**
 - Modify: `api/app/config.py`, `api/.env.example`, `api/app/jobs/schemas.py`, `api/app/documents/schemas.py:8`, `api/app/takeoff/models.py` (Project ~line 92, ProjectMaterialPrice ~line 495, append two classes), `api/requirements.txt`
-- Create: `api/migrations/versions/0024_market_pricing.py`
+- Create: `api/migrations/versions/0025_market_pricing.py`
 - Test: `api/tests/test_market_models.py`
 
 **Interfaces:**
@@ -195,7 +195,7 @@ DOC_TYPES = ("Drawings", "Specifications", "Addendum", "Scope", "Other", "Pricin
 
 ```python
     # The ZIP both market sources want. Parsed from `location` once by
-    # migration 0024, editable on project settings. None means every
+    # migration 0025, editable on project settings. None means every
     # market lookup is "location_needed" -- never a national number.
     postal_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
 ```
@@ -259,13 +259,13 @@ class ItemMarketPrice(Base):
 
 - [ ] **Step 7: Migration**
 
-`api/migrations/versions/0024_market_pricing.py`:
+`api/migrations/versions/0025_market_pricing.py`:
 
 ```python
 """market_pricing
 
-Revision ID: 0024
-Revises: 0023
+Revision ID: 0025
+Revises: 0024
 Create Date: 2026-09-18 00:00:00.000000
 
 docs/specs/estimate-first-pricing.md: the two market tables, the
@@ -281,8 +281,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
-revision: str = '0024'
-down_revision: Union[str, None] = '0023'
+revision: str = '0025'
+down_revision: Union[str, None] = '0024'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -358,7 +358,7 @@ Expected: PASS. (The test database is created from `Base.metadata`, so the model
 - [ ] **Step 9: Commit**
 
 ```bash
-git add api/app/config.py api/.env.example api/requirements.txt api/app/jobs/schemas.py api/app/documents/schemas.py api/app/takeoff/models.py api/migrations/versions/0024_market_pricing.py api/tests/test_market_models.py
+git add api/app/config.py api/.env.example api/requirements.txt api/app/jobs/schemas.py api/app/documents/schemas.py api/app/takeoff/models.py api/migrations/versions/0025_market_pricing.py api/tests/test_market_models.py
 git commit -m "Market pricing: the two tables, the project ZIP, supplier fields, two job kinds"
 ```
 
@@ -2912,7 +2912,7 @@ With `ONEBUILD_API_KEY` and `SERPAPI_KEY` in `api/.env`: `cd api && ../.engineve
 
 ## Self-review
 
-**Spec coverage.** §1 chain → Task 2. §2 sources → Task 5. §3 job, classification, cache, cap, location, keys absent, reprocess → Tasks 3, 6; ZIP → Task 4. §4 data model → Task 1 (`ProjectMaterialPrice.supplier_name/quote_date`, `MarketLookup`, `ItemMarketPrice`, `postal_code`, migration 0024). §5 resolution, outcomes copy, warnings → Tasks 2, 7. §6 supplier sheets: request → Tasks 9, 10; upload as `Pricing` document → Task 9; preview in the worker → Task 10; apply as one `commit()` + company save → Task 10; modal → Task 11. §7 security → Task 5 (trimming, https-only), Task 9 (only price and key interpreted). §8 API surface → Tasks 4, 7, 10; frontend files → Tasks 8, 11. §10 tests → each task; coverage eval → Task 12. §11 dependencies/config → Task 1.
+**Spec coverage.** §1 chain → Task 2. §2 sources → Task 5. §3 job, classification, cache, cap, location, keys absent, reprocess → Tasks 3, 6; ZIP → Task 4. §4 data model → Task 1 (`ProjectMaterialPrice.supplier_name/quote_date`, `MarketLookup`, `ItemMarketPrice`, `postal_code`, migration 0025). §5 resolution, outcomes copy, warnings → Tasks 2, 7. §6 supplier sheets: request → Tasks 9, 10; upload as `Pricing` document → Task 9; preview in the worker → Task 10; apply as one `commit()` + company save → Task 10; modal → Task 11. §7 security → Task 5 (trimming, https-only), Task 9 (only price and key interpreted). §8 API surface → Tasks 4, 7, 10; frontend files → Tasks 8, 11. §10 tests → each task; coverage eval → Task 12. §11 dependencies/config → Task 1.
 
 **Gaps found and folded in:** the spec's §3 "a ZIP being set queues a price job" — added to Task 7 Step 4 on `patch_postal_code`. `set_doc_type` retyping a `Pricing` sheet — Task 9 Step 4. `MATERIAL_PRICE_SNAPSHOT_TYPES` gaining the two columns so undo round-trips them — Task 10 Step 6.
 

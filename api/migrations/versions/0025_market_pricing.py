@@ -1,8 +1,12 @@
 """market_pricing
 
-Revision ID: 0024
-Revises: 0023
+Revision ID: 0025
+Revises: 0024
 Create Date: 2026-09-18 00:00:00.000000
+
+Numbered 0025: 0024 is say-what-it-is's resolve migration, which landed
+on main first; this migration was written as 0024 on its own branch and
+renumbered at integration so the chain stays linear.
 
 docs/specs/estimate-first-pricing.md: the two market tables, the
 project ZIP, the supplier fields on project_material_prices, and two
@@ -24,8 +28,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
-revision: str = '0024'
-down_revision: Union[str, None] = '0023'
+revision: str = '0025'
+down_revision: Union[str, None] = '0024'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

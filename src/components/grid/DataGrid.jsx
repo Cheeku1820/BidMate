@@ -139,6 +139,54 @@ const DataGrid = forwardRef(function DataGrid(
     };
   }, []);
 
+  // Column widths, set on the first resize drag: key -> px. Rendering
+  // stays auto-layout until then, so an estimator who never resizes
+  // sees exactly today's table.
+  const DEFAULT_WIDTH = 120;
+  const MIN_WIDTH = 60;
+  const [widths, setWidths] = useState(null);
+  const [resizing, setResizing] = useState(false);
+  const headers = useRef(new Map());
+  // The in-flight resize listeners, so an unmount mid-drag can remove
+  // them -- otherwise they stay on `document` with a stale closure and
+  // still fire a dispatch against a grid that no longer exists.
+  const resizeListeners = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (resizeListeners.current) {
+        document.removeEventListener("mousemove", resizeListeners.current.onMove);
+        document.removeEventListener("mouseup", resizeListeners.current.onUp);
+      }
+    };
+  }, []);
+
+  function startResize(event, key) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    // First drag: snapshot what the browser's auto layout gave every
+    // column, so only the dragged one moves from here on.
+    const base = widths || new Map(columns.map((c) => [c.key, headers.current.get(c.key)?.offsetWidth || DEFAULT_WIDTH]));
+    const startWidth = base.get(key);
+    setWidths(base);
+    setResizing(true);
+    const onMove = (e) => {
+      const next = new Map(base);
+      next.set(key, Math.max(MIN_WIDTH, startWidth + e.clientX - startX));
+      setWidths(next);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      resizeListeners.current = null;
+      setResizing(false);
+    };
+    resizeListeners.current = { onMove, onUp };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
   useEffect(() => {
     if (focusPending.current && active && !editing) {
       focusPending.current = false;
@@ -640,24 +688,40 @@ const DataGrid = forwardRef(function DataGrid(
   return (
     <div className="grid-scroll">
       <table
-        className="data-table takeoff-table grid"
+        className={"data-table takeoff-table grid" + (resizing ? " is-resizing" : "")}
         role="grid"
         aria-multiselectable="true"
+        style={widths ? { tableLayout: "fixed", width: [...widths.values()].reduce((a, b) => a + b, 0) + "px" } : undefined}
         onCopy={onCopy}
         onPaste={onPaste}
       >
         <caption className="sr-only">{caption}</caption>
+        {widths ? (
+          <colgroup>
+            {columns.map((c) => (
+              <col key={c.key} style={{ width: widths.get(c.key) + "px" }} />
+            ))}
+          </colgroup>
+        ) : null}
         <thead>
           <tr role="row">
             {columns.map((c) => {
               const dir = sort && sort.key === c.key ? sort.direction : null;
               return (
-                <th key={c.key} scope="col" role="columnheader" aria-sort={dir || undefined} style={{ textAlign: c.align }}>
+                <th
+                  key={c.key}
+                  ref={(el) => (el ? headers.current.set(c.key, el) : headers.current.delete(c.key))}
+                  scope="col"
+                  role="columnheader"
+                  aria-sort={dir || undefined}
+                  style={{ textAlign: c.align }}
+                >
                   <button type="button" className="grid-sort" onClick={() => onSortClick(c)}>
                     {c.label}
                     {dir === "ascending" ? <ArrowUp size={12} aria-hidden="true" /> : null}
                     {dir === "descending" ? <ArrowDown size={12} aria-hidden="true" /> : null}
                   </button>
+                  <div className="grid-resize" role="presentation" onMouseDown={(event) => startResize(event, c.key)} />
                 </th>
               );
             })}

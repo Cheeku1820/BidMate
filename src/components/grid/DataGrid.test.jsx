@@ -711,3 +711,44 @@ describe("fill handle", () => {
     expect(onCommitRange).not.toHaveBeenCalled();
   });
 });
+
+describe("resize", () => {
+  const handles = () => document.querySelectorAll(".grid-resize");
+
+  test("dragging a header edge widens that column and freezes the layout; the floor is 60px; the drag does not sort", () => {
+    setup();
+    expect(handles()).toHaveLength(5);
+    const h = handles()[2]; // Hours
+    fireEvent.mouseDown(h, { clientX: 100 });
+    expect(screen.getByRole("grid")).toHaveClass("is-resizing");
+    fireEvent.mouseMove(document, { clientX: 140 });
+    fireEvent.mouseUp(document);
+    const cols = document.querySelectorAll("colgroup col");
+    expect(cols).toHaveLength(5);
+    // jsdom reports offsetWidth 0, so the snapshot falls back to 120px.
+    expect(cols[2].style.width).toBe("160px");
+    expect(cols[1].style.width).toBe("120px");
+    expect(screen.getByRole("grid").style.tableLayout).toBe("fixed");
+    expect(screen.getByRole("grid")).not.toHaveClass("is-resizing");
+    expect(screen.getByRole("columnheader", { name: "Hours" })).not.toHaveAttribute("aria-sort");
+    fireEvent.mouseDown(h, { clientX: 100 });
+    fireEvent.mouseMove(document, { clientX: -500 });
+    fireEvent.mouseUp(document);
+    expect(document.querySelectorAll("colgroup col")[2].style.width).toBe("60px");
+  });
+
+  test("unmounting mid-drag removes the document mousemove and mouseup listeners", () => {
+    const { unmount } = setup();
+    const h = handles()[2];
+    fireEvent.mouseDown(h, { clientX: 100 });
+    const spy = vi.spyOn(document, "removeEventListener");
+    unmount();
+    expect(spy).toHaveBeenCalledWith("mousemove", expect.any(Function));
+    expect(spy).toHaveBeenCalledWith("mouseup", expect.any(Function));
+    spy.mockRestore();
+    expect(() => {
+      fireEvent.mouseMove(document, { clientX: 300 });
+      fireEvent.mouseUp(document);
+    }).not.toThrow();
+  });
+});

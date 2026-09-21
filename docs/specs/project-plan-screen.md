@@ -139,8 +139,9 @@ derivation below has real input on them. Kittles and Pulte ship
 
 ```
 {
-  "read_at":        ISO timestamp of the latest processed document, or null
-  "reading":        true while any document is still being read
+  "read_at":        ISO timestamp of the latest processed document (its upload time — there is no processed_at), or null
+  "reading":        true while a drawing set is still being read
+  "has_drawings":   true when at least one document is typed Drawings (the client's Start button needs it)
   "undecided":      count of lines in status "found"
   "scope":          [ScopeStatementOut, ...]          the existing shape
   "specs":          [PlanLineOut, ...]                kind "spec_section"
@@ -164,12 +165,18 @@ derivation below has real input on them. Kittles and Pulte ship
   "quote":             the verbatim line it was taken from
   "division":          "26" | "27" | "28"  (spec sections only)
   "sheet_number":      the sheet's number (schedules only)
+  "added":             true for a phase the estimator stated (false otherwise)
+  "phase_id":          the stated phase's id, for DELETE (null otherwise)
+  "places":            every place a phase appeared: [{document_id, document_filename, page, quote}, ...]
 }
 ```
 
-`PhaseOut` is a `PlanLineOut` with kind `"phase"`, plus `"added": true`
-and no document, page or quote when the estimator stated it. An added
-phase has a `key` of the form `phase:added:<uuid>`.
+A phase is a `PlanLineOut` with kind `"phase"`. A detected phase lists
+every place it appeared in `places` (the first is also the line's own
+citation). A stated phase has `"added": true`, a `phase_id`, no
+document, page or quote, a `key` of the form `phase:added:<uuid>`, and
+starts as *confirmed* — it is the estimator's own statement, so it is
+never counted as undecided; it can still be dismissed or reopened.
 
 `QuestionOut`:
 
@@ -218,9 +225,15 @@ so the corpus tests can feed it stored text without a database.
 document whose `doc_type` is Specifications, Addendum, Scope or Other
 (not Drawings: a drawing's page text is not stored). Pattern: a line
 that begins with a Division 26/27/28 section number in any of its
-forms — `26 05 19`, `260519`, `26-05-19` — followed by a title on the
-same line or the next. One line per distinct section number per
-document; the first occurrence wins and its line is the quote.
+forms — `26 05 19`, `260519`, `26-05-19`, and the level-4 forms
+`26 05 33.13` / `26 0533.13` (the suffix is part of the number, so
+`26 05 33`, `26 05 33.13` and `26 05 33.16` are three sections) —
+followed by a title on the same line or the next. A table of contents
+is the usual source: dot leaders and a trailing page reference are cut
+from the title (`GENERAL PROVISIONS ........ CDG` → `GENERAL PROVISIONS`);
+the quote stays verbatim, and when the title came from the next line
+the quote is both lines joined. One line per distinct section number
+per document; the first occurrence wins.
 `context_text` carries no page markers, so a spec line's `page` is
 null, its citation reads the filename alone, and its link opens the
 document at page 1 — the one section where "the page it came from"
@@ -297,7 +310,7 @@ migration spells its constants out; it imports nothing from `app`.
 |---|---|---|
 | `id` | uuid pk | |
 | `project_id` | uuid fk projects, cascade, indexed | |
-| `entry_key` | text | unique with `project_id` |
+| `entry_key` | string(300) | unique with `project_id` |
 | `status` | string(20) | check in `('found', 'confirmed', 'dismissed', 'answered')` |
 | `edited_text` | string(500) null | the correction |
 | `note_id` | uuid fk notes, set null | the answer, for a question |
@@ -339,7 +352,7 @@ project in another org, never 403), rows appended to
 | Route | Does |
 |---|---|
 | `GET /api/projects/{id}/plan` | assembles the plan (above) |
-| `PATCH /api/projects/{id}/plan/lines/{key}` | body `{"status": ...}` or `{"edited_text": ...}`, exactly one — the `scope.service.decide` contract; `status` may be `found` to reopen |
+| `PATCH /api/projects/{id}/plan/lines/{key}` | body `{"status": ...}` or `{"edited_text": ...}`, exactly one — the `scope.service.decide` contract; `status` may be `found` to reopen. A line (spec, schedule, phase) accepts `found`, `confirmed`, `dismissed`; a question accepts only `found` and `dismissed` (answering is the route below) and cannot be reworded |
 | `POST /api/projects/{id}/plan/questions/{key}/answer` | body `{"body": text}`; creates a context note through `notes.create_note` and marks the question `answered` with `note_id`; one request, two audited actions (`note_add`, `plan_decide`) in one transaction |
 | `POST /api/projects/{id}/plan/phases` | body `{"name": text}`; adds a phase, audited `plan_phase_add` |
 | `DELETE /api/projects/{id}/plan/phases/{phase_id}` | removes an added phase, audited `plan_phase_remove`; 404 for a detected phase's key |
@@ -361,14 +374,22 @@ sets `note_id` null and the question reads *found* again.
 - `edited_text` empty or over 500 characters → 422
 - answering a question with an empty body → 422 "Write the answer
   before saving it."
+- answering a question that already has an answer → 422 "This question
+  already has an answer. Reopen it to answer it again." Reopening
+  clears `note_id`; the earlier note stays in Notes & assumptions as
+  the estimator's own record, and still feeds the next run until they
+  delete it there.
 - a phase name empty, over 100 characters, or matching an existing
   phase (detected or added, case-insensitive) → 422 "That phase is
   already on the plan."
 
 **Stage.** `Project.stage` moves to `plan` when the plan is fetched
-while the stage is `setup` or `documents` and no drawing set is still
-being read. It never moves backward, and a fetch at `processing` or
-later changes nothing. This is the one place the plan is assembled, so
+while the stage is `setup` or `documents`, at least one drawing set
+has been read, and none is still being read. It never moves backward —
+the move is one conditional `UPDATE … WHERE stage IN ('setup',
+'documents')`, so a poll that loaded the project before the worker
+moved it to `processing` cannot move it back — and a fetch at
+`processing` or later changes nothing. This is the one place the plan is assembled, so
 it is the one place that knows the project has reached it. The client
 mirror `src/lib/projectStage.js` gains `{ key: "plan", label: "Plan" }`
 between `documents` and `processing`; `matchesFilter` is unchanged
@@ -398,7 +419,8 @@ path per record.
   through above a correction), citation *filename, page N* linking to
   the page, *View source* disclosure with the quote in a blockquote,
   and the decision controls: Confirm, Dismiss, Correct (an inline text
-  field, Enter saves, Esc cancels), Reopen on a decided row. Every
+  field with Save and Cancel, as the scope row always had), Reopen on a
+  decided row. Every
   control reports the server's answer; a refused decision leaves the
   row as it was with the refusal on the row. Scope rows are the same
   component with `onDecide` bound to `store.decideScope`.
@@ -427,9 +449,11 @@ group's last item is an append within that array; nothing above it
 moves.) Screen name `"plan"` appended to `SCREEN_NAMES`, `SCREEN_LABELS`
 (*Project plan*) and `BY_SUFFIX` in `screenContext.jsx`, and to
 `SCREEN_NAMES` and the `Literal` in `api/app/assistant/schemas.py` —
-the mirror the file's own docstring requires. `assistant/context.py`
-gets no plan-specific context in this slice; the panel on the plan
-screen answers from the project-level context every screen has.
+the mirror the file's own docstring requires — and to `SCREEN_LABELS`
+in `api/app/assistant/prompt.py`, a third mirror a test now guards.
+`assistant/context.py` gives `plan` the same sections as `confirm`
+(documents, sheets, document texts): the plan is a view over the same
+material, and the panel proposes nothing here.
 
 Store: `getPlan`, `decidePlanLine`, `answerPlanQuestion`, `addPlanPhase`,
 `removePlanPhase` appended to `api.js`; `mapPlan` appended to
@@ -512,5 +536,9 @@ Before the last commit: full backend suite, `npm test -- --run`,
   `worker/classify_job.py`.
 - **Phases stop at names.** Which sheets a phase covers, and its order,
   are stream D's.
-- **The conversation panel** has no plan-specific context or proposals
-  here; stream E adds both.
+- **The conversation panel** answers on the plan screen from the same
+  context the confirm screen has; it proposes nothing here. Stream E
+  adds proposals.
+- **`no_specs` asks only when a drawing set exists**, and `read_at` is
+  the latest upload time, not the time of the read — there is no
+  `processed_at` on a document.

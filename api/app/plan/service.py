@@ -138,3 +138,74 @@ def build_plan(db: DbSession, project: Project) -> PlanOut:
         db.flush()
         db.expire(project, ["stage"])
     return out
+
+
+def _find_line(db: DbSession, project: Project, key: str):
+    """The derived line or question behind a key, or not_found(). A
+    scope statement id is not a key: scope has its own write path."""
+    docs, _scope, specs, scheds, phase_lines, added, qs = derive(db, project)
+    for line in specs + scheds + phase_lines:
+        if line.key == key:
+            return "line", line, docs
+    for phase in added:
+        if f"phase:added:{phase.id}" == key:
+            return "added", phase, docs
+    for q in qs:
+        if q.key == key:
+            return "question", q, docs
+    raise not_found()
+
+
+def _decision_row(db: DbSession, project: Project, key: str) -> PlanDecision:
+    row = db.scalar(select(PlanDecision).where(PlanDecision.project_id == project.id, PlanDecision.entry_key == key))
+    if row is None:
+        row = PlanDecision(project_id=project.id, entry_key=key, status="found")
+        db.add(row)
+    return row
+
+
+def _snapshot(row: PlanDecision) -> dict:
+    return {"status": row.status, "edited_text": row.edited_text, "note_id": str(row.note_id) if row.note_id else None}
+
+
+def decide(db: DbSession, *, actor: User, project: Project, key: str, status: str | None = None,
+           edited_text: str | None = None):
+    if (status is None) == (edited_text is None):
+        raise DomainError("invalid_plan_decision", "Send either a status or a corrected line, not both and not neither.", status=422)
+    what, target, docs = _find_line(db, project, key)
+    if what == "question" and edited_text is not None:
+        raise DomainError("invalid_plan_decision", "A question can be answered or dismissed, not reworded.", status=422)
+    if status is not None and status not in ("found", "confirmed", "dismissed"):
+        raise DomainError("invalid_plan_status", "Status must be one of found, confirmed, dismissed.", status=422)
+
+    row = _decision_row(db, project, key)
+    before = _snapshot(row)
+    if what == "question":
+        shown = target.title
+    else:
+        found_text = target.name if what == "added" else target.text
+        shown = row.edited_text or found_text
+
+    if status is not None:
+        row.status = status
+        if what == "question":
+            row.note_id = None
+        label = {"confirmed": f"Confirmed: {shown}", "dismissed": f"Dismissed: {shown}", "found": f"Reopened: {shown}"}[status]
+    else:
+        cleaned = edited_text.strip()
+        if not cleaned or len(cleaned) > _MAX_TEXT:
+            raise DomainError("invalid_plan_text", f"The corrected line can't be empty and must be {_MAX_TEXT} characters or fewer.", status=422)
+        row.edited_text = cleaned
+        label = f"Changed: {cleaned}"
+
+    row.decided_by = actor.id
+    row.decided_at = datetime.now(timezone.utc)
+    db.flush()
+    actions.commit(db, actor=actor, project_id=project.id, kind="plan_decide", label=label, before=before, after=_snapshot(row))
+
+    filenames = {str(d.id): d.filename for d in docs}
+    if what == "question":
+        return _question_out(target, row, filenames)
+    if what == "added":
+        return _added_phase_out(target, row)
+    return _line_out(target, row)

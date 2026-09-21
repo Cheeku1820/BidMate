@@ -120,3 +120,71 @@ def test_get_does_not_move_the_stage_backward_when_the_row_moved_underneath_it(c
     client.get(f"/api/projects/{project.id}/plan")
     db.refresh(project)
     assert project.stage == "processing"
+
+
+# --- deciding a line ---
+
+def _key(client, project, section, index=0):
+    return client.get(f"/api/projects/{project.id}/plan").json()[section][index]["key"]
+
+
+def test_confirm_correct_dismiss_and_reopen_are_audited_and_not_undoable(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "specs")
+    url = f"/api/projects/{project.id}/plan/lines/{key}"
+    assert client.patch(url, json={"status": "confirmed"}).json()["status"] == "confirmed"
+    r = client.patch(url, json={"edited_text": "26 05 19 — Conductors and cables"}).json()
+    assert r["edited_text"] == "26 05 19 — Conductors and cables" and r["text"] == r["edited_text"] and r["found_text"].endswith("CABLES")
+    assert client.patch(url, json={"status": "dismissed"}).json()["status"] == "dismissed"
+    assert client.patch(url, json={"status": "found"}).json()["status"] == "found"
+    labels = [a.label for a in db.scalars(select(Action).where(Action.kind == "plan_decide").order_by(Action.seq))]
+    assert labels == [
+        "Confirmed: 26 05 19 — LOW-VOLTAGE ELECTRICAL POWER CONDUCTORS AND CABLES",
+        "Changed: 26 05 19 — Conductors and cables",
+        "Dismissed: 26 05 19 — Conductors and cables",
+        "Reopened: 26 05 19 — Conductors and cables",
+    ]
+    [row] = db.scalars(select(PlanDecision).where(PlanDecision.project_id == project.id))
+    assert row.entry_key == key and row.decided_by == dana.id and row.status == "found"
+    # Not undoable: the undo endpoint finds nothing to reverse.
+    undo = client.post(f"/api/projects/{project.id}/undo")
+    assert undo.status_code in (200, 409)
+    assert not any(a.kind == "undo" for a in db.scalars(select(Action).where(Action.project_id == project.id)))
+
+
+def test_a_decision_shows_on_the_next_get_and_counts_as_decided(client, db, project, dana, signed_in_user, seeded):
+    before = client.get(f"/api/projects/{project.id}/plan").json()["undecided"]
+    key = _key(client, project, "schedules")
+    client.patch(f"/api/projects/{project.id}/plan/lines/{key}", json={"status": "confirmed"})
+    plan = client.get(f"/api/projects/{project.id}/plan").json()
+    assert plan["schedules"][0]["status"] == "confirmed" and plan["undecided"] == before - 1
+
+
+def test_a_question_can_be_dismissed_through_the_same_route(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "questions")
+    r = client.patch(f"/api/projects/{project.id}/plan/lines/{key}", json={"status": "dismissed"})
+    assert r.status_code == 200 and r.json()["status"] == "dismissed" and r.json()["title"]
+    assert client.patch(f"/api/projects/{project.id}/plan/lines/{key}", json={"edited_text": "x"}).status_code == 422
+
+
+def test_bad_bodies_and_stale_keys_are_refused(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "specs")
+    url = f"/api/projects/{project.id}/plan/lines/{key}"
+    assert client.patch(url, json={}).status_code == 422
+    assert client.patch(url, json={"status": "confirmed", "edited_text": "x"}).status_code == 422
+    assert client.patch(url, json={"status": "approved"}).status_code == 422
+    assert client.patch(url, json={"edited_text": "   "}).status_code == 422
+    assert client.patch(url, json={"edited_text": "x" * 501}).status_code == 422
+    assert client.patch(f"/api/projects/{project.id}/plan/lines/spec:gone:000000", json={"status": "confirmed"}).status_code == 404
+    assert client.patch(f"/api/projects/{project.id}/plan/lines/{seeded['scope'].id}", json={"status": "confirmed"}).status_code == 404
+
+
+def test_a_decision_survives_a_re_read_that_finds_the_same_line(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "specs")
+    client.patch(f"/api/projects/{project.id}/plan/lines/{key}", json={"status": "confirmed"})
+    seeded["spec"].context_text = "260519 LOW-VOLTAGE ELECTRICAL POWER CONDUCTORS AND CABLES (reissued)\n"
+    db.flush()
+    plan = client.get(f"/api/projects/{project.id}/plan").json()
+    assert plan["specs"][0]["key"] == key and plan["specs"][0]["status"] == "confirmed"
+    seeded["spec"].context_text = ""
+    db.flush()
+    assert client.get(f"/api/projects/{project.id}/plan").json()["specs"] == []

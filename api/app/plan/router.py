@@ -23,3 +23,12 @@ def get_plan(project_id: uuid.UUID, user: User = Depends(current_user), db: DbSe
     plan = service.build_plan(db, project)
     db.commit()
     return plan
+
+
+@router.patch("/projects/{project_id}/plan/lines/{key}", response_model=PlanLineOut | QuestionOut)
+def patch_line(project_id: uuid.UUID, key: str, payload: LineDecisionIn, user: User = Depends(current_user),
+               db: DbSession = Depends(get_db)):
+    project = load_project(project_id, db, user)
+    out = service.decide(db, actor=user, project=project, key=key, status=payload.status, edited_text=payload.edited_text)
+    db.commit()
+    return out

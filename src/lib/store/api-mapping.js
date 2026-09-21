@@ -33,6 +33,8 @@ export function mapItem(i) {
     y: i.y ?? null,
     path: i.path ?? null,
     notes: i.notes,
+    rejectReason: i.reject_reason ?? null,
+    resolveNote: i.resolve_note ?? null,
     evidence: i.evidence ?? null,
     // Never collapsed to a singular field (carry-forward 3) — an item
     // can carry a scale warning and a legend warning at once.
@@ -360,3 +362,31 @@ export function mapScopeStatement(raw) {
     quote: raw.quote,
   };
 }
+
+/** Wire ProposalOut -> store shape (say-what-it-is spec). `versions` is
+ *  keyed by item id and sent back untouched on apply. */
+export function mapProposal(p) {
+  return {
+    intent: p.intent,
+    targetItemIds: p.target_item_ids,
+    name: p.name, system: p.system, category: p.category, unit: p.unit,
+    catalogId: p.catalog_id ?? null,
+    scheduleMatch: p.schedule_match ? { sheet: p.schedule_match.sheet, line: p.schedule_match.line } : null,
+    quantity: p.quantity ?? null,
+    rejectReason: p.reject_reason ?? null,
+    summary: p.summary,
+    source: p.source,
+    versions: p.versions ?? {},
+  };
+}
+
+export function proposalToWire(p) {
+  return {
+    intent: p.intent, target_item_ids: p.targetItemIds, name: p.name, system: p.system, category: p.category,
+    unit: p.unit, catalog_id: p.catalogId ?? null,
+    schedule_match: p.scheduleMatch ? { sheet: p.scheduleMatch.sheet, line: p.scheduleMatch.line } : null,
+    quantity: p.quantity ?? null, reject_reason: p.rejectReason ?? null, summary: p.summary, source: p.source,
+    versions: p.versions ?? {},
+  };
+}
+

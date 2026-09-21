@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProcessing, mapProject, mapScopeStatement, mapSnapshot, mapUser, noteToWire } from "./api-mapping.js";
+import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProcessing, mapProject, mapProposal, mapScopeStatement, mapSnapshot, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -324,6 +324,22 @@ export function createApiStore() {
       skipped: (raw.skipped ?? []).map((s) => ({ itemId: s.item_id, code: s.code, message: s.message })),
       snapshot,
     };
+  }
+
+  async function resolveItem(itemId, text) {
+    // Proposes only -- nothing to invalidate.
+    return mapProposal(await request(`/api/items/${itemId}/resolve`, { method: "POST", body: { text, cluster: true } }));
+  }
+
+  async function applyProposal(itemId, proposal, { approve, note }) {
+    // The response IS a complete snapshot (like bulk-approve), so it
+    // repopulates the cache directly.
+    const raw = await request(`/api/items/${itemId}/apply-proposal`, {
+      method: "POST", body: { proposal: proposalToWire(proposal), approve, note },
+    });
+    const snapshot = mapSnapshot(raw.snapshot);
+    cacheSnapshot(snapshot);
+    return { label: raw.label, snapshot, alsoMatching: { count: raw.also_matching.count, sheetNumbers: raw.also_matching.sheet_numbers } };
   }
 
   async function undo() {
@@ -630,6 +646,8 @@ export function createApiStore() {
     deleteItem,
     setScale,
     bulkApprove,
+    resolveItem,
+    applyProposal,
     undo,
     redo,
     listProjects,

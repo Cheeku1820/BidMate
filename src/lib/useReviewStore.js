@@ -218,6 +218,25 @@ export function useReviewStore(store, { onSignedOut } = {}) {
     [store, runMutation, showToast, handleSignedOut]
   );
 
+  // A confirmed proposal (say-what-it-is): the response is a complete
+  // snapshot, exactly as bulk approve's is, and the label is the toast.
+  const applyProposal = useCallback(
+    async (itemId, proposal, { approve, note }) => {
+      try {
+        const res = await runMutation(() => store.applyProposal(itemId, proposal, { approve, note }));
+        setSnapshot(res.snapshot);
+        setItemError(null);
+        showToast(res.label);
+        return res;
+      } catch (err) {
+        if (handleSignedOut(err)) return null;
+        setItemError({ itemId, code: err?.code ?? "request_failed", message: err?.message || "This action could not be completed." });
+        return null;
+      }
+    },
+    [store, runMutation, showToast, handleSignedOut]
+  );
+
   const undo = useCallback(async () => {
     try {
       const res = await runMutation(() => store.undo());
@@ -273,6 +292,7 @@ export function useReviewStore(store, { onSignedOut } = {}) {
     deleteItem,
     setScale,
     bulkApprove,
+    applyProposal,
     undo,
     redo,
   };

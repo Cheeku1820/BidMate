@@ -30,6 +30,7 @@ Five documents at the repository root are the entry points: `README.md` (how to 
 | B3 — the drawing behind the markers | `specs/drawing-behind-the-markers.md` | `plans/done/drawing-behind-the-markers.md` | merged |
 | Firm price book | `specs/firm-price-book.md` (branch `feat/corpus-price-book`) | — | designed, parked behind Phase B |
 | Conversation panel (read-only slice) | `specs/conversation-panel.md` | `plans/done/conversation-panel.md` | merged |
+| Say what it is — the item panel's decision area | `specs/say-what-it-is.md` | `plans/say-what-it-is.md` | in flight (branch `feat/say-what-it-is`) |
 
 ## Adding a document
 

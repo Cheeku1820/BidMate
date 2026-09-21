@@ -1,7 +1,8 @@
-import { Check, Pencil, CircleSlash, Trash2, ChevronLeft, ChevronRight, ExternalLink, RefreshCw } from "lucide-react";
+import { Pencil, Trash2, ChevronLeft, ChevronRight, ExternalLink, RefreshCw, MoreHorizontal } from "lucide-react";
 import Pill from "./Pill.jsx";
 import { SYMBOL_LABELS } from "./Symbols.jsx";
 import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/vocabulary.js";
+import DecisionArea from "./decision/DecisionArea.jsx";
 
 /** Right panel: selected item (spec §5, screen F). Renders the review
  *  progress summary when nothing is selected, or the full item detail
@@ -12,7 +13,8 @@ import { STATUS, STATUS_ORDER, SYSTEMS } from "../lib/vocabulary.js";
  *  16-brief.md §4). */
 export default function ItemDetailPanel({
   sel, sheets, currentSheet, edit, onStartEdit, onChangeEdit, onSaveEdit, onCancelEdit,
-  onApprove, onReject, onRequestDelete, onShowEvidence, onStep, stepIndex, stepCount,
+  onResolve, onApplyProposal, onUndo, onSelectItem, alsoMatchingItemId,
+  onRequestDelete, onShowEvidence, onStep, stepIndex, stepCount,
   itemError, onRefreshItem, onDismissItemError,
   counts, itemsTotal, onNextIssue,
 }) {
@@ -79,10 +81,12 @@ export default function ItemDetailPanel({
 
   const itemSheet = sheets.find((s) => s.id === sel.sheetId);
 
-  const approveBlockedReason = sel.status === "missing"
+  // DecisionArea has no item-level guard of its own -- the API refuses an
+  // approve on a Missing information item regardless -- so this copy sits
+  // above the box so the estimator hits the rule while looking at the
+  // evidence, not later in a summary dialog (CLAUDE.md).
+  const missingBlockedReason = sel.status === "missing"
     ? "Resolve the scale on this sheet before approving a measured item."
-    : sel.rejected
-    ? "This item was rejected. Undo the rejection before approving it."
     : null;
 
   return (
@@ -91,6 +95,12 @@ export default function ItemDetailPanel({
         <div className="detail__head">
           <Pill status={sel.rejected ? "rejected" : sel.status} />
           <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{SYMBOL_LABELS[sel.symbol]}</span>
+          <details className="overflow">
+            <summary className="iconbtn" aria-label="More actions" role="button"><MoreHorizontal size={14} /></summary>
+            <div role="menu" className="overflow__menu">
+              <button role="menuitem" className="btn" onClick={() => onRequestDelete(sel)}><Trash2 size={13} /> Delete item</button>
+            </div>
+          </details>
         </div>
 
         {itemError && (
@@ -116,11 +126,30 @@ export default function ItemDetailPanel({
               <p className="ai-confirmed">✓ Confirmed against the drawing</p>
             ) : null}
 
+            {missingBlockedReason && (
+              <p style={{ fontSize: 12, color: "var(--ink-2)", margin: "10px 0 0" }}>{missingBlockedReason}</p>
+            )}
+
+            <DecisionArea
+              item={sel}
+              sheetNumber={itemSheet?.number}
+              onResolve={onResolve}
+              onApply={onApplyProposal}
+              onUndo={onUndo}
+              onSelectItem={onSelectItem}
+              alsoMatchingItemId={alsoMatchingItemId}
+            />
+
             <p className="label">Quantity</p>
             <p className="qty tabular">
               {sel.quantity.toLocaleString()}
               <small>{sel.unit}</small>
             </p>
+            {sel.path ? (
+              <div className="actions">
+                <button className="btn" onClick={() => onStartEdit(sel)}><Pencil size={13} /> Edit length</button>
+              </div>
+            ) : null}
 
             <p className="label">Classification</p>
             <p className="value">{sel.system} — {sel.category}</p>
@@ -150,13 +179,6 @@ export default function ItemDetailPanel({
               </div>
             ))}
 
-            {sel.approvedBy && (
-              <>
-                <p className="label">Approved by</p>
-                <p className="value">{sel.approvedBy}</p>
-              </>
-            )}
-
             {sel.notes && (
               <>
                 <p className="label">Notes</p>
@@ -164,19 +186,6 @@ export default function ItemDetailPanel({
               </>
             )}
 
-            <div className="actions">
-              <button className="btn btn--primary" onClick={() => onApprove(sel)} disabled={!!approveBlockedReason}>
-                <Check size={14} /> Approve item
-              </button>
-            </div>
-            {approveBlockedReason && (
-              <p style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 7 }}>{approveBlockedReason}</p>
-            )}
-            <div className="actions">
-              <button className="btn" onClick={() => onStartEdit(sel)}><Pencil size={13} /> Edit</button>
-              <button className="btn" onClick={() => onReject(sel)}><CircleSlash size={13} /> Reject</button>
-              <button className="btn" onClick={() => onRequestDelete(sel)}><Trash2 size={13} /></button>
-            </div>
           </>
         ) : (
           <>

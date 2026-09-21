@@ -89,3 +89,9 @@ The full revision-conflict flow (prototype path 4 in the spec) is **not yet buil
 Two clicks on a known dimension. The tool captures the pixel distance, and the confirm step asks for the real-world length. The cursor changes to a crosshair and a banner states which click is expected next, because a modal two-step interaction with no state indicator is where people get lost.
 
 Calibration and scale selection produce the same undoable action, so an estimator who calibrates then realizes the title block was right all along backs out cleanly.
+
+---
+
+## Deciding on an item
+
+The item panel asks one question — *What is this?* — and takes the answer in the estimator's words. The engine turns the sentence into a proposal (name, system, unit, schedule line, count if stated) and shows what would change before anything changes. Confirming applies it to the whole cluster and approves in the same press; a reject is the same box with a reason. Afterwards the panel states what was done, in those words, with Undo — there is no button left to press twice. Without a key, the words become the item's name as a custom item and the flow is otherwise identical.

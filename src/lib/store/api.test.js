@@ -7,7 +7,7 @@
    this file is narrower and stubs `fetch` directly.
    ============================================================ */
 
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, test, vi, beforeEach, afterEach } from "vitest";
 import { createApiStore, login, PRESENCE_BEAT_MS } from "./api.js";
 
 function jsonResponse(body, init = {}) {
@@ -659,5 +659,37 @@ describe("the route's project wins over ensureProjectId's fallback", () => {
     await store.getSnapshot().catch(() => {});
     const snapshotUrl = calls.find((u) => u.includes("/snapshot"));
     expect(snapshotUrl).toBe("/api/projects/route-project/snapshot");
+  });
+});
+
+describe("resolve and apply", () => {
+  const wireProposal = {
+    intent: "reclassify", target_item_ids: ["i1", "i2"], name: "2x4 LED troffer — type F", system: "Lighting",
+    category: "Fixtures", unit: "ea", catalog_id: null, schedule_match: { sheet: "E-501", line: "F" }, quantity: 28,
+    reject_reason: null, summary: "Applies to all 2", source: "read", versions: { i1: 3, i2: 1 },
+  };
+  test("resolveItem posts the sentence and maps the proposal", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(wireProposal));
+    vi.stubGlobal("fetch", fetchMock);
+    const store = createApiStore();
+    const p = await store.resolveItem("i1", "2x4 LED troffer, type F");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/items/i1/resolve");
+    expect(JSON.parse(init.body)).toEqual({ text: "2x4 LED troffer, type F", cluster: true });
+    expect(p).toMatchObject({ targetItemIds: ["i1", "i2"], scheduleMatch: { sheet: "E-501", line: "F" }, quantity: 28, versions: { i1: 3, i2: 1 } });
+  });
+  test("applyProposal sends the proposal back in wire shape with approve and note", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ label: "Approved 2 × x", snapshot: snapshotBody({ version: "v2" }), also_matching: { count: 6, sheet_numbers: ["EL101"] } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const store = createApiStore();
+    const mapped = { intent: "reclassify", targetItemIds: ["i1"], name: "x", system: "Power", category: "Devices", unit: "ea", catalogId: null, scheduleMatch: null, quantity: null, rejectReason: null, summary: "s", source: "typed", versions: { i1: 1 } };
+    const res = await store.applyProposal("i1", mapped, { approve: true, note: "x" });
+    const [url, init] = fetchMock.mock.calls.at(-1);
+    expect(url).toBe("/api/items/i1/apply-proposal");
+    const body = JSON.parse(init.body);
+    expect(body.approve).toBe(true);
+    expect(body.proposal).toMatchObject({ target_item_ids: ["i1"], catalog_id: null, schedule_match: null, versions: { i1: 1 } });
+    expect(res.alsoMatching).toEqual({ count: 6, sheetNumbers: ["EL101"] });
+    expect(res.label).toBe("Approved 2 × x");
   });
 });

@@ -87,6 +87,7 @@ function renderWorkspace({ notes = [] } = {}) {
     setScale: vi.fn(),
     undo: vi.fn(),
     redo: vi.fn(),
+    applyProposal: vi.fn(),
     me: { id: "u1", name: "Dana Whitfield", color: "#2563eb" },
     sheetId: "s1",
     setSheetId: vi.fn(),
@@ -94,7 +95,7 @@ function renderWorkspace({ notes = [] } = {}) {
     selectItem: vi.fn(),
     project: { id: "p1", name: "Riverside", location: "Riverside, CA" },
     projectId: "p1",
-    store: { listNotes },
+    store: { listNotes, resolveItem: vi.fn() },
   };
   const result = render(
     <MemoryRouter>

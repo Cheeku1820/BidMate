@@ -397,6 +397,7 @@ describe("pasteChanges", () => {
     expect(pasteChanges([["zzz"]], { r0: 0, c0: 1, r1: 0, c1: 1 }, columns, rows)).toEqual([]);
   });
 });
+```
 
 Then, in the same file, the fill and clear tests:
 

@@ -26,3 +26,6 @@ bid_examples/
 
 # Feature worktrees (superpowers:using-git-worktrees)
 .worktrees/
+
+# Local port override: bidmate_rebuild owns host port 5432, this repo uses 5433.
+docker-compose.override.yml

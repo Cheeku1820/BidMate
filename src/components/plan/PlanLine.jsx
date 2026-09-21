@@ -64,7 +64,8 @@ export default function PlanLine({ line, onDecide, onRemove = null, children = n
   const [error, setError] = useState("");
 
   const current = line.editedText ?? line.text;
-  const edited = line.editedText != null && line.editedText !== line.text;
+  const original = line.foundText ?? line.text;
+  const edited = line.editedText != null && line.editedText !== original;
   const id = line.key ?? line.id;
 
   const run = (promise) => {
@@ -124,7 +125,7 @@ export default function PlanLine({ line, onDecide, onRemove = null, children = n
       ) : (
         <>
           <p className="scope-row__text">{current}</p>
-          {edited ? <p className="scope-row__original muted">Original: {line.text}</p> : null}
+          {edited ? <p className="scope-row__original muted">Original: {original}</p> : null}
           {children}
           <div className="scope-row__actions">
             {line.status !== "confirmed" ? (

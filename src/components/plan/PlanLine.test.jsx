@@ -92,6 +92,24 @@ describe("PlanLine", () => {
     expect(onRemove).toHaveBeenCalled();
   });
 
+  it("shows the found text as the original when the line has already been corrected server-side", () => {
+    // Plan-derived lines (spec/schedule/phase) come back with text already
+    // set to the corrected value, and editedText mirrors it -- foundText
+    // carries what was actually found on the document.
+    render(
+      <PlanLine
+        line={line({
+          text: "26 05 19 — Conductors and Cables",
+          foundText: "26 05 19 — CONDUCTORS AND CABLES",
+          editedText: "26 05 19 — Conductors and Cables",
+        })}
+        onDecide={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("26 05 19 — Conductors and Cables")).toBeInTheDocument();
+    expect(screen.getByText("Original: 26 05 19 — CONDUCTORS AND CABLES")).toBeInTheDocument();
+  });
+
   it("renders status as icon plus label, never the review-status classes", () => {
     const { container } = render(<PlanLine line={line({ status: "confirmed" })} onDecide={vi.fn()} />);
     expect(container.querySelector(".pill--approved, .pill--ready, .pill--attention, .pill--missing")).toBeNull();

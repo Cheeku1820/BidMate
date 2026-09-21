@@ -860,3 +860,37 @@ def test_undo_of_a_supplier_quote_apply_restores_the_prior_price(client, db, sig
     db.expire_all()
     row = db.get(ProjectMaterialPrice, item.id)
     assert row.price_override == Decimal("15") and row.source == "project_price"
+
+
+def test_undoing_a_delete_restores_the_phase_override_and_the_lead_time(db, dana, project, sheet, item):
+    """`Item.phase_id` rides the flat column snapshot; `ItemLeadTime`
+    cascades with the item the way the two pricing rows do, so the delete
+    snapshot has to carry it or the flag and the quoted weeks are gone
+    for good the first time an estimator deletes and undoes."""
+    from datetime import date
+
+    from app.takeoff.models import ItemLeadTime, Phase
+
+    phase = Phase(project_id=project.id, name="Phase 1", sort_order=0)
+    db.add(phase); db.flush()
+    item.phase_id = phase.id
+    db.add(ItemLeadTime(item_id=item.id, flagged=True, lead_weeks=18, source="supplier_quote",
+                        source_label="Codale, 9/2", quoted_at=date(2026, 9, 2), needed_for_stage="gear",
+                        updated_by_user_id=dana.id))
+    db.flush()
+    item_id = item.id
+
+    review.delete_item(db, dana, item, item.version)
+    db.flush()
+    assert db.get(Item, item_id) is None
+
+    undo.undo(db, dana, project.id)
+    db.flush()
+    db.expire_all()
+
+    restored = db.get(Item, item_id)
+    assert restored is not None and restored.phase_id == phase.id
+    lead = db.get(ItemLeadTime, item_id)
+    assert lead is not None
+    assert (lead.flagged, lead.lead_weeks, lead.source, lead.source_label, lead.quoted_at, lead.needed_for_stage) == \
+        (True, 18, "supplier_quote", "Codale, 9/2", date(2026, 9, 2), "gear")

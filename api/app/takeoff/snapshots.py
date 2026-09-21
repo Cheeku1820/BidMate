@@ -80,6 +80,7 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     # unchanged, exactly like "evidence" above.
     "labor_line": dict,
     "material_price": dict,
+    "lead_time": dict,
 }
 
 # Counterpart for decoding one element of the nested "warnings" list.
@@ -123,6 +124,22 @@ MATERIAL_PRICE_SNAPSHOT_TYPES: dict[str, type] = {
     "updated_at": datetime,
 }
 
+# ItemLeadTime (phases-and-timeline §3.7) cascades with its item exactly
+# as the two pricing rows above do, so the delete snapshot carries it
+# under LEAD_TIME_KEY and undo_apply._apply_delete() restores it against
+# this map.
+LEAD_TIME_SNAPSHOT_TYPES: dict[str, type] = {
+    "item_id": uuid.UUID,
+    "flagged": bool,
+    "lead_weeks": int,
+    "source": str,
+    "source_label": str,
+    "quoted_at": date,
+    "needed_for_stage": str,
+    "updated_by_user_id": uuid.UUID,
+    "updated_at": datetime,
+}
+
 SYMBOL_RESOLUTION_SNAPSHOT_TYPES: dict[str, type] = {
     "id": uuid.UUID,
     "org_id": uuid.UUID,
@@ -146,9 +163,10 @@ SYMBOL_RESOLUTION_SNAPSHOT_TYPES: dict[str, type] = {
 # this key from actions it did not write) has exactly one place to look.
 ITEMS_SNAPSHOT_KEY = "items"
 
-# The three keys a delete's `before` snapshot nests *around* the item's
-# flat column snapshot -- the warning list plus the two optional pricing
-# rows, all three destroyed by the same cascade a delete triggers.
+# The four keys a delete's `before` snapshot nests *around* the item's
+# flat column snapshot -- the warning list, the two optional pricing
+# rows, and the optional lead-time row, all four destroyed by the same
+# cascade a delete triggers.
 # `review._apply_delete()` writes these keys; `undo_apply._apply_delete()`
 # reads them, in a different module, to know which keys are *not* part of
 # the flat `Item` column dict before decoding it against
@@ -159,7 +177,8 @@ ITEMS_SNAPSHOT_KEY = "items"
 WARNINGS_KEY = "warnings"
 LABOR_LINE_KEY = "labor_line"
 MATERIAL_PRICE_KEY = "material_price"
-NESTED_SNAPSHOT_KEYS = (WARNINGS_KEY, LABOR_LINE_KEY, MATERIAL_PRICE_KEY)
+LEAD_TIME_KEY = "lead_time"
+NESTED_SNAPSHOT_KEYS = (WARNINGS_KEY, LABOR_LINE_KEY, MATERIAL_PRICE_KEY, LEAD_TIME_KEY)
 
 
 def _column_snapshot(obj) -> dict:

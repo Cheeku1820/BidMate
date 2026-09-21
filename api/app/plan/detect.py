@@ -19,9 +19,14 @@ CONTEXT_DOC_TYPES = ("Specifications", "Addendum", "Scope", "Other")
 
 # A Division 26/27/28 section number at the start of a line, in any of
 # the forms a project manual uses: "26 05 19", "260519", "26-05-19",
-# with or without a leading SECTION. The title is the rest of the line,
-# or the next non-empty line when the number stands alone.
-_SECTION = re.compile(r"^\s*(?:SECTION\s+)?(26|27|28)[\s\-]?(\d\d)[\s\-]?(\d\d)\b[\s\-–—:.]*(.*)$", re.IGNORECASE)
+# with or without a leading SECTION, and an optional level-4 MasterFormat
+# suffix ("26 05 33.13", or the compact "26 0533.13"). The title is the
+# rest of the line, or the next non-empty line when the number stands
+# alone.
+_SECTION = re.compile(
+    r"^\s*(?:SECTION\s+)?(26|27|28)[\s\-]?(\d\d)[\s\-]?(\d\d)(?:\.(\d\d))?\b[\s\-–—:.]*(.*)$",
+    re.IGNORECASE,
+)
 
 # The schedule headings sheet_kind looks for when it classifies a sheet.
 # Spelled here rather than imported: app.plan stays out of app.engine.
@@ -118,7 +123,7 @@ def spec_sections(docs: list[DocIn]) -> list[Line]:
             m = _SECTION.match(raw)
             if not m:
                 continue
-            division, a, b, title = m.group(1), m.group(2), m.group(3), m.group(4).strip()
+            division, a, b, suffix, title = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5).strip()
             quote = raw.strip()
             if not title:
                 nxt = next((l.strip() for l in lines[i + 1:i + 3] if l.strip()), "")
@@ -130,13 +135,14 @@ def spec_sections(docs: list[DocIn]) -> list[Line]:
             title = _cut_toc_trailer(title)
             if not title:
                 continue
-            number = f"{division}{a}{b}"
+            number = f"{division}{a}{b}{suffix or ''}"
             if number in seen:
                 continue
             seen.add(number)
+            dotted = f"{division} {a} {b}.{suffix}" if suffix else f"{division} {a} {b}"
             out.append(Line(
                 key=f"spec:{d.id}:{number}", kind="spec_section",
-                text=f"{division} {a} {b} — {title}",
+                text=f"{dotted} — {title}",
                 place=Place(d.id, d.filename, None, quote[:600]), division=division,
             ))
     return out

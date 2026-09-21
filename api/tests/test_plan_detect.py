@@ -82,6 +82,25 @@ def test_a_leaders_only_next_line_leaves_no_title_and_is_dropped():
     assert spec_sections([doc(context_text="26 05 01\n..........\n")]) == []
 
 
+def test_level_4_section_numbers_are_kept_distinct_from_their_level_3_parent():
+    # "26 05 33.13" is a level-4 MasterFormat subsection of "26 05 33" and
+    # must not be dropped as a duplicate of it; "26 0533.26" is the compact
+    # spacing some manuals use (division, space, four digits, dot, suffix).
+    text = (
+        "26 05 33 RACEWAYS AND BOXES\n"
+        "26 05 33.13 Conduit for Electrical Systems\n"
+        "26 05 33.16 Boxes for Electrical Systems\n"
+        "26 0533.26 Wireways\n"
+    )
+    lines = spec_sections([doc(context_text=text)])
+    assert [(l.key, l.text) for l in lines] == [
+        ("spec:d1:260533", "26 05 33 — RACEWAYS AND BOXES"),
+        ("spec:d1:26053313", "26 05 33.13 — Conduit for Electrical Systems"),
+        ("spec:d1:26053316", "26 05 33.16 — Boxes for Electrical Systems"),
+        ("spec:d1:26053326", "26 05 33.26 — Wireways"),
+    ]
+
+
 # --- schedules ---
 
 def test_schedule_and_legend_sheets_are_lines_and_plan_sheets_with_a_heading_are_too():

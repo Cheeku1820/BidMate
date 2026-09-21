@@ -2147,6 +2147,8 @@ Tests:
     };
     const review = renderMaterial({ store });
     await loaded(/20A duplex receptacle/);
+    // Paste lands at the active cell, not the event target: make Basis active first.
+    fireEvent.click(cellFor("20A duplex receptacle", "Basis"));
     fireEvent.paste(cellFor("20A duplex receptacle", "Basis"), pasteEvent("Allowance\t\nAllowance\tstand-in"));
     await waitFor(() => expect(store.setMaterialPrice).toHaveBeenCalledTimes(1));
     expect(store.setMaterialPrice).toHaveBeenCalledWith("i2", { priceOverride: 15.5, source: "allowance", reason: "stand-in" });

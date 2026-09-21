@@ -1,0 +1,131 @@
+"""The project plan: derived lines with the decisions a person made on
+them. build_plan is the one place the plan is assembled; every write
+goes through actions.commit() and none is undoable (docs/specs/
+project-plan-screen.md, "Audited, not undoable")."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session as DbSession
+
+from app.errors import DomainError
+from app.identity.models import User
+from app.plan import detect
+from app.plan.models import PlanDecision, PlanPhase
+from app.plan.schemas import PlaceOut, PlanLineOut, PlanOut, QuestionOut
+from app.scope import service as scope_service
+from app.scope.router import _out as scope_out
+from app.takeoff import actions
+from app.takeoff.models import Document, Note, Project, Sheet
+from app.takeoff.router import not_found
+
+_MAX_TEXT = 500
+_MAX_PHASE = 100
+
+
+def _inputs(db: DbSession, project: Project) -> tuple[list[detect.DocIn], list[detect.SheetIn], list[Document]]:
+    docs = list(db.scalars(select(Document).where(Document.project_id == project.id).order_by(Document.created_at)))
+    doc_in = [detect.DocIn(id=str(d.id), filename=d.filename, doc_type=d.doc_type, status=d.status,
+                           context_text=d.context_text or "", page_count=d.page_count) for d in docs]
+    sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id, Sheet.superseded_at.is_(None))
+                             .order_by(Sheet.sort_order, Sheet.page_index)))
+    sheet_in = [detect.SheetIn(id=str(s.id), document_id=s.takeoff_id, number=s.number, title=s.title, kind=s.kind,
+                               page_index=s.page_index, scale=s.scale or "", scale_options=tuple(s.scale_options or ()),
+                               unreadable_reason=s.unreadable_reason or "", schedule_text=s.schedule_text or "")
+                for s in sheets]
+    return doc_in, sheet_in, docs
+
+
+def _decisions(db: DbSession, project: Project) -> dict[str, PlanDecision]:
+    return {d.entry_key: d for d in db.scalars(select(PlanDecision).where(PlanDecision.project_id == project.id))}
+
+
+def _uuid_or_none(value: str) -> uuid.UUID | None:
+    """A sheet's takeoff_id is the document id as text; a sheet created
+    outside the read job (a fixture, an older row) may carry none."""
+    try:
+        return uuid.UUID(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _line_out(line: detect.Line, decision: PlanDecision | None) -> PlanLineOut:
+    status = decision.status if decision and decision.status in ("found", "confirmed", "dismissed") else "found"
+    edited = decision.edited_text if decision else None
+    return PlanLineOut(
+        key=line.key, kind=line.kind, text=edited or line.text, found_text=line.text, edited_text=edited, status=status,
+        document_id=_uuid_or_none(line.place.document_id), document_filename=line.place.document_filename,
+        page=line.place.page, quote=line.place.quote, division=line.division, sheet_number=line.sheet_number,
+        places=[PlaceOut(document_id=_uuid_or_none(p.document_id), document_filename=p.document_filename, page=p.page, quote=p.quote)
+                for p in line.places],
+    )
+
+
+def _added_phase_out(phase: PlanPhase, decision: PlanDecision | None) -> PlanLineOut:
+    status = decision.status if decision and decision.status in ("found", "confirmed", "dismissed") else "found"
+    edited = decision.edited_text if decision else None
+    return PlanLineOut(key=f"phase:added:{phase.id}", kind="phase", text=edited or phase.name, found_text=phase.name,
+                       edited_text=edited, status=status, document_id=None, document_filename=None, page=None, quote=None,
+                       added=True, phase_id=phase.id)
+
+
+def _question_out(q: detect.Question, decision: PlanDecision | None, filenames: dict[str, str]) -> QuestionOut:
+    status = "found"
+    note_id = None
+    if decision:
+        if decision.status == "answered" and decision.note_id is not None:
+            status, note_id = "answered", decision.note_id
+        elif decision.status == "dismissed":
+            status = "dismissed"
+    return QuestionOut(key=q.key, status=status, title=q.title, found=q.found, why=q.why, fix=q.fix, where=q.where,
+                       document_id=_uuid_or_none(q.document_id) if q.document_id else None,
+                       document_filename=filenames.get(q.document_id) if q.document_id else None, note_id=note_id)
+
+
+def derive(db: DbSession, project: Project):
+    """Everything derived, before decisions are applied. Shared by
+    build_plan and the write paths, which need to know whether a key
+    still exists."""
+    doc_in, sheet_in, docs = _inputs(db, project)
+    scope = scope_service.list_statements(db, project)
+    specs = detect.spec_sections(doc_in)
+    scheds = detect.schedules(sheet_in, doc_in)
+    phase_lines = detect.phases(sheet_in, doc_in)
+    added = list(db.scalars(select(PlanPhase).where(PlanPhase.project_id == project.id).order_by(PlanPhase.created_at)))
+    qs = detect.questions(sheet_in, doc_in, scope_count=len(scope), phase_count=len(phase_lines) + len(added),
+                          schedule_count=len(scheds))
+    return docs, scope, specs, scheds, phase_lines, added, qs
+
+
+def build_plan(db: DbSession, project: Project) -> PlanOut:
+    docs, scope, specs, scheds, phase_lines, added, qs = derive(db, project)
+    decisions = _decisions(db, project)
+    filenames = {str(d.id): d.filename for d in docs}
+
+    drawings = [d for d in docs if d.doc_type == "Drawings"]
+    reading = any(d.status in ("uploaded", "processing") for d in drawings)
+    processed = [d for d in docs if d.status == "processed"]
+    read_at = max((d.created_at for d in processed), default=None)
+
+    out = PlanOut(
+        read_at=read_at, reading=reading, has_drawings=bool(drawings), undecided=0,
+        scope=[scope_out(s, filenames.get(str(s.document_id), "")) for s in scope],
+        specs=[_line_out(l, decisions.get(l.key)) for l in specs],
+        schedules=[_line_out(l, decisions.get(l.key)) for l in scheds],
+        phases=[_line_out(l, decisions.get(l.key)) for l in phase_lines]
+               + [_added_phase_out(p, decisions.get(f"phase:added:{p.id}")) for p in added],
+        questions=[_question_out(q, decisions.get(q.key), filenames) for q in qs],
+    )
+    out.undecided = (sum(1 for s in out.scope if s.status == "found")
+                     + sum(1 for l in out.specs + out.schedules + out.phases if l.status == "found")
+                     + sum(1 for q in out.questions if q.status == "found"))
+
+    # The stage moves forward once, here, because this is the one place
+    # that knows the project has reached the plan. Never backward.
+    if project.stage in ("setup", "documents") and drawings and not reading and any(d.status == "processed" for d in drawings):
+        project.stage = "plan"
+        db.flush()
+    return out

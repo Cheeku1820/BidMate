@@ -79,11 +79,20 @@ describe("PlanWorkspace", () => {
     expect(screen.getByText("12 of 12 pages in Gerber.pdf are scanned images with no readable text.")).toBeInTheDocument();
   });
 
-  it("starts the takeoff and goes to processing; a run in flight counts as started", async () => {
+  it("starts the takeoff and goes to processing", async () => {
     const store = mount();
     await userEvent.click(await screen.findByRole("button", { name: "Start takeoff" }));
     expect(store.startTakeoff).toHaveBeenCalledWith("p1");
     expect(await screen.findByText("processing")).toBeInTheDocument();
+  });
+
+  it("a run in flight counts as started", async () => {
+    const store = makeStore();
+    store.startTakeoff.mockRejectedValue({ code: "run_in_flight", message: "A run is already in progress." });
+    mount(store);
+    await userEvent.click(await screen.findByRole("button", { name: "Start takeoff" }));
+    expect(await screen.findByText("processing")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("disables Start takeoff while a drawing set is reading, with the help copy, and polls", async () => {

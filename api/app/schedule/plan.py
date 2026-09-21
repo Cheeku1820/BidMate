@@ -1,5 +1,5 @@
 """The schedule's arithmetic (phases-and-timeline.md §4), pure: plain
-dataclasses in, a Schedule out, no database, no date.today(). The
+dataclasses in, a PhasePlan out, no database, no date.today(). The
 router assembles inputs in assemble.py; the client renders what comes
 back and never re-derives a number.
 
@@ -7,10 +7,11 @@ Rounding: hours to two decimals (HALF_UP), days up to the whole day.
 Working days are Monday to Friday; nothing here knows a holiday."""
 import math
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
+from app.schedule.copy import NO_CREW
 from app.schedule.stages import STAGES
 
 CENTS = Decimal("0.01")
@@ -84,6 +85,7 @@ class StageBar:
     sources: dict[str, str]
     needed_crew: int | None = None
     over_max: bool = False
+    note: str = ""
 
     @property
     def crew(self) -> int:
@@ -114,8 +116,8 @@ class PhasePlan:
 def split_hours(item: ItemHours, splits: dict[str, SplitRule]) -> tuple[dict[str, Decimal], bool]:
     key = (item.category or "").strip().casefold() or FALLBACK_KEY
     rule = splits.get(key)
-    fallback = rule is None
-    if fallback:
+    fallback = rule is None or key == FALLBACK_KEY
+    if rule is None:
         rule = splits[FALLBACK_KEY]
     shares = {s: item.adjusted_hours * rule.percents.get(s, Decimal("0")) / Decimal("100") for s in STAGES}
     return shares, fallback
@@ -127,6 +129,12 @@ def next_working_day(d: date) -> date:
     return d
 
 
+def previous_working_day(d: date) -> date:
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
 def working_days_after(start: date, days: int) -> date:
     d = next_working_day(start)
     for _ in range(days):
@@ -134,8 +142,45 @@ def working_days_after(start: date, days: int) -> date:
     return d
 
 
+def working_days_before(d: date, days: int) -> date:
+    """The mirror of working_days_after: the date `days` working days
+    before `d` (days=0 -> d, rolled to the nearest working day)."""
+    d = previous_working_day(d)
+    for _ in range(days):
+        d = previous_working_day(d - timedelta(days=1))
+    return d
+
+
 def _week_of(d: date, origin: date) -> int:
     return (d - origin).days // 7 + 1
+
+
+def _strip_pins(overrides: dict[str, StageOverride]) -> dict[str, StageOverride]:
+    return {
+        stage: (replace(ov, start_date=None) if ov.start_date is not None else ov)
+        for stage, ov in overrides.items()
+    }
+
+
+def _anchor_for_pinned_stage(
+    phase: PhaseInput,
+    items: list[ItemHours],
+    splits: dict[str, SplitRule],
+    crews: dict[str, CrewRule],
+    relative_week_start: int,
+) -> date:
+    """`phase_start` is None but some stage is pinned to a calendar date.
+    Run once with the pins ignored to learn how many working days the
+    stages ahead of the first pinned one occupy, then walk the pinned
+    date back that many working days -- that becomes the phase's
+    calendar start, so every bar in the phase ends up dated."""
+    first_pinned = next(s for s in STAGES if phase.overrides.get(s) and phase.overrides[s].start_date is not None)
+    dry_phase = replace(phase, overrides=_strip_pins(phase.overrides))
+    dry_plan = build_phase(dry_phase, items, splits, crews, phase_start=None, relative_week_start=relative_week_start)
+    pinned_index = STAGES.index(first_pinned)
+    days_before = sum(b.duration_days for b in dry_plan.bars if STAGES.index(b.stage) < pinned_index)
+    pinned_date = phase.overrides[first_pinned].start_date
+    return working_days_before(pinned_date, days_before)
 
 
 def build_phase(
@@ -152,6 +197,9 @@ def build_phase(
     (the phase's own date, else the caller's -- previous phase end or
     mobilization) or None for relative weeks. `week_origin` is the
     project's first calendar day, for week numbering across phases."""
+    if phase_start is None and any(ov.start_date is not None for ov in phase.overrides.values()):
+        phase_start = _anchor_for_pinned_stage(phase, items, splits, crews, relative_week_start)
+
     stage_hours = {s: Decimal("0") for s in STAGES}
     for item in items:
         shares, _ = split_hours(item, splits)
@@ -168,7 +216,7 @@ def build_phase(
 
     bars: list[StageBar] = []
     cursor = next_working_day(phase_start) if phase_start else None
-    week_cursor = relative_week_start
+    day_cursor = (relative_week_start - 1) * 5
     origin = week_origin or phase_start
     for stage in STAGES:
         crew_rule = crews[stage]
@@ -191,28 +239,43 @@ def build_phase(
                 sources[name] = "estimator"
         crew = foreman + journeyman + apprentice
         capacity = Decimal(crew) * per_day
-        duration = max(1, math.ceil(hours / capacity)) if capacity > 0 else 1
-        if ov.duration_days is not None:
-            duration, sources["duration_days"] = ov.duration_days, "estimator"
 
-        if ov.start_date is not None:
-            cursor, sources["start"] = next_working_day(ov.start_date), "estimator"
-            if origin is None:
-                origin = cursor
-        if cursor is not None:
-            start = cursor
-            end = working_days_after(start, duration - 1)
-            start_week = _week_of(start, origin)
-            end_week = _week_of(end, origin)
-            cursor = working_days_after(end, 1)
-            week_cursor = end_week
+        no_crew = capacity <= 0 and ov.duration_days is None
+        if no_crew:
+            duration = 0
+            note = NO_CREW
         else:
+            duration = max(1, math.ceil(hours / capacity)) if capacity > 0 else 1
+            if ov.duration_days is not None:
+                duration, sources["duration_days"] = ov.duration_days, "estimator"
+            note = ""
+
+        if no_crew:
+            # No crew means nothing is scheduled on this stage: no dates,
+            # and the timeline cursor holds so later stages are unaffected.
             start = end = None
-            start_week = week_cursor
-            end_week = week_cursor + max(0, (duration - 1) // 5)
-            week_cursor = end_week + (1 if (duration % 5 == 0) else 0)
+            if cursor is not None:
+                start_week = end_week = _week_of(cursor, origin)
+            else:
+                start_week = end_week = day_cursor // 5 + 1
+        else:
+            if ov.start_date is not None:
+                cursor, sources["start"] = next_working_day(ov.start_date), "estimator"
+                if origin is None:
+                    origin = cursor
+            if cursor is not None:
+                start = cursor
+                end = working_days_after(start, duration - 1)
+                start_week = _week_of(start, origin)
+                end_week = _week_of(end, origin)
+                cursor = working_days_after(end, 1)
+            else:
+                start = end = None
+                start_week = day_cursor // 5 + 1
+                end_week = (day_cursor + duration - 1) // 5 + 1
+                day_cursor += duration
         bars.append(StageBar(stage, q(hours), foreman, journeyman, apprentice, per_day, duration,
-                             start, end, start_week, end_week, sources))
+                             start, end, start_week, end_week, sources, note=note))
 
     return PhasePlan(
         phase_id=phase.phase_id, name=phase.name, direct_hours=q(direct), general_conditions_hours=q(gc_total),

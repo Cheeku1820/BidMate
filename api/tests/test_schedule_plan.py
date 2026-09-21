@@ -2,8 +2,7 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-import pytest
-
+from app.schedule.copy import NO_CREW
 from app.schedule.plan import (
     CrewRule, ItemHours, PhaseInput, SplitRule, StageOverride,
     build_phase, next_working_day, split_hours, working_days_after,
@@ -43,6 +42,11 @@ def test_split_unlisted_category_uses_fallback():
 def test_split_matches_case_insensitively():
     shares, fallback = split_hours(ItemHours(uuid.uuid4(), PID, "DEVICES", D("10")), SPLITS)
     assert fallback is False and shares["rough_in"] == D("4.5")
+
+
+def test_split_empty_category_is_a_fallback():
+    _, fallback = split_hours(ItemHours(uuid.uuid4(), PID, "", D("10")), SPLITS)
+    assert fallback is True
 
 
 def test_working_days_skip_weekends():
@@ -88,12 +92,34 @@ def test_stages_chain_across_a_weekend_from_mobilization():
 
 
 def test_no_dates_means_relative_weeks():
-    items = [ItemHours(uuid.uuid4(), PID, "Devices", D("300"))]
+    items = [ItemHours(uuid.uuid4(), PID, "Devices", D("300"))]   # rough 135h -> 5d; pull 75h -> 3d; trim 75h -> 3d; close 15h -> 1d
     plan = build_phase(phase(), items, SPLITS, CREWS, phase_start=None, relative_week_start=1)
     by = {b.stage: b for b in plan.bars}
     assert by["rough_in"].start is None and by["rough_in"].start_week == 1 and by["rough_in"].end_week == 1
-    assert by["wire_pull"].start_week == 2
+    assert by["wire_pull"].start_week == 2 and by["wire_pull"].end_week == 2
+    assert by["trim"].start_week == 2 and by["trim"].end_week == 3
+    assert by["closeout"].start_week == 3 and by["closeout"].end_week == 3
     assert plan.start is None
+
+
+def test_relative_weeks_count_working_days_not_stage_count():
+    def solo(stage):
+        return rule(*[100 if s == stage else 0 for s in STAGES])
+
+    splits = {
+        "a": solo("demolition"), "b": solo("rough_in"), "c": solo("wire_pull"),
+        "*": rule(0, 0, 0, 0, 0, 100),
+    }
+    items = [
+        ItemHours(uuid.uuid4(), PID, "a", D("75")),   # each -> ceil(75/30) = 3 working days
+        ItemHours(uuid.uuid4(), PID, "b", D("75")),
+        ItemHours(uuid.uuid4(), PID, "c", D("75")),
+    ]
+    plan = build_phase(phase(), items, splits, CREWS, phase_start=None, relative_week_start=1)
+    by = {b.stage: b for b in plan.bars}
+    assert (by["demolition"].start_week, by["demolition"].end_week) == (1, 1)
+    assert (by["rough_in"].start_week, by["rough_in"].end_week) == (1, 2)
+    assert (by["wire_pull"].start_week, by["wire_pull"].end_week) == (2, 2)
 
 
 def test_pinned_start_shifts_later_stages_and_overrides_are_marked():
@@ -120,3 +146,35 @@ def test_productivity_factor_scales_stage_hours():
     items = [ItemHours(uuid.uuid4(), PID, "Devices", D("100"))]
     plan = build_phase(phase(), items, SPLITS, crews, phase_start=None, relative_week_start=1)
     assert {b.stage: b.hours for b in plan.bars}["trim"] == D("30.00")
+
+
+def test_zero_crew_sizes_nothing_and_leaves_later_stages_unaffected():
+    crews = dict(CREWS); crews["rough_in"] = CrewRule(0, 0, 0, D("6"), D("1"), 6, True)
+    items = [ItemHours(uuid.uuid4(), PID, "Devices", D("80"))]
+    plan = build_phase(phase(), items, SPLITS, crews, phase_start=None, relative_week_start=1)
+    by = {b.stage: b for b in plan.bars}
+    assert by["rough_in"].duration_days == 0
+    assert by["rough_in"].start is None and by["rough_in"].end is None
+    assert by["rough_in"].note == NO_CREW
+    assert by["wire_pull"].start_week == 1   # rough_in consumed no time, so wire_pull isn't pushed out
+
+
+def test_zero_crew_with_a_duration_override_still_schedules():
+    crews = dict(CREWS); crews["rough_in"] = CrewRule(0, 0, 0, D("6"), D("1"), 6, True)
+    ov = {"rough_in": StageOverride(duration_days=3)}
+    items = [ItemHours(uuid.uuid4(), PID, "Devices", D("80"))]
+    plan = build_phase(phase(overrides=ov), items, SPLITS, crews, phase_start=None, relative_week_start=1)
+    by = {b.stage: b for b in plan.bars}
+    assert by["rough_in"].duration_days == 3
+    assert by["rough_in"].note == ""
+
+
+def test_pinned_stage_with_no_phase_start_anchors_the_phase():
+    items = [ItemHours(uuid.uuid4(), PID, "Devices", D("300"))]   # rough 135h -> 5d; pull 75h -> 3d
+    ov = {"wire_pull": StageOverride(start_date=date(2026, 10, 19))}   # a Monday
+    plan = build_phase(phase(overrides=ov), items, SPLITS, CREWS, phase_start=None, relative_week_start=1)
+    by = {b.stage: b for b in plan.bars}
+    assert by["rough_in"].start == date(2026, 10, 12)
+    assert by["wire_pull"].start == date(2026, 10, 19)
+    assert plan.start == date(2026, 10, 12)
+    assert all(b.start is not None and b.end is not None for b in plan.bars)

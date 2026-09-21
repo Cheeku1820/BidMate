@@ -166,6 +166,13 @@ def test_a_question_can_be_dismissed_through_the_same_route(client, db, project,
     assert client.patch(f"/api/projects/{project.id}/plan/lines/{key}", json={"edited_text": "x"}).status_code == 422
 
 
+def test_a_question_cannot_be_confirmed(client, db, project, dana, signed_in_user, seeded):
+    key = _key(client, project, "questions")
+    r = client.patch(f"/api/projects/{project.id}/plan/lines/{key}", json={"status": "confirmed"})
+    assert r.status_code == 422
+    assert not any(a.kind == "plan_decide" for a in db.scalars(select(Action).where(Action.project_id == project.id)))
+
+
 def test_bad_bodies_and_stale_keys_are_refused(client, db, project, dana, signed_in_user, seeded):
     key = _key(client, project, "specs")
     url = f"/api/projects/{project.id}/plan/lines/{key}"

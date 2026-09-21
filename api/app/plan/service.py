@@ -175,8 +175,12 @@ def decide(db: DbSession, *, actor: User, project: Project, key: str, status: st
     what, target, docs = _find_line(db, project, key)
     if what == "question" and edited_text is not None:
         raise DomainError("invalid_plan_decision", "A question can be answered or dismissed, not reworded.", status=422)
-    if status is not None and status not in ("found", "confirmed", "dismissed"):
-        raise DomainError("invalid_plan_status", "Status must be one of found, confirmed, dismissed.", status=422)
+    if status is not None:
+        allowed = {"found", "dismissed"} if what == "question" else {"found", "confirmed", "dismissed"}
+        if status not in allowed:
+            message = (f"A question can be dismissed or reopened, not {status}." if what == "question"
+                       else "Status must be one of found, confirmed, dismissed.")
+            raise DomainError("invalid_plan_status", message, status=422)
 
     row = _decision_row(db, project, key)
     before = _snapshot(row)

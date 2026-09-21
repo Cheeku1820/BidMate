@@ -60,6 +60,12 @@ function cellFor(itemName, columnLabel) {
   return Array.from(row.querySelectorAll('[role="gridcell"], [role="rowheader"]'))[headers.indexOf(columnLabel)];
 }
 
+function pasteEvent(text) {
+  const store = { "text/plain": text };
+  return { clipboardData: { getData: (t) => store[t] ?? "", setData: () => {}, types: ["text/plain"] } };
+}
+const rowTwo = { ...baseRow, itemId: "i2", itemName: "High bay fixture" };
+
 describe("LaborWorkspace", () => {
   test("renders a row per item, with the Missing information status when nothing resolves", async () => {
     const store = {
@@ -342,5 +348,110 @@ describe("LaborWorkspace", () => {
     await waitFor(() => expect(screen.getByRole("grid")).toBeInTheDocument());
     expect(screen.queryByText(/Branch wiring is estimated/)).not.toBeInTheDocument();
     expect(document.querySelector(".pricing-basis")).toBeNull();
+  });
+
+  test("a pasted block sends one PATCH per cell, in row-major order, one after another", async () => {
+    const calls = [];
+    let release;
+    const first = new Promise((r) => { release = r; });
+    // The server resolves the whole row on every PATCH, so the mock keeps
+    // per-item state and returns it cumulatively -- a rate response
+    // still carries the hours the previous call set.
+    const state = { i1: { ...baseRow }, i2: { ...rowTwo } };
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow, rowTwo] }),
+      setLaborLine: vi.fn((itemId, changes) => {
+        calls.push([itemId, changes]);
+        const s = state[itemId];
+        if ("hoursOverride" in changes) Object.assign(s, { hoursPerUnit: changes.hoursOverride, hoursSourceLabel: "Estimator entered" });
+        if ("rateOverride" in changes) Object.assign(s, { rate: changes.rateOverride, rateSourceLabel: "Estimator entered" });
+        const updated = { ...s };
+        return calls.length === 1 ? first.then(() => updated) : Promise.resolve(updated);
+      }),
+    };
+    const review = renderLabor({ store });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    // Columns from Hours/unit: Hours/unit, Hours source (read-only), Rate --
+    // so the clip carries an empty second column, as a Material paste does
+    // for its own read-only Range column.
+    fireEvent.paste(cellFor("20A duplex receptacle", "Hours/unit"), pasteEvent("0.5\t\t60\n0.75\t\t70"));
+    // Local state moved before any response.
+    expect(cellFor("High bay fixture", "Rate")).toHaveTextContent("$70.00/hr");
+    expect(calls).toHaveLength(1); // the second waits on the first
+    release();
+    await waitFor(() => expect(calls).toHaveLength(4));
+    expect(calls).toEqual([
+      ["i1", { hoursOverride: 0.5 }], ["i1", { rateOverride: 60 }],
+      ["i2", { hoursOverride: 0.75 }], ["i2", { rateOverride: 70 }],
+    ]);
+    await waitFor(() => expect(review.showToast).toHaveBeenCalledWith("Pasted 4 cells on 2 rows"));
+    expect(store.getLaborRows).toHaveBeenCalledTimes(1); // no refetch
+    expect(screen.getAllByText("Estimator entered")).toHaveLength(4);
+  });
+
+  test("a failed call restores that cell, the rest land, and the banner counts", async () => {
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow, rowTwo] }),
+      setLaborLine: vi.fn()
+        .mockResolvedValueOnce({ ...baseRow, hoursPerUnit: 0.5, hoursSourceLabel: "Estimator entered" })
+        .mockRejectedValueOnce(new Error("boom"))
+        .mockResolvedValueOnce({ ...rowTwo, hoursPerUnit: 0.75, hoursSourceLabel: "Estimator entered" })
+        .mockResolvedValueOnce({ ...rowTwo, hoursPerUnit: 0.75, hoursSourceLabel: "Estimator entered", rate: 70, rateSourceLabel: "Estimator entered" }),
+    };
+    const review = renderLabor({ store });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    fireEvent.paste(cellFor("20A duplex receptacle", "Hours/unit"), pasteEvent("0.5\t\t60\n0.75\t\t70"));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("1 of 4 cells couldn't be saved. Try again."));
+    expect(cellFor("20A duplex receptacle", "Rate")).toHaveTextContent("—");
+    expect(cellFor("High bay fixture", "Rate")).toHaveTextContent("$70.00/hr");
+    expect(review.showToast).toHaveBeenCalledWith("Pasted 3 cells on 2 rows");
+  });
+
+  test("the toast's Undo after a range operation reverses every call, reloads, and says so", async () => {
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow, rowTwo] }),
+      setLaborLine: vi.fn((itemId, changes) => Promise.resolve({ ...(itemId === "i1" ? baseRow : rowTwo), hoursPerUnit: changes.hoursOverride, hoursSourceLabel: "Estimator entered" })),
+    };
+    const undo = vi.fn().mockResolvedValue({ performed: true });
+    const review = renderLabor({ store, extra: { undo, toast: { id: "t1", text: "Pasted 2 cells on 2 rows" } } });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    fireEvent.paste(cellFor("20A duplex receptacle", "Hours/unit"), pasteEvent("0.5\n0.75"));
+    await waitFor(() => expect(store.setLaborLine).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(undo).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(store.getLaborRows).toHaveBeenCalledTimes(2));
+    expect(review.showToast).toHaveBeenLastCalledWith("Reversed 2 cells");
+    expect(review.dismissToast).toHaveBeenCalled();
+  });
+
+  test("Ctrl+Z on a cell reverses one action and reloads; Ctrl+Shift+Z redoes", async () => {
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: null, pricingNote: "", rows: [baseRow] }),
+      setLaborLine: vi.fn(),
+    };
+    const undo = vi.fn().mockResolvedValue({ performed: true });
+    const redo = vi.fn().mockResolvedValue({ performed: true });
+    renderLabor({ store, extra: { undo, redo } });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    fireEvent.keyDown(cellFor("20A duplex receptacle", "Hours/unit"), { key: "z", metaKey: true });
+    await waitFor(() => expect(undo).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(store.getLaborRows).toHaveBeenCalledTimes(2));
+    fireEvent.keyDown(cellFor("20A duplex receptacle", "Hours/unit"), { key: "z", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(redo).toHaveBeenCalledTimes(1));
+  });
+
+  test("copying the status and item columns gives their labels, not markup", async () => {
+    const store = {
+      getLaborRows: vi.fn().mockResolvedValue({ pricingSource: "llm", pricingNote: "", rows: [pricedRow] }),
+      setLaborLine: vi.fn(),
+    };
+    renderLabor({ store });
+    await waitFor(() => expect(screen.getByRole("rowheader", { name: /20A duplex receptacle/ })).toBeInTheDocument());
+    const status = cellFor("20A duplex receptacle", "Status");
+    fireEvent.click(status);
+    fireEvent.click(cellFor("20A duplex receptacle", "Hours source"), { shiftKey: true });
+    const store2 = {};
+    fireEvent.copy(screen.getByRole("grid"), { clipboardData: { setData: (t, v) => { store2[t] = v; }, getData: () => "" } });
+    expect(store2["text/plain"]).toBe("Ready to review\t20A duplex receptacle\t10\t0.5\tEstimated basis");
   });
 });

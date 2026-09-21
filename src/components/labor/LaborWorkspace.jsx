@@ -14,12 +14,22 @@
    drives the top bar's Saving…/Saved, showToast the five-second Undo.
    Undo pulls from the shared stack and lands in the action log, not in
    this screen's rows, so the toast's Undo reloads them.
+
+   A pasted, filled, or cleared range lands as N sequential
+   store.setLaborLine calls -- one PATCH per cell, each its own
+   undoable action -- through commitRange below, rather than one
+   combined request; see docs/specs/spreadsheet-grid.md, "What the
+   screens do with a range". The toast's Undo reverses however many
+   calls the operation made, through useUndoCount, so it still reads
+   as one press whether it undoes a single cell or a pasted block.
    ============================================================ */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import DataGrid from "../grid/DataGrid.jsx";
 import { COLUMNS, FIELDS, money } from "./laborColumns.jsx";
+import { rangeFailure, rangeToast } from "../grid/rangeCopy.js";
+import { useUndoCount } from "../grid/useUndoCount.js";
 import { saveStateText } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 
@@ -37,7 +47,7 @@ function toastFor(key, value, row, updated) {
 }
 
 export default function LaborWorkspace() {
-  const { store, projectId, runMutation, showToast, saved, toast, dismissToast, undo } = useWorkspaceContext();
+  const { store, projectId, runMutation, showToast, saved, toast, dismissToast, undo, redo } = useWorkspaceContext();
 
   const [rows, setRows] = useState(null); // null = loading
   const [pricingNote, setPricingNote] = useState("");
@@ -59,6 +69,8 @@ export default function LaborWorkspace() {
     load();
   }, [load]);
 
+  const undoCount = useUndoCount({ undo, load, showToast });
+
   const replaceRow = (itemId, next) =>
     setRows((current) => current.map((r) => (r.itemId === itemId ? next : r)));
 
@@ -74,6 +86,7 @@ export default function LaborWorkspace() {
     try {
       const updated = await runMutation(() => store.setLaborLine(row.itemId, { [field.wire]: wire }));
       replaceRow(row.itemId, updated);
+      undoCount.remember({ calls: 1, cells: 1 });
       showToast(toastFor(key, value, row, updated));
     } catch (err) {
       // Only the edited field, on the row as it is now -- not the whole
@@ -81,6 +94,50 @@ export default function LaborWorkspace() {
       // that has already landed.
       setRows((cur) => cur.map((r) => (r.itemId === row.itemId ? { ...r, [key]: row[key] } : r)));
       setSaveError(err?.message || "That change couldn't be saved. Try again.");
+    }
+  };
+
+  // A range lands as one PATCH per cell, sequentially, each its own
+  // action (docs/specs/spreadsheet-grid.md, "What the screens do with a
+  // range"). Every change is applied locally first so the footer moves
+  // at once; each response replaces its row, keeping any value on that
+  // row still waiting to be sent; a failure restores that one cell and
+  // the run continues.
+  const commitRange = async (changes, { kind }) => {
+    setSaveError(null);
+    setRows((cur) =>
+      cur.map((r) => {
+        const mine = changes.filter((c) => c.row.itemId === r.itemId);
+        if (!mine.length) return r;
+        const next = { ...r };
+        for (const c of mine) next[c.key] = c.value;
+        return next;
+      }),
+    );
+    let done = 0;
+    let failed = 0;
+    const touched = new Set();
+    for (let i = 0; i < changes.length; i += 1) {
+      const c = changes[i];
+      const field = FIELDS[c.key];
+      const wire = c.key === "adjustmentReason" && c.value === null ? "" : c.value;
+      try {
+        const updated = await runMutation(() => store.setLaborLine(c.row.itemId, { [field.wire]: wire }));
+        const pending = changes.slice(i + 1).filter((p) => p.row.itemId === c.row.itemId);
+        const merged = { ...updated };
+        for (const p of pending) merged[p.key] = p.value;
+        replaceRow(c.row.itemId, merged);
+        done += 1;
+        touched.add(c.row.itemId);
+      } catch {
+        setRows((cur) => cur.map((r) => (r.itemId === c.row.itemId ? { ...r, [c.key]: c.row[c.key] } : r)));
+        failed += 1;
+      }
+    }
+    if (failed) setSaveError(rangeFailure(failed, changes.length));
+    if (done) {
+      undoCount.remember({ calls: done, cells: done });
+      showToast(rangeToast(kind, done, touched.size));
     }
   };
 
@@ -146,6 +203,9 @@ export default function LaborWorkspace() {
               rowKey={(row) => row.itemId}
               rowLabel={(row) => row.itemName}
               onCommit={commit}
+              onCommitRange={commitRange}
+              onUndo={() => undo().then(load).catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."))}
+              onRedo={() => redo().then(load).catch((err) => setSaveError(err?.message || "That change couldn't be redone. Try again."))}
               footer={footer}
               caption="Labor by item"
             />
@@ -169,9 +229,7 @@ export default function LaborWorkspace() {
           <button
             type="button"
             onClick={() => {
-              undo()
-                .then(load)
-                .catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
+              undoCount.undoLast().catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
               dismissToast();
             }}
           >

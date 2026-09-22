@@ -79,6 +79,21 @@ def _delete_phase_if_present(db: DbSession, phase_id: uuid.UUID) -> None:
         db.flush()
 
 
+def _rename_first(db: DbSession, state: dict) -> None:
+    """A proposal may rename the implicit first phase rather than adding
+    beside it (propose.py), so replaying one has to carry that name back
+    and forth -- the phase itself is never created or deleted by it, so
+    nothing else in the branch would."""
+    name = state.get("first_name")
+    order = state.get("order") or []
+    if not name or not order:
+        return
+    phase = db.get(Phase, _uuid(order[0]))
+    if phase is not None:
+        phase.name = name
+        db.flush()
+
+
 def _apply_order(db: DbSession, order: list[str]) -> None:
     for i, pid in enumerate(order):
         phase = db.get(Phase, _uuid(pid))
@@ -146,11 +161,13 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
             for snap in action.after["phases"]:
                 _delete_phase_if_present(db, _uuid(snap["id"]))
             _apply_order(db, action.before["order"])
+            _rename_first(db, action.before)
         else:
             for snap in action.after["phases"]:
                 _restore_phase(db, snap, snap.get("lines", []), [])
             _apply_order(db, action.after["order"])
             _apply_refs(db, action.after["sheets"], {})
+            _rename_first(db, action.after)
     else:  # phase_line_edit, stage_plan_edit, lead_time_edit -- Task 6
         from app.schedule import overrides
         overrides.apply_undo(db, action, direction)

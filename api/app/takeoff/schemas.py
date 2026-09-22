@@ -109,6 +109,12 @@ class ItemOut(BaseModel):
     # processing internal -- legitimate estimator-facing data, and the
     # merge key a re-run uses to recognise an item it already produced.
     source_tag: str = ""
+    # Which phase this item's hours belong to (phases-and-timeline.md
+    # §3.1), already resolved through `phases.phase_of` -- the client
+    # never re-derives it. None only on a project that has no phase row
+    # yet, which the client reads as "the only phase".
+    phase_id: uuid.UUID | None = None
+    phase_overridden: bool = False
 
     model_config = MODEL_CONFIG
 
@@ -168,6 +174,8 @@ class ProjectOut(BaseModel):
     location: str
     postal_code: str | None
     bid_due_date: date | None
+    expected_award_date: date | None = None
+    mobilization_date: date | None = None
     stage: str
     revision_set_label: str
     archived_at: datetime | None

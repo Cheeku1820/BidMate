@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.collab.service import active_presence, presence_signal
 from app.identity.models import User
 from app.takeoff import undo as undo_module
-from app.takeoff.models import Action, Item, Sheet, Warning
+from app.takeoff.models import Action, Item, Phase, Sheet, Warning
 from app.takeoff.schemas import ItemOut, SheetOut, SnapshotOut, TotalsOut, UndoOut, WarningOut
 from app.takeoff.totals import approved_totals
 
@@ -100,7 +100,12 @@ def sheet_out(sheet: Sheet) -> SheetOut:
     )
 
 
-def _item_out(item: Item, warnings: list[Warning], approved_by_name: str | None) -> ItemOut:
+def _item_out(
+    item: Item,
+    warnings: list[Warning],
+    approved_by_name: str | None,
+    phase_id: uuid.UUID | None = None,
+) -> ItemOut:
     return ItemOut(
         id=item.id,
         sheet_id=item.sheet_id,
@@ -130,7 +135,22 @@ def _item_out(item: Item, warnings: list[Warning], approved_by_name: str | None)
         placements=item.placements,
         ai_confirmed=item.ai_confirmed,
         source_tag=item.source_tag,
+        phase_id=phase_id,
+        phase_overridden=item.phase_id is not None,
     )
+
+
+def _resolved_phase_id(db: DbSession, item: Item) -> uuid.UUID | None:
+    """One item's phase, through the one resolution
+    (`schedule.phases.phase_of`): the item's own override, else its
+    sheet's, else the project's first phase. None when the project has
+    no phase row yet -- nothing creates one from a read of a single
+    item."""
+    from app.schedule.phases import phase_of, phases_for
+
+    sheet = db.get(Sheet, item.sheet_id)
+    ordered = phases_for(db, item.project_id)
+    return phase_of(item, sheet, ordered[0] if ordered else None) if sheet is not None else item.phase_id
 
 
 def item_out(db: DbSession, item: Item) -> ItemOut:
@@ -154,7 +174,7 @@ def item_out(db: DbSession, item: Item) -> ItemOut:
     if item.approved_by_user_id is not None:
         approver = db.get(User, item.approved_by_user_id)
         approved_by_name = approver.name if approver is not None else None
-    return _item_out(item, warnings, approved_by_name)
+    return _item_out(item, warnings, approved_by_name, _resolved_phase_id(db, item))
 
 
 def build(db: DbSession, actor: User, project_id: uuid.UUID, version: str) -> SnapshotOut:
@@ -238,11 +258,29 @@ def build(db: DbSession, actor: User, project_id: uuid.UUID, version: str) -> Sn
 
     presence = active_presence(db, project_id, exclude=actor.id)
 
+    # Each item's phase, resolved once for the whole snapshot rather
+    # than per item: the sheets are already loaded above, and a read
+    # never creates the implicit first phase (only the schedule screen
+    # does that, deliberately).
+    from app.schedule.phases import phase_of
+
+    ordered_phases = list(
+        db.scalars(select(Phase).where(Phase.project_id == project_id).order_by(Phase.sort_order))
+    )
+    first = ordered_phases[0] if ordered_phases else None
+    sheets_by_id = {s.id: s for s in sheets}
+    phase_ids = {
+        i.id: phase_of(i, sheets_by_id[i.sheet_id], first)
+        for i in items
+        if i.sheet_id in sheets_by_id
+    }
+
     return SnapshotOut(
         version=version,
         sheets=[sheet_out(s) for s in sheets],
         items=[
-            _item_out(i, warnings_by_item_id.get(i.id, []), names.get(i.approved_by_user_id)) for i in items
+            _item_out(i, warnings_by_item_id.get(i.id, []), names.get(i.approved_by_user_id), phase_ids.get(i.id))
+            for i in items
         ],
         totals=TotalsOut(**asdict(approved_totals(db, project_id))),
         undo=UndoOut(

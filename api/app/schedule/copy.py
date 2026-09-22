@@ -32,3 +32,16 @@ def stale_lead_time_warning(days: int, source_label: str) -> dict:
         "fix": "Ask the supplier for a current lead time, or upload their price sheet with the lead-time column filled.",
         "where": "Phases and schedule, long-lead items; the item's detail panel",
     }
+
+
+def unscheduled_items(count: int) -> str:
+    noun = "item isn't" if count == 1 else "items aren't"
+    return f"{count} {noun} in the schedule yet — they need labor hours"
+
+
+NO_PHASING_FOUND = "No phasing found in the sheet numbers. Add phases by hand, or assign sheets to one."
+
+
+def proposal_note(phase_count: int, sheet_count: int) -> str:
+    return (f"{phase_count} phases from {sheet_count} sheets. Nothing changes until you confirm."
+            if phase_count != 1 else f"1 phase from {sheet_count} sheets. Nothing changes until you confirm.")

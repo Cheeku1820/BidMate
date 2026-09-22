@@ -39,6 +39,10 @@ class ProjectRow:
     location: str
     postal_code: str | None
     bid_due_date: datetime.date | None
+    # Phases and schedule (phases-and-timeline.md §3.6): both typed by
+    # the estimator, neither derived from anything.
+    expected_award_date: datetime.date | None
+    mobilization_date: datetime.date | None
     stage: str
     revision_set_label: str
     archived_at: datetime.datetime | None
@@ -161,6 +165,8 @@ def list_projects(
                 location=project.location,
                 postal_code=project.postal_code,
                 bid_due_date=project.bid_due_date,
+                expected_award_date=project.expected_award_date,
+                mobilization_date=project.mobilization_date,
                 stage=project.stage,
                 revision_set_label=project.revision_set_label,
                 archived_at=project.archived_at,

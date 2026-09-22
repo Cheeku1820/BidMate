@@ -19,6 +19,7 @@ from app.takeoff.mutations import router as takeoff_mutations_router
 from app.takeoff.price_sheet_router import router as price_sheet_router
 from app.takeoff.pricing_router import router as pricing_router
 from app.takeoff.router import PROJECT_NOT_FOUND_CODE, PROJECT_NOT_FOUND_MESSAGE
+from app.schedule.router import router as schedule_router
 from app.takeoff.router import router as takeoff_router
 from app.tiles.router import router as tiles_router
 
@@ -119,6 +120,7 @@ app.include_router(scope_router)
 app.include_router(collab_router)
 app.include_router(tiles_router)
 app.include_router(conversation_router)
+app.include_router(schedule_router)
 
 
 @app.get("/api/health")

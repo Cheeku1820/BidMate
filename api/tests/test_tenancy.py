@@ -59,6 +59,17 @@ def document(db, project, dana):
 
 
 @pytest.fixture
+def phase(db, project, dana):
+    """A phase with its template lines, for the routes keyed by
+    phase_id rather than project_id."""
+    from app.schedule.phases import first_phase
+
+    row = first_phase(db, project, create=True)
+    db.flush()
+    return row
+
+
+@pytest.fixture
 def note(db, project, dana):
     n = Note(
         project_id=project.id, scope="project", title="Existing panel to remain",
@@ -225,6 +236,22 @@ TENANCY_TABLE = [
     ("POST", "/api/projects/{project_id}/notes",
      lambda p, s, i: f"/api/projects/{p.id}/notes",
      lambda p, s, i: {"title": "t", "body": "b", "category": "existing_condition"}, None),
+    ("GET", "/api/projects/{project_id}/schedule",
+     lambda p, s, i: f"/api/projects/{p.id}/schedule", None, None),
+    ("POST", "/api/projects/{project_id}/phases",
+     lambda p, s, i: f"/api/projects/{p.id}/phases", lambda p, s, i: {"name": "Phase 2"}, None),
+    ("PATCH", "/api/projects/{project_id}/schedule-dates",
+     lambda p, s, i: f"/api/projects/{p.id}/schedule-dates",
+     lambda p, s, i: {"mobilizationDate": "2026-10-05"}, None),
+    ("POST", "/api/projects/{project_id}/phases/propose",
+     lambda p, s, i: f"/api/projects/{p.id}/phases/propose", lambda p, s, i: {}, None),
+    ("POST", "/api/projects/{project_id}/phases/propose/apply",
+     lambda p, s, i: f"/api/projects/{p.id}/phases/propose/apply",
+     lambda p, s, i: {"phases": [], "note": ""}, None),
+    ("PATCH", "/api/items/{item_id}/phase",
+     lambda p, s, i: f"/api/items/{i.id}/phase", lambda p, s, i: {"phaseId": None}, None),
+    ("PATCH", "/api/items/{item_id}/lead-time",
+     lambda p, s, i: f"/api/items/{i.id}/lead-time", lambda p, s, i: {"flagged": True}, None),
     ("GET", "/api/projects/{project_id}/labor",
      lambda p, s, i: f"/api/projects/{p.id}/labor", None, None),
     ("GET", "/api/projects/{project_id}/material-pricing",
@@ -297,6 +324,25 @@ DOCUMENT_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in 
 # (p, s, i) lambdas were never written to accept. `GET
 # /api/projects/{project_id}/scope` IS project-keyed and lives in
 # TENANCY_TABLE above instead.
+# The five schedule routes keyed by phase_id rather than project_id,
+# same shape and same reasoning as NOTE_TENANCY_TABLE above: they need
+# the `phase` fixture, which the main table's (p, s, i) lambdas were
+# never written to accept.
+PHASE_TENANCY_TABLE = [
+    ("PATCH", "/api/phases/{phase_id}",
+     lambda ph: f"/api/phases/{ph.id}", lambda ph: {"name": "Renamed"}, None),
+    ("DELETE", "/api/phases/{phase_id}",
+     lambda ph: f"/api/phases/{ph.id}", None, None),
+    ("PUT", "/api/phases/{phase_id}/sheets",
+     lambda ph: f"/api/phases/{ph.id}/sheets", lambda ph: {"sheetIds": []}, None),
+    ("PUT", "/api/phases/{phase_id}/stages/{stage}",
+     lambda ph: f"/api/phases/{ph.id}/stages/rough_in", lambda ph: {"journeyman": 2}, None),
+    ("PATCH", "/api/phases/{phase_id}/lines/{line_id}",
+     lambda ph: f"/api/phases/{ph.id}/lines/{uuid.uuid4()}", lambda ph: {"hours": 4}, None),
+]
+
+PHASE_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in PHASE_TENANCY_TABLE]
+
 SCOPE_TENANCY_TABLE = [
     ("PATCH", "/api/scope/{statement_id}",
      lambda s: f"/api/scope/{s.id}", lambda s: {"status": "confirmed"}, None),
@@ -367,6 +413,25 @@ NON_PROJECT_SCOPED_ROUTES = {
     ("PUT", "/api/company/labor-hours-overrides/{item_name}"),
     ("DELETE", "/api/company/labor-hours-overrides/{item_name}"),
     ("GET", "/api/company/market-pricing/usage"),
+    # The firm's schedule tables -- stage splits, crews, the
+    # general-conditions template, its own quoted lead times, and the
+    # staleness window. Org-scoped by the session for the same reason
+    # the pricing rows above are: no project id anywhere in the path,
+    # and every write records a CompanyAction rather than a project
+    # action.
+    ("GET", "/api/company/stage-splits"),
+    ("PUT", "/api/company/stage-splits/{key}"),
+    ("DELETE", "/api/company/stage-splits/{key}"),
+    ("GET", "/api/company/stage-crews"),
+    ("PUT", "/api/company/stage-crews/{stage}"),
+    ("GET", "/api/company/schedule-settings"),
+    ("PUT", "/api/company/schedule-settings"),
+    ("GET", "/api/company/phase-line-templates"),
+    ("PUT", "/api/company/phase-line-templates/{template_id}"),
+    ("DELETE", "/api/company/phase-line-templates/{template_id}"),
+    ("GET", "/api/company/lead-times"),
+    ("PUT", "/api/company/lead-times/{item_class}"),
+    ("DELETE", "/api/company/lead-times/{item_class}"),
     # FastAPI's own framework routes -- docs UI, its OAuth2 redirect
     # target, the OpenAPI schema, and ReDoc. None of these take a
     # project id or touch tenant data; they exist the moment `FastAPI()`
@@ -448,6 +513,39 @@ def test_an_unauthenticated_caller_gets_401_on_every_note_route(
     path = path_fn(note)
     body = body_fn(note) if body_fn else None
     headers = headers_fn(note) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
+
+
+# --- The schedule routes, keyed by phase_id rather than project_id ---
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", PHASE_TENANCY_TABLE, ids=PHASE_TENANCY_IDS)
+def test_a_rival_org_gets_404_on_every_phase_route(
+    client, dana, rival, phase, method, path_template, path_fn, body_fn, headers_fn
+):
+    _sign_in_as(client, "rival@example.com", "hunter2")
+    path = path_fn(phase)
+    body = body_fn(phase) if body_fn else None
+    headers = headers_fn(phase) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 404, (
+        f"{method} {path} leaked status {response.status_code} to a rival org, expected 404"
+    )
+    assert response.json()["detail"]["code"] == "project_not_found"
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", PHASE_TENANCY_TABLE, ids=PHASE_TENANCY_IDS)
+def test_an_unauthenticated_caller_gets_401_on_every_phase_route(
+    client, phase, method, path_template, path_fn, body_fn, headers_fn
+):
+    path = path_fn(phase)
+    body = body_fn(phase) if body_fn else None
+    headers = headers_fn(phase) if headers_fn else None
 
     response = client.request(method, path, json=body, headers=headers)
 
@@ -608,6 +706,7 @@ def test_every_project_scoped_route_is_covered_by_the_tenancy_table():
         | {(method, template) for method, template, _, _, _ in NOTE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in SCOPE_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in PHASE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _ in MULTIPART_TENANCY_TABLE}
         | NON_PROJECT_SCOPED_ROUTES
     )

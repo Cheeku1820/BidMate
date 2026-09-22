@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapProcessing, mapProject, mapProposal, mapScopeStatement, mapSnapshot, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
+import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPlan, mapPlanLine, mapProcessing, mapProject, mapProposal, mapQuestion, mapScopeStatement, mapSnapshot, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -444,6 +444,36 @@ export function createApiStore() {
     return mapScopeStatement(await request(`/api/scope/${id}`, { method: "PATCH", body }));
   }
 
+  /** The project plan: what the documents say, derived server-side on
+   *  every read, with the estimator's decisions applied. */
+  async function getPlan(projectId) {
+    return mapPlan(await request(`/api/projects/${projectId}/plan`));
+  }
+
+  /** Exactly one of status / editedText, the same contract as decideScope.
+   *  A question comes back as a question (title, found, why, fix, where);
+   *  anything else as a line. */
+  async function decidePlanLine(projectId, key, changes) {
+    const body = {};
+    if (Object.prototype.hasOwnProperty.call(changes, "status")) body.status = changes.status;
+    if (Object.prototype.hasOwnProperty.call(changes, "editedText")) body.edited_text = changes.editedText;
+    const raw = await request(`/api/projects/${projectId}/plan/lines/${encodeURIComponent(key)}`, { method: "PATCH", body });
+    return raw && raw.title !== undefined ? mapQuestion(raw) : mapPlanLine(raw);
+  }
+
+  async function answerPlanQuestion(projectId, key, body) {
+    const raw = await request(`/api/projects/${projectId}/plan/questions/${encodeURIComponent(key)}/answer`, { method: "POST", body: { body } });
+    return mapQuestion(raw);
+  }
+
+  async function addPlanPhase(projectId, name) {
+    return mapPlanLine(await request(`/api/projects/${projectId}/plan/phases`, { method: "POST", body: { name } }));
+  }
+
+  async function removePlanPhase(projectId, phaseId) {
+    return request(`/api/projects/${projectId}/plan/phases/${phaseId}`, { method: "DELETE" });
+  }
+
   async function listDocuments(projectId) {
     const rows = await request(`/api/projects/${projectId}/documents`);
     return (rows || []).map(mapDocument);
@@ -772,5 +802,10 @@ export function createApiStore() {
     getCompanyLaborHoursOverrides,
     setCompanyLaborHoursOverride,
     deleteCompanyLaborHoursOverride,
+    getPlan,
+    decidePlanLine,
+    answerPlanQuestion,
+    addPlanPhase,
+    removePlanPhase,
   };
 }

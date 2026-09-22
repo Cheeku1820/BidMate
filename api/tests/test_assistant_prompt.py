@@ -3,8 +3,8 @@ renders. Two things are load-bearing: extracted document text is inert
 data (ROADMAP invariant 11), and the prompt is byte-identical across
 calls so the cached block is a cache hit."""
 from app.assistant.context import ContextBundle
-from app.assistant.prompt import SYSTEM_PROMPT, esc, render
-from app.assistant.schemas import ScreenIn
+from app.assistant.prompt import SCREEN_LABELS, SYSTEM_PROMPT, esc, render
+from app.assistant.schemas import SCREEN_NAMES, ScreenIn
 
 
 def _bundle(**kw):
@@ -146,3 +146,11 @@ def test_pricing_source_never_appears_in_render():
 def test_system_prompt_names_bulk_approve():
     assert ("approve several Ready to review items at once from the Spreadsheet's bulk approve, "
             "which never covers Needs attention or Missing information") in SYSTEM_PROMPT
+
+
+def test_every_screen_name_has_a_prompt_label():
+    # render() indexes SCREEN_LABELS[bundle.screen.name] unguarded, so a
+    # screen name missing from this mirror is a 500 on the first message
+    # sent from that screen's conversation panel, not a KeyError caught
+    # anywhere before the estimator sees it.
+    assert set(SCREEN_NAMES) <= set(SCREEN_LABELS)

@@ -19,7 +19,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 export const SCREEN_NAMES = [
   "overview", "documents", "confirm", "processing", "takeoff", "spreadsheet",
-  "notes", "labor", "pricing", "export", "settings",
+  "notes", "labor", "pricing", "export", "settings", "plan",
 ];
 
 export const SCREEN_LABELS = {
@@ -34,6 +34,7 @@ export const SCREEN_LABELS = {
   pricing: "Material pricing",
   export: "Export",
   settings: "Project settings",
+  plan: "Project plan",
 };
 
 // The suffix after /projects/:id, or "" for the overview. Same exclusion
@@ -51,6 +52,7 @@ const BY_SUFFIX = {
   pricing: "pricing",
   export: "export",
   settings: "settings",
+  plan: "plan",
 };
 
 export function screenNameFromPath(pathname) {

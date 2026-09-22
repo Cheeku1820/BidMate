@@ -244,6 +244,16 @@ TENANCY_TABLE = [
      lambda p, s, i: f"/api/projects/{p.id}/market-pricing/refresh", None, None),
     ("GET", "/api/projects/{project_id}/material-pricing/price-request",
      lambda p, s, i: f"/api/projects/{p.id}/material-pricing/price-request", None, None),
+    ("GET", "/api/projects/{project_id}/plan",
+     lambda p, s, i: f"/api/projects/{p.id}/plan", None, None),
+    ("PATCH", "/api/projects/{project_id}/plan/lines/{key}",
+     lambda p, s, i: f"/api/projects/{p.id}/plan/lines/spec:x:260519", lambda p, s, i: {"status": "confirmed"}, None),
+    ("POST", "/api/projects/{project_id}/plan/questions/{key}/answer",
+     lambda p, s, i: f"/api/projects/{p.id}/plan/questions/question:no_specs:project/answer", lambda p, s, i: {"body": "One phase."}, None),
+    ("POST", "/api/projects/{project_id}/plan/phases",
+     lambda p, s, i: f"/api/projects/{p.id}/plan/phases", lambda p, s, i: {"name": "Phase 2"}, None),
+    ("DELETE", "/api/projects/{project_id}/plan/phases/{phase_id}",
+     lambda p, s, i: f"/api/projects/{p.id}/plan/phases/{uuid.uuid4()}", None, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]

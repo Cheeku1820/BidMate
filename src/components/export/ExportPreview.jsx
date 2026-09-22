@@ -17,7 +17,7 @@
    named as such, never silently dropped.
    ============================================================ */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
@@ -46,7 +46,27 @@ function toCsv(rows) {
 }
 
 export default function ExportPreview() {
-  const { snapshot, loading, loadError, refresh, projectId, project } = useWorkspaceContext();
+  const { snapshot, loading, loadError, refresh, projectId, project, store } = useWorkspaceContext();
+
+  // The schedule, for the phase roll-up and the long-lead section. It
+  // is a separate read because the export is a view onto the same
+  // approved totals whether or not a project is phased: a single-phase
+  // bid exports exactly as it did before, plus its general-conditions
+  // lines and any long-lead rows.
+  const [schedule, setSchedule] = useState(null);
+  useEffect(() => {
+    if (typeof store?.getSchedule !== "function") return undefined;
+    let alive = true;
+    store
+      .getSchedule(projectId)
+      .then((next) => {
+        if (alive) setSchedule(next);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [store, projectId]);
 
   const items = snapshot?.items ?? [];
   const sheets = snapshot?.sheets ?? [];
@@ -88,6 +108,53 @@ export default function ExportPreview() {
     item.totalCost ? Math.round(item.totalCost) : "",
   ]);
 
+  // The phase roll-up: one lump-sum line per phase carrying its hours
+  // and material, exactly as the firm's own summary sheet does, then
+  // each phase's own section below it. A single-phase project gets no
+  // summary block — there is nothing to roll up.
+  const phases = schedule?.phases ?? [];
+  const multiPhase = Boolean(schedule?.multiPhase);
+  const phaseOf = (item) => item.phaseId ?? phases[0]?.id ?? null;
+
+  const summaryRows = multiPhase
+    ? phases.map((phase) => [
+        phase.name, "", "", 1, "LS", "", "Phase total",
+        phase.materialTotal ? Math.round(phase.materialTotal) : "",
+        Number((phase.directHours + phase.generalConditionsHours).toFixed(2)),
+        "",
+      ])
+    : [];
+
+  const generalConditionsRows = phases.flatMap((phase) =>
+    phase.lines.map((line) => [
+      line.label, multiPhase ? phase.name : "", "General conditions", 1, "LS", "", "",
+      "", Number(line.hours.toFixed(2)), "",
+    ]),
+  );
+
+  const sectionedRows = multiPhase
+    ? phases.flatMap((phase) => [
+        [`— ${phase.name} —`, "", "", "", "", "", "", "", "", ""],
+        ...phase.lines.map((line) => [
+          line.label, "", "General conditions", 1, "LS", "", "", "", Number(line.hours.toFixed(2)), "",
+        ]),
+        ...exportRows.filter((_, index) => phaseOf([...approved, ...allowances][index]) === phase.id),
+      ])
+    : [...generalConditionsRows, ...exportRows];
+
+  const leadRows = (schedule?.leads ?? []).map((lead) => [
+    lead.itemName,
+    multiPhase ? lead.phaseName : "",
+    "Long-lead item",
+    lead.leadWeeks ?? "",
+    lead.leadWeeks == null ? "" : "weeks",
+    lead.sourceLabel || "",
+    lead.leadWeeks == null ? "Not yet quoted" : `Needed for ${lead.neededForStage.replace("_", " ")}`,
+    "", "", lead.orderBy ?? "",
+  ]);
+
+  const csvRows = schedule === null ? exportRows : [...summaryRows, ...sectionedRows, ...leadRows];
+
   // Estimate cost over the whole takeoff. An unpriced takeoff carries
   // zero on every item, and zero is not a price -- the card stays hidden
   // rather than exporting a confident $0.
@@ -105,7 +172,7 @@ export default function ExportPreview() {
     // .xlsx workbook, which needs a library this prototype deliberately
     // does not pull in -- the reconciliation guarantee (these totals
     // equal the drawer's) is the part that matters and is real here.
-    const blob = new Blob([toCsv(exportRows)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob([toCsv(csvRows)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -241,6 +308,73 @@ export default function ExportPreview() {
                 </dl>
               </section>
             </div>
+
+            {multiPhase ? (
+              <section className="card">
+                <h2>Summary by phase</h2>
+                <p className="muted">
+                  Each phase exports as one lump-sum line carrying its hours, the way the firm's summary sheet does.
+                </p>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Phase</th>
+                      <th scope="col">Qty</th>
+                      <th scope="col">Unit</th>
+                      <th scope="col">Labor hours</th>
+                      <th scope="col">Material</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {phases.map((phase) => (
+                      <tr key={phase.id}>
+                        <td>{phase.name}</td>
+                        <td className="tabular">1</td>
+                        <td>LS</td>
+                        <td className="tabular">
+                          {(phase.directHours + phase.generalConditionsHours).toFixed(2)}
+                        </td>
+                        <td className="tabular">{phase.materialTotal ? dollars(phase.materialTotal) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            ) : null}
+
+            {leadRows.length ? (
+              <section className="card">
+                <h2>Long-lead items</h2>
+                <p className="muted">
+                  Stated in the bid so the lead times are on the record. A row with no quote says so rather than
+                  carrying a date nobody gave.
+                </p>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Item</th>
+                      {multiPhase ? <th scope="col">Phase</th> : null}
+                      <th scope="col">Lead weeks</th>
+                      <th scope="col">Source</th>
+                      <th scope="col">Needed for</th>
+                      <th scope="col">Order by</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(schedule?.leads ?? []).map((lead) => (
+                      <tr key={lead.itemId}>
+                        <td>{lead.itemName}</td>
+                        {multiPhase ? <td>{lead.phaseName}</td> : null}
+                        <td className="tabular">{lead.leadWeeks ?? "Not yet quoted"}</td>
+                        <td>{lead.sourceLabel || "—"}</td>
+                        <td>{lead.neededForStage.replace("_", " ")}</td>
+                        <td className="tabular">{lead.orderBy ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            ) : null}
 
             <section className="card">
               <h2>Columns in the export</h2>

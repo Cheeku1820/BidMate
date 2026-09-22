@@ -2956,3 +2956,375 @@ button {
   font-size: 13.5px;
   color: var(--ink-2);
 }
+
+/* ==== schedule (phases-and-timeline.md §6) ==== */
+
+.workspace--schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.phase-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.phase-row {
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.phase-row__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.phase-row__name {
+  font-weight: 600;
+  font-size: 1rem;
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  cursor: text;
+  color: var(--ink-1);
+}
+
+.phase-row__hours {
+  color: var(--ink-2);
+  font-size: 0.85rem;
+}
+
+.phase-row__controls {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.phase-row__controls button {
+  background: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  padding: 4px;
+  color: var(--ink-2);
+  line-height: 0;
+}
+
+.phase-row__controls button:disabled {
+  opacity: 0.4;
+}
+
+.phase-row__sheets,
+.phase-row__dates,
+.phase-list__actions,
+.proposal-card__actions,
+.phase-row__assign-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.phase-row__dates label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.phase-row__assign {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-sm);
+  padding: 8px;
+}
+
+.phase-line {
+  display: grid;
+  grid-template-columns: 1fr 96px auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+}
+
+.phase-line input {
+  width: 96px;
+  text-align: right;
+}
+
+.schedule-note {
+  color: var(--ink-2);
+}
+
+.schedule-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+
+.proposal-card {
+  border: 1px solid var(--blue-line);
+  background: var(--blue-tint);
+  border-radius: var(--r-sm);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.proposal-card__list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.stage-bars {
+  overflow-x: auto;
+}
+
+.stage-bars__grid {
+  display: grid;
+  gap: 4px 2px;
+  align-items: center;
+  min-width: max-content;
+}
+
+.stage-bars__week {
+  font-size: 0.75rem;
+  color: var(--ink-3);
+  text-align: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.stage-bars__phase {
+  font-weight: 600;
+  padding-right: 8px;
+}
+
+.stage-bar {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  border: 1px solid var(--blue-line);
+  background: var(--blue-tint);
+  color: var(--ink-1);
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+.stage-bar--selected {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.stage-bar__label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.stage-bar__meta,
+.stage-bar__note {
+  font-size: 0.75rem;
+  color: var(--ink-2);
+}
+
+.tier-tag {
+  display: inline-block;
+  font-size: 0.7rem;
+  color: var(--slate);
+  background: var(--slate-tint);
+  border: 1px solid var(--slate-line);
+  border-radius: 999px;
+  padding: 0 6px;
+  justify-self: start;
+}
+
+.order-marker {
+  color: var(--blue);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.order-marker--stale {
+  color: var(--amber);
+}
+
+.order-marker--passed {
+  color: var(--red);
+}
+
+.order-marker__note {
+  font-size: 0.75rem;
+  color: var(--red);
+  padding-left: 18px;
+  white-space: nowrap;
+}
+
+.stage-editor {
+  border: 1px solid var(--line-1);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.stage-editor__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.stage-editor__head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.stage-editor__head button {
+  background: none;
+  border: 0;
+  color: var(--ink-2);
+  line-height: 0;
+}
+
+.stage-editor__field {
+  display: grid;
+  grid-template-columns: 1fr 88px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.stage-editor__field input {
+  width: 88px;
+  text-align: right;
+}
+
+.stage-editor__field label {
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.stage-editor__field .link {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+.stage-editor__solve {
+  border-top: 1px solid var(--line-1);
+  padding-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.manpower {
+  display: grid;
+  gap: 8px;
+}
+
+.manpower__svg {
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+}
+
+.manpower__bar--foreman {
+  fill: var(--blue-600);
+}
+
+.manpower__bar--journeyman {
+  fill: var(--blue);
+}
+
+.manpower__bar--apprentice {
+  fill: var(--blue-line);
+}
+
+.manpower__week {
+  font-size: 9px;
+  fill: var(--ink-3);
+}
+
+.long-lead {
+  display: grid;
+  gap: 8px;
+}
+
+.long-lead__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.long-lead__table th,
+.long-lead__table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line-1);
+  vertical-align: top;
+}
+
+.long-lead__row--passed td {
+  background: var(--red-tint);
+}
+
+.long-lead__search {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+
+.long-lead__matches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lead-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  padding-top: 8px;
+}
+
+.lead-form label {
+  display: grid;
+  gap: 2px;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+
+.lead-form input {
+  width: 140px;
+}
+
+.warning-details summary {
+  cursor: pointer;
+  color: var(--amber);
+  font-size: 0.8rem;
+}
+
+.small {
+  font-size: 0.75rem;
+}
+
+.error-text {
+  color: var(--red);
+}

@@ -27,6 +27,7 @@ import TakeoffSpreadsheet from "./components/takeoff/TakeoffSpreadsheet.jsx";
 import NotesWorkspace from "./components/notes/NotesWorkspace.jsx";
 import LaborWorkspace from "./components/labor/LaborWorkspace.jsx";
 import MaterialPricingWorkspace from "./components/pricing/MaterialPricingWorkspace.jsx";
+import ScheduleWorkspace from "./components/schedule/ScheduleWorkspace.jsx";
 import ExportPreview from "./components/export/ExportPreview.jsx";
 import CompanySettings from "./components/settings/CompanySettings.jsx";
 import ProjectSettings from "./components/settings/ProjectSettings.jsx";
@@ -55,6 +56,7 @@ export function appRoutes({ store, me, onSignedOut }) {
         <Route path="spreadsheet" element={<TakeoffSpreadsheet />} />
         <Route path="labor" element={<LaborWorkspace />} />
         <Route path="pricing" element={<MaterialPricingWorkspace />} />
+        <Route path="schedule" element={<ScheduleWorkspace />} />
         <Route path="export" element={<ExportPreview />} />
       </Route>
       <Route path="*" element={<NotFound />} />

@@ -150,10 +150,14 @@ describe("CompanyNav", () => {
 });
 
 describe("ProjectNav", () => {
-  it("lists all thirteen spec §4.2 workspaces, so the workflow's shape stays visible", () => {
+  // Fourteen, not the spec's thirteen: "Phases and schedule"
+  // (docs/specs/phases-and-timeline.md §6) is a workspace the frontend
+  // design spec §4.2 predates. It sits in the Cost group after Labor,
+  // because it reads labor's resolved hours and feeds the export.
+  it("lists all fourteen workspaces, so the workflow's shape stays visible", () => {
     renderProjectNav();
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
-    expect(within(nav).getAllByRole("link")).toHaveLength(13);
+    expect(within(nav).getAllByRole("link")).toHaveLength(14);
   });
 
   it("links only the built workspaces and disables the rest by name", () => {
@@ -171,9 +175,10 @@ describe("ProjectNav", () => {
     expect(within(nav).getByRole("link", { name: /^export/i })).toHaveAttribute("href", "/projects/p1/export");
 
     const disabled = disabledItems(nav);
-    // 13 workspaces total, minus the nine now built: overview, blueprint
+    // 14 workspaces total, minus the ten now built: overview, blueprint
     // takeoff, takeoff spreadsheet, documents (intake), notes &
-    // assumptions, labor, material pricing, export, and project settings.
+    // assumptions, labor, material pricing, phases and schedule,
+    // export, and project settings.
     expect(disabled).toHaveLength(4);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
@@ -257,17 +262,17 @@ describe("ProjectNav's header card fallbacks", () => {
 describe("ProjectNav as the project's rail", () => {
   it("keeps the brand and the project card out of the workspace nav", () => {
     // Both sit in the rail but neither is a workspace. While they were
-    // inside the labelled <nav>, "Project workspaces" announced fourteen
-    // destinations for thirteen workspaces.
+    // inside the labelled <nav>, "Project workspaces" announced two
+    // destinations more than there are workspaces.
     renderProjectNav({ project: projectRow(), companyName: "Meridian Electric Co." });
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
 
-    expect(within(nav).getAllByRole("link")).toHaveLength(13);
+    expect(within(nav).getAllByRole("link")).toHaveLength(14);
     expect(within(nav).queryByText("BidMate")).toBeNull();
     expect(screen.getByRole("link", { name: /bidmate/i })).toHaveAttribute("href", "/projects");
   });
 
-  it("groups the thirteen without reordering them", () => {
+  it("groups them without reordering them", () => {
     renderProjectNav({ project: projectRow() });
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
 
@@ -288,6 +293,7 @@ describe("ProjectNav as the project's rail", () => {
       "Assemblies",
       "Labor",
       "Material pricing",
+      "Phases and schedule",
       "Estimate summary",
       "Revisions",
       "Final review",

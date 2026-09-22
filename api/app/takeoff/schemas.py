@@ -150,6 +150,11 @@ class SheetOut(BaseModel):
     render_error: str = ""
     max_zoom: int | None = None
 
+    # Which phase this sheet's items inherit (phases-and-timeline.md
+    # §3.1). None until a phase row exists, which reads as the
+    # project's first phase.
+    phase_id: uuid.UUID | None = None
+
     model_config = MODEL_CONFIG
 
 

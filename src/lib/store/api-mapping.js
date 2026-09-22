@@ -79,6 +79,9 @@ export function evidenceImageUrl(item) {
 
 export function mapSheet(s) {
   return {
+    // Which phase this sheet's items inherit (null = the project's
+    // first phase). What the item panel's "From its sheet" names.
+    phaseId: s.phase_id ?? null,
     id: s.id,
     number: s.number,
     title: s.title,

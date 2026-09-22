@@ -97,6 +97,7 @@ def sheet_out(sheet: Sheet) -> SheetOut:
         render_status=sheet.render_status,
         render_error=sheet.render_error,
         max_zoom=sheet.max_zoom,
+        phase_id=sheet.phase_id,
     )
 
 

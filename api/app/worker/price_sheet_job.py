@@ -61,8 +61,13 @@ def run(db: Session, job: Job) -> None:
     by_id = {str(i.id): i for i in items}
     by_name = {i.name: i for i in items}
     overrides = {r.item_id: r for r in db.scalars(select(ProjectMaterialPrice).where(ProjectMaterialPrice.item_id.in_([i.id for i in items])))}
-    matched, unmatched, seen = [], [], set()
+    matched, unmatched, seen, unreadable = [], [], set(), []
     for r in parsed.rows:
+        # A row can carry a good price and a bad lead time. It stays
+        # matched -- the price applies -- and the lead time is named
+        # back by row rather than dropped (phases-and-timeline §7.1).
+        if r.lead_error:
+            unreadable.append({"line": r.line, "reason": r.lead_error})
         item = by_id.get(r.row_key or "") or (by_name.get(r.item_name) if r.row_key is None else None)
         if item is None or str(item.id) in seen:
             unmatched.append({"item_name": r.item_name, "unit_price": str(r.unit_price) if r.unit_price is not None else None, "line": r.line})
@@ -74,11 +79,13 @@ def run(db: Session, job: Job) -> None:
         matched.append({"item_id": str(item.id), "item_name": item.name,
                         "current_unit_price": str(cur.price_override) if cur else None,
                         "current_source_label": {"project_price": "Project price", "allowance": "Allowance", "supplier_quote": "Supplier quote"}.get(cur.source) if cur else None,
-                        "new_unit_price": str(r.unit_price), "part_no": r.part_no, "notes": r.notes, "line": r.line})
+                        "new_unit_price": str(r.unit_price), "part_no": r.part_no, "notes": r.notes, "line": r.line,
+                        "lead_weeks": r.lead_weeks})
     priced_ids = {m["item_id"] for m in matched}
     unpriced = [{"item_id": str(i.id), "item_name": i.name} for i in items if str(i.id) not in priced_ids]
     supplier, date = _supplier_and_date(doc.filename)
     job.payload = {**(job.payload or {}), "preview": {
-        "matched": matched, "unmatched": unmatched, "unpriced": unpriced, "refused": parsed.refused,
+        "matched": matched, "unmatched": unmatched, "unpriced": unpriced, "unreadable": unreadable,
+        "refused": parsed.refused,
         "supplier_name": supplier, "quote_date": date}}
     db.flush()

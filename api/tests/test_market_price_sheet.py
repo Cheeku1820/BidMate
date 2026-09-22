@@ -5,6 +5,8 @@ from decimal import Decimal
 
 import openpyxl
 
+from openpyxl.utils import get_column_letter
+
 from app.market.price_sheet import HEADER, _price, build_request_workbook, parse_price_sheet
 
 ROWS = [
@@ -18,7 +20,12 @@ def test_request_workbook_has_one_row_per_item_and_a_hidden_key_column():
     ws = wb["Price request"]
     assert [c.value for c in ws[1]] == list(HEADER)
     assert ws.cell(2, 1).value == "20A duplex receptacle" and ws.cell(2, 3).value == 14
-    assert ws.cell(2, 8).value == ROWS[0]["item_id"] and ws.column_dimensions["H"].hidden is True
+    # Derived from HEADER rather than hard-coded: the row key is the
+    # last column and moves whenever one is added before it (the lead
+    # time did exactly that).
+    key_col = HEADER.index("Row key") + 1
+    assert ws.cell(2, key_col).value == ROWS[0]["item_id"]
+    assert ws.column_dimensions[get_column_letter(key_col)].hidden is True
     assert ws.cell(2, 5).value is None    # unit price left blank for the supplier
 
 
@@ -85,3 +92,44 @@ def test_price_refuses_a_negative_or_oversized_number_as_unpriced():
     assert _price("99,999,999.99") == Decimal("99999999.99")
     assert _price(0) == Decimal("0.00")
     assert _price(float("inf")) is None
+
+
+# --- The supplier's lead time (phases-and-timeline.md §7.1) ---
+
+
+def _csv_bytes(rows):
+    return ("\n".join(",".join(cell for cell in row) for row in rows)).encode()
+
+
+def test_the_request_carries_a_lead_time_column_beside_the_part_number():
+    assert HEADER.index("Lead time (weeks)") == HEADER.index("Supplier part no.") + 1
+
+
+def test_a_lead_time_is_optional_and_parsed_as_whole_weeks():
+    data = _csv_bytes([
+        ["Item", "Unit price", "Lead time (weeks)", "Row key"],
+        ["Switchboard MSB-1", "12000", "40", "k1"],
+        ["Panel LP-2", "900", "", "k2"],
+    ])
+    rows = parse_price_sheet(data, "quote.csv").rows
+    assert (rows[0].lead_weeks, rows[0].lead_error) == (40, None)
+    assert (rows[1].lead_weeks, rows[1].lead_error) == (None, None)
+
+
+def test_a_sheet_without_the_lead_time_column_still_parses():
+    data = _csv_bytes([["Item", "Unit price", "Row key"], ["Panel LP-2", "900", "k2"]])
+    parsed = parse_price_sheet(data, "quote.csv")
+    assert parsed.refused is None
+    assert parsed.rows[0].lead_weeks is None and parsed.rows[0].unit_price == Decimal("900.00")
+
+
+def test_a_lead_time_that_is_not_a_number_of_weeks_is_named_by_row():
+    data = _csv_bytes([
+        ["Item", "Unit price", "Lead time (weeks)", "Row key"],
+        ["Switchboard MSB-1", "12000", "12 wks", "k1"],
+    ])
+    row = parse_price_sheet(data, "quote.csv").rows[0]
+    # The price still applies; only the lead time is refused, by line.
+    assert row.unit_price == Decimal("12000.00")
+    assert row.lead_weeks is None
+    assert row.lead_error == "Row 2: the lead time isn't a number of weeks"

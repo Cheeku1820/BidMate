@@ -35,8 +35,11 @@ def test_preview_matches_by_key_and_lists_the_rest(db, project, sheet, item, dan
     ])))
     ws = wb.active
     ws.cell(2, 5).value = 9.10                       # item priced
-    ws.append(["Something extra", "", 1, "EA", 4, "", "", str(uuid.uuid4())])   # foreign key, not ours
-    ws.append(["Renamed thing", "", 1, "EA", 5, "", "", None])                  # no key, no name match
+    # Positional against HEADER (Item, Description, Qty, Unit, Unit
+    # price, Supplier part no., Lead time, Notes, Row key) -- the key
+    # is the last cell, so these rows say what they mean about it.
+    ws.append(["Something extra", "", 1, "EA", 4, "", None, "", str(uuid.uuid4())])   # foreign key, not ours
+    ws.append(["Renamed thing", "", 1, "EA", 5, "", None, "", None])                  # no key, no name match
     out = io.BytesIO(); wb.save(out)
     d = _sheet_doc(db, project, dana, inline, out.getvalue())
     job = queue.enqueue_price_sheet(db, d, dana.id); _run_all(db)
@@ -76,3 +79,31 @@ def test_refused_sheet_completes_with_the_reason(db, project, dana, inline, monk
     job = queue.enqueue_price_sheet(db, d, dana.id); _run_all(db)
     db.refresh(job)
     assert job.status == "done" and "Unit price" in job.payload["preview"]["refused"]
+
+
+def test_the_preview_carries_a_lead_time_and_names_an_unreadable_one(db, project, sheet, item, dana, inline, monkeypatch):
+    """A row with a good price and a bad lead time stays matched -- the
+    price applies -- and the lead time is listed by line rather than
+    dropped (phases-and-timeline.md §7.1)."""
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    other = Item(project_id=project.id, sheet_id=sheet.id, symbol="panel", name="Panelboard LP-2",
+                 system="Power", category="Distribution", quantity=1, unit="EA",
+                 status=ReviewStatus.READY, x=2, y=2)
+    db.add(other); db.flush()
+
+    data = (
+        "Item,Unit price,Lead time (weeks),Row key\n"
+        f"{item.name},12000,40,{item.id}\n"
+        f"{other.name},900,12 wks,{other.id}\n"
+    ).encode()
+    d = _sheet_doc(db, project, dana, inline, data, name="graybar.csv")
+    job = queue.enqueue_price_sheet(db, d, dana.id); _run_all(db)
+    db.refresh(job)
+
+    preview = job.payload["preview"]
+    assert job.status == "done" and preview["refused"] is None
+    by_name = {row["item_name"]: row for row in preview["matched"]}
+    assert by_name[item.name]["lead_weeks"] == 40
+    assert by_name[other.name]["lead_weeks"] is None
+    assert by_name[other.name]["new_unit_price"] == "900.00"
+    assert preview["unreadable"] == [{"line": 3, "reason": "Row 3: the lead time isn't a number of weeks"}]

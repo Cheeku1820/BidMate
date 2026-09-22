@@ -109,7 +109,17 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
         _apply_sparse_pricing_row(db, ProjectMaterialPrice, action.item_id, MATERIAL_PRICE_SNAPSHOT_TYPES, state)
     elif action.kind == "supplier_quote_apply":
         for item_id, row_state in (state.get("rows") or {}).items():
-            _apply_sparse_pricing_row(db, ProjectMaterialPrice, uuid.UUID(item_id), MATERIAL_PRICE_SNAPSHOT_TYPES, row_state)
+            # Two row shapes: a plain price snapshot, and -- when the
+            # supplier also quoted a lead time -- {"price", "lead_time"}.
+            # Both are replayed here so an action recorded before the
+            # lead-time column existed still undoes.
+            carries_lead = isinstance(row_state, dict) and "price" in row_state
+            price_state = row_state["price"] if carries_lead else row_state
+            _apply_sparse_pricing_row(db, ProjectMaterialPrice, uuid.UUID(item_id), MATERIAL_PRICE_SNAPSHOT_TYPES, price_state)
+            if carries_lead:
+                _apply_sparse_pricing_row(
+                    db, ItemLeadTime, uuid.UUID(item_id), LEAD_TIME_SNAPSHOT_TYPES, row_state["lead_time"]
+                )
     elif action.kind == "resolve":
         _apply_resolve(db, action, direction)
     elif action.kind in SCHEDULE_KINDS:

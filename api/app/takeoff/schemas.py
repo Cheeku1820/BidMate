@@ -553,6 +553,10 @@ class PriceSheetPreviewOut(BaseModel):
     matched: list[dict] = []
     unmatched: list[dict] = []
     unpriced: list[dict] = []
+    # Rows the sheet carried that could not be read in full -- today a
+    # lead time that is not a number of weeks. The row's price still
+    # applies; this says what was skipped and on which line.
+    unreadable: list[dict] = []
     refused: str | None = None
     supplier_name: str = ""
     quote_date: date | None = None

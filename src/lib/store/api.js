@@ -665,10 +665,14 @@ export function createApiStore() {
       matched: (p.matched ?? []).map((m) => ({
         itemId: m.item_id, itemName: m.item_name, currentUnitPrice: m.current_unit_price,
         currentSourceLabel: m.current_source_label, newUnitPrice: m.new_unit_price, partNo: m.part_no,
-        notes: m.notes, line: m.line,
+        notes: m.notes, line: m.line, leadWeeks: m.lead_weeks ?? null,
       })),
       unmatched: (p.unmatched ?? []).map((u) => ({ itemName: u.item_name, unitPrice: u.unit_price, line: u.line })),
       unpriced: (p.unpriced ?? []).map((u) => ({ itemId: u.item_id, itemName: u.item_name })),
+      // Rows the sheet carried that could not be read in full -- today
+      // a lead time that is not a number of weeks. The row's price
+      // still applies; this names what was skipped, by line.
+      unreadable: (p.unreadable ?? []).map((u) => ({ line: u.line, reason: u.reason })),
     };
   }
 

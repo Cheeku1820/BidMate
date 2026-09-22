@@ -24,12 +24,15 @@ import { useCallback, useEffect, useState } from "react";
 import AppTopBar from "../shell/AppTopBar.jsx";
 import { getCompanySettings, setCompanyValue } from "../../lib/settingsStore.js";
 import { formatCalendarDate } from "../../lib/format.js";
+import { CrewsAndStagesTab, LeadTimesTab } from "./ScheduleSettingsTabs.jsx";
 
 const TABS = [
   { id: "profile", label: "Company profile", intro: "Your firm's identity, shown on exports." },
   { id: "labor", label: "Labor rates", intro: "Hourly rates applied to estimated labor hours." },
   { id: "adjustments", label: "Labor adjustments", intro: "Productivity factors applied on top of base hours." },
   { id: "material", label: "Material pricing", intro: "Where material unit costs and labor units come from." },
+  { id: "crews", label: "Crews and stages", intro: "How hours divide across the stages of a job, and the crew the firm puts on each." },
+  { id: "leadtimes", label: "Lead times", intro: "Lead times your suppliers or reps have quoted, with who said so and when." },
   { id: "markup", label: "Waste and markup", intro: "The estimator-owned layer on top of direct cost." },
   { id: "export", label: "Export preferences", intro: "Defaults for the exported workbook." },
 ];
@@ -203,6 +206,9 @@ export default function CompanySettings({ store }) {
 
         <div className="tabpanel" role="tabpanel" id={`panel-${activeTab}`} aria-labelledby={`tab-${activeTab}`}>
           <p className="muted">{tab.intro}</p>
+
+          {activeTab === "crews" ? <CrewsAndStagesTab store={store} /> : null}
+          {activeTab === "leadtimes" ? <LeadTimesTab store={store} /> : null}
 
           {activeTab === "labor" || activeTab === "adjustments" ? (
             laborError ? (

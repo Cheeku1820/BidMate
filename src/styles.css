@@ -3328,3 +3328,30 @@ button {
 .error-text {
   color: var(--red);
 }
+
+.schedule-settings {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.settings-table th,
+.settings-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line-1);
+  vertical-align: middle;
+}
+
+.settings-table input.field {
+  width: 88px;
+}
+
+.settings-table input.field[type="date"],
+.settings-table input.field[type="text"]:not(.field--number) {
+  width: 160px;
+}

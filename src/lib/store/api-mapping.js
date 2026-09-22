@@ -54,6 +54,11 @@ export function mapItem(i) {
     // tag a human drew on the sheet ("R", "F2"), not processing
     // internals. Not rendered anywhere yet (Task 5).
     sourceTag: i.source_tag ?? "",
+    // The phase this item's hours belong to, already resolved by the
+    // API (item override -> sheet -> first phase). `phaseOverridden`
+    // is what makes the panel able to say "moved from Phase 1".
+    phaseId: i.phase_id ?? null,
+    phaseOverridden: Boolean(i.phase_overridden),
   };
 }
 
@@ -280,6 +285,8 @@ export function mapProject(raw) {
     location: raw.location ?? "",
     postalCode: raw.postalCode ?? null,
     bidDueDate: raw.bidDueDate ?? null,
+    expectedAwardDate: raw.expectedAwardDate ?? null,
+    mobilizationDate: raw.mobilizationDate ?? null,
     stage: raw.stage,
     revisionSetLabel: raw.revisionSetLabel ?? "",
     archivedAt: raw.archivedAt ?? null,
@@ -399,3 +406,158 @@ export function proposalToWire(p) {
   };
 }
 
+
+
+/* ==== schedule (phases-and-timeline.md §10) ==== */
+
+const num = (v) => (v == null ? null : Number(v));
+
+function mapBar(b) {
+  return {
+    stage: b.stage,
+    label: b.label,
+    hours: num(b.hours),
+    crew: { foreman: b.crew?.foreman ?? 0, journeyman: b.crew?.journeyman ?? 0, apprentice: b.crew?.apprentice ?? 0 },
+    productiveHoursPerDay: num(b.productive_hours_per_day),
+    durationDays: b.duration_days ?? 0,
+    // Dates stay ISO strings: the screen formats them for display and
+    // sends them back unchanged, so parsing to a Date here would only
+    // introduce a timezone to get wrong.
+    start: b.start ?? null,
+    end: b.end ?? null,
+    startWeek: b.start_week,
+    endWeek: b.end_week,
+    sources: { ...(b.sources || {}) },
+    neededCrew: b.needed_crew ?? null,
+    overMax: Boolean(b.over_max),
+    overMaxNote: b.over_max_note ?? "",
+    note: b.note ?? "",
+  };
+}
+
+function mapPhase(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    sortOrder: p.sort_order,
+    startDate: p.start_date ?? null,
+    requiredFinishDate: p.required_finish_date ?? null,
+    notes: p.notes ?? "",
+    sheetIds: p.sheet_ids ?? [],
+    itemsMovedIn: p.items_moved_in ?? 0,
+    itemsMovedOut: p.items_moved_out ?? 0,
+    directHours: num(p.direct_hours) ?? 0,
+    generalConditionsHours: num(p.general_conditions_hours) ?? 0,
+    materialTotal: num(p.material_total) ?? 0,
+    lines: (p.lines || []).map((l) => ({
+      id: l.id,
+      label: l.label,
+      hours: num(l.hours) ?? 0,
+      source: l.source,
+      percentOfDirectHours: num(l.percent_of_direct_hours) ?? 0,
+    })),
+    bars: (p.bars || []).map(mapBar),
+    start: p.start ?? null,
+    end: p.end ?? null,
+  };
+}
+
+function mapLead(l) {
+  return {
+    itemId: l.item_id,
+    itemName: l.item_name,
+    itemStatus: l.item_status,
+    phaseId: l.phase_id,
+    phaseName: l.phase_name,
+    leadWeeks: l.lead_weeks ?? null,
+    source: l.source ?? null,
+    sourceLabel: l.source_label ?? "",
+    quotedAt: l.quoted_at ?? null,
+    neededForStage: l.needed_for_stage,
+    neededBy: l.needed_by ?? null,
+    orderBy: l.order_by ?? null,
+    orderByWeek: l.order_by_week ?? null,
+    passed: Boolean(l.passed),
+    stale: Boolean(l.stale),
+    note: l.note ?? "",
+    warning: l.warning ?? null,
+  };
+}
+
+/** Wire ScheduleOut -> store shape. Decimal strings become numbers the
+ *  same way mapLaborRow's do; nothing here re-derives a duration, a
+ *  date, or a crew — every one of them came from the API. */
+export function mapSchedule(s) {
+  return {
+    multiPhase: Boolean(s.multi_phase),
+    relative: Boolean(s.relative),
+    phases: (s.phases || []).map(mapPhase),
+    manpower: (s.manpower || []).map((w) => ({
+      week: w.week,
+      start: w.start ?? null,
+      foreman: w.foreman,
+      journeyman: w.journeyman,
+      apprentice: w.apprentice,
+      crew: w.foreman + w.journeyman + w.apprentice,
+    })),
+    peakCrew: s.peak_crew ?? 0,
+    peakWeek: s.peak_week ?? 0,
+    averageCrew: num(s.average_crew) ?? 0,
+    leads: (s.leads || []).map(mapLead),
+    unscheduledCount: s.unscheduled_count ?? 0,
+    unscheduledNote: s.unscheduled_note ?? "",
+    defaultSplitCount: s.default_split_count ?? 0,
+    defaultsInUse: {
+      splits: Boolean(s.defaults_in_use?.splits),
+      crews: Boolean(s.defaults_in_use?.crews),
+    },
+    expectedAwardDate: s.expected_award_date ?? null,
+    mobilizationDate: s.mobilization_date ?? null,
+  };
+}
+
+export function mapStageSplit(r) {
+  return {
+    categoryKey: r.category_key,
+    categoryLabel: r.category_label,
+    demolition: num(r.demolition) ?? 0,
+    roughIn: num(r.rough_in) ?? 0,
+    wirePull: num(r.wire_pull) ?? 0,
+    gear: num(r.gear) ?? 0,
+    trim: num(r.trim) ?? 0,
+    closeout: num(r.closeout) ?? 0,
+    firmEdited: Boolean(r.firm_edited),
+  };
+}
+
+export function mapStageCrew(r) {
+  return {
+    stage: r.stage,
+    label: r.label,
+    foreman: r.foreman,
+    journeyman: r.journeyman,
+    apprentice: r.apprentice,
+    productiveHoursPerDay: num(r.productive_hours_per_day) ?? 0,
+    productivityFactor: num(r.productivity_factor) ?? 1,
+    maxCrew: r.max_crew,
+    firmEdited: Boolean(r.firm_edited),
+  };
+}
+
+export function mapPhaseLineTemplate(r) {
+  return {
+    id: r.id,
+    label: r.label,
+    percentOfDirectHours: num(r.percent_of_direct_hours) ?? 0,
+    sortOrder: r.sort_order ?? 0,
+  };
+}
+
+export function mapCompanyLeadTime(r) {
+  return {
+    itemClass: r.item_class,
+    leadWeeks: r.lead_weeks,
+    sourceLabel: r.source_label,
+    quotedAt: r.quoted_at,
+  };
+}

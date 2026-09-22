@@ -2956,3 +2956,29 @@ button {
   font-size: 13.5px;
   color: var(--ink-2);
 }
+/* ==== stream B: grid ==== */
+/* docs/specs/spreadsheet-grid.md, "Styling". A range is a wash of the
+   selection blue; the focus cell alone keeps the ring. Nothing here is
+   a status colour. --grid-range sits here rather than with the tokens
+   at the top per the shared-file rule; the coordinator may move it. */
+:root { --grid-range: color-mix(in srgb, var(--blue) 12%, transparent); }
+.grid [aria-selected="true"]:not([data-active]) { box-shadow: none; background: var(--grid-range); }
+.grid [data-active] { box-shadow: inset 0 0 0 2px var(--blue); }
+.grid td[data-fill-target], .grid th[data-fill-target] { outline: 1px dashed var(--ink-3); outline-offset: -3px; }
+.grid-fill-handle {
+  position: absolute; right: 1px; bottom: 1px; width: 7px; height: 7px;
+  background: var(--blue); cursor: crosshair;
+}
+.grid-sort {
+  display: inline-flex; align-items: center; gap: 4px;
+  font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer;
+}
+.grid-sort svg { color: var(--ink-2); }
+.grid-sort:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.grid th[aria-sort] .grid-sort { font-weight: 600; }
+.grid-resize {
+  position: absolute; top: 0; right: -4px; width: 8px; height: 100%;
+  cursor: col-resize; user-select: none;
+}
+.grid-resize:hover { background: var(--grid-range); }
+.grid.is-resizing, .grid.is-resizing * { user-select: none; cursor: col-resize; }

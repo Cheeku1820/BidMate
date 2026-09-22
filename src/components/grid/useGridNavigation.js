@@ -5,12 +5,11 @@
 
    The movement rules are pure functions over (columns, rows) so they
    are tested on plain data; the hook underneath is thin. An active
-   cell is { row: index, col: column key }. Only editable cells
-   participate -- a column with no `edit`, or whose `edit.disabled(row)`
-   is true for this row, is stepped over in every direction. That is
-   what makes Tab walk hours → rate → adjustment → reason → next row's
-   hours on the labor screen rather than stopping on Status and
-   Quantity.
+   cell is { row: index, col: column key }. Arrows, Home and End visit
+   every cell, as in a spreadsheet. Only Tab (`next`/`prev`) is the
+   entry flow: it walks editable cells only, so on the labor screen it
+   goes hours → rate → adjustment → reason → the next row's hours rather
+   than stopping on Status and Quantity.
    ============================================================ */
 
 import { useCallback, useEffect, useState } from "react";
@@ -31,33 +30,36 @@ export function firstEditable(columns, rows) {
   return null;
 }
 
-/** The active cell after moving in `direction`. Returns null only for
- *  "next"/"prev" past the grid's last/first editable cell -- the one
- *  case focus should leave the grid, which is what an un-prevented Tab
- *  does. Every other dead end stays put. */
+/** The active cell after moving in `direction`.
+ *
+ *  Arrows, Home and End move over every cell -- read-only, disabled,
+ *  or editable -- one step, clamped at the grid's edges, the way a
+ *  spreadsheet does. `next`/`prev` (Tab) are the entry flow: they walk
+ *  editable cells only, wrap between rows, and return null past the
+ *  grid's last/first editable cell -- the one case focus should leave
+ *  the grid, which is what an un-prevented Tab does. */
 export function moveActive(active, direction, columns, rows) {
   if (!active) return null;
-  const keys = editableKeys(columns, rows[active.row]);
-  const i = keys.indexOf(active.col);
+  const all = columns.map((c) => c.key);
+  const ci = all.indexOf(active.col);
   switch (direction) {
     case "left":
-      return i > 0 ? { row: active.row, col: keys[i - 1] } : active;
+      return ci > 0 ? { row: active.row, col: all[ci - 1] } : active;
     case "right":
-      return i < keys.length - 1 ? { row: active.row, col: keys[i + 1] } : active;
+      return ci < all.length - 1 ? { row: active.row, col: all[ci + 1] } : active;
     case "home":
-      return keys.length ? { row: active.row, col: keys[0] } : active;
+      return { row: active.row, col: all[0] };
     case "end":
-      return keys.length ? { row: active.row, col: keys[keys.length - 1] } : active;
+      return { row: active.row, col: all[all.length - 1] };
     case "up":
-    case "down": {
-      const step = direction === "up" ? -1 : 1;
-      for (let r = active.row + step; r >= 0 && r < rows.length; r += step) {
-        if (editableKeys(columns, rows[r]).includes(active.col)) return { row: r, col: active.col };
-      }
-      return active;
-    }
+      return active.row > 0 ? { row: active.row - 1, col: active.col } : active;
+    case "down":
+      return active.row < rows.length - 1 ? { row: active.row + 1, col: active.col } : active;
     case "next": {
-      if (i < keys.length - 1) return { row: active.row, col: keys[i + 1] };
+      // The next editable cell strictly after this one in reading order.
+      const keys = editableKeys(columns, rows[active.row]);
+      const after = keys.find((k) => all.indexOf(k) > ci);
+      if (after) return { row: active.row, col: after };
       for (let r = active.row + 1; r < rows.length; r += 1) {
         const k = editableKeys(columns, rows[r]);
         if (k.length) return { row: r, col: k[0] };
@@ -65,7 +67,9 @@ export function moveActive(active, direction, columns, rows) {
       return null;
     }
     case "prev": {
-      if (i > 0) return { row: active.row, col: keys[i - 1] };
+      const keys = editableKeys(columns, rows[active.row]);
+      const before = [...keys].reverse().find((k) => all.indexOf(k) < ci);
+      if (before) return { row: active.row, col: before };
       for (let r = active.row - 1; r >= 0; r -= 1) {
         const k = editableKeys(columns, rows[r]);
         if (k.length) return { row: r, col: k[k.length - 1] };

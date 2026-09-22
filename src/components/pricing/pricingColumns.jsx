@@ -31,6 +31,7 @@
    ============================================================ */
 
 import Pill from "../Pill.jsx";
+import { STATUS, STATUS_ORDER } from "../../lib/vocabulary.js";
 
 export const NONE = "—";
 export const money = (n) => "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -71,7 +72,10 @@ function MarketEvidence({ evidence }) {
 }
 
 export const COLUMNS = [
-  { key: "status", label: "Status", align: "left", render: (row) => <Pill status={row.status} /> },
+  {
+    key: "status", label: "Status", align: "left", render: (row) => <Pill status={row.status} />,
+    text: (row) => STATUS[row.status]?.label ?? "", sortValue: (row) => STATUS_ORDER.indexOf(row.status),
+  },
   {
     key: "itemName", label: "Material", align: "left", header: true,
     render: (row) => (
@@ -86,6 +90,7 @@ export const COLUMNS = [
         {row.marketEvidence && row.marketEvidence.length > 0 ? <MarketEvidence evidence={row.marketEvidence} /> : null}
       </>
     ),
+    text: (row) => row.itemName, sortValue: (row) => row.itemName,
   },
   { key: "quantity", label: "Quantity", align: "right", render: (row) => row.quantity },
   {
@@ -101,6 +106,8 @@ export const COLUMNS = [
     key: "range", label: "Range", align: "right",
     render: (row) => (row.priceLow != null && row.priceHigh != null && row.priceLow !== row.priceHigh
       ? <span className="tabular">{money(row.priceLow)}–{money(row.priceHigh)}</span> : NONE),
+    text: (row) => (row.priceLow != null && row.priceHigh != null ? `${row.priceLow}–${row.priceHigh}` : ""),
+    sortValue: (row) => row.priceLow ?? null,
   },
   {
     key: "source", label: "Basis", align: "left",
@@ -115,6 +122,7 @@ export const COLUMNS = [
         </span>
       );
     },
+    text: (row) => row.sourceLabel ?? "", sortValue: (row) => row.sourceLabel ?? null,
     edit: {
       kind: "select",
       value: (row) => row.pendingSource || row.source,
@@ -139,5 +147,7 @@ export const COLUMNS = [
   {
     key: "lineTotal", label: "Line total", align: "right",
     render: (row) => (row.unitPrice != null ? money(Number(row.quantity) * Number(row.unitPrice)) : NONE),
+    text: (row) => (row.unitPrice != null ? String(Number(row.quantity) * Number(row.unitPrice)) : ""),
+    sortValue: (row) => (row.unitPrice != null ? Number(row.quantity) * Number(row.unitPrice) : null),
   },
 ];

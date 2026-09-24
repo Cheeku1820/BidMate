@@ -26,7 +26,20 @@ from app.engine.page_frame import Word
 # A subscript touching the glyph ("3", "D") distinguishes a switch
 # variant that shares one drawn symbol.
 MODIFIER_PT = 2.0
-MAX_MODIFIER_CHARS = 2
+# One character only. Every genuine switch-variant subscript measured on
+# the corpus is a single character (Unalaska E0.1: "3", "4", "D", "K").
+# Two-character words that satisfy the same touching-proximity rule turn
+# out to be circuit numbers beside a receptacle ("43", "31" on Kittles
+# Saxony EP101, B3c task 6 round 2) -- not a device variant, and with no
+# legend row to rank against (rank_templates would never find one), so
+# every instance a two-digit "modifier" split off landed with no
+# suggestion. Capping at 1 char means a genuine two-character subscript
+# (none seen yet) is missed and its instances simply fold into the plain
+# cluster -- counted, just not split out -- which is the safe direction:
+# silence never drops a device, it only under-splits one. Shared with the
+# counting side (engine/counting.py's modifier split) deliberately: a
+# legend row's own subscript is single-character too.
+MAX_MODIFIER_CHARS = 1
 # How far right of a glyph its description can run before the words
 # belong to another column.
 DESCRIPTION_REACH_PT = 240.0

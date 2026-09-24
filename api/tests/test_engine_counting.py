@@ -385,3 +385,22 @@ def test_a_subscript_is_still_found_beside_a_glyph_with_a_nearer_device_tag(tmp_
     assert "R" not in clusters  # only two instances -- never a tag cluster on its own
     threes = [c for t, c in clusters.items() if t.endswith(":3")]
     assert len(threes) == 1 and threes[0].count == 5 and threes[0].modifier == "3"
+
+
+def test_a_two_digit_circuit_number_never_splits_a_shape_cluster(tmp_path):
+    """A circuit number beside a receptacle ("43") is not a device
+    variant -- it satisfies the same touching-proximity rule as a
+    genuine subscript, but MAX_MODIFIER_CHARS = 1 excludes it, so all
+    four instances stay one plain cluster rather than splitting off with
+    no legend row to ever match against (B3c task 6 round 2)."""
+    def draw(page, _):
+        for x in (100, 200, 300, 400):
+            s = page.new_shape()
+            s.draw_line((x, 294), (x, 306)); s.draw_circle((x, 298), 3); s.draw_circle((x, 302), 3)
+            s.finish(color=(0, 0, 0), width=0.7); s.commit()
+            page.insert_text((x + 4, 296), "43", fontsize=5)
+    path, (sheet,) = _plan(tmp_path, draw)
+    clusters = [c for c in counting.count_sheet(path, sheet) if c.tag.startswith("shape:")]
+    assert len(clusters) == 1
+    assert clusters[0].tag.count(":") == 1  # "shape:<sig>" only -- no ":43" suffix
+    assert clusters[0].modifier == "" and clusters[0].count == 4

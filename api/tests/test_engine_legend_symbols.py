@@ -199,3 +199,20 @@ def test_near_identical_rows_both_survive(legend):
 
 def test_the_constants_are_what_the_corpus_set():
     assert (ls.SUGGESTION_FLOOR, ls.MAX_SUGGESTIONS, ls.SIL, ls.SPAN) == (0.30, 4, 32, 96)
+
+
+def test_a_two_character_word_beside_the_glyph_is_description_not_modifier():
+    """MAX_MODIFIER_CHARS = 1 (B3c task 6 round 2): a two-character token
+    touching the glyph -- indistinguishable in position from a genuine
+    one-character subscript -- reads as part of the description instead,
+    since every real switch-variant subscript measured on the corpus is
+    a single character."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=600, height=200)
+    _receptacle(page, 300, 60)
+    page.insert_text((307, 63), "4W", fontsize=5)
+    page.insert_text((330, 63), "FOUR WAY SWITCH", fontsize=7)
+    t = ls.templates_on(page, visual_words(page))
+    assert len(t) == 1
+    assert t[0].modifier == ""
+    assert "4W" in t[0].description

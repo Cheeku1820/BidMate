@@ -49,7 +49,9 @@ function ItemDetails({ proposal }) {
           ))}
         </ul>
       ) : null}
-      {proposal.moreCount > 0 ? <p className="proposal-card__more">+{proposal.moreCount} more</p> : null}
+      {proposal.moreCount > 0 ? (
+        <p className="proposal-card__more tabular">+{proposal.moreCount} more</p>
+      ) : null}
       {proposal.note ? <p className="proposal-card__note">{proposal.note}</p> : null}
     </>
   );

@@ -75,6 +75,23 @@ def test_no_event_when_nothing_is_proposable(client, db, project, dana, signed_i
     assert [name for name, _ in _events(body)] == ["delta", "done"]
 
 
+def test_a_non_serializable_proposal_skips_its_event_instead_of_aborting_the_stream(
+    client, db, project, dana, signed_in_user, monkeypatch,
+):
+    """The deltas -- and the answer they became -- are already on the
+    wire by the time the proposal is built. A proposal that cannot be
+    turned into JSON must not blow up the generator out from under an
+    answer that already landed; it is logged and the event is skipped,
+    and `done` still arrives."""
+    monkeypatch.setattr(service.llm, "stream", lambda system, messages: iter(["Six items."]))
+    monkeypatch.setattr(service, "propose_for", lambda **kw: {"kind": "note", "summary": "x", "bad": {1, 2}})
+    body = service.answer_events(project_id=project.id, actor_id=dana.id, bundle_text="ctx",
+                                 messages=[{"role": "user", "content": "ceiling is 14 feet"}],
+                                 message_text="ceiling is 14 feet", screen={"name": "takeoff"})
+    events = _events(body)
+    assert [name for name, _ in events] == ["delta", "done"]
+
+
 def test_the_proposal_is_stored_offered_and_comes_back_on_the_thread(client, db, project, dana, signed_in_user,
                                                                      monkeypatch):
     monkeypatch.setattr(service.llm, "stream", lambda system, messages: iter(["Noted."]))

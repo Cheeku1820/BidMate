@@ -35,6 +35,7 @@ describe("ProposalCard", () => {
     expect(screen.getByText("Name 6 items on E2.1 2x4 LED troffer, type F.")).toBeInTheDocument();
     expect(screen.getAllByText("Unclassified symbol")).toHaveLength(2);
     expect(screen.getByText("+4 more")).toBeInTheDocument();
+    expect(screen.getByText("+4 more")).toHaveClass("tabular");
     expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Dismiss" })).toBeEnabled();
   });

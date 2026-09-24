@@ -81,6 +81,11 @@ def test_a_tag_matches_source_tag_or_name_on_the_sheet_in_view(db, project):
     _item(db, project, other_sheet, source_tag="F", name="Unclassified symbol")
     out = t.resolve_items(db, project, RouteTargets(form="tag", tag="F"), _screen(sheet_id=sheet.id))
     assert {i.id for i in out} == {f1.id, f2.id}
+    # Stable across repeat calls: anchor_of's fallback and a proposal's
+    # preview both read off this order, so it must not shuffle between
+    # the answer and a later re-check of the same card.
+    again = t.resolve_items(db, project, RouteTargets(form="tag", tag="F"), _screen(sheet_id=sheet.id))
+    assert [i.id for i in out] == [i.id for i in again]
 
 
 def test_a_rejected_item_and_a_superseded_sheet_are_never_targets(db, project):

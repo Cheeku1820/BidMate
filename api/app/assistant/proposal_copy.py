@@ -54,7 +54,3 @@ def others_left_out(count: int) -> str:
 
 def too_many(count: int) -> str:
     return f"That would change {count} items. Narrow it down — filter the view, or pick a sheet."
-
-
-def stale() -> str:
-    return "The records this would have changed have moved on. Ask again to get a fresh reading."

@@ -212,7 +212,15 @@ def answer_events(*, project_id: uuid.UUID, actor_id: uuid.UUID, bundle_text: st
                            screen=screen, answer_id=answer_id)
     if proposal is not None:
         _store_proposal(answer_id, proposal)
-        yield _event("proposal", {"id": answer_id, "proposal": proposal})
+        try:
+            event = _event("proposal", {"id": answer_id, "proposal": proposal})
+        except (TypeError, ValueError):
+            # The answer is already on the wire and stored; a proposal
+            # that cannot be turned into JSON must not take the rest of
+            # the stream down with it -- skip the event, keep `done`.
+            logger.warning("proposal event not serializable request_id=%s", request_id_var.get(), exc_info=True)
+        else:
+            yield event
     yield _event("done", {"id": answer_id})
 
 

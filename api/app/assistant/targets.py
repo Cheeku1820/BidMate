@@ -52,7 +52,7 @@ def _view_query(project: Project, screen: ScreenIn):
         needle = f"%{view.search.strip().lower()}%"
         query = query.where(or_(_like(Item.name, needle), _like(Item.description, needle),
                                 _like(Item.source_tag, needle)))
-    return query.order_by(Item.id)
+    return query.order_by(Item.sheet_id, Item.source_tag, Item.id)
 
 
 def resolve_items(db: DbSession, project: Project, targets: RouteTargets, screen: ScreenIn) -> list[Item]:
@@ -74,7 +74,7 @@ def resolve_items(db: DbSession, project: Project, targets: RouteTargets, screen
             query = query.where(Item.sheet_id == screen.sheet_id)
         rows = list(db.scalars(
             query.where(or_(func.lower(func.coalesce(Item.source_tag, "")) == needle,
-                            _like(Item.name, f"%{needle}%"))).order_by(Item.id)))
+                            _like(Item.name, f"%{needle}%"))).order_by(Item.sheet_id, Item.source_tag, Item.id)))
     else:
         return []
     if len(rows) > MAX_TARGETS:

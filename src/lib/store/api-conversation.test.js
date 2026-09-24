@@ -29,7 +29,7 @@ describe("conversation calls", () => {
     const rows = await createApiStore().listConversation("p1");
     expect(fetchMock.mock.calls[0][0]).toBe("/api/projects/p1/conversation");
     expect(fetchMock.mock.calls[0][1].credentials).toBe("include");
-    expect(rows).toEqual([{ id: "m1", role: "estimator", text: "q", screen: { name: "export" }, createdAt: "2026-09-16T10:00:00Z" }]);
+    expect(rows).toEqual([{ id: "m1", role: "estimator", text: "q", screen: { name: "export" }, createdAt: "2026-09-16T10:00:00Z", proposal: null, proposalStatus: null }]);
   });
 
   it("streams deltas, even split across chunks, then resolves with done", async () => {
@@ -40,7 +40,7 @@ describe("conversation calls", () => {
     const deltas = [];
     const result = await createApiStore().sendMessage("p1", { text: "q", screen: { name: "export" } }, (t) => deltas.push(t));
     expect(deltas).toEqual(["Nothing", " blocks."]);
-    expect(result).toEqual({ id: "a1" });
+    expect(result).toEqual({ id: "a1", proposal: null });
     const [, init] = fetchMock.mock.calls[0];
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body)).toEqual({ text: "q", screen: { name: "export" } });

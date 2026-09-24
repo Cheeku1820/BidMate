@@ -174,6 +174,32 @@ def test_a_scope_correction_carries_edited_text_instead_of_a_status(db, project,
     assert out.get("status") is None
 
 
+def test_a_faked_routing_call_produces_a_scope_proposal_with_the_decision_word(db, project, dana, monkeypatch):
+    """End to end, through the real language boundary rather than a
+    hand-built Route: `llm.route_message` is faked, `conversation.
+    route_message` routes it, and the result is handed to `propose.build`
+    exactly as `service.propose_for` does. This is the regression for the
+    value/field pairing -- `propose.py` reads the decision word out of
+    `route.value`, so a routed "status"/"confirmed" pair that never made
+    it through validation would have come out with no status at all."""
+    from app.engine import conversation as conv
+
+    statement = _scope(db, project, dana)
+    screen = {"name": "confirm", "sheet": "", "selection": "", "filter": None,
+             "records": [f"scope:{statement.id}"]}
+
+    def fake(message, screen_line):
+        return {"intent": "decide_scope", "target_form": "record", "tag": "",
+                "record_key": f"scope:{statement.id}", "field": "status", "value": "confirmed"}
+
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", fake)
+    route = conv.route_message("site lighting is by others, that's right", screen=screen)
+    out = propose.build(db, project=project, route=route, screen=_screen(name="confirm"),
+                        message="site lighting is by others, that's right")
+    assert out["kind"] == "scope" and out["status"] == "confirmed"
+
+
 def test_a_record_key_the_screen_does_not_offer_proposes_nothing(db, project, dana):
     statement = _scope(db, project, dana)
     # Right key, wrong screen: the blueprint shows no scope statements.

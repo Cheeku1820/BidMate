@@ -227,3 +227,48 @@ def test_route_message_never_returns_item_ids_and_opens_no_session():
     src = inspect.getsource(conv)
     assert "target_item_ids" not in inspect.getsource(conv.route_message)
     assert "Session" not in src and "sqlalchemy" not in src
+
+
+# --- a decide_* intent needs a decision word or a reworded value, paired with `field` ---
+
+
+def test_a_decide_scope_status_field_with_a_decision_word_routes_through(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_scope", "target_form": "record", "tag": "", "record_key": "scope:abc",
+        "field": "status", "value": "confirmed"})
+    out = conv.route_message("that's right", screen=_screen(records=["scope:abc"]))
+    assert out.intent == "decide_scope" and out.field == "status" and out.value == "confirmed"
+
+
+def test_a_decide_scope_status_field_with_an_empty_value_is_unknown(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_scope", "target_form": "record", "tag": "", "record_key": "scope:abc",
+        "field": "status", "value": ""})
+    assert conv.route_message("that's right", screen=_screen(records=["scope:abc"])).intent == "unknown"
+
+
+def test_a_decide_plan_text_field_with_an_empty_value_is_unknown(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_plan", "target_form": "record", "tag": "", "record_key": "plan:spec:x:260519",
+        "field": "text", "value": ""})
+    assert conv.route_message("reword it", screen=_screen(records=["plan:spec:x:260519"])).intent == "unknown"
+
+
+def test_a_decide_plan_text_field_with_a_reworded_value_routes_through(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_plan", "target_form": "record", "tag": "", "record_key": "plan:spec:x:260519",
+        "field": "text", "value": "26 05 19 -- corrected title"})
+    out = conv.route_message("say it's corrected title instead", screen=_screen(records=["plan:spec:x:260519"]))
+    assert out.intent == "decide_plan" and out.field == "text" and out.value == "26 05 19 -- corrected title"
+
+
+def test_a_decide_scope_status_field_with_a_non_decision_word_is_unknown(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_scope", "target_form": "record", "tag": "", "record_key": "scope:abc",
+        "field": "status", "value": "yes"})
+    assert conv.route_message("that's right", screen=_screen(records=["scope:abc"])).intent == "unknown"

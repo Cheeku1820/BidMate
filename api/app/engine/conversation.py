@@ -98,6 +98,13 @@ TARGET_FORMS = ("selection", "view", "tag", "record", "none")
 # estimator.
 _RECORD_INTENTS = ("decide_scope", "decide_plan")
 
+# A decide_* intent settles a record two ways: the decision word itself
+# (field "status"), or a rewording of it (field "text"). Anything else --
+# a missing field, an empty value, a word outside this set -- is not a
+# decision this agent can hand off, so it becomes "unknown" rather than
+# a half-formed one propose.py has to guess at.
+_DECISION_WORDS = ("confirmed", "dismissed", "found")
+
 
 @dataclass(frozen=True)
 class RouteTargets:
@@ -160,6 +167,17 @@ def _validate(raw, message: str, screen: dict) -> Route:
     if intent in _RECORD_INTENTS:
         # The key must be one the screen put in front of the estimator.
         if form != "record" or key not in (screen.get("records") or []):
+            return _UNKNOWN
+        # And the field/value pair must actually settle it: the decision
+        # word itself, or a non-empty rewording -- never both blank, and
+        # never a word that is not one of the three decisions.
+        if field == "status":
+            if value not in _DECISION_WORDS:
+                return _UNKNOWN
+        elif field == "text":
+            if not value:
+                return _UNKNOWN
+        else:
             return _UNKNOWN
     elif form == "record":
         return _UNKNOWN

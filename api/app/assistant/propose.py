@@ -23,7 +23,7 @@ from app.engine.conversation import Route
 from app.plan import service as plan_service
 from app.scope import service as scope_service
 from app.takeoff import resolve as resolve_service
-from app.takeoff.models import Item, Project, Sheet
+from app.takeoff.models import Item, Note, Project, Sheet
 
 PROPOSAL_KINDS = ("item", "note", "scope", "plan_line", "plan_answer", "refused")
 
@@ -200,6 +200,20 @@ def _item_stale(db, proposal) -> bool:
     return not versions
 
 
+def _note_stale(db, project, proposal) -> bool:
+    """A note proposal is stale once the project already carries a note
+    with the same title and body -- a lost bookkeeping PATCH after a
+    successful apply must not let a second press create a duplicate
+    context note that feeds the next run. Exact match only: a note the
+    estimator went on to edit is a different note, not evidence this
+    one already landed."""
+    existing = db.scalar(
+        select(Note.id).where(Note.project_id == project.id, Note.title == proposal.get("title"),
+                              Note.body == proposal.get("body")).limit(1)
+    )
+    return existing is not None
+
+
 def _scope_stale(db, project, proposal) -> bool:
     statement = next((s for s in scope_service.list_statements(db, project)
                       if str(s.id) == proposal.get("statement_id")), None)
@@ -236,7 +250,7 @@ def is_stale(db: DbSession, *, project: Project, proposal: dict) -> bool:
     if kind == "refused":
         return True
     if kind == "note":
-        return False
+        return _note_stale(db, project, proposal)
     if kind == "item":
         return _item_stale(db, proposal)
     if kind in ("scope",):

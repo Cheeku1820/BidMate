@@ -313,6 +313,36 @@ def test_a_plan_answer_proposal_goes_stale_once_the_question_is_answered(db, pro
     assert propose.is_stale(db, project=project, proposal=out) is True
 
 
+def test_a_note_is_stale_once_the_project_already_has_that_exact_note(db, project, dana):
+    """A lost bookkeeping PATCH after a successful apply must not let a
+    second press create a duplicate context note that feeds the next
+    run -- so a note proposal goes stale the moment a note with the same
+    title and body already exists on the project, exactly as though the
+    apply had been recorded."""
+    from app.takeoff.models import Note
+
+    out = propose.build(db, project=project,
+                        route=_route("set_context", form="none", field="text", value="Ceiling is 14 feet."),
+                        screen=_screen(), message="Ceiling is 14 feet.")
+    assert propose.is_stale(db, project=project, proposal=out) is False
+    db.add(Note(project_id=project.id, author_user_id=dana.id, title=out["title"], body=out["body"],
+               category=out["category"], usage=out["usage"]))
+    db.flush()
+    assert propose.is_stale(db, project=project, proposal=out) is True
+
+
+def test_a_different_note_on_the_project_does_not_make_a_new_one_stale(db, project, dana):
+    from app.takeoff.models import Note
+
+    out = propose.build(db, project=project,
+                        route=_route("set_context", form="none", field="text", value="Ceiling is 14 feet."),
+                        screen=_screen(), message="Ceiling is 14 feet.")
+    db.add(Note(project_id=project.id, author_user_id=dana.id, title="Voltage is 480V", body="Voltage is 480V.",
+               category="existing_condition", usage="context"))
+    db.flush()
+    assert propose.is_stale(db, project=project, proposal=out) is False
+
+
 def test_a_note_is_never_stale_and_a_refusal_always_is(db, project):
     note = propose.build(db, project=project, route=_route("set_context", form="none", field="text", value="14 feet"),
                          screen=_screen(), message="14 feet")

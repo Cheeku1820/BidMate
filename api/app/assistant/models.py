@@ -27,6 +27,11 @@ class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
     __table_args__ = (
         CheckConstraint("role in ('estimator', 'answer')", name="ck_conversation_messages_role"),
+        CheckConstraint(
+            "(proposal is null and proposal_status is null) "
+            "or (proposal is not null and proposal_status in ('offered', 'applied', 'dismissed'))",
+            name="ck_conversation_messages_proposal_status",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -35,5 +40,11 @@ class ConversationMessage(Base):
     text: Mapped[str] = mapped_column(Text)
     # The screen descriptor the question was asked from; null on answers.
     screen: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # What this answer offered to change, and what became of it. Not a
+    # takeoff mutation: never routed through commit(), never in the undo
+    # stack. The change itself is written by the record's own endpoint
+    # when the estimator presses Apply.
+    proposal: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    proposal_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

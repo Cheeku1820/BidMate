@@ -47,6 +47,11 @@ def plan_answer(title: str) -> str:
     return f"Answer the open question \"{title}\" and save it as a note."
 
 
+def others_left_out(count: int) -> str:
+    items = "item" if count == 1 else "items"
+    return f" {count} other matching {items} sit outside this cluster; say so again with one of them selected to change those."
+
+
 def too_many(count: int) -> str:
     return f"That would change {count} items. Narrow it down — filter the view, or pick a sheet."
 

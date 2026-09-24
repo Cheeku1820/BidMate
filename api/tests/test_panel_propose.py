@@ -90,6 +90,41 @@ def test_a_reclassify_calls_the_classifier_once_and_never_approves(db, project, 
     assert len(out["targets_preview"]) == 2 and out["more_count"] == 0
 
 
+def test_a_tag_form_reclassify_stays_within_the_anchors_cluster(db, project, monkeypatch):
+    sheet = _sheet(db, project)
+    f1a = _item(db, project, sheet, source_tag="F1", name="Type F recessed")
+    f1b = _item(db, project, sheet, source_tag="F1", name="Type F recessed")
+    f2a = _item(db, project, sheet, source_tag="F2", name="Type F pendant")
+
+    def fake(db_, item, text, *, cluster=True):
+        cluster_items = [i for i in (f1a, f1b, f2a) if i.source_tag == item.source_tag]
+        return _resolved(cluster_items)
+
+    monkeypatch.setattr(propose.resolve_service, "resolve_for_item", fake)
+    out = propose.build(db, project=project, route=_route("reclassify", form="tag", tag="type f"),
+                        screen=_screen(sheet_id=sheet.id, item_id=f1a.id),
+                        message="these are all type F recessed")
+    assert out["proposal"]["target_item_ids"] == [str(f1a.id), str(f1b.id)]
+    assert out["count"] == 2
+    assert len(out["targets_preview"]) == 2
+    assert "sit outside this cluster" in out["summary"]
+    assert "1 other matching item" in out["summary"]
+
+
+def test_a_view_form_reclassify_matches_one_cluster_exactly(db, project, monkeypatch):
+    sheet = _sheet(db, project)
+    a = _item(db, project, sheet, source_tag="F1")
+    b = _item(db, project, sheet, source_tag="F1")
+
+    monkeypatch.setattr(propose.resolve_service, "resolve_for_item",
+                        lambda db_, item, text, *, cluster=True: _resolved([a, b]))
+    out = propose.build(db, project=project, route=_route("reclassify", form="view"),
+                        screen=_screen(sheet_id=sheet.id), message="these are all type F")
+    assert out["proposal"]["target_item_ids"] == [str(a.id), str(b.id)]
+    assert out["count"] == 2
+    assert "sit outside this cluster" not in out["summary"]
+
+
 def test_an_exclude_carries_the_sentence_as_the_reason(db, project, monkeypatch):
     sheet = _sheet(db, project)
     a = _item(db, project, sheet)

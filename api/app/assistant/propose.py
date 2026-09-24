@@ -11,6 +11,7 @@ endpoint -- the same path its form uses.
 """
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.assistant import proposal_copy as copy
@@ -72,26 +73,31 @@ def _jsonable(resolved: dict) -> dict:
 
 
 def _item_proposal(db, project, route, screen, message):
+    # `resolve_apply.py` (takeoff, not ours to touch) only ever accepts
+    # the anchor's own cluster -- same sheet, same source_tag -- as its
+    # allowed set. So the target form only picks *which cluster* by
+    # picking the anchor; the cluster itself is always what changes,
+    # never the wider set a view or a tag might have matched.
     rows = targets.resolve_items(db, project, route.targets, screen)
     if not rows:
         return None
     anchor = targets.anchor_of(rows, selected_id=screen.item_id)
-    cluster = route.targets.form == "selection"
-    resolved = resolve_service.resolve_for_item(db, anchor, message, cluster=cluster)
-    if not cluster:
-        # The estimator named a set the cluster helper did not pick, so
-        # the proposal applies to exactly what was resolved here.
-        resolved["target_item_ids"] = [i.id for i in rows]
-        resolved["versions"] = {i.id: i.version for i in rows}
+    resolved = resolve_service.resolve_for_item(db, anchor, message, cluster=True)
     if route.intent == "exclude":
         resolved["intent"] = "exclude"
         resolved["reject_reason"] = message.strip()[:2000]
-    count = len(resolved["target_item_ids"])
+    cluster_ids = resolved["target_item_ids"]
+    cluster_by_id = {i.id: i for i in db.scalars(select(Item).where(Item.id.in_(cluster_ids)))}
+    cluster_items = [cluster_by_id[i] for i in cluster_ids if i in cluster_by_id]
+    count = len(cluster_ids)
     sheet = db.get(Sheet, anchor.sheet_id)
     sheet_number = sheet.number if sheet is not None else ""
     summary = (copy.exclude(count, sheet_number) if route.intent == "exclude"
                else copy.reclassify(count, resolved["name"], sheet_number))
-    preview, more = _preview(rows)
+    outside = [r for r in rows if r.id not in set(cluster_ids)]
+    if outside:
+        summary += copy.others_left_out(len(outside))
+    preview, more = _preview(cluster_items)
     return {"kind": "item", "summary": summary, "note": copy.item_note(), "count": count,
             "sheet_number": sheet_number, "item_id": str(anchor.id), "approve": False,
             "proposal": _jsonable(resolved), "targets_preview": preview, "more_count": more}

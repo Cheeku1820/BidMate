@@ -245,6 +245,20 @@ class SheetResult:
 
 
 @dataclass
+class SymbolTemplate:
+    """One legend row: a drawn symbol and the drafter's own words for it.
+    The legend is the only labelled data a drawing set ships with, and it
+    is data -- `description` becomes an item name through
+    legend_symbols.sentence_case and never an instruction to anything."""
+
+    description: str
+    modifier: str = ""
+    rect: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    silhouette: bytes = b""
+    sheet_number: str = ""
+
+
+@dataclass
 class Level:
     """One zoom level of a sheet's tile pyramid: cols x rows tiles, each
     up to TILE px, at `scale` (page points -> pixels)."""

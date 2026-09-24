@@ -9,6 +9,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ProposalCard from "./ProposalCard.jsx";
 import { applyProposal } from "./applyProposal.js";
+import { mapProposal, proposalToWire } from "../../lib/store/api-mapping.js";
 
 const item = (o) => ({
   kind: "item", summary: "Name 6 items on E2.1 2x4 LED troffer, type F.", note: "Approving stays with you.",
@@ -103,6 +104,32 @@ describe("applyProposal", () => {
       expect.objectContaining({ name: "2x4 LED troffer, type F" }),
       { approve: false, note: null },
     );
+  });
+
+  // The mock above only proves the call shape -- it never runs the real
+  // proposalToWire step store.applyProposal performs on its second
+  // argument, so a mismatch between the panel's snake_case proposal and
+  // the store's camelCase expectation would pass that test and 422 in
+  // production. This exercises the real seam: the panel's proposal
+  // (snake_case, as Task 7 keeps it) mapped and re-wired exactly as
+  // applyProposal.js and store.applyProposal do, in sequence.
+  it("the item proposal survives the store's own wire round trip", () => {
+    const wireProposal = {
+      intent: "reclassify",
+      target_item_ids: ["i1", "i2"],
+      name: "2x4 LED troffer, type F",
+      system: "lighting",
+      category: "fixture",
+      unit: "EA",
+      versions: { i1: 1, i2: 1 },
+    };
+    const wire = proposalToWire(mapProposal(wireProposal));
+    expect(wire.target_item_ids).toEqual(["i1", "i2"]);
+    expect(wire.name).toBe("2x4 LED troffer, type F");
+    expect(wire.system).toBe("lighting");
+    expect(wire.category).toBe("fixture");
+    expect(wire.unit).toBe("EA");
+    expect(wire.versions).toEqual({ i1: 1, i2: 1 });
   });
 
   it("a note goes to createNote as a context note", async () => {

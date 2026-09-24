@@ -14,12 +14,21 @@
    proposal, { approve, note }), see src/lib/store/api.js — rather than
    the two-argument, single-wrapped-object call an earlier sketch of
    this map assumed. This dispatch follows the real store.
+
+   The panel's inner proposal (Task 7) stays snake_case, the wire shape
+   the assistant sent it in. store.applyProposal runs its second
+   argument through proposalToWire, which expects the store's camelCase
+   shape (targetItemIds, catalogId, ...). mapProposal is the same
+   snake_case -> camelCase step every other proposal read already goes
+   through, so this is the store's own round trip, not a new one.
    ============================================================ */
+
+import { mapProposal } from "../../lib/store/api-mapping.js";
 
 export async function applyProposal(store, projectId, proposal) {
   switch (proposal.kind) {
     case "item":
-      return store.applyProposal(proposal.itemId, proposal.proposal, { approve: false, note: null });
+      return store.applyProposal(proposal.itemId, mapProposal(proposal.proposal), { approve: false, note: null });
     case "note":
       return store.createNote(projectId, {
         scope: "project", scopeRef: null, title: proposal.title, body: proposal.body,

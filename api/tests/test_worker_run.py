@@ -82,8 +82,11 @@ def test_each_sheet_job_carries_its_own_clusters_and_lands_on_its_own_sheet(db, 
     # Placement always serialises 4-wide on the wire (x, y, w, h); a
     # Placement with no box (w = h = 0, the fake engine's default) carries
     # zeros here, not a 2-element point -- ingest is what collapses a
-    # zero-extent box back to a point (B3b Task 1).
-    assert all(j.payload["clusters"] == [{"tag": "R", "placements": [[300, 300, 0, 0]]}] for j in jobs.values())
+    # zero-extent box back to a point (B3b Task 1). B3c adds "exemplar"
+    # (None on a tagged cluster) and "modifier" alongside tag/placements,
+    # so the sheet job can render this cluster's own silhouette itself.
+    assert all(j.payload["clusters"] == [{"tag": "R", "placements": [[300, 300, 0, 0]], "exemplar": None, "modifier": ""}]
+              for j in jobs.values())
     for page, sheet in sheets.items():
         [item] = db.scalars(select(Item).where(Item.sheet_id == sheet.id))
         assert item.source_tag == "R" and item.evidence["sheet"] == "E2.1"
@@ -359,6 +362,54 @@ def test_the_real_engine_counts_the_page_the_sheet_row_points_at(db, project, da
     assert {j.status for j in db.scalars(select(Job))} == {"done"}
     db.refresh(project)
     assert project.stage == "review" and project.pricing_source == "deterministic"
+
+
+def _plan_with_untagged_receptacles_and_a_matching_legend() -> bytes:
+    """A plan sheet carrying four untagged duplex-receptacle glyphs (no
+    device tag beside any of them, so Counting emits one unlabelled
+    shape cluster) and a legend sheet defining the same drawn glyph as
+    DUPLEX RECEPTACLE. Both glyphs are the same `_receptacle` drawing,
+    just at different locations and page sizes, so their silhouettes
+    correlate highly -- a real B3c suggestion, not a hand-built one."""
+    import pymupdf
+
+    from tests.test_engine_glyphs import _receptacle
+
+    doc = pymupdf.open()
+    plan = doc.new_page(width=1224, height=792)
+    plan.insert_text((72, 72), "E2.1 POWER PLAN")
+    plan.draw_rect(pymupdf.Rect(100, 100, 900, 700))
+    for x in (250, 400, 550, 700):
+        _receptacle(plan, x, 400)
+    legend = doc.new_page(width=600, height=400)
+    legend.insert_text((72, 40), "E0.1 LEGEND AND ABBREVIATIONS")
+    legend.draw_rect(pymupdf.Rect(30, 30, 570, 380))
+    _receptacle(legend, 120, 120)
+    legend.insert_text((150, 123), "DUPLEX RECEPTACLE", fontsize=7)
+    return doc.tobytes()
+
+
+def test_a_real_run_attaches_ranked_suggestions_to_an_unnamed_shape_cluster(db, project, dana, inline, monkeypatch):
+    """No fakes: read, classify, and sheet run for real, end to end.
+    Unlike a unit test that hands `classify()` a cluster with
+    `exemplar_silhouette` already set, this is the path that catches the
+    worker failing to actually wire the exemplar rect from the classify
+    job's clusters (discarded at the end of that job) through the sheet
+    job's payload and into a silhouette rendered there -- the bug an
+    earlier version of this change shipped with."""
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    d = _stored(db, project, dana, inline, _plan_with_untagged_receptacles_and_a_matching_legend())
+    queue.enqueue_read(db, d); _run_all(db)
+    queue.enqueue_classify(db, project, dana.id); _run_all(db)
+
+    items = list(db.scalars(select(Item).where(Item.project_id == project.id)))
+    shape_items = [i for i in items if i.source_tag.startswith("shape:")]
+    assert len(shape_items) == 1
+    item = shape_items[0]
+    assert item.suggestions == [{"name": "Duplex receptacle", "sheet": "E0.1"}]
+    warning = db.scalars(select(Warning).where(Warning.item_id == item.id)).one()
+    assert warning.fix == "Pick what this symbol is from the legend entries listed, or classify it by hand."
 
 
 def test_a_project_with_no_readable_drawings_fails_the_run_with_copy(db, project, dana, inline, monkeypatch, fake_engine):

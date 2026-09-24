@@ -7,12 +7,11 @@ from __future__ import annotations
 
 import logging
 
-import pymupdf
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.engine import classification, counting, documents, legend_symbols
+from app.engine import classification, counting, documents
 from app.engine.context import CONTEXT_CAP
 from app.engine.estimate import _unmatched_note, _wiring_note
 from app.identity.models import User
@@ -39,6 +38,19 @@ def _detected(s: Sheet):
     return documents.sheet_from_row(s.page_index - 1, s.number, s.title, s.scale, s.width_pt, s.height_pt, s.region,
                                     s.kind, s.schedule_text, s.legend, s.unreadable_reason,
                                     symbol_templates=s.symbol_templates)
+
+
+def _cluster_payload(c) -> dict:
+    """One cluster, as the sheet job's payload carries it. `exemplar` is
+    four floats -- cheap to carry -- so the sheet job can render this
+    shape cluster's silhouette itself, where its one document is already
+    open; the silhouette bytes themselves never go in a job payload
+    (B3c: they would bloat it, and every sheet job would repeat the
+    render classify_job already isn't doing). `modifier` rides along
+    too -- rank_templates needs it to only rank a shape against
+    same-modifier legend rows."""
+    return {"tag": c.tag, "placements": [[p.x, p.y, p.w, p.h] for p in c.placements],
+            "exemplar": list(c.exemplar) if c.exemplar else None, "modifier": c.modifier}
 
 
 def _scope_block(db: Session, project_id) -> str:
@@ -99,30 +111,20 @@ def run(db: Session, job: Job) -> None:
         if not plans:
             continue
         with blob_to_tempfile(doc.storage_key, doc.filename) as path:
-            # Opened once per document, not once per cluster: silhouetting
-            # every shape cluster's exemplar on a dense sheet would
-            # otherwise reopen the same file dozens of times.
-            pdf = pymupdf.open(path)
-            try:
-                for s in plans:
-                    try:
-                        clusters_by_sheet[s.id] = counting.count_sheet(path, detected[s.id])
-                        page = pdf[detected[s.id].page_index]
-                        shapes = [c for c in clusters_by_sheet[s.id] if c.tag.startswith("shape:") and c.exemplar]
-                        for c in shapes:
-                            c.exemplar_silhouette = legend_symbols.silhouette(page, c.exemplar)
-                        for c in shapes[:MAX_CROPS_PER_SHEET]:
-                            x0, y0, x1, y1 = c.exemplar
-                            png = documents.render_evidence_crop(path, detected[s.id].page_index, detected[s.id].width_pt,
-                                                                 detected[s.id].height_pt,
-                                                                 [((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0)])
-                            if png:
-                                crops[c.tag] = png
-                    except Exception:  # noqa: BLE001 -- one sheet, not the run
-                        s.unreadable_reason = copy.SHEET_UNREADABLE
-                        detected[s.id].unreadable_reason = copy.SHEET_UNREADABLE
-            finally:
-                pdf.close()
+            for s in plans:
+                try:
+                    clusters_by_sheet[s.id] = counting.count_sheet(path, detected[s.id])
+                    shapes = [c for c in clusters_by_sheet[s.id] if c.tag.startswith("shape:") and c.exemplar]
+                    for c in shapes[:MAX_CROPS_PER_SHEET]:
+                        x0, y0, x1, y1 = c.exemplar
+                        png = documents.render_evidence_crop(path, detected[s.id].page_index, detected[s.id].width_pt,
+                                                             detected[s.id].height_pt,
+                                                             [((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0)])
+                        if png:
+                            crops[c.tag] = png
+                except Exception:  # noqa: BLE001 -- one sheet, not the run
+                    s.unreadable_reason = copy.SHEET_UNREADABLE
+                    detected[s.id].unreadable_reason = copy.SHEET_UNREADABLE
     db.flush()
 
     clusters = [c for cs in clusters_by_sheet.values() for c in cs]
@@ -146,8 +148,8 @@ def run(db: Session, job: Job) -> None:
     notes_service.mark_applied(db, context_notes)
     project.stage = "processing"
     plan_sheets = [s for s in all_sheets if s.id in clusters_by_sheet]
-    queue.enqueue_sheets(db, job, [(s, {"clusters": [{"tag": c.tag, "placements": [[p.x, p.y, p.w, p.h] for p in c.placements]}
-                                                     for c in clusters_by_sheet[s.id]]}) for s in plan_sheets])
+    queue.enqueue_sheets(db, job, [(s, {"clusters": [_cluster_payload(c) for c in clusters_by_sheet[s.id]]})
+                                    for s in plan_sheets])
     _complete(db, project, job)
 
 

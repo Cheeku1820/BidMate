@@ -6,11 +6,12 @@ from __future__ import annotations
 import os
 import uuid
 
+import pymupdf
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app import db as db_module
-from app.engine import documents, sheet as sheet_mod
+from app.engine import documents, legend_symbols, sheet as sheet_mod
 from app.engine.contracts import Classification, DeviceCluster, Placement
 from app.jobs import queue
 from app.takeoff import merge
@@ -64,12 +65,28 @@ def run(db: Session, job: Job) -> None:
     all_sheets = list(db.scalars(select(Sheet).where(Sheet.project_id == project.id)))
     detected_all = [_detected(s) for s in all_sheets]
     detected = next(d for s, d in zip(all_sheets, detected_all) if s.id == sheet.id)
-    clusters = [DeviceCluster(c["tag"], detected.page_index, [Placement(*(int(v) for v in p)) for p in c["placements"]])
+    clusters = [DeviceCluster(c["tag"], detected.page_index, [Placement(*(int(v) for v in p)) for p in c["placements"]],
+                              exemplar=tuple(c["exemplar"]) if c.get("exemplar") else None,
+                              modifier=c.get("modifier", ""))
                 for c in (job.payload or {}).get("clusters", [])]
     cls = _classification(db, job, clusters)
 
     _report_checking(db, job)
     with blob_to_tempfile(doc.storage_key, doc.filename) as path:
+        # B3c: this sheet's own shape clusters get their exemplar
+        # silhouette here, not in the classify job -- the classify job's
+        # clusters are discarded once its payload is written, so a
+        # silhouette rendered there has no consumer. The document is
+        # opened once, for this one sheet, and closed before `finish`
+        # (which reopens the path itself for crops and vision).
+        pdf = pymupdf.open(path)
+        try:
+            page = pdf[detected.page_index]
+            for c in clusters:
+                if c.tag.startswith("shape:") and c.exemplar:
+                    c.exemplar_silhouette = legend_symbols.silhouette(page, c.exemplar)
+        finally:
+            pdf.close()
         result = sheet_mod.finish(path, detected, clusters, cls, detected_all)
 
     payload = {"takeoff_id": str(doc.id), "source": cls.source,

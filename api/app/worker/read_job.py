@@ -40,6 +40,7 @@ def run(db: Session, job: Job) -> None:
             sheet.schedule_text = detected.schedule_text
             sheet.region = list(detected.region)
             sheet.legend = [vars(e) for e in detected.legend]
+            sheet.symbol_templates = [documents.template_to_payload(t) for t in detected.symbol_templates] or None
         # The drawing behind the markers, cut and stored by its own job
         # so the read never waits on it. Keyed by the file's hash: the
         # same bytes read again queue nothing.

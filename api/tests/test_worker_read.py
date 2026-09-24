@@ -193,3 +193,34 @@ def test_retyping_a_drawing_set_away_from_drawings_drops_its_sheets(db, project,
     assert d.status == "processed"
     assert db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))).all() == []
     assert db.scalars(select(Item).where(Item.project_id == project.id)).all() == []
+
+
+def test_a_legend_sheet_stores_its_rows(db, project, dana, inline, monkeypatch):
+    import pymupdf
+    from sqlalchemy import select
+    from app.takeoff.models import Sheet
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    doc = pymupdf.open()
+    page = doc.new_page(width=600, height=400)
+    page.insert_text((72, 40), "E0.1 LEGEND AND ABBREVIATIONS")
+    page.draw_rect(pymupdf.Rect(30, 30, 570, 380))
+    s = page.new_shape(); s.draw_circle((120, 120), 8); s.draw_line((108, 120), (114, 120)); s.draw_line((126, 120), (132, 120))
+    s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    page.insert_text((150, 123), "DUPLEX RECEPTACLE", fontsize=7)
+    d = _stored(db, project, dana, inline, doc.tobytes())
+    queue.enqueue_read(db, d); _run_all(db)
+    sheet = db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))).first()
+    assert sheet.kind == "legend"
+    assert sheet.symbol_templates and sheet.symbol_templates[0]["description"] == "DUPLEX RECEPTACLE"
+    assert sheet.symbol_templates[0]["sheet_number"] == sheet.number
+    assert isinstance(sheet.symbol_templates[0]["silhouette"], str)   # base64 on the row
+
+
+def test_a_plan_sheet_stores_no_templates(db, project, dana, inline, monkeypatch):
+    from sqlalchemy import select
+    from app.takeoff.models import Sheet
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _stored(db, project, dana, inline, _pdf("E2.1 POWER PLAN", pages=1))
+    queue.enqueue_read(db, d); _run_all(db)
+    sheet = db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))).first()
+    assert not sheet.symbol_templates

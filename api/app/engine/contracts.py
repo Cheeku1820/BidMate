@@ -33,6 +33,8 @@ class DetectedSheet:
     schedule_text: str = ""  # raw schedule/legend text for Classification
     legend: list["LegendEntry"] = field(default_factory=list)  # parsed rows from schedule_text
     unreadable_reason: str = ""  # set when the sheet could not be read
+    # B3c: the legend rows read off this sheet, when it is a legend sheet.
+    symbol_templates: list["SymbolTemplate"] = field(default_factory=list)
 
 
 @dataclass

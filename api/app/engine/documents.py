@@ -14,13 +14,14 @@ vector sheets only; a raster page is flagged, never silently counted.
 
 from __future__ import annotations
 
+import base64
 import re
 from dataclasses import replace
 
 import pymupdf
 
-from . import scope, sheet_kind, title_block
-from .contracts import DetectedSheet, DocumentReading, LegendEntry
+from . import legend_symbols, scope, sheet_kind, title_block
+from .contracts import DetectedSheet, DocumentReading, LegendEntry, SymbolTemplate
 from .legend import parse_legend
 from .page_frame import visual_words
 
@@ -217,17 +218,32 @@ def sheet_to_payload(s: DetectedSheet) -> dict:
     }
 
 
+def template_to_payload(t: SymbolTemplate) -> dict:
+    """A template as it is stored on the sheet row: the silhouette is
+    base64 so the column stays JSON."""
+    return {"description": t.description, "modifier": t.modifier, "rect": list(t.rect),
+            "silhouette": base64.b64encode(t.silhouette).decode("ascii"), "sheet_number": t.sheet_number}
+
+
+def template_from_row(raw: dict) -> SymbolTemplate:
+    return SymbolTemplate(description=raw.get("description", ""), modifier=raw.get("modifier", ""),
+                          rect=tuple(raw.get("rect") or (0, 0, 0, 0)),
+                          silhouette=base64.b64decode(raw.get("silhouette") or ""),
+                          sheet_number=raw.get("sheet_number", ""))
+
+
 def sheet_from_row(page_index, number, title, scale, width_pt, height_pt, region, kind,
-                   schedule_text, legend, unreadable_reason) -> DetectedSheet:
+                   schedule_text, legend, unreadable_reason, symbol_templates=None) -> DetectedSheet:
     """Rebuild the Documents agent's record from what the read job stored,
     so classify and sheet jobs never re-open the file to get it."""
     entries = [LegendEntry(**e) for e in (legend or [])]
+    templates = [template_from_row(t) for t in (symbol_templates or [])]
     return DetectedSheet(
         page_index=page_index, number=number or "", title=title or "", discipline="Electrical",
         scale=scale or "", width_pt=float(width_pt), height_pt=float(height_pt),
         region=tuple(region) if region else (0.0, 0.0, float(width_pt), float(height_pt)),
         kind=kind or "plan", schedule_text=schedule_text or "", legend=entries,
-        unreadable_reason=unreadable_reason or "",
+        unreadable_reason=unreadable_reason or "", symbol_templates=templates,
     )
 
 
@@ -291,16 +307,19 @@ def detect_sheets(path: str) -> list[DetectedSheet]:
         raw_title = title_block.title(tb, number)
         kind = sheet_kind.classify(raw_title, text, bool(scale))
         sched = text if any(k in text.upper() for k in SCHEDULE_KEYWORDS) else ""
-        sheets.append(
-            DetectedSheet(
-                page_index=pno, number=number, title=raw_title or sheet_kind.label(kind),
-                discipline="Electrical", scale=scale, width_pt=w, height_pt=h,
-                region=region, kind=kind, schedule_text=sched,
-                # parse_legend reads text and cannot know which page it came
-                # from; the caller does, so it stamps each row here.
-                legend=[replace(e, page_index=pno) for e in parse_legend(sched)],
-            )
+        sheet = DetectedSheet(
+            page_index=pno, number=number, title=raw_title or sheet_kind.label(kind),
+            discipline="Electrical", scale=scale, width_pt=w, height_pt=h,
+            region=region, kind=kind, schedule_text=sched,
+            # parse_legend reads text and cannot know which page it came
+            # from; the caller does, so it stamps each row here.
+            legend=[replace(e, page_index=pno) for e in parse_legend(sched)],
         )
+        if sheet.kind == "legend":
+            # The page and its words are still open/in scope here, which
+            # is what silhouette() needs (it renders from the live page).
+            sheet.symbol_templates = legend_symbols.templates_on(page, words, sheet_number=sheet.number)
+        sheets.append(sheet)
     return sheets
 
 

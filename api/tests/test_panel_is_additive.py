@@ -123,16 +123,23 @@ def _conversation_rows(db, project_id):
 
 def test_item_reclassify_reaches_the_same_end_state_through_apply_proposal(db, org, dana, signed_in_user, client):
     """Form path: the item panel's own flow -- POST /resolve, then POST
-    /apply-proposal with the returned proposal. The card has no note
-    field of its own (that's a DecisionArea-only control), so both paths
-    apply with an empty note -- ApplyProposalIn.note's own default -- and
-    this compares what the same endpoint does with the same proposal
-    content and the same (absent) note from two different callers.
+    /apply-proposal with the returned proposal and the estimator's typed
+    sentence as the note. DecisionArea.jsx always sends the sentence it
+    just resolved from as `note` (see DecisionArea.test.jsx: `onApply`
+    is called with `note: "type F per E-501"`, never blank) -- so the
+    form side here does the same, rather than the empty note that made
+    the two paths look alike for the wrong reason.
 
     Panel path: propose.build with a hand-made reclassify Route (no
     model call -- resolve_for_item falls back to the typed reading with
     no ANTHROPIC_API_KEY in this process), then apply-proposal with the
-    body applyProposal.js's `item` arm actually sends: `note: ""`."""
+    body applyProposal.js's `item` arm actually sends: `note: ""`.
+
+    `resolve_note` is therefore the one column expected to differ, on
+    purpose: the card has no note field of its own to type into, and the
+    panel's own record of what happened is the conversation thread, not
+    this column. Every other changed column, and the action log, must
+    still match."""
     form_env = _seed(db, org, dana, "Form project — item")
     panel_env = _seed(db, org, dana, "Panel project — item")
     db.commit()
@@ -144,7 +151,7 @@ def test_item_reclassify_reaches_the_same_end_state_through_apply_proposal(db, o
                            json={"text": message, "cluster": True})
     assert resolved.status_code == 200, resolved.text
     form_apply = client.post(f"/api/items/{form_env['anchor'].id}/apply-proposal",
-                             json={"proposal": resolved.json(), "approve": False, "note": ""})
+                             json={"proposal": resolved.json(), "approve": False, "note": message})
     assert form_apply.status_code == 200, form_apply.text
 
     # Panel path: propose.build, by hand, then applyProposal.js's own body.
@@ -162,8 +169,12 @@ def test_item_reclassify_reaches_the_same_end_state_through_apply_proposal(db, o
     db.expire_all()
     for form_item, panel_item in ((form_env["anchor"], panel_env["anchor"]), (form_env["twin"], panel_env["twin"])):
         f, p = db.get(Item, form_item.id), db.get(Item, panel_item.id)
-        assert (f.name, f.system, f.category, float(f.quantity), f.status, f.resolve_note) == \
-               (p.name, p.system, p.category, float(p.quantity), p.status, p.resolve_note)
+        assert (f.name, f.system, f.category, float(f.quantity), f.status) == \
+               (p.name, p.system, p.category, float(p.quantity), p.status)
+    # The one column that differs, and why: the form typed a sentence
+    # into a note the panel's card has nowhere to collect.
+    assert db.get(Item, form_env["anchor"].id).resolve_note == message
+    assert db.get(Item, panel_env["anchor"].id).resolve_note is None
 
     assert _actions_kind_label(db, form_env["project"].id) == _actions_kind_label(db, panel_env["project"].id)
     assert _conversation_rows(db, panel_env["project"].id) == []
@@ -173,31 +184,61 @@ def test_item_reclassify_reaches_the_same_end_state_through_apply_proposal(db, o
 
 
 def test_a_context_note_reaches_the_same_end_state_through_post_notes(db, org, dana, signed_in_user, client):
-    """Form path: NoteForm's own POST to /projects/{id}/notes.
-    Panel path: propose.build with a hand-made set_context Route, then
-    applyProposal.js's `note` arm -- store.createNote with a fixed
-    scope/status/usage, the proposal's own title/body/category."""
+    """Form path: a person filling in NoteForm.jsx by hand to record the
+    same fact the panel would have captured from "Ceiling is 14 feet in
+    the warehouse." -- title and body typed into the form's own fields
+    (`fieldsFromNote`'s defaults: scope "project", status "open",
+    `rfiNeeded` false, `sourceRef`/`obsoleteAfterRevision` empty), the
+    "Feeds the takeoff" switch checked (`usage: "context"`, the only way
+    NoteForm produces that value -- its default is "reference"), posted
+    through `onSave` -> `store.createNote` -> `noteToWire`. These values
+    are hardcoded here, not derived from `propose.build`, precisely
+    because both paths calling the same derivation would make this
+    comparison pass even if that derivation were wrong.
+
+    Panel path: propose.build with a hand-made set_context Route (this
+    is the derivation under test), then applyProposal.js's `note` arm --
+    store.createNote with the same fixed scope/status/usage and the
+    proposal's own title/body/category.
+
+    The pinned literals below double as an assertion on `propose.build`
+    itself: if `_note_from` ever derives a different title, body or
+    category for this exact sentence, the pin assertion fails first."""
     form_env = _seed(db, org, dana, "Form project — note")
     panel_env = _seed(db, org, dana, "Panel project — note")
     db.commit()
 
     message = "Ceiling is 14 feet in the warehouse."
-    route = _route("set_context", form="none", field="text", value=message)
 
-    form_built = propose.build(db, project=form_env["project"], route=route, screen=_screen(), message=message)
-    panel_built = propose.build(db, project=panel_env["project"], route=route, screen=_screen(), message=message)
-    assert form_built["kind"] == panel_built["kind"] == "note"
-    assert (form_built["title"], form_built["body"], form_built["category"]) == \
-           (panel_built["title"], panel_built["body"], panel_built["category"])
-
-    def _note_body(built):
-        return {"scope": "project", "scope_ref": None, "title": built["title"], "body": built["body"],
-                "category": built["category"], "status": "open", "rfi_needed": False, "usage": "context",
-                "source_ref": "", "obsolete_after_revision": ""}
-
-    form_resp = client.post(f"/api/projects/{form_env['project'].id}/notes", json=_note_body(form_built))
+    # What a person typing this into NoteForm.jsx would produce: the
+    # title with the trailing period NoteForm has no reason to add back
+    # (a person types a title, not a sentence with a period appended),
+    # the sentence itself as the body, "existing_condition" because it's
+    # a physical-condition note (CATEGORY_LABELS' own vocabulary), and
+    # every other NoteForm default left untouched.
+    literal_note_body = {
+        "scope": "project", "scope_ref": None,
+        "title": "Ceiling is 14 feet in the warehouse", "body": "Ceiling is 14 feet in the warehouse.",
+        "category": "existing_condition", "status": "open", "rfi_needed": False, "usage": "context",
+        "source_ref": "", "obsolete_after_revision": "",
+    }
+    form_resp = client.post(f"/api/projects/{form_env['project'].id}/notes", json=literal_note_body)
     assert form_resp.status_code == 201, form_resp.text
-    panel_resp = client.post(f"/api/projects/{panel_env['project'].id}/notes", json=_note_body(panel_built))
+
+    # Panel path: the derivation under test.
+    route = _route("set_context", form="none", field="text", value=message)
+    built = propose.build(db, project=panel_env["project"], route=route, screen=_screen(), message=message)
+    assert built is not None and built["kind"] == "note"
+    # Pin: propose.build must derive exactly what a person would have
+    # typed by hand above, or this fails here rather than only in a
+    # comparison both sides share the same bug in.
+    assert (built["title"], built["body"], built["category"]) == \
+           (literal_note_body["title"], literal_note_body["body"], literal_note_body["category"])
+
+    panel_body = {"scope": "project", "scope_ref": None, "title": built["title"], "body": built["body"],
+                 "category": built["category"], "status": "open", "rfi_needed": False, "usage": "context",
+                 "source_ref": "", "obsolete_after_revision": ""}
+    panel_resp = client.post(f"/api/projects/{panel_env['project'].id}/notes", json=panel_body)
     assert panel_resp.status_code == 201, panel_resp.text
 
     db.expire_all()
@@ -215,10 +256,17 @@ def test_a_context_note_reaches_the_same_end_state_through_post_notes(db, org, d
 
 
 def test_a_scope_confirmation_reaches_the_same_end_state_through_patch_scope(db, org, dana, signed_in_user, client):
-    """Form path: the confirm screen's own PATCH /scope/{id}.
+    """Form path: a person clicking "Confirm" on the statement's own
+    PlanLine row -- ScopeSection.jsx's `decide` forwards `onDecide`'s
+    `{ status: "confirmed" }` straight to `store.decideScope`, which
+    posts `{"status": "confirmed"}` (`decideScope` in api.js). That
+    literal is hardcoded here, not read back from `propose.build`, so a
+    wrong derivation there can't also be the source of the form's body.
+
     Panel path: propose.build with a hand-made decide_scope Route (the
-    key the screen itself offers, from record_keys), then the same
-    PATCH with applyProposal.js's `scope` arm body."""
+    key the screen itself offers, from record_keys) -- the derivation
+    under test -- then the same PATCH with applyProposal.js's `scope`
+    arm body."""
     form_env = _seed(db, org, dana, "Form project — scope")
     panel_env = _seed(db, org, dana, "Panel project — scope")
     db.commit()
@@ -226,24 +274,23 @@ def test_a_scope_confirmation_reaches_the_same_end_state_through_patch_scope(db,
     message = "site lighting is by others, that's right"
     screen = _screen(name="confirm")
 
-    def _decide(env):
-        statement = env["scope_statement"]
-        route = _route("decide_scope", form="record", record_key=f"scope:{statement.id}",
-                       field="status", value="confirmed")
-        built = propose.build(db, project=env["project"], route=route, screen=screen, message=message)
-        assert built is not None and built["kind"] == "scope"
-        return statement, built
-
-    form_statement, form_built = _decide(form_env)
-    panel_statement, panel_built = _decide(panel_env)
-    assert form_built["status"] == panel_built["status"] == "confirmed"
-
-    def _scope_body(built):
-        return {"status": built["status"]} if built.get("status") is not None else {"edited_text": built["edited_text"]}
-
-    form_resp = client.patch(f"/api/scope/{form_statement.id}", json=_scope_body(form_built))
+    # What clicking "Confirm" on this row actually posts.
+    literal_scope_body = {"status": "confirmed"}
+    form_statement = form_env["scope_statement"]
+    form_resp = client.patch(f"/api/scope/{form_statement.id}", json=literal_scope_body)
     assert form_resp.status_code == 200, form_resp.text
-    panel_resp = client.patch(f"/api/scope/{panel_statement.id}", json=_scope_body(panel_built))
+
+    # Panel path: the derivation under test.
+    panel_statement = panel_env["scope_statement"]
+    route = _route("decide_scope", form="record", record_key=f"scope:{panel_statement.id}",
+                   field="status", value="confirmed")
+    built = propose.build(db, project=panel_env["project"], route=route, screen=screen, message=message)
+    assert built is not None and built["kind"] == "scope"
+    # Pin: propose.build must derive the same status "Confirm" posts.
+    assert built["status"] == literal_scope_body["status"]
+
+    panel_body = {"status": built["status"]} if built.get("status") is not None else {"edited_text": built["edited_text"]}
+    panel_resp = client.patch(f"/api/scope/{panel_statement.id}", json=panel_body)
     assert panel_resp.status_code == 200, panel_resp.text
 
     db.expire_all()
@@ -267,9 +314,21 @@ def _spec_key(db, project):
 def test_a_plan_line_confirmation_reaches_the_same_end_state_through_patch_plan_lines(
     db, org, dana, signed_in_user, client
 ):
-    """Form path: the plan screen's own PATCH /plan/lines/{key}.
+    """Form path: a person clicking "Confirm" on the spec section's own
+    PlanLine row -- the same row component and the same `onDecide` ->
+    `store.decidePlanLine` -> `{"status": "confirmed"}` body scope
+    statements use (PlanWorkspace.jsx's `decideLine`). Hardcoded here
+    rather than read from `propose.build`, so the panel's derivation
+    can't be the only thing this comparison is built on.
+
+    Which row to PATCH is still looked up server-side (`plan_service
+    .derive`'s own key, which embeds a document id neither side can
+    know in advance) -- that's finding the record a person would have
+    clicked, not deriving what they typed.
+
     Panel path: propose.build with a hand-made decide_plan Route naming
-    the key record_keys offers, then applyProposal.js's `plan_line` arm."""
+    the key record_keys offers -- the derivation under test -- then
+    applyProposal.js's `plan_line` arm."""
     form_env = _seed(db, org, dana, "Form project — plan line")
     panel_env = _seed(db, org, dana, "Panel project — plan line")
     db.commit()
@@ -277,23 +336,22 @@ def test_a_plan_line_confirmation_reaches_the_same_end_state_through_patch_plan_
     message = "that spec section applies, confirm it"
     screen = _screen(name="plan")
 
-    def _decide(env):
-        entry_key = _spec_key(db, env["project"])
-        route = _route("decide_plan", form="record", record_key=f"plan:{entry_key}", field="status", value="confirmed")
-        built = propose.build(db, project=env["project"], route=route, screen=screen, message=message)
-        assert built is not None and built["kind"] == "plan_line"
-        return entry_key, built
-
-    form_key, form_built = _decide(form_env)
-    panel_key, panel_built = _decide(panel_env)
-    assert form_built["status"] == panel_built["status"] == "confirmed"
-
-    def _line_body(built):
-        return {"status": built["status"]} if built.get("status") is not None else {"edited_text": built["edited_text"]}
-
-    form_resp = client.patch(f"/api/projects/{form_env['project'].id}/plan/lines/{form_key}", json=_line_body(form_built))
+    # What clicking "Confirm" on this row actually posts.
+    literal_line_body = {"status": "confirmed"}
+    form_key = _spec_key(db, form_env["project"])
+    form_resp = client.patch(f"/api/projects/{form_env['project'].id}/plan/lines/{form_key}", json=literal_line_body)
     assert form_resp.status_code == 200, form_resp.text
-    panel_resp = client.patch(f"/api/projects/{panel_env['project'].id}/plan/lines/{panel_key}", json=_line_body(panel_built))
+
+    # Panel path: the derivation under test.
+    panel_key = _spec_key(db, panel_env["project"])
+    route = _route("decide_plan", form="record", record_key=f"plan:{panel_key}", field="status", value="confirmed")
+    built = propose.build(db, project=panel_env["project"], route=route, screen=screen, message=message)
+    assert built is not None and built["kind"] == "plan_line"
+    # Pin: propose.build must derive the same status "Confirm" posts.
+    assert built["status"] == literal_line_body["status"]
+
+    panel_body = {"status": built["status"]} if built.get("status") is not None else {"edited_text": built["edited_text"]}
+    panel_resp = client.patch(f"/api/projects/{panel_env['project'].id}/plan/lines/{panel_key}", json=panel_body)
     assert panel_resp.status_code == 200, panel_resp.text
 
     from app.plan.models import PlanDecision
@@ -316,9 +374,18 @@ def _question_key(db, project):
 
 
 def test_a_plan_answer_reaches_the_same_end_state_through_post_plan_answer(db, org, dana, signed_in_user, client):
-    """Form path: the plan screen's own POST /plan/questions/{key}/answer.
+    """Form path: a person typing an answer into QuestionLine.jsx's own
+    textarea and submitting -- `onAnswer(draft.trim())` ->
+    `store.answerPlanQuestion` -> `POST .../answer` with `{"body": ...}`
+    (PlanWorkspace.jsx wires `onAnswer` straight to that call). The
+    literal body is hardcoded here, not read from `propose.build`, for
+    the same reason as the other kinds -- the point is proving the
+    panel's derivation against an independently-known-correct value, not
+    against itself.
+
     Panel path: propose.build with a hand-made decide_plan Route naming
-    the question's key, then applyProposal.js's `plan_answer` arm."""
+    the question's key -- the derivation under test -- then
+    applyProposal.js's `plan_answer` arm."""
     form_env = _seed(db, org, dana, "Form project — plan answer")
     panel_env = _seed(db, org, dana, "Panel project — plan answer")
     db.commit()
@@ -326,22 +393,23 @@ def test_a_plan_answer_reaches_the_same_end_state_through_post_plan_answer(db, o
     message = "E2.2 is at the same scale as E2.1 — use 1/8\" = 1'-0\"."
     screen = _screen(name="plan")
 
-    def _decide(env):
-        entry_key = _question_key(db, env["project"])
-        route = _route("decide_plan", form="record", record_key=f"plan:{entry_key}", field="text", value=message)
-        built = propose.build(db, project=env["project"], route=route, screen=screen, message=message)
-        assert built is not None and built["kind"] == "plan_answer"
-        return entry_key, built
-
-    form_key, form_built = _decide(form_env)
-    panel_key, panel_built = _decide(panel_env)
-    assert form_built["body"] == panel_built["body"] == message
-
+    # What typing this answer and pressing save actually posts.
+    literal_answer_body = {"body": message}
+    form_key = _question_key(db, form_env["project"])
     form_resp = client.post(f"/api/projects/{form_env['project'].id}/plan/questions/{form_key}/answer",
-                            json={"body": form_built["body"]})
+                            json=literal_answer_body)
     assert form_resp.status_code == 200, form_resp.text
+
+    # Panel path: the derivation under test.
+    panel_key = _question_key(db, panel_env["project"])
+    route = _route("decide_plan", form="record", record_key=f"plan:{panel_key}", field="text", value=message)
+    built = propose.build(db, project=panel_env["project"], route=route, screen=screen, message=message)
+    assert built is not None and built["kind"] == "plan_answer"
+    # Pin: propose.build must derive the same body the estimator typed.
+    assert built["body"] == literal_answer_body["body"]
+
     panel_resp = client.post(f"/api/projects/{panel_env['project'].id}/plan/questions/{panel_key}/answer",
-                             json={"body": panel_built["body"]})
+                             json={"body": built["body"]})
     assert panel_resp.status_code == 200, panel_resp.text
 
     from app.plan.models import PlanDecision

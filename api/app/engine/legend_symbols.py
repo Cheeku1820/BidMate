@@ -90,15 +90,27 @@ def templates_on(page, words: list[Word], sheet_number: str = "") -> list[Symbol
         cy, height = (y0 + y1) / 2, y1 - y0
         band = [w for w in words if abs(w.cy - cy) <= max(height, 6.0)]
         modifier = ""
+        modifier_word: Word | None = None
         for w in band:
             text = w.text.strip()
             if len(text) <= MAX_MODIFIER_CHARS and text and _near(g.rect, w, MODIFIER_PT):
                 modifier = text
+                modifier_word = w
                 break
+        # Exclude the modifier by identity, not text: a description word
+        # that happens to share the modifier's text ("TYPE 3 OUTLET" beside
+        # a "3" modifier) is still part of the description.
         right = [w for w in band if w.x0 >= x1 - 1 and w.x0 <= x1 + DESCRIPTION_REACH_PT
-                 and w.text.strip() != modifier]
-        right.sort(key=lambda w: (round(w.cy), w.x0))
-        description = " ".join(w.text.strip() for w in right if w.text.strip())
+                 and w is not modifier_word]
+        # Most legend columns read left-to-right, but a row drawn with its
+        # words to the left of the glyph is still a row, not a stray
+        # drawing. Only fall back to the left when the right side found
+        # nothing, so a normal right-hand column never loses to it.
+        chosen = right if right else [
+            w for w in band if w.x1 <= x0 + 1 and w.x1 >= x0 - DESCRIPTION_REACH_PT
+            and w is not modifier_word]
+        chosen.sort(key=lambda w: (round(w.cy), w.x0))
+        description = " ".join(w.text.strip() for w in chosen if w.text.strip())
         if not description:
             continue
         out.append(SymbolTemplate(description=description, modifier=modifier, rect=g.rect,

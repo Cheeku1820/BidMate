@@ -218,3 +218,38 @@ def test_record_keys_lists_only_what_the_screen_offers(db, project, dana):
     statement = _scope(db, project, dana)
     assert f"scope:{statement.id}" in propose.record_keys(db, project, _screen(name="confirm"))
     assert propose.record_keys(db, project, _screen(name="takeoff")) == []
+
+
+# --- staleness: what stops a card applying to something that moved ---
+
+
+def test_an_item_proposal_goes_stale_when_a_target_moves_or_vanishes(db, project, monkeypatch):
+    sheet = _sheet(db, project)
+    a, b = _item(db, project, sheet), _item(db, project, sheet)
+    monkeypatch.setattr(propose.resolve_service, "resolve_for_item",
+                        lambda db_, item, text, *, cluster=True: _resolved([a, b]))
+    built = propose.build(db, project=project, route=_route("reclassify"),
+                          screen=_screen(sheet_id=sheet.id, item_id=a.id), message="type F")
+    assert propose.is_stale(db, project=project, proposal=built) is False
+    b.version += 1
+    db.flush()
+    assert propose.is_stale(db, project=project, proposal=built) is True
+
+
+def test_a_scope_proposal_is_stale_once_the_statement_already_says_so(db, project, dana):
+    statement = _scope(db, project, dana)
+    built = propose.build(db, project=project,
+                          route=_route("decide_scope", form="record", record_key=f"scope:{statement.id}",
+                                       field="status", value="confirmed"),
+                          screen=_screen(name="confirm"), message="that's right")
+    assert propose.is_stale(db, project=project, proposal=built) is False
+    statement.status = "confirmed"
+    db.flush()
+    assert propose.is_stale(db, project=project, proposal=built) is True
+
+
+def test_a_note_is_never_stale_and_a_refusal_always_is(db, project):
+    note = propose.build(db, project=project, route=_route("set_context", form="none", field="text", value="14 feet"),
+                         screen=_screen(), message="14 feet")
+    assert propose.is_stale(db, project=project, proposal=note) is False
+    assert propose.is_stale(db, project=project, proposal={"kind": "refused", "summary": "x"}) is True

@@ -11,6 +11,8 @@ endpoint -- the same path its form uses.
 """
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
@@ -173,3 +175,59 @@ def build(db: DbSession, *, project: Project, route: Route, screen: ScreenIn, me
     except targets.TooMany as many:
         return {"kind": "refused", "summary": copy.too_many(many.count), "targets_preview": [], "more_count": 0}
     return None
+
+
+def _item_stale(db, proposal) -> bool:
+    inner = proposal.get("proposal") or {}
+    versions = inner.get("versions") or {}
+    for raw_id, version in versions.items():
+        row = db.get(Item, uuid.UUID(raw_id))
+        if row is None or row.version != version:
+            return True
+    return not versions
+
+
+def _scope_stale(db, project, proposal) -> bool:
+    statement = next((s for s in scope_service.list_statements(db, project)
+                      if str(s.id) == proposal.get("statement_id")), None)
+    if statement is None:
+        return True
+    if proposal.get("status") is not None:
+        return statement.status == proposal["status"]
+    return (statement.edited_text or statement.text) == proposal.get("edited_text")
+
+
+def _plan_stale(db, project, proposal) -> bool:
+    """Read the plan the way the screen does -- build_plan applies the
+    stored decisions, which derive() alone does not, and a card is stale
+    precisely when the decision it proposes has already been made."""
+    entry_key = proposal.get("key", "")
+    plan = plan_service.build_plan(db, project)
+    if proposal["kind"] == "plan_answer":
+        question = next((q for q in plan.questions if q.key == entry_key), None)
+        return question is None or question.status == "answered"
+    line = next((l for l in (*plan.specs, *plan.schedules, *plan.phases) if l.key == entry_key), None)
+    if line is None:
+        return True
+    if proposal.get("status") is not None:
+        return line.status == proposal["status"]
+    return line.text == proposal.get("edited_text")
+
+
+def is_stale(db: DbSession, *, project: Project, proposal: dict) -> bool:
+    """Whether the proposal still describes the project. Checked before
+    a card offers Apply, so a record that moved underneath it -- or a
+    change that already landed when the bookkeeping call was lost --
+    refuses rather than applying twice."""
+    kind = (proposal or {}).get("kind")
+    if kind == "refused":
+        return True
+    if kind == "note":
+        return False
+    if kind == "item":
+        return _item_stale(db, proposal)
+    if kind in ("scope",):
+        return _scope_stale(db, project, proposal)
+    if kind in ("plan_line", "plan_answer"):
+        return _plan_stale(db, project, proposal)
+    return True

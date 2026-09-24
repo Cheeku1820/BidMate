@@ -231,7 +231,20 @@ def commit(
         id=uuid.uuid4(),
         project_id=project_id,
         kind=kind,
-        label=label,
+        # Action.label is String(300). Every caller here builds its label
+        # by interpolating estimator-facing data into a fixed prefix --
+        # "Edited {item.name}", "Undid: {root.label}" -- and Task 8 made
+        # an item name a field an estimator can set up to exactly 300
+        # characters, at which point "Edited " alone pushes the combined
+        # string 7 characters past the column and Postgres refuses the
+        # insert outright (StringDataRightTruncation), turning a valid
+        # edit into an unhandled 500 with no recovery copy. Truncating
+        # defensively here, in the one function every mutation commits
+        # an action through, covers every caller -- including undo/redo,
+        # which prepend "Undid: "/"Redid: " to a label that can itself
+        # already be 300 characters -- rather than pushing a length limit
+        # onto each call site that builds a label.
+        label=label if len(label) <= 300 else label[:299] + "…",
         before=encode_snapshot(before),
         after=encode_snapshot(after),
         item_id=item_id,

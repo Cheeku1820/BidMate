@@ -726,3 +726,31 @@ def test_item_out_carries_suggestions(client, signed_in_user, db, project, item)
     body = client.get(f"/api/projects/{project.id}/snapshot").json()
     row = next(i for i in body["items"] if i["id"] == str(item.id))
     assert row["suggestions"] == [{"name": "Duplex receptacle", "sheet": "E0.1"}]
+
+
+def test_a_rename_is_undoable(client, signed_in_user, project, item):
+    original_name = item.name
+    r = client.patch(f"/api/items/{item.id}", json={"name": "Duplex receptacle"},
+                     headers={"If-Match": str(item.version)})
+    assert r.status_code == 200, r.text
+    assert r.json()["item"]["name"] == "Duplex receptacle"
+
+    body = client.post(f"/api/projects/{project.id}/undo").json()
+
+    assert body["performed"] is True
+    matched = next(i for i in body["snapshot"]["items"] if i["id"] == str(item.id))
+    assert matched["name"] == original_name
+
+
+def test_a_name_of_exactly_three_hundred_characters_is_accepted(client, signed_in_user, item):
+    name = "x" * 300
+    r = client.patch(f"/api/items/{item.id}", json={"name": name}, headers={"If-Match": str(item.version)})
+    assert r.status_code == 200, r.text
+    assert r.json()["item"]["name"] == name
+
+
+def test_a_name_is_stored_trimmed(client, signed_in_user, item):
+    r = client.patch(f"/api/items/{item.id}", json={"name": "  Duplex receptacle  "},
+                     headers={"If-Match": str(item.version)})
+    assert r.status_code == 200, r.text
+    assert r.json()["item"]["name"] == "Duplex receptacle"

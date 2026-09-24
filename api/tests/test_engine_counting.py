@@ -313,3 +313,19 @@ def test_fewer_than_three_instances_is_not_a_cluster(tmp_path):
         _receptacle(page, 100, 300); _receptacle(page, 200, 300)
     path, (sheet,) = _plan(tmp_path, draw)
     assert counting.count_sheet(path, sheet) == []
+
+
+def test_a_subscript_splits_a_shape_cluster(tmp_path):
+    def draw(page, _):
+        for i, x in enumerate((100, 200, 300, 400, 500, 600, 700)):
+            s = page.new_shape()
+            s.draw_line((x, 294), (x, 306)); s.draw_circle((x, 298), 3); s.draw_circle((x, 302), 3)
+            s.finish(color=(0, 0, 0), width=0.7); s.commit()
+            if i < 4:
+                page.insert_text((x + 4, 296), "3", fontsize=5)
+    path, (sheet,) = _plan(tmp_path, draw)
+    by_tag = {c.tag: c for c in counting.count_sheet(path, sheet)}
+    threes = [c for t, c in by_tag.items() if t.endswith(":3")]
+    plains = [c for t, c in by_tag.items() if t.startswith("shape:") and not t.endswith(":3")]
+    assert len(threes) == 1 and threes[0].count == 4 and threes[0].modifier == "3"
+    assert len(plains) == 1 and plains[0].count == 3 and plains[0].modifier == ""

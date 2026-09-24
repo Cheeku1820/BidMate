@@ -20,6 +20,7 @@ from collections import Counter, defaultdict
 import pymupdf
 
 from app.engine import glyphs
+from app.engine.legend_symbols import MAX_MODIFIER_CHARS, MODIFIER_PT
 
 from .contracts import DetectedSheet, DeviceCluster, Placement
 from .page_frame import visual_spans, visual_words
@@ -216,11 +217,31 @@ def _shape_clusters(page, sheet: DetectedSheet, words, stamp: set[tuple[int, int
              if (round((g.rect[0] + g.rect[2]) / 2), round((g.rect[1] + g.rect[3]) / 2)) not in stamp]
     out = []
     for c in glyphs.cluster(found, MIN_PLACEMENTS):
-        out.append(DeviceCluster(
-            tag=f"shape:{c.signature}", sheet_page_index=sheet.page_index,
-            placements=[_placement(g) for g in c.members], exemplar=c.members[0].rect,
-        ))
+        by_modifier: dict[str, list] = {}
+        for g in c.members:
+            by_modifier.setdefault(_modifier_of(g.rect, words), []).append(g)
+        for modifier, members in sorted(by_modifier.items()):
+            if len(members) < MIN_PLACEMENTS:
+                continue
+            tag = f"shape:{c.signature}" + (f":{modifier}" if modifier else "")
+            out.append(DeviceCluster(
+                tag=tag, sheet_page_index=sheet.page_index, modifier=modifier,
+                placements=[_placement(g) for g in members], exemplar=members[0].rect,
+            ))
     return out
+
+
+def _modifier_of(rect, words) -> str:
+    """The subscript touching this instance, if any -- a switch variant's
+    only difference from its plain sibling."""
+    x0, y0, x1, y1 = rect
+    for w in words:
+        text = w.text.strip()
+        if not text or len(text) > MAX_MODIFIER_CHARS:
+            continue
+        if w.x0 <= x1 + MODIFIER_PT and w.x1 >= x0 - MODIFIER_PT and w.y0 <= y1 + MODIFIER_PT and w.y1 >= y0 - MODIFIER_PT:
+            return text
+    return ""
 
 
 def _placement(g: glyphs.Glyph) -> Placement:

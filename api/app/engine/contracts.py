@@ -63,6 +63,14 @@ class DeviceCluster:
     # Set on a shape cluster absorbed by a tag cluster (counting._link);
     # kept for tests, never serialised.
     linked_tag: str = ""
+    # B3c: the subscript beside this cluster's instances ("3", "D"), when
+    # every instance carries the same one. A switch variant shares its
+    # drawn symbol and differs only here, so it is part of the cluster's
+    # identity -- Counting records it and never interprets it.
+    modifier: str = ""
+    # The exemplar as an ink-fraction silhouette, rendered by the classify
+    # job while the file is open, for ranking against the legend.
+    exemplar_silhouette: bytes | None = None
 
     @property
     def count(self) -> int:

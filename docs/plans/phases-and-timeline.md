@@ -4760,3 +4760,40 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 | §13 tests, invariants | every task; 15 |
 
 Known simplifications in this plan, each a deliberate reading of the spec rather than a gap: `PhaseOut.material_total` sums `Item.material_cost` (the engine's stored figure) rather than the pricing resolution, matching what the export reads today (`estimate-first-pricing.md` §5's "until one pricing truth lands"); the reverse solve apportions the window's working days across bars in proportion to hours before sizing each crew (§4.6 says "the same stage proportions"); and a project whose only dates are on a later phase renders the earlier phases relatively — the spec's "with no date anywhere" case generalised to "no date reaching this phase".
+
+---
+
+## Integration notes (written after the branch was built)
+
+`main` moved while this stream ran: stream A (pricing hardening) and
+stream B (the spreadsheet grid) merged at `54b2f14`. Two things follow.
+
+**No migration renumbering.** `main`'s head is still `0025_market_pricing`,
+so `0026_phases_and_schedule` chains cleanly. Check again at merge time —
+streams C and F merge ahead of D in the planned order.
+
+**One real conflict, in the price sheet (Task 8).** Both branches add an
+`unreadable` group to the preview, and — fortunately — with the same
+shape, `[{line, reason}]`:
+
+| File | `main` (stream A) | This branch (Task 8) |
+|---|---|---|
+| `market/price_sheet.py` | adds `ParsedSheet.unreadable`, filled by a per-row `try/except` around the price cell | adds `"Lead time (weeks)"` to `HEADER`, and `ParsedRow.lead_weeks` / `.lead_error` |
+| `worker/price_sheet_job.py` | `"unreadable": [... for line, reason in parsed.unreadable]` | builds the same list in the row loop from `r.lead_error` |
+| `takeoff/schemas.py` | `unreadable: list[dict] = []` on `PriceSheetPreviewOut` | the same field, same type |
+
+Resolve it by keeping **main's mechanism** and feeding this branch's
+lead-time errors into it: have `parse_price_sheet` append
+`(row.line, row.lead_error)` to `ParsedSheet.unreadable` where this
+branch currently sets `ParsedRow.lead_error`, then drop the job-loop
+collection added here and keep main's single `parsed.unreadable`
+comprehension. Take either copy of the `schemas.py` field — they are
+identical. The tests from both branches then pass unchanged: main's
+assert a bad price is named by row, this branch's assert a bad lead time
+is (`"Row 3: the lead time isn't a number of weeks"`).
+
+`price_sheet.py`'s `HEADER` gains the lead-time column from this branch
+only — main does not touch it — but note the **row key moves from column
+8 to 9**, which is why `test_market_price_sheet.py` and
+`test_pricing_endpoints.py` here derive it from `HEADER` rather than
+hard-coding it. Keep those derived versions.

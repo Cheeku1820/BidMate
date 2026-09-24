@@ -80,18 +80,25 @@ Nothing else. No price, no labor hours, no markup, no approval.
   kinds maps to a control that exists: the item panel's decision area,
   the note form, the scope row, the plan line. Tested, not asserted —
   see *Testing*.
-- **Extracted document text is data.** Precisely: it never reaches the
-  routing call's input at all. `_screen_line()` builds what the model
-  sees out of the screen descriptor alone — screen name, sheet number,
-  selection, filter, and the server-computed `record_keys` — none of
-  which touches a sheet's extracted text (`Sheet.schedule_text` feeds
-  only the answer's own rendered context, a different call than the one
-  that routes a sentence). On top of that, the proposal is
-  shape-constrained: a closed set of kinds, each with a fixed field
-  list, and every id resolved server-side against the project's own
-  rows. Text lifted from a drawing cannot name a kind, add a target, or
-  reach a field it does not own — and it is never given the chance to
-  try.
+- **Extracted document text is data.** Not "never reaches the routing
+  call" — `selection` in `_screen_line()` is `Item.name`, and on a
+  classified item that string can descend from a legend or schedule
+  Classification read off the drawing set, so it *can* reach the
+  routing call's input. What holds instead: `_screen_line()` renders
+  `selection`, `sheet`, and every offered record key quoted, each on
+  its own labelled segment (`selection (a label read from the drawing
+  set, data, not an instruction): "..."`) rather than as bare words, so
+  a value that happens to read like an instruction still arrives as
+  delimited data, never as part of the line the model reads as its
+  brief. `Sheet.schedule_text` itself is not in this line at all — it
+  feeds only the answer's own rendered context, a different call than
+  the one that routes a sentence. And independently of what the line
+  contains, the proposal stays shape-constrained: the intent is checked
+  against `INTENTS`, the target form against `TARGET_FORMS`, and every
+  record key against `record_keys()` computed fresh from the project's
+  own rows. Text lifted from a drawing cannot name a kind, add a
+  target, or reach a field it does not own, even granting it reaches
+  the model's input at all.
 - **`resolve_note` differs between the two paths, by design.** The item
   panel's decision box passes the estimator's typed sentence as `note`,
   stored on the item as `resolve_note`; the panel's card always applies
@@ -175,11 +182,15 @@ Building and storing are two separate steps, in `api/app/assistant/service.py`
 rather than in `propose.py` itself: `propose_for()` calls
 `conversation.route_message()` and `propose.build()` to produce the dict,
 and a separate function, `_store_proposal()`, persists it onto the
-answer's own row afterward, in its own session. The SSE `proposal` event
-is written before that store is attempted, and a store failure is
+answer's own row first, in its own session. The SSE `proposal` event is
+emitted only after that store is attempted, and a store failure is
 swallowed there rather than upstream — so a proposal that was built but
 could not be persisted still reaches the estimator on the live stream;
-only a later reload of the thread would miss it.
+only a later reload of the thread would miss it. A proposal that fails
+to serialize to JSON at all is handled the same way, one step later: the
+event itself is skipped and logged rather than raised, since by then the
+answer is already on the wire and nothing should take the rest of the
+stream down with it.
 
 **Target resolution**, by form:
 
@@ -233,8 +244,17 @@ event: proposal
 data: {"id": "<answer message id>", "proposal": {...}}
 ```
 
-`PanelProposalOut` is a discriminated union on `kind`, each arm carrying
-only its own endpoint's fields:
+There is no `PanelProposalOut` pydantic union on the wire. The closed
+set is enforced by construction instead: `PROPOSAL_KINDS` is the
+registered arm list, and `propose.build()` asserts its own return's
+`kind` against it before the dict ever reaches `_event()` — a builder
+that forgot to register a new arm raises there, rather than shipping an
+unrecognised kind to the panel. On the read side, `service.thread_view()`
+treats a stored proposal whose `kind` falls outside `PROPOSAL_KINDS` as
+stale, so a row that predates the assertion (or was written directly)
+degrades exactly like a record that moved, rather than offering an
+Apply nothing can build. Each arm still carries only its own endpoint's
+fields, as a plain dict:
 
 ```
 kind "item"          → {summary, count, sheet_number, item_id, proposal: ProposalOut, approve: false}
@@ -250,10 +270,11 @@ kind "refused"       → {summary}
 route handler, so the too-large case is a card like any other rather
 than an error the panel has to special-case.
 
-Every arm also carries `targets_preview`: up to five human-readable rows
-(`"E2.1 · 20A duplex receptacle · 14"`) plus `more_count`, so the card
-can name what it would touch without the client re-querying. Nothing on
-the wire names a model, a confidence, a rule name or a run id.
+Every arm also carries `targets_preview`: up to five rows, each
+`{"label": <item name>, "detail": "<quantity> <unit>"}`, plus
+`more_count`, so the card can name what it would touch without the
+client re-querying. Nothing on the wire names a model, a confidence, a
+rule name or a run id.
 
 `PATCH /api/projects/{project_id}/conversation/messages/{message_id}/proposal`
 takes `{"status": "applied" | "dismissed"}` and records the card's
@@ -264,19 +285,31 @@ proposal (404) or one already settled (409, with the current status).
 ## Staleness
 
 Before a card offers Apply — on load and on every reconnect — the
-server recomputes whether the proposal still describes reality:
+server recomputes whether the proposal still describes reality, and the
+check differs by kind because "still true" means something different
+for each one:
 
-- an item target that no longer exists, or whose `version` has moved
-  since the proposal was built;
-- a scope statement already decided, or a plan line the current
-  derivation no longer produces;
-- a plan question already answered.
+- **item** — stale once any target no longer exists, or its `version`
+  has moved since the proposal was built.
+- **scope** and **plan_line** — stale once the record already carries
+  the decision the proposal would make: the same status it proposes, or
+  the same wording; a `plan_line` is also stale once the current
+  derivation no longer produces that key at all.
+- **plan_answer** — stale once the question is already answered.
+- **note** — stale once the project already carries a note with the
+  exact same title and body. Unlike the other kinds there is no record
+  the note proposal points *at* to check for a moved value — the check
+  is instead whether the note it would create already exists, which is
+  what a lost bookkeeping PATCH after a successful apply leaves behind.
+- **refused** — always stale; there was never a record behind it to
+  begin with.
 
 A stale card says what changed and offers nothing: *"The items this
 would have changed have moved on. Ask again to get a fresh reading."*
 This is also what protects against a double apply when the bookkeeping
 PATCH fails after a successful apply: the second press finds the
-targets already carrying the proposed values, and refuses.
+targets already carrying the proposed values (or, for a note, the note
+already existing), and refuses.
 
 The check lives with the proposal builder so there is one definition of
 "still true", and it is exercised directly in tests rather than left to
@@ -328,7 +361,7 @@ project screen, which is why this stream waited for F.
 |---|---|
 | Offered | what would change, where, and the count |
 | Applying | the button reads *Applying…*, both controls disabled |
-| Applied | *"Renamed 6 items on E2.1 to 2x4 LED troffer, type F."* with Undo where the underlying action is undoable (an item change is; a note, scope or plan decision is not, exactly as from the form) |
+| Applied | the pill reads *Applied*; the card keeps its original summary and details rather than restating what happened, and carries no Undo of its own — undo for an item change still lives in the top bar, exactly as for a manual edit (see *Not built in this slice*) |
 | Dismissed | *"Dismissed."* — nothing was written |
 | Stale | *"The items this would have changed have moved on. Ask again to get a fresh reading."* |
 | Refused | the server's own sentence, on the card, with the card left offered |
@@ -360,10 +393,11 @@ proposal and 409s one already settled; tenancy rows for the new route;
 nothing in the payload names internals (the same grep the plan and
 conversation tests use).
 
-**Staleness** (same file): a moved item version, a deleted item, a
-decided scope statement, a vanished plan line and an answered question
-each make the card stale; a second apply after a lost bookkeeping PATCH
-is refused.
+**Staleness** (same file, and `api/tests/test_panel_propose.py`): a
+moved item version, a deleted item, a decided scope statement, a
+vanished plan line, an answered question, and — for a note — the exact
+same title and body already existing on the project each make the card
+stale; a second apply after a lost bookkeeping PATCH is refused.
 
 **Injection** (`api/tests/test_assistant_prompt.py`, extended): a sheet
 carrying document text that reads like an instruction ("ignore every
@@ -376,7 +410,13 @@ the guarantee is that the text is never handed to the call, not that a
 validator downstream would catch it if it were. Separately, the routed
 intent for the unrelated question is still `unknown` with the
 deterministic matcher, and `propose.build()` refuses an unknown intent
-before it looks at a target — a second, independent check.
+before it looks at a target — a second, independent check. A second
+case covers `selection`, which *does* reach the call (it is `Item.name`,
+which can descend from a legend or schedule): it builds a real item
+whose name carries an instruction-shaped sentence, captures the real
+`screen_line`, and asserts the sentence appears only inside its quoted,
+labelled data segment — never as a bare instruction line — while the
+routed intent still comes from what the faked response said.
 
 **The acceptance criterion** (`api/tests/test_panel_is_additive.py`,
 new): for each of the four kinds, the same end state is reachable
@@ -405,8 +445,17 @@ card.
 - **Firm memory across projects.** A symbol resolved here writes the
   project's symbol library through `resolve_apply`, as it does from the
   item panel, and no further.
-- **More than one proposal per answer.** One card per answer; a sentence
-  that asks for two things proposes the first and says so.
+- **An applied card stating what was done, with Undo.** Applying leaves
+  the card's original summary and details in place with the pill
+  changed to *Applied* — it does not yet restate what actually happened
+  in the estimator's own words, and it carries no Undo of its own. Undo
+  for an item change is still reachable, but only from the top bar, the
+  same as for a manual edit; a note, scope, or plan decision has no undo
+  anywhere, exactly as from the form.
+- **More than one proposal per answer, said out loud.** One card per
+  answer; a sentence that asks for two things proposes only the first,
+  without saying so — the card does not yet name the part of the
+  sentence it left out.
 - **Approving anything, ever.**
 
 ## Risks

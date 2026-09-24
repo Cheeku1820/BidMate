@@ -182,6 +182,11 @@ class Sheet(Base):
     render_error: Mapped[str] = mapped_column(Text, default="", server_default="")
     max_zoom: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # B3c: the legend rows this sheet carries, when it is a legend sheet --
+    # each a glyph's silhouette plus the drafter's own words for it. Read
+    # once at upload; Classification ranks against them.
+    symbol_templates: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
 
 class Document(Base):
     """An uploaded file, as stored. The API streams and hashes it; it
@@ -331,6 +336,7 @@ class SymbolMatch(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending", server_default="pending")
     matches: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
     error: Mapped[str] = mapped_column(Text, default="", server_default="")
+    suggested_name: Mapped[str] = mapped_column(String(300), default="", server_default="")
     created_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -380,6 +386,10 @@ class Item(Base):
     # the same sheet, which is what lets a re-run recognise the item it
     # produced last time instead of replacing it blindly.
     source_tag: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    # B3c: legend rows this item's symbol looks like, best first, for an
+    # estimator to pick from. Names only -- the score that ordered them
+    # stops in the engine (CLAUDE.md: confidence never renders).
+    suggestions: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # Optimistic-concurrency counter for the five single-item mutations
     # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
     # is driven by `onupdate=func.now()` and therefore transaction-

@@ -180,3 +180,18 @@ def test_pricing_columns_are_not_flattened_into_the_item_snapshot_types():
 
     assert ITEM_SNAPSHOT_TYPES["labor_line"] is dict
     assert ITEM_SNAPSHOT_TYPES["material_price"] is dict
+
+
+def test_sheet_item_and_match_carry_the_legend_columns(db, project, sheet, dana):
+    from app.takeoff.models import Item, SymbolMatch
+    sheet.symbol_templates = [{"description": "DUPLEX RECEPTACLE", "modifier": "", "rect": [0, 0, 10, 10],
+                               "silhouette": "AAAA", "sheet_number": "E0.1"}]
+    item = Item(project_id=project.id, sheet_id=sheet.id, symbol="generic", name="Unclassified symbol",
+                system="Unknown", category="Unclassified", quantity=3, unit="ea",
+                suggestions=[{"name": "Duplex receptacle", "sheet": "E0.1"}])
+    match = SymbolMatch(org_id=project.org_id, project_id=project.id, sheet_id=sheet.id,
+                        box=[500, 375, 12, 12], created_by=dana.id)
+    db.add_all([item, match]); db.flush(); db.refresh(sheet); db.refresh(item); db.refresh(match)
+    assert sheet.symbol_templates[0]["description"] == "DUPLEX RECEPTACLE"
+    assert item.suggestions == [{"name": "Duplex receptacle", "sheet": "E0.1"}]
+    assert match.suggested_name == ""

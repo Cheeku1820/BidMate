@@ -102,7 +102,7 @@ describe("applyProposal", () => {
     expect(s.applyProposal).toHaveBeenCalledWith(
       "i1",
       expect.objectContaining({ name: "2x4 LED troffer, type F" }),
-      { approve: false, note: null },
+      { approve: false, note: "" },
     );
   });
 

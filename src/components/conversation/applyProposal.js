@@ -28,7 +28,7 @@ import { mapProposal } from "../../lib/store/api-mapping.js";
 export async function applyProposal(store, projectId, proposal) {
   switch (proposal.kind) {
     case "item":
-      return store.applyProposal(proposal.itemId, mapProposal(proposal.proposal), { approve: false, note: null });
+      return store.applyProposal(proposal.itemId, mapProposal(proposal.proposal), { approve: false, note: "" });
     case "note":
       return store.createNote(projectId, {
         scope: "project", scopeRef: null, title: proposal.title, body: proposal.body,

@@ -123,15 +123,16 @@ def _conversation_rows(db, project_id):
 
 def test_item_reclassify_reaches_the_same_end_state_through_apply_proposal(db, org, dana, signed_in_user, client):
     """Form path: the item panel's own flow -- POST /resolve, then POST
-    /apply-proposal with the returned proposal and the estimator's
-    sentence as the note (docs/specs/say-what-it-is.md; DecisionArea
-    always sends the sentence as `note`, never null).
+    /apply-proposal with the returned proposal. The card has no note
+    field of its own (that's a DecisionArea-only control), so both paths
+    apply with an empty note -- ApplyProposalIn.note's own default -- and
+    this compares what the same endpoint does with the same proposal
+    content and the same (absent) note from two different callers.
 
     Panel path: propose.build with a hand-made reclassify Route (no
     model call -- resolve_for_item falls back to the typed reading with
     no ANTHROPIC_API_KEY in this process), then apply-proposal with the
-    body applyProposal.js's `item` arm actually sends -- which is
-    `note: null`, always, for every item-kind card."""
+    body applyProposal.js's `item` arm actually sends: `note: ""`."""
     form_env = _seed(db, org, dana, "Form project — item")
     panel_env = _seed(db, org, dana, "Panel project — item")
     db.commit()
@@ -143,7 +144,7 @@ def test_item_reclassify_reaches_the_same_end_state_through_apply_proposal(db, o
                            json={"text": message, "cluster": True})
     assert resolved.status_code == 200, resolved.text
     form_apply = client.post(f"/api/items/{form_env['anchor'].id}/apply-proposal",
-                             json={"proposal": resolved.json(), "approve": False, "note": message})
+                             json={"proposal": resolved.json(), "approve": False, "note": ""})
     assert form_apply.status_code == 200, form_apply.text
 
     # Panel path: propose.build, by hand, then applyProposal.js's own body.
@@ -152,10 +153,10 @@ def test_item_reclassify_reaches_the_same_end_state_through_apply_proposal(db, o
     built = propose.build(db, project=panel_env["project"], route=route, screen=screen, message=message)
     assert built is not None and built["kind"] == "item"
     # applyProposal.js: store.applyProposal(proposal.itemId, mapProposal(proposal.proposal),
-    # { approve: false, note: null }) -- mapProposal -> proposalToWire round-trips the
+    # { approve: false, note: "" }) -- mapProposal -> proposalToWire round-trips the
     # inner (already snake_case) proposal dict back to the identical wire shape.
     panel_apply = client.post(f"/api/items/{built['item_id']}/apply-proposal",
-                              json={"proposal": built["proposal"], "approve": False, "note": None})
+                              json={"proposal": built["proposal"], "approve": False, "note": ""})
     assert panel_apply.status_code == 200, panel_apply.text
 
     db.expire_all()

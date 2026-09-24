@@ -282,7 +282,7 @@ describe("ConversationPanel", () => {
     expect(store.applyProposal).toHaveBeenCalledWith(
       "i1",
       expect.objectContaining({ name: ITEM_PROPOSAL.proposal.name }),
-      { approve: false, note: null },
+      { approve: false, note: "" },
     );
     expect(store.setProposalStatus).toHaveBeenCalledWith("p1", "m1", "applied");
     expect(await screen.findByText("Applied")).toBeInTheDocument();

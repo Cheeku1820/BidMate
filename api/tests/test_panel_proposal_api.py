@@ -8,10 +8,11 @@ import json
 import uuid
 
 import pytest
+from sqlalchemy import text
 
 from app.assistant import service
 from app.assistant.models import ConversationMessage
-from app.takeoff.models import Item, ReviewStatus, Sheet
+from app.takeoff.models import Document, Item, ReviewStatus, Sheet
 
 
 @pytest.fixture(autouse=True)
@@ -142,3 +143,49 @@ def test_a_stale_stored_proposal_says_so_on_the_thread(client, db, project, dana
     thread = client.get(f"/api/projects/{project.id}/conversation").json()["messages"]
     answer = [m for m in thread if m["role"] == "answer"][-1]
     assert answer["proposal_status"] == "stale"
+
+
+def test_a_get_never_persists_the_stage_advance_a_stale_check_can_reach(client, db, project, dana, signed_in_user):
+    """A plan_line proposal's staleness goes through plan_service.build_plan
+    (propose._plan_stale), which stages a project-stage advance via
+    db.execute(update(...)) + db.flush() whenever a processed drawing set
+    is on the project -- see GET /plan, which commits right after for
+    exactly that reason. Reading the conversation thread must never move
+    the stage: asserted with a raw query on the same session, since a
+    flushed-but-not-committed update is otherwise indistinguishable from
+    a committed one within this transaction."""
+    db.execute(text("update projects set stage = 'documents' where id = :id"), {"id": str(project.id)})
+    db.flush()
+    doc = Document(project_id=project.id, filename="E-set.pdf", doc_type="Drawings", content_type="application/pdf",
+                   size_bytes=1, sha256="a" * 64, storage_key="k", uploaded_by=dana.id, status="processed")
+    db.add(doc); db.flush()
+    row = ConversationMessage(project_id=project.id, role="answer", text="…", created_by=dana.id,
+                              proposal_status="offered",
+                              proposal={"kind": "plan_line", "key": "spec:none:0", "summary": "x",
+                                        "current_text": "x", "targets_preview": [], "more_count": 0})
+    db.add(row); db.flush()
+    # Committed, not just flushed: `client` reuses this same session across
+    # the request, so only a real commit boundary lets the assertion below
+    # tell "the route's own rollback discarded its own flush" apart from
+    # "the route's rollback discarded everything this test staged."
+    db.commit()
+    assert client.get(f"/api/projects/{project.id}/conversation").status_code == 200
+    stage = db.execute(text("select stage from projects where id = :id"), {"id": str(project.id)}).scalar_one()
+    assert stage == "documents"
+
+
+def test_a_malformed_stored_proposal_degrades_only_its_own_card(client, db, project, dana, signed_in_user):
+    bad = ConversationMessage(project_id=project.id, role="answer", text="…", created_by=dana.id,
+                              proposal_status="offered",
+                              proposal={"kind": "item", "summary": "x",
+                                        "proposal": {"target_item_ids": ["not-a-uuid"],
+                                                     "versions": {"not-a-uuid": 1}}})
+    db.add(bad); db.flush()
+    fine = ConversationMessage(project_id=project.id, role="answer", text="fine", created_by=dana.id)
+    db.add(fine); db.flush()
+    res = client.get(f"/api/projects/{project.id}/conversation")
+    assert res.status_code == 200
+    thread = res.json()["messages"]
+    bad_out = next(m for m in thread if m["id"] == str(bad.id))
+    assert bad_out["proposal_status"] == "offered"
+    assert any(m["id"] == str(fine.id) for m in thread)

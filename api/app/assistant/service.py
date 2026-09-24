@@ -257,13 +257,23 @@ def thread_view(db: DbSession, project: Project) -> list[dict]:
     status recomputed: a card whose records have moved reads stale rather
     than offering Apply. Read-only -- staleness is recomputed on every
     read, never written back, so a card can recover if the estimator
-    undoes whatever moved it."""
+    undoes whatever moved it. Never commits, and the caller must not
+    either: recomputing a plan-kind proposal's staleness runs
+    `plan_service.build_plan`, which can stage a project-stage advance
+    (`db.execute(update(...))` + `db.flush()` -- see `GET /plan`, which
+    commits right after for exactly that reason) that a GET must never
+    persist -- the router rolls back immediately after this returns."""
     rows = list_messages(db, project.id)
     out = []
     for row in rows:
         status = row.proposal_status
-        if status == "offered" and propose.is_stale(db, project=project, proposal=row.proposal):
-            status = "stale"
+        if status == "offered":
+            try:
+                if propose.is_stale(db, project=project, proposal=row.proposal):
+                    status = "stale"
+            except Exception:  # noqa: BLE001 -- a malformed stored proposal degrades its own card, not the thread
+                logger.warning("stale check failed for message %s request_id=%s", row.id,
+                               request_id_var.get(), exc_info=True)
         out.append({
             "id": row.id, "role": row.role, "text": row.text, "screen": row.screen,
             "created_at": row.created_at, "proposal": row.proposal, "proposal_status": status,

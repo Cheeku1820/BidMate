@@ -24,6 +24,11 @@ router = APIRouter(prefix="/api", tags=["conversation"])
 def get_conversation(project_id: uuid.UUID, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> ConversationOut:
     project = load_project(project_id, db, user)
     rows = service.thread_view(db, project)
+    # thread_view can reach plan_service.build_plan (through a plan-kind
+    # proposal's staleness check), which stages a project-stage advance --
+    # see its own docstring. A read must never write, so roll back
+    # whatever that recompute staged before responding.
+    db.rollback()
     return ConversationOut(messages=[MessageOut(**row) for row in rows])
 
 

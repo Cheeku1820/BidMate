@@ -31,6 +31,26 @@ def _raster_pdf():
     return doc.tobytes()
 
 
+def _legend_and_plan_pdf():
+    """A two-page set: a legend sheet naming a duplex receptacle (the
+    same drawn glyph the corpus's own legend fixture uses, so the plan
+    instance's silhouette scores well above SUGGESTION_FLOOR against
+    it -- test_engine_legend_symbols.py's own `legend` fixture builds
+    its DUPLEX RECEPTACLE row the identical way), and a plan sheet with
+    one instance of that glyph to box."""
+    doc = pymupdf.open()
+    legend = doc.new_page(width=600, height=400)
+    legend.insert_text((72, 40), "E0.1 LEGEND AND ABBREVIATIONS")
+    legend.draw_rect(pymupdf.Rect(30, 30, 570, 380), color=(0, 0, 0))
+    _receptacle(legend, 120, 120)
+    legend.insert_text((150, 123), "DUPLEX RECEPTACLE", fontsize=7)
+    plan = doc.new_page(width=1000, height=800)
+    plan.insert_text((72, 72), "E2.1 POWER PLAN")
+    plan.draw_rect(pymupdf.Rect(30, 30, 800, 760), color=(0, 0, 0))
+    _receptacle(plan, 100, 400)
+    return doc.tobytes()
+
+
 def _title_block_glyph_pdf():
     """A vector sheet whose only receptacle sits inside the title-block
     strip on the right edge -- outside the sheet's counting region,
@@ -103,3 +123,22 @@ def test_a_failing_match_marks_its_row(db, project, dana, inline, monkeypatch):
     assert m.status == "failed" and m.error == copy.MATCH_FAILED
     job = db.scalars(select(Job).where(Job.symbol_match_id == m.id)).one()
     assert job.status == "failed" and "RuntimeError" not in job.error
+
+
+def test_a_drawn_box_suggests_a_name_from_the_project_legend(db, project, dana, inline, monkeypatch):
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _stored(db, project, dana, inline, _legend_and_plan_pdf())
+    queue.enqueue_read(db, d); _run_all(db)
+    sheets = list(db.scalars(select(Sheet).where(Sheet.takeoff_id == str(d.id))))
+    plan = next(s for s in sheets if s.kind == "plan")
+    # 1000x800 page -> sheet units: x unchanged, y * 750/800.
+    m = _match(db, project, dana, plan, [100, 375, 16, 15])
+    assert m.status == "found"
+    assert m.suggested_name == "Duplex receptacle"
+
+
+def test_a_drawn_box_with_no_project_legend_suggests_nothing(db, project, dana, inline, monkeypatch):
+    sheet = _read(db, project, dana, inline, monkeypatch, _vector_pdf())
+    m = _match(db, project, dana, sheet, [100, 375, 16, 15])
+    assert m.status == "found"
+    assert m.suggested_name == ""

@@ -32,6 +32,7 @@ class SymbolMatchOut(BaseModel):
     count: int
     matches: list[list[int]]
     error: str
+    suggested_name: str = ""
 
 
 class MatchItemOut(BaseModel):

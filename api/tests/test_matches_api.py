@@ -33,7 +33,7 @@ def test_post_creates_a_pending_match_and_queues_a_job(client, signed_in_user, d
 
     assert r.status_code == 201, r.text
     body = r.json()
-    assert set(body) == {"id", "sheet_id", "box", "status", "count", "matches", "error"}
+    assert set(body) == {"id", "sheet_id", "box", "status", "count", "matches", "error", "suggested_name"}
     assert body["status"] == "pending" and body["count"] == 0 and body["matches"] == []
     assert db.scalar(select(Job).where(Job.kind == "match", Job.symbol_match_id == uuid.UUID(body["id"]))) is not None
 
@@ -229,3 +229,11 @@ def test_another_orgs_match_is_a_404(client, signed_in_user, db, other_org_proje
 
     r = client.post(f"/api/sheets/{other_sheet.id}/matches", json=_box())
     assert r.status_code == 404
+
+
+def test_the_wire_carries_a_suggested_name(client, signed_in_user, db, project, sheet):
+    m = _found(db, project, sheet, signed_in_user.id)
+    m.suggested_name = "Duplex receptacle"; db.commit()
+    body = client.get(f"/api/symbol-matches/{m.id}").json()
+    assert body["suggested_name"] == "Duplex receptacle"
+    assert not any(k in body for k in ("score", "threshold"))

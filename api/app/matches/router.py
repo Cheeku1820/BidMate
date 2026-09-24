@@ -19,7 +19,8 @@ router = APIRouter(prefix="/api", tags=["matches"])
 
 def _out(m: SymbolMatch) -> SymbolMatchOut:
     return SymbolMatchOut(id=m.id, sheet_id=m.sheet_id, box=list(m.box), status=m.status,
-                          count=len(m.matches or []), matches=[list(x) for x in (m.matches or [])], error=m.error)
+                          count=len(m.matches or []), matches=[list(x) for x in (m.matches or [])], error=m.error,
+                          suggested_name=m.suggested_name)
 
 
 @router.post("/sheets/{sheet_id}/matches", response_model=SymbolMatchOut, status_code=201)

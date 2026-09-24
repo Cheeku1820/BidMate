@@ -2975,3 +2975,18 @@ button {
 .plan-add-phase__row { display: flex; gap: 8px; }
 .plan-add-phase__row .field { flex: 1; }
 .note-status--answered { background: var(--slate-tint); color: var(--slate); border-color: var(--slate-line); }
+
+/* ==== stream E: panel proposals ==== */
+.proposal-card {
+  margin: 8px 0 2px; padding: 10px 12px; border: 1px solid var(--line-2);
+  border-radius: 8px; background: var(--paper-0); display: flex; flex-direction: column; gap: 8px;
+}
+.proposal-card__summary { margin: 0; font-size: 13px; line-height: 1.45; }
+.proposal-card__note { margin: 0; font-size: 12.5px; color: var(--ink-3); }
+.proposal-card__targets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.proposal-card__target { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.proposal-card__more { font-size: 12.5px; color: var(--ink-3); }
+.proposal-card__was { text-decoration: line-through; color: var(--ink-3); }
+.proposal-card__actions { display: flex; gap: 6px; }
+.proposal-card__error { margin: 0; font-size: 12.5px; color: var(--red); }
+.proposal-card__error:empty { display: none; }

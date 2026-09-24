@@ -10,6 +10,7 @@ import pytest
 from app.assistant import propose
 from app.assistant.schemas import ScreenIn
 from app.engine.conversation import Route, RouteTargets
+from app.plan import service as plan_service
 from app.takeoff.models import Document, Item, ReviewStatus, ScopeStatement, Sheet
 
 
@@ -274,6 +275,42 @@ def test_a_scope_proposal_is_stale_once_the_statement_already_says_so(db, projec
     statement.status = "confirmed"
     db.flush()
     assert propose.is_stale(db, project=project, proposal=built) is True
+
+
+def _spec_doc(db, project, dana):
+    d = Document(project_id=project.id, filename="Spec.pdf", doc_type="Specifications", content_type="application/pdf",
+                 size_bytes=1, sha256=uuid.uuid4().hex * 2, storage_key="k", uploaded_by=dana.id, status="processed",
+                 context_text="SECTION 26 05 19 - LOW-VOLTAGE ELECTRICAL POWER CONDUCTORS AND CABLES\n")
+    db.add(d); db.flush(); return d
+
+
+def test_a_plan_line_proposal_goes_stale_once_that_line_already_carries_the_proposed_status(db, project, dana):
+    _spec_doc(db, project, dana)
+    plan = plan_service.build_plan(db, project)
+    line = plan.specs[0]
+    key = f"plan:{line.key}"
+    out = propose.build(db, project=project,
+                        route=_route("decide_plan", form="record", record_key=key, field="status", value="confirmed"),
+                        screen=_screen(name="plan"), message="that's right")
+    assert out["kind"] == "plan_line" and out["status"] == "confirmed"
+    assert propose.is_stale(db, project=project, proposal=out) is False
+    plan_service.decide(db, actor=dana, project=project, key=line.key, status="confirmed")
+    assert propose.is_stale(db, project=project, proposal=out) is True
+
+
+def test_a_plan_answer_proposal_goes_stale_once_the_question_is_answered(db, project, dana):
+    sheet = _sheet(db, project)  # a "plan" sheet with no scale -- a no_scale question
+    plan = plan_service.build_plan(db, project)
+    question = next(q for q in plan.questions if q.key.startswith("question:no_scale:"))
+    key = f"plan:{question.key}"
+    out = propose.build(db, project=project,
+                        route=_route("decide_plan", form="record", record_key=key, field="text",
+                                     value="It's 1/8 inch = 1 foot."),
+                        screen=_screen(name="plan"), message="it's 1/8 inch = 1 foot")
+    assert out["kind"] == "plan_answer"
+    assert propose.is_stale(db, project=project, proposal=out) is False
+    plan_service.answer(db, actor=dana, project=project, key=question.key, body="It's 1/8 inch = 1 foot.")
+    assert propose.is_stale(db, project=project, proposal=out) is True
 
 
 def test_a_note_is_never_stale_and_a_refusal_always_is(db, project):

@@ -52,6 +52,11 @@ MAX_CELL_PATHS = 200
 TOL_PT = 0.35
 # Signature: the exemplar's canonical form on this grid, for a stable id.
 QUANT_PT = 0.25
+# Containment: an inner mark is a fraction of the symbol that encloses it
+# (a recessed fixture's circle inside its square) -- a contained candidate
+# must be at most this share of its container's longest side, or it is a
+# neighbour of comparable size, not a part.
+CONTAINED_SHARE = 0.6
 # Memory guard. PyMuPDF materialises every drawing on the page as a dict
 # before paths_on sees any of them, at about 1.2 GB per million drawings
 # measured (Pulte E-210: 1.6M small paths, get_drawings() alone 2.5 GB, the
@@ -219,25 +224,47 @@ def _candidates(paths: list[Path]) -> list[list[Path]]:
     # fixture's square around its circle -- is two candidates that never
     # touch: the inner one floats inside the outer one's bbox with a gap
     # on every side. Join a candidate whose own centre lies inside
-    # another's box, both still glyph-sized, so the same symbol is one
-    # candidate on the legend sheet and on the plan alike. Containment is
-    # one-directional (the inner is inside the outer), so this can only
-    # ever join parts of one symbol, never two neighbours.
+    # another's box, but only when every one of:
+    #   - the container is itself glyph-sized (<= MAX_GLYPH_PT)
+    #   - the contained candidate is itself glyph-sized -- size-checking
+    #     only the container lets an oversized chain or a spanning wall,
+    #     whose own bbox happens to centre on a small mark, merge into
+    #     that mark and vanish along with it once the merged group fails
+    #     MAX_GLYPH_PT
+    #   - the contained candidate is meaningfully smaller than its
+    #     container (CONTAINED_SHARE) -- a mark comparable in size to its
+    #     "container" is a neighbour, not a part
+    #   - exactly one candidate is centred inside that container -- two
+    #     or more is an enclosure, a detail bubble, or an equipment pad
+    #     holding separate devices, and none of them merge (union-find is
+    #     transitive, so merging any one would pull every device inside
+    #     one shared box into a single, wrong glyph)
+    # Containment is one-directional (the inner is inside the outer), and
+    # `find()` is rechecked live so an already-joined pair is skipped.
     roots = defaultdict(list)
     for i in range(n):
         if i not in dense:
             roots[find(i)].append(i)
     boxes = {r: _bbox([paths[i] for i in members]) for r, members in roots.items()}
-    for a, ba in boxes.items():
-        for b, bb in boxes.items():
+    for b, bb in boxes.items():
+        bw, bh = bb[2] - bb[0], bb[3] - bb[1]
+        if max(bw, bh) > MAX_GLYPH_PT:
+            continue
+        contained = []
+        for a, ba in boxes.items():
             if a == b or find(a) == find(b):
                 continue
             cx, cy = (ba[0] + ba[2]) / 2, (ba[1] + ba[3]) / 2
             if not (bb[0] <= cx <= bb[2] and bb[1] <= cy <= bb[3]):
                 continue
-            if max(bb[2] - bb[0], bb[3] - bb[1]) > MAX_GLYPH_PT:
+            aw, ah = ba[2] - ba[0], ba[3] - ba[1]
+            if max(aw, ah) > MAX_GLYPH_PT:
                 continue
-            parent[find(a)] = find(b)
+            if max(aw, ah) > CONTAINED_SHARE * max(bw, bh):
+                continue
+            contained.append(a)
+        if len(contained) == 1:
+            parent[find(contained[0])] = find(b)
 
     groups: dict[int, list[Path]] = defaultdict(list)
     for i in range(n):

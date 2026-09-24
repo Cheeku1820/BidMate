@@ -218,13 +218,80 @@ def test_the_visual_frame_is_used_on_a_rotated_page():
     assert abs((x0 + x1) / 2 - 900) < 8 and abs((y0 + y1) / 2 - 100) < 8
 
 
-def test_a_symbol_drawn_as_a_box_around_a_circle_is_one_glyph(page):
-    s = page.new_shape(); s.draw_rect(pymupdf.Rect(100, 100, 118, 118)); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+def _box_outline(page, x0, y0, x1, y1):
+    """A rectangle drawn as four separate committed strokes, corner to
+    corner -- what a real outline looks like exploded (unlike
+    `draw_rect`, which compiles to a single `re` item whose own bbox
+    already spans the interior, making any contained mark trivially
+    'touch' it under the ordinary bbox-overlap test)."""
+    for (ax, ay), (bx, by) in ((( x0, y0), (x1, y0)), ((x1, y0), (x1, y1)),
+                                ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
+        s = page.new_shape()
+        s.draw_line((ax, ay), (bx, by))
+        s.finish(color=(0, 0, 0), width=0.7)
+        s.commit()
+
+
+def _u_chain(page, x0, y0, x1, y1, step=10.0):
+    """A 'U' bounding (x0,y0)-(x1,y1), open at the top, built from many
+    short touching line segments so the whole run is one glyph candidate
+    spanning the full extent even though no single stroke is long."""
+    pts = []
+    y = y0
+    while y < y1:
+        pts.append((x0, y)); y += step
+    pts.append((x0, y1))
+    x = x0
+    while x < x1:
+        pts.append((x, y1)); x += step
+    pts.append((x1, y1))
+    y = y1
+    while y > y0:
+        pts.append((x1, y)); y -= step
+    pts.append((x1, y0))
+    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+        s = page.new_shape()
+        s.draw_line((ax, ay), (bx, by))
+        s.finish(color=(0, 0, 0), width=0.5)
+        s.commit()
+
+
+def test_an_outline_drawn_as_separate_strokes_merges_with_its_inner_mark(page):
+    _box_outline(page, 100, 100, 118, 118)
     s = page.new_shape(); s.draw_circle((109, 109), 5); s.finish(color=(0, 0, 0), width=0.7); s.commit()
     g = glyphs.glyphs_on(page, _region(), visual_words(page))
     assert len(g) == 1
     x0, y0, x1, y1 = g[0].rect
     assert x1 - x0 >= 17 and y1 - y0 >= 17
+
+
+def test_a_long_chain_never_swallows_a_device(page):
+    """The reviewer's case: a U of short segments spanning ~200x100 pt,
+    with a circle sitting untouched at its centre. The chain's own bbox
+    is far too big to be a symbol (MAX_GLYPH_PT), so it must never be
+    treated as -- or absorb -- a contained mark; the device survives and
+    the chain is simply dropped by the existing size gate."""
+    _u_chain(page, 100, 100, 300, 200)
+    s = page.new_shape(); s.draw_circle((200, 150), 5); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    assert len(glyphs.glyphs_on(page, _region(), visual_words(page))) == 1
+
+
+def test_an_enclosure_holding_two_devices_merges_nothing(page):
+    """A 38 pt outline containing two separate 8 pt devices is an
+    enclosure or an equipment pad, not one symbol -- more than one
+    candidate centred inside a container means none of them merge."""
+    _box_outline(page, 100, 100, 138, 138)
+    s = page.new_shape(); s.draw_circle((110, 110), 4); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    s = page.new_shape(); s.draw_circle((128, 128), 4); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    assert len(glyphs.glyphs_on(page, _region(), visual_words(page))) == 3
+
+
+def test_a_mark_the_same_size_as_its_container_is_not_merged(page):
+    """A ~7 pt mark centred inside a ~10 pt box is comparable in size,
+    not a fraction of it (CONTAINED_SHARE) -- a neighbour, not a part."""
+    _box_outline(page, 100, 100, 110, 110)
+    s = page.new_shape(); s.draw_circle((105, 105), 3.5); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    assert len(glyphs.glyphs_on(page, _region(), visual_words(page))) == 2
 
 
 def test_containment_never_swallows_a_neighbour(page):

@@ -116,3 +116,49 @@ def templates_on(page, words: list[Word], sheet_number: str = "") -> list[Symbol
         out.append(SymbolTemplate(description=description, modifier=modifier, rect=g.rect,
                                   silhouette=silhouette(page, g.rect), sheet_number=sheet_number))
     return out
+
+
+# Below this correlation a template is unrelated, not a worse guess. A
+# floor, never a decision: the measurement that killed thresholded
+# naming is in spec section 1.1 -- true matches run 0.5 to 0.88 and two
+# near-identical legend rows score 0.86 against each other, so the
+# ranking is offered and a person picks.
+SUGGESTION_FLOOR = 0.30
+MAX_SUGGESTIONS = 4
+
+
+def _grid(sil: bytes) -> np.ndarray:
+    return np.frombuffer(sil, dtype=np.uint8).reshape(SIL, SIL).astype(np.float32)
+
+
+def _unit(a: np.ndarray) -> np.ndarray:
+    x = a - a.mean()
+    n = float(np.sqrt((x * x).sum()))
+    return x / n if n else x
+
+
+def match_score(a: bytes, b: bytes) -> float:
+    """The best zero-mean normalised correlation of two ink-fraction
+    grids over the eight dihedral transforms -- a symbol drawn rotated or
+    mirrored is the same symbol (glyphs._forms enumerates the same
+    eight)."""
+    if len(a) != SIL * SIL or len(b) != SIL * SIL:
+        return 0.0
+    ga, gb = _unit(_grid(a)), _grid(b)
+    best = 0.0
+    for k in range(4):
+        rot = np.rot90(gb, k)
+        for candidate in (rot, np.fliplr(rot)):
+            best = max(best, float((ga * _unit(candidate)).sum()))
+    return best
+
+
+def rank_templates(sil: bytes, modifier: str, templates, limit: int = MAX_SUGGESTIONS):
+    """The legend rows this silhouette looks most like, best first. Only
+    rows with the same modifier are eligible; the score orders the list
+    and never leaves this module."""
+    scored = [(match_score(sil, t.silhouette), i, t)
+              for i, t in enumerate(templates) if (t.modifier or "") == (modifier or "")]
+    scored = [s for s in scored if s[0] >= SUGGESTION_FLOOR]
+    scored.sort(key=lambda s: (-s[0], s[1]))
+    return [t for _score, _i, t in scored[:limit]]

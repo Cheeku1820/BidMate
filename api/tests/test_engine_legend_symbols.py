@@ -134,3 +134,68 @@ def test_sentence_case_keeps_short_acronyms():
     assert ls.sentence_case("DUPLEX RECEPTACLE") == "Duplex receptacle"
     assert ls.sentence_case("GFI RECEPTACLE") == "GFI receptacle"
     assert ls.sentence_case("") == ""
+
+
+def _sil_of(page, description, words=None):
+    t = {x.description: x for x in ls.templates_on(page, words or visual_words(page))}
+    return t[description].silhouette
+
+
+def test_a_glyph_scores_one_against_itself(legend):
+    a = _sil_of(legend, "DUPLEX RECEPTACLE")
+    assert ls.match_score(a, a) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_the_same_symbol_at_half_scale_ranks_first():
+    # _receptacle's tail is a fixed 2 pt regardless of r, so r=8 and r=4
+    # are not a true scaling of one shape (their aspect ratios differ --
+    # 20x16 vs 12x8, the same fixture gap test_silhouettes_are_fixed_size
+    # _and_scale_free already worked around with _scaled_receptacle).
+    # Use that helper here too so this test exercises an actual half-scale
+    # copy of the same symbol, not two different proportions.
+    doc = pymupdf.open(); page = doc.new_page(width=400, height=200)
+    _scaled_receptacle(page, 80, 80, r=8)      # the legend's size
+    _scaled_receptacle(page, 240, 80, r=4)     # the plan's size
+    words = visual_words(page)
+    big, small = sorted(glyphs.glyphs_on(page, (0, 0, 400, 200), words), key=lambda g: g.rect[0])
+    a, b = ls.silhouette(page, big.rect), ls.silhouette(page, small.rect)
+    assert ls.match_score(a, b) >= 0.8
+
+
+def test_a_rotated_copy_still_matches():
+    doc = pymupdf.open(); page = doc.new_page(width=400, height=200)
+    _receptacle(page, 80, 80, r=8)
+    _receptacle(page, 240, 80, r=8, rot=90)
+    words = visual_words(page)
+    a, b = [ls.silhouette(page, g.rect) for g in sorted(glyphs.glyphs_on(page, (0, 0, 400, 200), words), key=lambda g: g.rect[0])]
+    assert ls.match_score(a, b) >= 0.8
+
+
+def test_ranking_is_ordered_capped_and_floored(legend):
+    words = visual_words(legend)
+    templates = ls.templates_on(legend, words)
+    sil = _sil_of(legend, "DUPLEX RECEPTACLE", words)
+    ranked = ls.rank_templates(sil, "", templates)
+    assert ranked and ranked[0].description == "DUPLEX RECEPTACLE"
+    assert len(ranked) <= ls.MAX_SUGGESTIONS
+    assert all(t.modifier == "" for t in ranked)
+    assert ls.rank_templates(bytes(ls.SIL * ls.SIL), "", templates) == []
+
+
+def test_a_modifier_selects_its_own_rows(legend):
+    words = visual_words(legend)
+    templates = ls.templates_on(legend, words)
+    sil = _sil_of(legend, "THREE-WAY SWITCH", words)
+    ranked = ls.rank_templates(sil, "3", templates)
+    assert [t.description for t in ranked] == ["THREE-WAY SWITCH"]
+
+
+def test_near_identical_rows_both_survive(legend):
+    words = visual_words(legend)
+    templates = ls.templates_on(legend, words)
+    ranked = ls.rank_templates(_sil_of(legend, "DUPLEX RECEPTACLE", words), "", templates)
+    assert "GROUND FAULT RECEPTACLE" in [t.description for t in ranked]
+
+
+def test_the_constants_are_what_the_corpus_set():
+    assert (ls.SUGGESTION_FLOOR, ls.MAX_SUGGESTIONS, ls.SIL, ls.SPAN) == (0.30, 4, 32, 96)

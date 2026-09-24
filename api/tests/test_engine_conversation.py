@@ -92,8 +92,15 @@ def test_the_module_imports_nothing_that_could_write():
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             imported.update(a.name.split(".")[0] for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imported.add(node.module.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported.add(node.module.split(".")[0])
+            elif node.level >= 1:
+                # A bare "from . import llm" carries no `module` string
+                # for ast to report -- without this branch it would be
+                # invisible to this scan, and the boundary it exists to
+                # enforce would just be unchecked for that import form.
+                imported.update(a.name for a in node.names)
 
     # "contracts" is `from .contracts import Proposal` -- a same-package
     # relative import (level=1), which ast reports with module="contracts",
@@ -105,15 +112,13 @@ def test_the_module_imports_nothing_that_could_write():
     # "logging" and "dataclasses" arrived with route_message(): a warning
     # log line when the language call fails, and the frozen Route /
     # RouteTargets records it returns. Neither reaches a session, an
-    # engine, or a model client. The actual language call lives behind
-    # `from . import llm` (`app.engine.resolve` already imports it the
-    # same way, with no import-boundary test of its own) -- a bare
-    # "from . import llm" carries no `module` string for ast.ImportFrom
-    # to report, so this scan does not even see it, let alone need it
-    # added to `allowed`. route_message() still proposes; it still never
-    # writes -- llm.route_message() raises on failure rather than
-    # writing, and route_message() here only reads its return value.
-    allowed = {"__future__", "re", "contracts", "logging", "dataclasses"}
+    # engine, or a model client.
+    # "llm" is `from . import llm` -- the language-side agent's call
+    # module (`app.engine.resolve` already imports it the same way). It
+    # imports no database session itself, and test_api_import_boundary.py
+    # is what enforces that absence at the process level; route_message()
+    # here only reads its return value and never writes.
+    allowed = {"__future__", "re", "contracts", "logging", "dataclasses", "llm"}
     assert imported <= allowed, f"conversation.py imports beyond its boundary: {imported - allowed}"
 
 

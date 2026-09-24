@@ -241,28 +241,49 @@ def _candidates(paths: list[Path]) -> list[list[Path]]:
     #     one shared box into a single, wrong glyph)
     # Containment is one-directional (the inner is inside the outer), and
     # `find()` is rechecked live so an already-joined pair is skipped.
+    #
+    # Indexed, not scanned: testing every root against every other root
+    # is the same O(roots^2) shape as the pairwise touch pass above, and
+    # on a dense sheet the two passes together were the measured cost.
+    # A container is <= MAX_GLYPH_PT on a side -- 5 cells at GRID_PT 8 --
+    # so bucketing each root's own bbox centre onto that same grid lets a
+    # container test only the roots whose centre cell falls within its
+    # own cell span, instead of every root on the page. The cell span is
+    # chosen to cover every cell a centre inside the container's bbox
+    # could land in, so this changes nothing about which pairs the exact
+    # bbox test below accepts -- it only skips candidates the exact test
+    # could never have accepted anyway.
     roots = defaultdict(list)
     for i in range(n):
         if i not in dense:
             roots[find(i)].append(i)
     boxes = {r: _bbox([paths[i] for i in members]) for r, members in roots.items()}
+    cell_roots: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for r, rb in boxes.items():
+        cx, cy = (rb[0] + rb[2]) / 2, (rb[1] + rb[3]) / 2
+        cell_roots[(int(cx // GRID_PT), int(cy // GRID_PT))].append(r)
     for b, bb in boxes.items():
         bw, bh = bb[2] - bb[0], bb[3] - bb[1]
         if max(bw, bh) > MAX_GLYPH_PT:
             continue
+        gx0, gx1 = int(bb[0] // GRID_PT), int(bb[2] // GRID_PT)
+        gy0, gy1 = int(bb[1] // GRID_PT), int(bb[3] // GRID_PT)
         contained = []
-        for a, ba in boxes.items():
-            if a == b or find(a) == find(b):
-                continue
-            cx, cy = (ba[0] + ba[2]) / 2, (ba[1] + ba[3]) / 2
-            if not (bb[0] <= cx <= bb[2] and bb[1] <= cy <= bb[3]):
-                continue
-            aw, ah = ba[2] - ba[0], ba[3] - ba[1]
-            if max(aw, ah) > MAX_GLYPH_PT:
-                continue
-            if max(aw, ah) > CONTAINED_SHARE * max(bw, bh):
-                continue
-            contained.append(a)
+        for gx in range(gx0, gx1 + 1):
+            for gy in range(gy0, gy1 + 1):
+                for a in cell_roots.get((gx, gy), ()):
+                    if a == b or find(a) == find(b):
+                        continue
+                    ba = boxes[a]
+                    cx, cy = (ba[0] + ba[2]) / 2, (ba[1] + ba[3]) / 2
+                    if not (bb[0] <= cx <= bb[2] and bb[1] <= cy <= bb[3]):
+                        continue
+                    aw, ah = ba[2] - ba[0], ba[3] - ba[1]
+                    if max(aw, ah) > MAX_GLYPH_PT:
+                        continue
+                    if max(aw, ah) > CONTAINED_SHARE * max(bw, bh):
+                        continue
+                    contained.append(a)
         if len(contained) == 1:
             parent[find(contained[0])] = find(b)
 

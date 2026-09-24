@@ -6,7 +6,16 @@
    ============================================================ */
 
 import { describe, expect, test } from "vitest";
-import { evidenceImageUrl, mapLaborRow, mapMaterialRow, mapSheet } from "./api-mapping.js";
+import { evidenceImageUrl, mapItem, mapLaborRow, mapMaterialRow, mapSheet } from "./api-mapping.js";
+
+// Minimal wire-shaped item carrying every field ItemOut requires
+// (api/app/takeoff/schemas.py) without a default, so mapItem() doesn't
+// throw reading past the end of an incomplete fixture.
+const ITEM_WIRE = {
+  id: "item-1", sheet_id: "sheet-1", symbol: "receptacle", name: "Duplex receptacle",
+  description: "d", system: "Power", category: "Devices", quantity: "1", unit: "EA",
+  status: "ready", version: 1, notes: "",
+};
 
 describe("evidenceImageUrl", () => {
   test("returns a URL when the item has an image", () => {
@@ -87,6 +96,17 @@ describe("mapMaterialRow", () => {
                   source_label: null, status: "missing", basis_note: "" };
     const mapped = mapMaterialRow(row);
     expect(mapped).toMatchObject({ source: null, reason: "" });
+  });
+});
+
+describe("mapItem", () => {
+  test("carries suggestions and allows a name edit", () => {
+    expect(mapItem({ ...ITEM_WIRE, suggestions: [{ name: "Duplex receptacle", sheet: "E0.1" }] }).suggestions)
+      .toEqual([{ name: "Duplex receptacle", sheet: "E0.1" }]);
+  });
+
+  test("defaults suggestions to an empty array when the wire omits it", () => {
+    expect(mapItem(ITEM_WIRE).suggestions).toEqual([]);
   });
 });
 

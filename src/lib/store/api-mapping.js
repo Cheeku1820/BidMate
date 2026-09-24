@@ -52,6 +52,9 @@ export function mapItem(i) {
     // tag a human drew on the sheet ("R", "F2"), not processing
     // internals. Not rendered anywhere yet (Task 5).
     sourceTag: i.source_tag ?? "",
+    // This cluster's ranked legend candidates (Task 7's engine output),
+    // read-only -- nothing on the client writes this back.
+    suggestions: i.suggestions ?? [],
   };
 }
 

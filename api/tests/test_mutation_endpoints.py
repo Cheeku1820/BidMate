@@ -701,3 +701,28 @@ def test_evidence_image_endpoint_404s_for_another_orgs_item(client, db, signed_i
 
     response = client.get(f"/api/items/{other_item.id}/evidence-image")
     assert response.status_code == 404
+
+
+# --- Task 8: name becomes editable, and suggestions reach the wire ---
+
+
+def test_an_item_can_be_renamed(client, signed_in_user, db, project, item):
+    r = client.patch(f"/api/items/{item.id}", json={"name": "Duplex receptacle"},
+                     headers={"If-Match": str(item.version)})
+    assert r.status_code == 200, r.text
+    assert r.json()["item"]["name"] == "Duplex receptacle"
+    assert r.json()["label"].startswith("Edited")
+
+
+def test_a_blank_or_oversized_name_is_refused(client, signed_in_user, item):
+    for bad in ("   ", "x" * 301):
+        r = client.patch(f"/api/items/{item.id}", json={"name": bad}, headers={"If-Match": str(item.version)})
+        assert r.status_code == 422, bad
+
+
+def test_item_out_carries_suggestions(client, signed_in_user, db, project, item):
+    item.suggestions = [{"name": "Duplex receptacle", "sheet": "E0.1"}]
+    db.commit()
+    body = client.get(f"/api/projects/{project.id}/snapshot").json()
+    row = next(i for i in body["items"] if i["id"] == str(item.id))
+    assert row["suggestions"] == [{"name": "Duplex receptacle", "sheet": "E0.1"}]

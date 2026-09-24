@@ -107,6 +107,13 @@ class ItemOut(BaseModel):
     # processing internal -- legitimate estimator-facing data, and the
     # merge key a re-run uses to recognise an item it already produced.
     source_tag: str = ""
+    # This cluster's ranked legend candidates (Task 7's engine output),
+    # read-only here -- nothing writes it from the client. Each entry is
+    # exactly `{"name", "sheet"}` as the engine stored it: no score, no
+    # shape signature, no template rect. Those are processing internals
+    # (CLAUDE.md: "confidence never renders") and a raw geometry payload
+    # neither the panel nor any other consumer needs.
+    suggestions: list[dict] = Field(default_factory=list)
 
     model_config = MODEL_CONFIG
 

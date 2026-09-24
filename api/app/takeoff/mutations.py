@@ -62,7 +62,7 @@ class EditIn(BaseModel):
     """The `PATCH /items/{id}` body.
 
     `extra="forbid"` (review finding): the default `extra="ignore"`
-    silently drops any key that isn't one of the five fields below, so
+    silently drops any key that isn't one of the six fields below, so
     `{"unit": "LF", "status": "approved"}` -- neither editable -- reduced
     to an empty `changes` dict and produced a phantom no-op edit: 200, a
     permanent row in the append-only action log, a version bump forcing
@@ -72,7 +72,7 @@ class EditIn(BaseModel):
     refuses a body with zero *known* fields (`PATCH {}`), which
     `extra="forbid"` alone doesn't catch since `{}` has no unknown keys.
 
-    All five fields default to `None` so the endpoint can tell "not
+    All six fields default to `None` so the endpoint can tell "not
     sent" from "sent as null" via `model_fields_set`, rather than
     `body.model_dump(exclude_none=True)` (the sketch's approach,
     correction 2) -- `exclude_none=True` strips an explicit `notes: null`
@@ -89,10 +89,18 @@ class EditIn(BaseModel):
     `edit_validation.validate_edit()` still does its own parsing and
     finiteness/sign/magnitude/scale checks downstream; this validator
     only narrows the wire format, it doesn't replace that validation.
+
+    `name` (Task 8) joins the other free-text fields: an item's name was
+    previously set only by the engine at ingest and never editable, but
+    an estimator correcting an unfamiliar or garbled symbol name needs a
+    plain path to retype it. Blank/length rules live in
+    `edit_validation.validate_edit()`, same as every other field here --
+    this model only narrows the wire format.
     """
 
     model_config = ConfigDict(extra="forbid")
 
+    name: str | None = None
     system: str | None = None
     category: str | None = None
     quantity: Decimal | None = None

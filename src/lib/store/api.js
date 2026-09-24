@@ -56,7 +56,7 @@ const POLL_INTERVAL_MS = 3000;
 const ASSUMED_HEARTBEAT_INTERVAL_MS = 10_000;
 export const PRESENCE_BEAT_MS = ASSUMED_HEARTBEAT_INTERVAL_MS / 2;
 
-const EDITABLE_FIELDS = ["system", "category", "quantity", "notes", "symbol"];
+const EDITABLE_FIELDS = ["name", "system", "category", "quantity", "notes", "symbol"];
 
 /* --- error shape --------------------------------------------------------
 
@@ -259,7 +259,7 @@ export function createApiStore() {
   async function editItem(id, changes, expectedVersion) {
     const body = {};
     for (const key of Object.keys(changes)) {
-      // Never round-trip a whole ItemOut — only these five fields exist
+      // Never round-trip a whole ItemOut — only these six fields exist
       // on EditIn, and it rejects anything else with a 422
       // (carry-forward 7). Callers are expected to pass only these,
       // but this filters defensively rather than trusting that.

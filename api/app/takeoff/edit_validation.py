@@ -20,8 +20,10 @@ from app.errors import DomainError
 # The only fields a generic edit may touch. Status changes go through
 # approve/reject/unreject instead, so "status" is deliberately absent --
 # a caller trying to smuggle a status change through edit_item() gets
-# refused here rather than silently bypassing the approval rule.
-EDITABLE_FIELDS = {"system", "category", "quantity", "notes", "symbol"}
+# refused here rather than silently bypassing the approval rule. "name"
+# (Task 8) was engine-written only, at ingest; an estimator can now
+# retype it here like any other free-text field.
+EDITABLE_FIELDS = {"name", "system", "category", "quantity", "notes", "symbol"}
 
 # Fields that must be non-empty, non-null text -- an empty string is not
 # a real value for any of these, and letting one through would (for
@@ -53,6 +55,18 @@ def validate_edit(changes: dict) -> None:
                 "field_cannot_be_empty",
                 f"{field.capitalize()} cannot be blank. Enter a value before saving this edit.",
             )
+
+    # "name" gets its own block rather than joining REQUIRED_TEXT_FIELDS:
+    # it needs a length ceiling those fields don't, and its own
+    # estimator-facing copy naming what the field is for ("what this
+    # symbol is"), not the generic "cannot be blank" message.
+    if "name" in changes:
+        name = (changes["name"] or "").strip()
+        if not name:
+            raise DomainError("invalid_name", "An item needs a name. Type what this symbol is.", status=422)
+        if len(name) > 300:
+            raise DomainError("invalid_name", "That name is too long. Keep it under 300 characters.", status=422)
+        changes["name"] = name
 
     if "notes" in changes and changes["notes"] is None:
         raise DomainError(

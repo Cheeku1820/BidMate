@@ -94,6 +94,11 @@ class ClassifiedItem:
     status: str  # ready | attention | missing (never approved here)
     warning: dict | None = None  # four-field shape when status != ready
     source_tag: str = ""
+    # B3c: legend rows this item's symbol looks like, best first -- only
+    # ever set on a shape cluster the classifier could not name. Each
+    # entry is `{"name", "sheet"}`; never a score, a signature, or a
+    # modifier (CLAUDE.md: confidence never renders).
+    suggestions: list[dict] = field(default_factory=list)
 
 
 @dataclass

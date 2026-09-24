@@ -630,3 +630,16 @@ def test_point_placements_stay_two_element():
 def test_denormalize_box_is_the_inverse_of_normalisation():
     from app.takeoff.ingest import denormalize_box
     assert denormalize_box([500, 375, 10, 15], 2000, 1500) == (990.0, 735.0, 1010.0, 765.0)
+
+
+def test_map_payload_carries_suggestions_through_unchanged():
+    payload = _payload()
+    payload["items"][0]["suggestions"] = [{"name": "Duplex receptacle", "sheet": "E0.1"}]
+    mapped = map_payload(payload)
+    assert mapped.items[0]["suggestions"] == [{"name": "Duplex receptacle", "sheet": "E0.1"}]
+
+
+def test_map_payload_defaults_suggestions_to_an_empty_list():
+    payload = _payload()
+    payload["items"][0].pop("suggestions", None)
+    assert map_payload(payload).items[0]["suggestions"] == []

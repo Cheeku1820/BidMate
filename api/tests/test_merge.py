@@ -536,3 +536,16 @@ def test_drop_sheets_keeps_a_sheet_holding_a_match_item(db, project, sheet, dana
     db.flush()
     merge.drop_sheets(db, [sheet.id]); db.flush()
     assert db.get(Sheet, sheet.id) is not None and sheet.unreadable_reason == copy.PAGE_GONE
+
+
+def test_merge_sheet_writes_suggestions_and_clears_them_on_a_later_run(db, project):
+    suggestion = {"name": "Duplex receptacle", "sheet": "E0.1"}
+    _merge(db, project, [{**_row("shape:abcd1234", "Unclassified symbol", status="attention", warning=_WARNING),
+                          "suggestions": [suggestion]}])
+    item = db.scalars(select(Item).where(Item.source_tag == "shape:abcd1234")).one()
+    assert item.suggestions == [suggestion]
+
+    _merge(db, project, [{**_row("shape:abcd1234", "Unclassified symbol", status="attention", warning=_WARNING),
+                          "suggestions": []}])
+    db.refresh(item)
+    assert item.suggestions is None

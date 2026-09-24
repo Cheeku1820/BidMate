@@ -440,6 +440,11 @@ def map_payload(payload: dict, valid_sheet_numbers: set[str] | None = None) -> M
             # None or a KeyError.
             "source_tag": str(raw.get("tag") or ""),
             "warning": item_warning,
+            # B3c: legend rows this item's symbol looks like, best first --
+            # carried through as the engine wrote them; never invented
+            # here. `{"name", "sheet"}` only, enforced upstream in
+            # classification.py.
+            "suggestions": raw.get("suggestions") or [],
             "evidence": {
                 "detail": f"Counted from the drawing at {n_places} location{'s' if n_places != 1 else ''}",
                 "sheet": sheet_number,

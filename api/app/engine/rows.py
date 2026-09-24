@@ -214,6 +214,7 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
         "total_cost": round(material + labor, 2),
         "symbol": spec.get("symbol", ""),
         "warning": warning,
+        "suggestions": [],
     }
 
 
@@ -259,4 +260,5 @@ def _row_from_catalog(item, cluster, sheets, labor_rate: float, material_factor:
         "total_cost": round(material + labor, 2),
         "symbol": item.symbol,
         "warning": item.warning,
+        "suggestions": item.suggestions,
     }

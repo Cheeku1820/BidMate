@@ -247,6 +247,10 @@ def _overwrite(item: Item, sheet: Sheet, row: dict) -> None:
     item.ai_confirmed = row["ai_confirmed"]
     item.source_tag = row["source_tag"]
     item.evidence = row["evidence"]
+    # A re-run that finds no suggestions clears whatever the last run
+    # attached -- the same "quiet when absent" rule status.py's stage
+    # words and rows_for's classification follow elsewhere.
+    item.suggestions = row["suggestions"] or None
     # Bumped exactly like every other mutation that changes a row's
     # fields (review._apply_edit, undo_apply._apply_item_state) -- a
     # client holding a stale version must not write over this re-run.
@@ -394,6 +398,7 @@ def merge_sheet(db, *, project, sheet, rows, ai_reading) -> MergeCounts:
                 labor_hours=row["labor_hours"], labor_cost=row["labor_cost"],
                 total_cost=row["total_cost"], ai_confirmed=row["ai_confirmed"],
                 source_tag=row["source_tag"], evidence=row["evidence"],
+                suggestions=row["suggestions"] or None,
             )
             db.add(item)
             db.flush()

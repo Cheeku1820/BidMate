@@ -60,6 +60,7 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "placements": list,
     "ai_confirmed": bool,
     "source_tag": str,
+    "suggestions": list,
     "updated_at": datetime,
     "warnings": list,
     # Both optional, `None` when the item never had that override.

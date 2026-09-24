@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import logging
 
+import pymupdf
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.engine import classification, counting, documents
+from app.engine import classification, counting, documents, legend_symbols
 from app.engine.context import CONTEXT_CAP
 from app.engine.estimate import _unmatched_note, _wiring_note
 from app.identity.models import User
@@ -36,7 +37,8 @@ def _detected(s: Sheet):
     wrong page is the one visibly wrong marker that costs trust in every
     other, so the conversion happens here, at the store's edge, once."""
     return documents.sheet_from_row(s.page_index - 1, s.number, s.title, s.scale, s.width_pt, s.height_pt, s.region,
-                                    s.kind, s.schedule_text, s.legend, s.unreadable_reason)
+                                    s.kind, s.schedule_text, s.legend, s.unreadable_reason,
+                                    symbol_templates=s.symbol_templates)
 
 
 def _scope_block(db: Session, project_id) -> str:
@@ -97,20 +99,30 @@ def run(db: Session, job: Job) -> None:
         if not plans:
             continue
         with blob_to_tempfile(doc.storage_key, doc.filename) as path:
-            for s in plans:
-                try:
-                    clusters_by_sheet[s.id] = counting.count_sheet(path, detected[s.id])
-                    shapes = [c for c in clusters_by_sheet[s.id] if c.tag.startswith("shape:") and c.exemplar]
-                    for c in shapes[:MAX_CROPS_PER_SHEET]:
-                        x0, y0, x1, y1 = c.exemplar
-                        png = documents.render_evidence_crop(path, detected[s.id].page_index, detected[s.id].width_pt,
-                                                             detected[s.id].height_pt,
-                                                             [((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0)])
-                        if png:
-                            crops[c.tag] = png
-                except Exception:  # noqa: BLE001 -- one sheet, not the run
-                    s.unreadable_reason = copy.SHEET_UNREADABLE
-                    detected[s.id].unreadable_reason = copy.SHEET_UNREADABLE
+            # Opened once per document, not once per cluster: silhouetting
+            # every shape cluster's exemplar on a dense sheet would
+            # otherwise reopen the same file dozens of times.
+            pdf = pymupdf.open(path)
+            try:
+                for s in plans:
+                    try:
+                        clusters_by_sheet[s.id] = counting.count_sheet(path, detected[s.id])
+                        page = pdf[detected[s.id].page_index]
+                        shapes = [c for c in clusters_by_sheet[s.id] if c.tag.startswith("shape:") and c.exemplar]
+                        for c in shapes:
+                            c.exemplar_silhouette = legend_symbols.silhouette(page, c.exemplar)
+                        for c in shapes[:MAX_CROPS_PER_SHEET]:
+                            x0, y0, x1, y1 = c.exemplar
+                            png = documents.render_evidence_crop(path, detected[s.id].page_index, detected[s.id].width_pt,
+                                                                 detected[s.id].height_pt,
+                                                                 [((x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0)])
+                            if png:
+                                crops[c.tag] = png
+                    except Exception:  # noqa: BLE001 -- one sheet, not the run
+                        s.unreadable_reason = copy.SHEET_UNREADABLE
+                        detected[s.id].unreadable_reason = copy.SHEET_UNREADABLE
+            finally:
+                pdf.close()
     db.flush()
 
     clusters = [c for cs in clusters_by_sheet.values() for c in cs]

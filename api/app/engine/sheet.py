@@ -32,6 +32,10 @@ def rows_for(
     # Item names priced without their assembly -- see resolve_assembly_parent.
     bare: set[str] = set()
     applied = False
+    # B3c: every legend row on the project, read off the sheets this
+    # call was already handed -- not a new parameter, so every existing
+    # caller (the sheet job, the CLI, the tests) keeps working unchanged.
+    templates = [t for s in sheets for t in (s.symbol_templates or [])]
     if classification.source == "llm":
         for c in clusters:
             spec = classification.specs_by_tag.get(c.tag)
@@ -48,7 +52,7 @@ def rows_for(
                 # cost the model attached to a name it could not tie to a
                 # catalog item. Routed through _row_from_catalog, the same
                 # builder the deterministic path uses, so the two never drift.
-                item = classification_mod.classify_cluster(c, sheets)
+                item = classification_mod.classify_cluster(c, sheets, templates)
                 rows.append(_row_from_catalog(item, c, sheets, classification.labor_rate, classification.material_factor))
                 continue
             parent = resolve_assembly_parent(spec)
@@ -70,7 +74,7 @@ def rows_for(
             # per cluster, so the row is priced from this cluster's own
             # classification and its quantity, placements and warning
             # text are this sheet's.
-            item = classification_mod.classify_cluster(c, sheets)
+            item = classification_mod.classify_cluster(c, sheets, templates)
             if assemblies.expand(item.catalog_id, 1).lines:
                 applied = True
             rows.append(_row_from_catalog(item, c, sheets, classification.labor_rate, classification.material_factor))

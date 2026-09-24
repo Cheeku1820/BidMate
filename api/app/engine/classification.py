@@ -42,10 +42,10 @@ import logging
 import re
 from collections import defaultdict
 
-from . import llm, regions
+from . import legend_symbols, llm, regions
 from .catalog import CATALOG, TAG_TO_CATALOG, is_fixture_type
 from .context import build_classifier_context
-from .contracts import Classification, ClassifiedItem, DetectedSheet, DeviceCluster
+from .contracts import Classification, ClassifiedItem, DetectedSheet, DeviceCluster, SymbolTemplate
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +186,11 @@ def _resolve_legend_sheet(page_index: int, sheet_no: dict[int, str]) -> str | No
     return sheet_no.get(page_index)
 
 
-def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list[ClassifiedItem]:
+def classify(
+    clusters: list[DeviceCluster],
+    sheets: list[DetectedSheet],
+    templates: list[SymbolTemplate] | None = None,
+) -> list[ClassifiedItem]:
     sheet_no = {s.page_index: (s.number or f"page {s.page_index + 1}") for s in sheets}
     # First definition wins, matching parse_legend's own policy: a legend
     # sheet carries the real definitions, and a later sheet's mis-paired
@@ -204,11 +208,18 @@ def classify(clusters: list[DeviceCluster], sheets: list[DetectedSheet]) -> list
     for c in clusters:
         no = sheet_no.get(c.sheet_page_index, "?")
         if c.tag.startswith("shape:"):
+            ranked = []
+            if templates and c.exemplar_silhouette:
+                ranked = [{"name": legend_symbols.sentence_case(t.description), "sheet": t.sheet_number}
+                          for t in legend_symbols.rank_templates(c.exemplar_silhouette, c.modifier, templates)]
+            warning = _unknown_glyph_warning(c.count, no)
+            if ranked:
+                warning = {**warning, "fix": "Pick what this symbol is from the legend entries listed, or classify it by hand."}
             items.append(ClassifiedItem(
                 catalog_id="unclassified", name="Unclassified symbol",
                 system="Unknown", category="Unclassified", unit="ea", symbol="generic",
                 quantity=c.count, sheet_page_index=c.sheet_page_index, placements=c.placements,
-                status="attention", warning=_unknown_glyph_warning(c.count, no), source_tag=c.tag,
+                status="attention", warning=warning, source_tag=c.tag, suggestions=ranked,
             ))
             continue
         # Curated Division 26 knowledge outranks a parsed abbreviation: a
@@ -327,10 +338,14 @@ def classify_run(
     )
 
 
-def classify_cluster(cluster: DeviceCluster, sheets: list[DetectedSheet]) -> ClassifiedItem:
+def classify_cluster(
+    cluster: DeviceCluster,
+    sheets: list[DetectedSheet],
+    templates: list[SymbolTemplate] | None = None,
+) -> ClassifiedItem:
     """The deterministic classification of one cluster. `classify` carries
     no state from one cluster to the next -- only the legend, which is
     the sheets' -- so a cluster classified alone gets the same answer it
     gets in the full set, with its own count, placements and warning
     text rather than another sheet's."""
-    return classify([cluster], sheets)[0]
+    return classify([cluster], sheets, templates)[0]

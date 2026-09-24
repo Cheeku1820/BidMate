@@ -529,3 +529,53 @@ def test_an_ordinary_text_tag_keeps_the_model_warning_path_when_catalog_id_is_no
     assert row["name"] == "Type F luminaire"
     assert row["status"] == "attention"
     assert row["material_cost"] > 0
+
+
+def _template(description, silhouette, modifier=""):
+    from app.engine.contracts import SymbolTemplate
+    return SymbolTemplate(description=description, modifier=modifier, rect=(0, 0, 10, 10),
+                          silhouette=silhouette, sheet_number="E0.1")
+
+
+def _sil(seed):
+    import numpy as np
+    from app.engine import legend_symbols as ls
+    rng = np.random.default_rng(seed)
+    return bytes((rng.random((ls.SIL, ls.SIL)) * 255).astype("uint8").ravel())
+
+
+def test_an_unnamed_cluster_carries_ranked_suggestions():
+    from app.engine.classification import classify
+    from app.engine.contracts import DetectedSheet, DeviceCluster, Placement
+    sil = _sil(1)
+    sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                          width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    c = DeviceCluster(tag="shape:0a1b2c3d", sheet_page_index=0, placements=[Placement(10, 10, 6, 6)] * 4,
+                      exemplar=(7, 7, 13, 13), exemplar_silhouette=sil)
+    (item,) = classify([c], [sheet], templates=[_template("DUPLEX RECEPTACLE", sil), _template("PANEL", _sil(2))])
+    assert item.name == "Unclassified symbol" and item.status == "attention"
+    assert item.suggestions[0] == {"name": "Duplex receptacle", "sheet": "E0.1"}
+    assert item.warning["fix"] == "Pick what this symbol is from the legend entries listed, or classify it by hand."
+    assert "0a1b2c3d" not in str(item.suggestions)
+
+
+def test_a_named_cluster_carries_no_suggestions():
+    from app.engine.classification import classify
+    from app.engine.contracts import DetectedSheet, DeviceCluster, Placement
+    sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                          width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    c = DeviceCluster(tag="R", sheet_page_index=0, placements=[Placement(10, 10)] * 4)
+    (item,) = classify([c], [sheet], templates=[_template("DUPLEX RECEPTACLE", _sil(1))])
+    assert not item.suggestions
+
+
+def test_no_templates_means_the_old_wording():
+    from app.engine.classification import classify
+    from app.engine.contracts import DetectedSheet, DeviceCluster, Placement
+    sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                          width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    c = DeviceCluster(tag="shape:0a1b2c3d", sheet_page_index=0, placements=[Placement(10, 10, 6, 6)] * 4,
+                      exemplar=(7, 7, 13, 13), exemplar_silhouette=_sil(3))
+    (item,) = classify([c], [sheet], templates=[])
+    assert item.suggestions == []
+    assert item.warning["fix"] == "Assign a classification, or reject it if it isn't a device."

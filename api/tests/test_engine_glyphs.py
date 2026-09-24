@@ -216,3 +216,18 @@ def test_the_visual_frame_is_used_on_a_rotated_page():
     assert 0 <= x0 < x1 <= 1000 and 0 <= y0 < y1 <= 800
     # (100, 100) on the unrotated page lands near (900, 100) after a 90° turn
     assert abs((x0 + x1) / 2 - 900) < 8 and abs((y0 + y1) / 2 - 100) < 8
+
+
+def test_a_symbol_drawn_as_a_box_around_a_circle_is_one_glyph(page):
+    s = page.new_shape(); s.draw_rect(pymupdf.Rect(100, 100, 118, 118)); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    s = page.new_shape(); s.draw_circle((109, 109), 5); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    g = glyphs.glyphs_on(page, _region(), visual_words(page))
+    assert len(g) == 1
+    x0, y0, x1, y1 = g[0].rect
+    assert x1 - x0 >= 17 and y1 - y0 >= 17
+
+
+def test_containment_never_swallows_a_neighbour(page):
+    s = page.new_shape(); s.draw_rect(pymupdf.Rect(100, 100, 118, 118)); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    s = page.new_shape(); s.draw_circle((140, 109), 5); s.finish(color=(0, 0, 0), width=0.7); s.commit()
+    assert len(glyphs.glyphs_on(page, _region(), visual_words(page))) == 2

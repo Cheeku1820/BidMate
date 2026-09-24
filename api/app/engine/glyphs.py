@@ -214,6 +214,31 @@ def _candidates(paths: list[Path]) -> list[list[Path]]:
                 i, j = survivors[a], survivors[b]
                 if _touching(paths[i].rect, paths[j].rect):
                     parent[find(i)] = find(j)
+
+    # A symbol drawn as an outline around an inner mark -- a recessed
+    # fixture's square around its circle -- is two candidates that never
+    # touch: the inner one floats inside the outer one's bbox with a gap
+    # on every side. Join a candidate whose own centre lies inside
+    # another's box, both still glyph-sized, so the same symbol is one
+    # candidate on the legend sheet and on the plan alike. Containment is
+    # one-directional (the inner is inside the outer), so this can only
+    # ever join parts of one symbol, never two neighbours.
+    roots = defaultdict(list)
+    for i in range(n):
+        if i not in dense:
+            roots[find(i)].append(i)
+    boxes = {r: _bbox([paths[i] for i in members]) for r, members in roots.items()}
+    for a, ba in boxes.items():
+        for b, bb in boxes.items():
+            if a == b or find(a) == find(b):
+                continue
+            cx, cy = (ba[0] + ba[2]) / 2, (ba[1] + ba[3]) / 2
+            if not (bb[0] <= cx <= bb[2] and bb[1] <= cy <= bb[3]):
+                continue
+            if max(bb[2] - bb[0], bb[3] - bb[1]) > MAX_GLYPH_PT:
+                continue
+            parent[find(a)] = find(b)
+
     groups: dict[int, list[Path]] = defaultdict(list)
     for i in range(n):
         if i not in dense:

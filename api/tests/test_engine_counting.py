@@ -329,3 +329,59 @@ def test_a_subscript_splits_a_shape_cluster(tmp_path):
     plains = [c for t, c in by_tag.items() if t.startswith("shape:") and not t.endswith(":3")]
     assert len(threes) == 1 and threes[0].count == 4 and threes[0].modifier == "3"
     assert len(plains) == 1 and plains[0].count == 3 and plains[0].modifier == ""
+
+
+def test_a_rare_subscript_folds_back_into_the_plain_cluster_rather_than_dropping(tmp_path):
+    """Silence reads as completeness (CLAUDE.md): a modifier group too
+    small to stand alone (below MIN_PLACEMENTS) is never dropped -- it
+    folds back into the plain shape, so the instance is still counted,
+    just not carved off as its own device variant."""
+    def draw(page, _):
+        for i, x in enumerate((100, 200, 300, 400, 500, 600, 700)):
+            s = page.new_shape()
+            s.draw_line((x, 294), (x, 306)); s.draw_circle((x, 298), 3); s.draw_circle((x, 302), 3)
+            s.finish(color=(0, 0, 0), width=0.7); s.commit()
+            if i < 2:  # only two carry "3" -- too few to split off on their own
+                page.insert_text((x + 4, 296), "3", fontsize=5)
+    path, (sheet,) = _plan(tmp_path, draw)
+    clusters = [c for c in counting.count_sheet(path, sheet) if c.tag.startswith("shape:")]
+    assert len(clusters) == 1
+    assert clusters[0].tag.count(":") == 1  # "shape:<sig>" only -- no ":3" suffix
+    assert clusters[0].modifier == "" and clusters[0].count == 7
+
+
+def test_a_touching_device_tag_is_never_read_as_a_modifier(tmp_path):
+    """A device tag beside a glyph (already claimed by the tag path in
+    count_sheet's by_tag pass) must never also split the shape cluster --
+    the tag path and the shape/modifier path are separate, and _link
+    reconciles them afterwards. Same fixture as the existing absorption
+    test, restated against the modifier path directly."""
+    def draw(page, _):
+        for x in (100, 200, 300, 400, 500):
+            _receptacle(page, x, 300)
+            page.insert_text((x + 8, 296), "R", fontsize=6)
+    path, (sheet,) = _plan(tmp_path, draw)
+    clusters = counting.count_sheet(path, sheet)
+    assert [c.tag for c in clusters] == ["R"]  # no "shape:...:R" ever appears
+    r = clusters[0]
+    assert r.count == 5 and all(p.w > 0 and p.h > 0 for p in r.placements)
+
+
+def test_a_subscript_is_still_found_beside_a_glyph_with_a_nearer_device_tag(tmp_path):
+    """A glyph can carry a device tag on one side (excluded -- it belongs
+    to the tag path) and a genuine subscript on the other (the modifier).
+    The tag sits closer than the subscript here, so this also proves
+    exclusion wins over nearest-distance, not the reverse."""
+    def draw(page, _):
+        for i, x in enumerate((100, 200, 300, 400, 500)):
+            s = page.new_shape()
+            s.draw_line((x, 294), (x, 306)); s.draw_circle((x, 298), 3); s.draw_circle((x, 302), 3)
+            s.finish(color=(0, 0, 0), width=0.7); s.commit()
+            page.insert_text((x + 4, 296), "3", fontsize=5)  # the subscript, every instance
+            if i < 2:  # a device tag, nearer than the subscript, on only two instances
+                page.insert_text((x - 7, 296), "R", fontsize=6)
+    path, (sheet,) = _plan(tmp_path, draw)
+    clusters = {c.tag: c for c in counting.count_sheet(path, sheet)}
+    assert "R" not in clusters  # only two instances -- never a tag cluster on its own
+    threes = [c for t, c in clusters.items() if t.endswith(":3")]
+    assert len(threes) == 1 and threes[0].count == 5 and threes[0].modifier == "3"

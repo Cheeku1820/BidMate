@@ -185,6 +185,7 @@ def count_sheet(path: str, sheet: DetectedSheet) -> list[DeviceCluster]:
     line_len: Counter = Counter((w.block, w.line) for w in words)
 
     by_tag: dict[str, list[Placement]] = defaultdict(list)
+    tag_points: set[tuple[int, int]] = set()
     for w in words:
         t = w.text.strip()
         if not TAG.match(t) or t in NOISE:
@@ -196,19 +197,21 @@ def count_sheet(path: str, sheet: DetectedSheet) -> list[DeviceCluster]:
         if not _in_region(w.cx, w.cy, sheet.region):
             continue
         by_tag[t].append(Placement(int(w.cx), int(w.cy)))
+        tag_points.add((round(w.cx), round(w.cy)))
     tag_clusters = [
         DeviceCluster(tag=tag, sheet_page_index=sheet.page_index, placements=places)
         for tag, places in by_tag.items()
         if len(places) >= MIN_PLACEMENTS
     ]
-    shape_clusters = _shape_clusters(page, sheet, words, stamp)
+    shape_clusters = _shape_clusters(page, sheet, words, stamp, tag_points)
     _link(tag_clusters, shape_clusters)
     clusters = tag_clusters + [c for c in shape_clusters if not c.linked_tag]
     clusters.sort(key=lambda c: c.count, reverse=True)
     return clusters
 
 
-def _shape_clusters(page, sheet: DetectedSheet, words, stamp: set[tuple[int, int]]) -> list[DeviceCluster]:
+def _shape_clusters(page, sheet: DetectedSheet, words, stamp: set[tuple[int, int]],
+                     tag_points: set[tuple[int, int]]) -> list[DeviceCluster]:
     """Untagged device glyphs, by shape (glyphs.py). Counting names
     nothing: the tag is the shape's signature, and Classification
     decides what it is."""
@@ -219,7 +222,29 @@ def _shape_clusters(page, sheet: DetectedSheet, words, stamp: set[tuple[int, int
     for c in glyphs.cluster(found, MIN_PLACEMENTS):
         by_modifier: dict[str, list] = {}
         for g in c.members:
-            by_modifier.setdefault(_modifier_of(g.rect, words), []).append(g)
+            by_modifier.setdefault(_modifier_of(g.rect, words, tag_points), []).append(g)
+        # A modifier group too small to stand alone folds back into the
+        # plain group rather than being dropped -- a rare subscript is
+        # still counted, under the plain shape, never silently deleted
+        # (CLAUDE.md: silence reads as completeness).
+        plain = by_modifier.pop("", [])
+        for modifier, members in list(by_modifier.items()):
+            if len(members) < MIN_PLACEMENTS:
+                plain.extend(members)
+                del by_modifier[modifier]
+        if plain:
+            if len(plain) >= MIN_PLACEMENTS or not by_modifier:
+                by_modifier[""] = plain
+            else:
+                # The plain remainder is itself too few to stand alone,
+                # and every surviving group is already a real (>=
+                # MIN_PLACEMENTS) modifier cluster, so there is nothing
+                # left to fold it into but one of those -- these are the
+                # same drawn shape, just missing a legible subscript
+                # reading. Merge into the largest survivor rather than
+                # drop: never a silent count loss.
+                biggest = max(by_modifier, key=lambda m: len(by_modifier[m]))
+                by_modifier[biggest].extend(plain)
         for modifier, members in sorted(by_modifier.items()):
             if len(members) < MIN_PLACEMENTS:
                 continue
@@ -231,17 +256,34 @@ def _shape_clusters(page, sheet: DetectedSheet, words, stamp: set[tuple[int, int
     return out
 
 
-def _modifier_of(rect, words) -> str:
+def _modifier_of(rect, words, tag_points: set[tuple[int, int]]) -> str:
     """The subscript touching this instance, if any -- a switch variant's
-    only difference from its plain sibling."""
+    only difference from its plain sibling. A word already counted as a
+    device tag (by_tag, above) is never a modifier: it was a device's own
+    label, not a subscript on a neighbouring shape, and treating it as
+    one would fragment the shape cluster and double-count against the
+    tag cluster that already counted it. Among words that still qualify,
+    the nearest by centre distance wins, not the first in emission
+    order."""
     x0, y0, x1, y1 = rect
+    cy, height = (y0 + y1) / 2, y1 - y0
+    cx = (x0 + x1) / 2
+    best: tuple[float, str] | None = None
     for w in words:
         text = w.text.strip()
         if not text or len(text) > MAX_MODIFIER_CHARS:
             continue
-        if w.x0 <= x1 + MODIFIER_PT and w.x1 >= x0 - MODIFIER_PT and w.y0 <= y1 + MODIFIER_PT and w.y1 >= y0 - MODIFIER_PT:
-            return text
-    return ""
+        if (round(w.cx), round(w.cy)) in tag_points:
+            continue  # already a device tag, not a modifier
+        if not (w.x0 <= x1 + MODIFIER_PT and w.x1 >= x0 - MODIFIER_PT
+                and w.y0 <= y1 + MODIFIER_PT and w.y1 >= y0 - MODIFIER_PT):
+            continue  # doesn't overlap the instance's rect (+ MODIFIER_PT)
+        if abs(w.cy - cy) > height:
+            continue  # a subscript sits beside the symbol, not above the next one
+        d = math.hypot(w.cx - cx, w.cy - cy)
+        if best is None or d < best[0]:
+            best = (d, text)
+    return best[1] if best else ""
 
 
 def _placement(g: glyphs.Glyph) -> Placement:

@@ -3155,7 +3155,9 @@ button {
 .order-marker {
   color: var(--blue);
   font-size: 0.9rem;
-  text-align: center;
+  /* Left, not centred: the order-by date falls at the start of its
+     week, and it keeps the glyph clear of the note that follows it. */
+  text-align: left;
 }
 
 .order-marker--stale {

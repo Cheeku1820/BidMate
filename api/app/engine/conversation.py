@@ -24,11 +24,16 @@ v1 matches phrasing deterministically. A language version replaces
 
 from __future__ import annotations
 
+import logging
 import re
+from dataclasses import dataclass
 
+from . import llm
 from .contracts import Proposal
 
-INTENTS = ("reclassify", "exclude", "set_context", "unknown")
+logger = logging.getLogger(__name__)
+
+INTENTS = ("reclassify", "exclude", "set_context", "decide_scope", "decide_plan", "unknown")
 
 _EXCLUDE = ("ignore", "is existing", "existing to remain", "not in contract",
             "not doing", "exclude", "out of scope", "by others",
@@ -83,3 +88,102 @@ def route(message: str, anchor_item_ids: list[str]) -> Proposal:
                         summary="Record project context from the estimator")
     return Proposal(intent="unknown", target_item_ids=targets, field="", value="",
                     summary="Could not resolve this to a change — ask for specifics")
+
+
+TARGET_FORMS = ("selection", "view", "tag", "record", "none")
+
+# Intents that name one record the screen is already showing. Their key
+# must appear in the screen descriptor's own list, so a sentence -- or a
+# drawing's text -- cannot reach a record that is not in front of the
+# estimator.
+_RECORD_INTENTS = ("decide_scope", "decide_plan")
+
+
+@dataclass(frozen=True)
+class RouteTargets:
+    form: str
+    tag: str = ""
+    record_key: str = ""
+
+
+@dataclass(frozen=True)
+class Route:
+    """What the panel's sentence asked for: an intent, which set it
+    applies to, and the estimator's own words where the change records
+    them. Never item ids -- the caller resolves the set."""
+
+    intent: str
+    targets: RouteTargets
+    field: str
+    value: str
+
+
+_UNKNOWN = Route(intent="unknown", targets=RouteTargets(form="none"), field="", value="")
+
+
+def _screen_line(screen: dict) -> str:
+    parts = [f"screen {screen.get('name', '')}"]
+    for key in ("sheet", "selection", "filter"):
+        if screen.get(key):
+            parts.append(f"{key} {screen[key]}")
+    records = screen.get("records") or []
+    if records:
+        parts.append("records on screen: " + ", ".join(records[:40]))
+    return "; ".join(parts)
+
+
+def _from_keywords(message: str, screen: dict) -> Route:
+    """The deterministic path, reusing route()'s own needles so the two
+    never drift. Only the three intents it can recognise; a record
+    decision needs a key and this path has no way to pick one."""
+    text = (message or "").strip().lower()
+    if _match(text, _EXCLUDE):
+        return Route("exclude", RouteTargets(form="selection"), "status", "")
+    if _match(text, _RECLASSIFY):
+        return Route("reclassify", RouteTargets(form="selection"), "classification", "")
+    if _match(text, _CONTEXT):
+        return Route("set_context", RouteTargets(form="none"), "text", (message or "").strip())
+    return _UNKNOWN
+
+
+def _validate(raw, message: str, screen: dict) -> Route:
+    if not isinstance(raw, dict):
+        return _UNKNOWN
+    intent = raw.get("intent")
+    form = raw.get("target_form")
+    if intent not in INTENTS or form not in TARGET_FORMS or intent == "unknown":
+        return _UNKNOWN
+    field = raw.get("field") if raw.get("field") in ("classification", "status", "text", "") else ""
+    value = str(raw.get("value") or "")[:2000]
+    tag = str(raw.get("tag") or "")[:50]
+    key = str(raw.get("record_key") or "")[:300]
+    if intent in _RECORD_INTENTS:
+        # The key must be one the screen put in front of the estimator.
+        if form != "record" or key not in (screen.get("records") or []):
+            return _UNKNOWN
+    elif form == "record":
+        return _UNKNOWN
+    if form == "tag" and not tag:
+        return _UNKNOWN
+    if intent == "set_context" and not value:
+        value = (message or "").strip()
+    return Route(intent, RouteTargets(form=form, tag=tag, record_key=key), field, value)
+
+
+def route_message(message: str, *, screen: dict) -> Route:
+    """The panel's entry point. A language reading when a key is set,
+    the keyword matcher otherwise and whenever the call fails, so the
+    panel degrades to fewer proposals rather than to an error.
+
+    Deliberately a sibling of route() rather than a replacement: route()
+    takes concrete anchor ids from the item panel, which already knows
+    its targets, while the panel knows only what is on screen.
+    """
+    if not (message or "").strip():
+        return _UNKNOWN
+    if llm.available():
+        try:
+            return _validate(llm.route_message(message, _screen_line(screen)), message, screen)
+        except Exception as exc:  # noqa: BLE001 -- routing is enrichment; the panel still answered
+            logger.warning("message routing unavailable (%s); used keywords", type(exc).__name__)
+    return _from_keywords(message, screen)

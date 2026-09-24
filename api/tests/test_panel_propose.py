@@ -5,6 +5,8 @@ the kind's own endpoint; nothing names how it was produced."""
 import json
 import uuid
 
+import pytest
+
 from app.assistant import propose
 from app.assistant.schemas import ScreenIn
 from app.engine.conversation import Route, RouteTargets
@@ -279,3 +281,18 @@ def test_a_note_is_never_stale_and_a_refusal_always_is(db, project):
                          screen=_screen(), message="14 feet")
     assert propose.is_stale(db, project=project, proposal=note) is False
     assert propose.is_stale(db, project=project, proposal={"kind": "refused", "summary": "x"}) is True
+
+
+# --- the closed set is enforced, not just declared ---
+
+
+def test_build_refuses_to_return_a_kind_outside_the_closed_set(db, project, monkeypatch):
+    """PROPOSAL_KINDS is the arm list. A builder that ever returned
+    something outside it would ship an unregistered proposal kind to the
+    wire silently -- build asserts instead, so that is a hard failure
+    here rather than a mystery in the panel."""
+    monkeypatch.setattr(propose, "_note_from", lambda value, message: {"kind": "bogus", "summary": "x"})
+    with pytest.raises(ValueError):
+        propose.build(db, project=project,
+                      route=_route("set_context", form="none", field="text", value="14 feet"),
+                      screen=_screen(), message="14 feet")

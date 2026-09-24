@@ -155,9 +155,7 @@ def _plan_proposal(db, project, route, key):
     return out
 
 
-def build(db: DbSession, *, project: Project, route: Route, screen: ScreenIn, message: str) -> dict | None:
-    """One wire-ready proposal, or None when nothing is proposable. A
-    target set past the cap is a refusal the card shows, not an error."""
+def _build(db: DbSession, *, project: Project, route: Route, screen: ScreenIn, message: str) -> dict | None:
     if route.intent == "unknown":
         return None
     try:
@@ -175,6 +173,21 @@ def build(db: DbSession, *, project: Project, route: Route, screen: ScreenIn, me
     except targets.TooMany as many:
         return {"kind": "refused", "summary": copy.too_many(many.count), "targets_preview": [], "more_count": 0}
     return None
+
+
+def build(db: DbSession, *, project: Project, route: Route, screen: ScreenIn, message: str) -> dict | None:
+    """One wire-ready proposal, or None when nothing is proposable. A
+    target set past the cap is a refusal the card shows, not an error.
+
+    The closed set is enforced here rather than by a wire model: every
+    arm this function can produce is asserted against PROPOSAL_KINDS
+    before it leaves, so a future arm that forgets to register itself
+    fails loudly here instead of shipping an unrecognised kind to the
+    panel (which would otherwise only ever see it read back as stale)."""
+    out = _build(db, project=project, route=route, screen=screen, message=message)
+    if out is not None and out.get("kind") not in PROPOSAL_KINDS:
+        raise ValueError(f"propose.build produced an unregistered proposal kind: {out.get('kind')!r}")
+    return out
 
 
 def _item_stale(db, proposal) -> bool:

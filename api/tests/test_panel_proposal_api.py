@@ -174,6 +174,19 @@ def test_a_get_never_persists_the_stage_advance_a_stale_check_can_reach(client, 
     assert stage == "documents"
 
 
+def test_a_proposal_kind_outside_the_closed_set_reads_as_stale(client, db, project, dana, signed_in_user):
+    """PROPOSAL_KINDS is the arm list `propose.build` is now asserted
+    against; a row stored before that assertion existed, or one written
+    directly, must still degrade safely rather than offer an Apply the
+    thread has no builder for."""
+    row = ConversationMessage(project_id=project.id, role="answer", text="…", created_by=dana.id,
+                              proposal_status="offered", proposal={"kind": "not_a_real_kind", "summary": "x"})
+    db.add(row); db.flush()
+    thread = client.get(f"/api/projects/{project.id}/conversation").json()["messages"]
+    answer = next(m for m in thread if m["id"] == str(row.id))
+    assert answer["proposal_status"] == "stale"
+
+
 def test_a_malformed_stored_proposal_degrades_only_its_own_card(client, db, project, dana, signed_in_user):
     bad = ConversationMessage(project_id=project.id, role="answer", text="…", created_by=dana.id,
                               proposal_status="offered",

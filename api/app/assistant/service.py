@@ -268,12 +268,20 @@ def thread_view(db: DbSession, project: Project) -> list[dict]:
     for row in rows:
         status = row.proposal_status
         if status == "offered":
-            try:
-                if propose.is_stale(db, project=project, proposal=row.proposal):
-                    status = "stale"
-            except Exception:  # noqa: BLE001 -- a malformed stored proposal degrades its own card, not the thread
-                logger.warning("stale check failed for message %s request_id=%s", row.id,
-                               request_id_var.get(), exc_info=True)
+            kind = (row.proposal or {}).get("kind")
+            if kind not in propose.PROPOSAL_KINDS:
+                # The closed set moved on, or the row predates it being
+                # enforced -- either way there is no builder left to
+                # apply this against, so it reads exactly like a record
+                # that already moved: stale, never an offer.
+                status = "stale"
+            else:
+                try:
+                    if propose.is_stale(db, project=project, proposal=row.proposal):
+                        status = "stale"
+                except Exception:  # noqa: BLE001 -- a malformed stored proposal degrades its own card, not the thread
+                    logger.warning("stale check failed for message %s request_id=%s", row.id,
+                                   request_id_var.get(), exc_info=True)
         out.append({
             "id": row.id, "role": row.role, "text": row.text, "screen": row.screen,
             "created_at": row.created_at, "proposal": row.proposal, "proposal_status": status,

@@ -276,6 +276,25 @@ class TotalsOut(BaseModel):
     approved_units: Decimal
 
 
+class PhaseSummaryOut(BaseModel):
+    """Just enough of a phase to name one (phases-and-timeline.md §3.1).
+
+    Rides the snapshot rather than a poll of its own: the item panel and
+    the takeoff spreadsheet only need each phase's name, the snapshot is
+    already refreshed every few seconds, and its version is built from
+    the action log -- which every phase mutation appends to -- so a phase
+    a colleague adds or renames arrives on the next poll rather than on
+    a reload. The schedule screen reads the full record separately;
+    this is the shared, cheap view of it.
+    """
+
+    id: uuid.UUID
+    name: str
+    sort_order: int
+
+    model_config = MODEL_CONFIG
+
+
 class SnapshotOut(BaseModel):
     version: str
     sheets: list[SheetOut]
@@ -283,6 +302,7 @@ class SnapshotOut(BaseModel):
     totals: TotalsOut
     undo: UndoOut
     presence: list[PresenceOut]
+    phases: list[PhaseSummaryOut] = []
 
 
 # --- Mutation response models (Task 13) ---

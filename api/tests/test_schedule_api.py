@@ -280,3 +280,40 @@ def test_a_stale_company_lead_time_carries_a_four_field_warning(client, signed_i
     assert lead["stale"] is True
     assert set(lead["warning"]) == {"title", "found", "why", "fix", "where"}
     assert "Cummins rep" in lead["warning"]["found"]
+
+
+def test_the_snapshot_carries_the_phase_list_so_the_poll_refreshes_it(client, signed_in_user, project, sheet, db):
+    """The item panel and the spreadsheet show a phase's name, and they
+    read it from the snapshot the client already polls -- so a phase a
+    colleague adds arrives on the next poll rather than on a reload.
+    The snapshot's version is built from the action log, and every phase
+    mutation appends to it, so the ETag cannot serve a stale list."""
+    first = _schedule(client, project)["phases"][0]
+
+    before = client.get(f"/api/projects/{project.id}/snapshot")
+    assert [p["name"] for p in before.json()["phases"]] == ["Phase 1"]
+    version_before = before.json()["version"]
+
+    created = client.post(f"/api/projects/{project.id}/phases", json={"name": "XE sheets", "afterPhaseId": first["id"]})
+    assert created.status_code == 201, created.text
+
+    after = client.get(f"/api/projects/{project.id}/snapshot")
+    assert [p["name"] for p in after.json()["phases"]] == ["Phase 1", "XE sheets"]
+    assert after.json()["version"] != version_before, "a new phase must change the snapshot version"
+
+    # A rename moves the version too -- otherwise a 304 would serve the
+    # old name to everyone else on the project.
+    renamed = client.patch(f"/api/phases/{first['id']}", json={"name": "E sheets"})
+    assert renamed.status_code == 200, renamed.text
+    latest = client.get(f"/api/projects/{project.id}/snapshot").json()
+    assert [p["name"] for p in latest["phases"]] == ["E sheets", "XE sheets"]
+    assert latest["version"] != after.json()["version"]
+
+
+def test_a_project_with_no_phase_row_reports_an_empty_phase_list(client, signed_in_user, project, sheet, item):
+    """Read-only: a snapshot never creates the implicit first phase.
+    An empty list is what the client reads as "one phase", which is
+    what an unphased project is."""
+    body = client.get(f"/api/projects/{project.id}/snapshot").json()
+    assert body["phases"] == []
+    assert all(row["phase_id"] is None for row in body["items"])

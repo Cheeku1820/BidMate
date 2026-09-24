@@ -25,7 +25,7 @@ export default function Workspace() {
     itemError, clearItemError, setPresenceTarget, refresh,
     deleteItem, editItem, setScale, undo, redo, applyProposal,
     me, sheetId, setSheetId, selectedItemId, selectItem, project, projectId,
-    store, phases, reloadPhases,
+    store, phases,
   } = useWorkspaceContext();
   const navigate = useNavigate();
 
@@ -36,9 +36,9 @@ export default function Workspace() {
     async (itemId, phaseId) => {
       if (typeof store.setItemPhase !== "function") return;
       await store.setItemPhase(itemId, phaseId);
-      await Promise.all([refresh(), reloadPhases?.()]);
+      await refresh();
     },
-    [store, refresh, reloadPhases],
+    [store, refresh],
   );
 
   // Notes (Task 4's listNotes/createNote/updateNote/deleteNote) sit

@@ -18,7 +18,7 @@ import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 import { COPY } from "./scheduleCopy.js";
 
 export function useSchedule() {
-  const { store, projectId, runMutation, showToast, reloadPhases } = useWorkspaceContext();
+  const { store, projectId, runMutation, showToast, refresh } = useWorkspaceContext();
   const [schedule, setSchedule] = useState(null); // null = loading
   const [loadError, setLoadError] = useState(null);
   const [saveError, setSaveError] = useState(null);
@@ -43,13 +43,12 @@ export function useSchedule() {
         // Guarded rather than assumed: setItemPhase answers with an
         // item, not a schedule, and a reload follows it instead.
         if (next && Array.isArray(next.phases)) setSchedule(next);
-        // The layout holds the phase list the item panel and the
-        // spreadsheet read, and adding or renaming a phase here is
-        // exactly what makes their field and column appear. Without
-        // this they keep the list they loaded on mount, and a project
-        // that just gained a second phase still reads as unphased
-        // everywhere else.
-        await reloadPhases?.();
+        // The phase list every other screen reads rides the snapshot,
+        // so refreshing it here is what makes the item panel's field
+        // and the spreadsheet's column appear the moment a second
+        // phase exists -- rather than on the next poll a few seconds
+        // later, or a reload.
+        await refresh?.();
         if (label) showToast(label);
         return next;
       } catch (err) {
@@ -57,7 +56,7 @@ export function useSchedule() {
         return null;
       }
     },
-    [runMutation, showToast, reloadPhases],
+    [runMutation, showToast, refresh],
   );
 
   return { schedule, loadError, saveError, reload, mutate };

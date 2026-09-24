@@ -33,7 +33,7 @@ from app.collab.service import active_presence, presence_signal
 from app.identity.models import User
 from app.takeoff import undo as undo_module
 from app.takeoff.models import Action, Item, Phase, Sheet, Warning
-from app.takeoff.schemas import ItemOut, SheetOut, SnapshotOut, TotalsOut, UndoOut, WarningOut
+from app.takeoff.schemas import ItemOut, PhaseSummaryOut, SheetOut, SnapshotOut, TotalsOut, UndoOut, WarningOut
 from app.takeoff.totals import approved_totals
 
 
@@ -282,6 +282,12 @@ def build(db: DbSession, actor: User, project_id: uuid.UUID, version: str) -> Sn
         items=[
             _item_out(i, warnings_by_item_id.get(i.id, []), names.get(i.approved_by_user_id), phase_ids.get(i.id))
             for i in items
+        ],
+        # The same rows the phase resolution above already loaded --
+        # named here so every screen that shows a phase reads it from
+        # the poll rather than fetching its own list and going stale.
+        phases=[
+            PhaseSummaryOut(id=p.id, name=p.name, sort_order=p.sort_order) for p in ordered_phases
         ],
         totals=TotalsOut(**asdict(approved_totals(db, project_id))),
         undo=UndoOut(

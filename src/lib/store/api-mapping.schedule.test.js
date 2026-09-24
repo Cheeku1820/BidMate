@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapSchedule, mapStageCrew, mapStageSplit } from "./api-mapping.js";
+import { mapSchedule, mapSnapshot, mapStageCrew, mapStageSplit } from "./api-mapping.js";
 
 const wire = {
   multi_phase: true,
@@ -79,5 +79,38 @@ describe("company table mappers", () => {
       stage: "rough_in", label: "Rough-in", foreman: 1, journeyman: 2, apprentice: 2,
       productive_hours_per_day: "6.00", productivity_factor: "1.000", max_crew: 6, firm_edited: true,
     }).productiveHoursPerDay).toBe(6);
+  });
+});
+
+describe("phases on the snapshot", () => {
+  it("carries the phase list the poll refreshes", () => {
+    const snapshot = mapSnapshot({
+      version: "v1",
+      sheets: [],
+      items: [],
+      totals: { by_system: {}, approved_count: 0, remaining_count: 0, attention_count: 0, missing_count: 0, approved_units: "0" },
+      undo: { can_undo: false, can_redo: false, undo_label: null, redo_label: null },
+      presence: [],
+      phases: [
+        { id: "p1", name: "E sheets", sort_order: 0 },
+        { id: "p2", name: "XE sheets", sort_order: 1 },
+      ],
+    });
+    expect(snapshot.phases).toEqual([
+      { id: "p1", name: "E sheets", sortOrder: 0 },
+      { id: "p2", name: "XE sheets", sortOrder: 1 },
+    ]);
+  });
+
+  it("reads an unphased project as an empty list rather than undefined", () => {
+    const snapshot = mapSnapshot({
+      version: "v1",
+      sheets: [],
+      items: [],
+      totals: { by_system: {}, approved_count: 0, remaining_count: 0, attention_count: 0, missing_count: 0, approved_units: "0" },
+      undo: { can_undo: false, can_redo: false, undo_label: null, redo_label: null },
+      presence: [],
+    });
+    expect(snapshot.phases).toEqual([]);
   });
 });

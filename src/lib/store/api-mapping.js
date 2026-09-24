@@ -162,6 +162,11 @@ export function mapSnapshot(s) {
     totals: mapTotals(s.totals),
     undo: mapUndo(s.undo),
     presence: s.presence.map(mapPresence),
+    // The project's phases, by name. They ride the snapshot so the
+    // poll refreshes them: a phase a colleague adds shows up on the
+    // next poll rather than on a reload. An empty list is an unphased
+    // project, which every screen reads as "one phase".
+    phases: (s.phases ?? []).map((p) => ({ id: p.id, name: p.name, sortOrder: p.sort_order })),
   };
 }
 

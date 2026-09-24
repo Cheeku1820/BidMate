@@ -68,6 +68,8 @@ Once you've uploaded and processed a drawing set, the workspace surfaces whateve
 
 **Classify an unknown symbol.** A symbol that isn't in the legend stays visible and reviewable rather than being silently dropped. Type what it is in your own words — "2x4 LED troffer, type F on the E-501 schedule" — check what would change, and confirm: every one in the cluster is renamed and approved in one press, and the same tag elsewhere on the set is offered next. "Not a device" rejects with your reason.
 
+**Put the hours in time.** Open **Phases and schedule**. The hours the takeoff already resolved are split across the six stages electrical work runs in — demolition, rough-in, wire pull, gear, trim, close-out — sized by the firm's crew for each, and drawn as bars on a week grid with the weekly manpower chart a GC asks for underneath. Everything computed says so and can be typed over; an override says it is yours. Where the drawings phase the job — `E-1.0` against `XE-1.0`, as the example set does — **Propose phases from sheet numbers** offers the split and writes nothing until you confirm, as one undoable action. Flag a switchboard as long-lead and the timeline counts an order-by date back from the stage that installs it, from a lead time a supplier quoted or your firm entered. Nothing here changes what is counted.
+
 **Hit the blocking rule.** Click **Finish review** while any *Missing information* item remains. Completion is blocked, the blocking items are listed with direct links, and only *Needs attention* items can be carried forward — after an explicit acknowledgment checkbox.
 
 ---
@@ -160,6 +162,12 @@ api/app/documents/
   service.py                   store / list / retype / delete / stream, each audited, none undoable
   router.py                    the five document routes, org-scoped through the project they belong to
   schemas.py                   the wire shape and the closed sets of document types and statuses
+api/app/schedule/
+  stages.py                    the six stages of electrical work, and the long-lead word list
+  plan.py                      the derivation, pure: hours per stage, durations, working days, order-by
+  phases.py                    phases as records — every mutation audited and undoable
+  overrides.py                 what the estimator changes on a line, a stage, or a lead time
+  assemble.py                  what the screen reads, through the same totals and labor functions
 api/app/jobs/
   queue.py                     enqueue / claim / retry / stale-reclaim — the queue is the `jobs` table, no Redis
   status.py                    the stage words screen E polls; never a job id, an attempt count, or a source
@@ -200,6 +208,7 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 ## Known limitations
 
 - **Sync is a poll, not a push channel.** The client polls the API every few seconds for changes from other reviewers, rather than receiving them immediately over a WebSocket. Undo is also still a single shared linear stack, so one reviewer can undo another's action from underneath them — shared undo needs conflict resolution, either operational transforms or per-user undo stacks with a merge policy, and that decision is still open.
+- **The schedule stops at working days.** Phases, stages, crews, the weekly manpower chart, and long-lead order-by dates are built ([`docs/specs/phases-and-timeline.md`](docs/specs/phases-and-timeline.md)), but the calendar is Monday to Friday with no holidays and no overtime, phases run in order rather than through real dependencies, bars are edited in fields rather than dragged, and nothing imports the GC's own schedule. A lead time comes only from a supplier's quote or the firm's dated entry — flagged gear with neither says "Not yet quoted" and draws no date.
 - **Export produces a CSV, not yet a real Excel workbook.**
 - **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. Labor and Material pricing are now built and routed, each carrying a pricing basis note. See [`ROADMAP.md`](ROADMAP.md).
 - **The conversation panel is read-only.** It answers questions about the screen in view and says where a change is made; it does not propose or apply changes yet. It needs `ANTHROPIC_API_KEY` on the API container; without one the panel says so and nothing else is affected.

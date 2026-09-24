@@ -4,7 +4,7 @@ Five documents at the repository root are the entry points: `README.md` (how to 
 
 | Folder | Holds | When to read it |
 |---|---|---|
-| `product/` | What the product **is**. Stable references, rarely amended. | Before designing anything: `product-spec.md` (the eleven screens), `frontend-product-design.md` (the thirteen workspaces the product is built against), `agent-architecture.md` (the five engine agents and their contracts), `mvp-approach.md` (the geometry-versus-language split), `accuracy-and-pilot.md` (accuracy policy, information model, pilot operating model). |
+| `product/` | What the product **is**. Stable references, rarely amended. | Before designing anything: `product-spec.md` (the eleven screens), `frontend-product-design.md` (the workspaces the product is built against — thirteen there, fourteen in the nav since Phases and schedule), `agent-architecture.md` (the five engine agents and their contracts), `mvp-approach.md` (the geometry-versus-language split), `accuracy-and-pilot.md` (accuracy policy, information model, pilot operating model). |
 | `roadmap/` | What to do next and in what order. | `full-webapp-plan.md` governs sequencing now (phases A–G, with an audit of what each screen actually does). `ROADMAP.md` and `BUILD-STAGES.md` at the root remain the inventory and the stages. |
 | `specs/` | One **design** per feature — the decisions, the data shapes, the rules, what is out of scope. | When working on that feature, or on anything that touches it. A spec is amended when execution proves it wrong; the amendment says so. |
 | `plans/` | The executable task list for a spec, same file name. A plan in `plans/` is in flight; `plans/done/` holds every executed plan, unchanged — the record of each task, each review, each catch. | `plans/<name>.md` when executing; `plans/done/` when asking "why is it built this way." |
@@ -32,6 +32,7 @@ Five documents at the repository root are the entry points: `README.md` (how to 
 | Conversation panel (read-only slice) | `specs/conversation-panel.md` | `plans/done/conversation-panel.md` | merged |
 | Estimate-first pricing | `specs/estimate-first-pricing.md` | `plans/done/estimate-first-pricing.md` | merged |
 | Say what it is — the item panel's decision area | `specs/say-what-it-is.md` | `plans/done/say-what-it-is.md` | merged |
+| Phases and timeline | `specs/phases-and-timeline.md` | `plans/phases-and-timeline.md` | built on `claude/sweet-hellman-f7c3d0`, awaiting merge |
 
 ## Adding a document
 

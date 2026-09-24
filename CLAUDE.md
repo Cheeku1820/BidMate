@@ -37,6 +37,8 @@ Every screen is a different view onto this same state. When building a new scree
 - **Approving a *Missing information* item is blocked at the item level**, with inline copy explaining why — so the estimator hits the rule while looking at the evidence, not later in a summary dialog.
 - **A note's status is not an item's status.** Notes carry their own confirmed/open vocabulary describing a *note*; the four labels above describe an *item's evidence*. Never render a note's status using the item-status components or colours — a note pill in amber reads as *Needs attention* and quietly makes the four labels into five. `--slate`/`--plum` in `styles.css` exist for exactly this separation.
 - **The engine never discards a person's judgment.** A run — the first one or the hundredth — merges into each sheet rather than replacing it: an *Estimator approved* item is never overwritten or deleted by processing. A page that vanishes from a re-read keeps its sheet, marked unreadable, for as long as an approved item still lives on it. A clean slate is a deliberate act (deleting the items), never a side effect of re-running.
+- **A phase groups what is already counted; it never changes a number.** Adding, renaming, or deleting a phase moves no total, no status, and no approval, and no totals query gains a phase filter. The same rule the layer toggles follow: an estimator organising the work must not change the number they are about to bid.
+- **An order-by date is drawn only from a lead time somebody quoted.** A supplier's price sheet or the firm's own dated entry — never a published industry range, and never a guess. Flagged gear with nothing quoted says "Not yet quoted" and shows no date, because a date counted back from an invented lead time is the confidently wrong number this product exists to prevent.
 - **The conversation panel never becomes the only path to anything.** See the section below.
 
 ## The conversation panel is additive, never load-bearing
@@ -88,6 +90,13 @@ src/
       ScopeSection.jsx       screen D's scope list — found/confirmed/dismissed, never the four review labels
       ProcessingStatus.jsx   screen E — polls per-sheet progress from the worker's queue
       SheetProgressList.jsx  the per-sheet stage list screen E and the notes re-run both render
+    schedule/                phases and the timeline they imply
+      ScheduleWorkspace.jsx  the screen: phase list, stage bars, manpower, long-lead
+      StageBars.jsx          the week grid — one row per stage, never two in one
+      StageEditor.jsx        one bar's crew, hours, dates, each with a way back to computed
+      ManpowerChart.jsx      people on site per week, by role — the chart a GC asks for
+      LongLeadList.jsx       flagged gear and the lead times someone actually quoted
+      stages.js              the six stages (mirrors api/app/schedule/stages.py)
     conversation/            the panel — read-only in this slice
       ConversationPanel.jsx  the column: header, thread, composer, collapsed strip
       screenContext.jsx      the closed set of screen names (mirrored by api/app/assistant/schemas.py); selection and view reporting
@@ -100,6 +109,14 @@ api/app/takeoff/
   notes.py                   note CRUD, audited through commit(), not undoable
   merge.py                   the one write path for engine output — approval-preserving, per sheet
   price_sheet_router.py      the supplier price-sheet round trip: request, upload, preview, apply
+api/app/schedule/
+  stages.py                  the six stages and the long-lead word list — one vocabulary, never a seventh
+  plan.py                    the derivation, pure: split, durations, working days, manpower, order-by
+  phases.py                  phases as records; every mutation audited through commit(), all undoable
+  overrides.py               the estimator's overrides on a line, a stage, a lead time
+  defaults.py                the firm's seeded tables — "the default" until a firm edits one
+  assemble.py                what the screen reads, through countable_items and resolve_labor
+  propose.py                 phases proposed from sheet families; written only on the estimator's press
 api/app/market/
   classify.py                which source prices a line, and with what query — pure, deterministic
   copy.py                    the market lookup's outcomes and the estimator-facing words for each
@@ -181,6 +198,8 @@ Rules that are easy to break here:
 
 ## Known scope limits
 
-Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer thirteen-workspace additions are not (see `src/components/shell/ProjectNav.jsx`) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note, with a market estimate tier by ZIP on top of it and a supplier price-sheet round trip for turning that into a real quote; labor returned by the market feed is stored but not resolved into an estimate (docs/specs/estimate-first-pricing.md §9). Notes & assumptions is built and routed. The conversation panel is read-only: it answers and advises about what is in view, and says where a change is made; it proposes nothing yet. Threads are one per project. See docs/specs/conversation-panel.md.
+Export produces a CSV, not yet a real Excel workbook. All eleven screens from the original spec (A–K) are routed and built; several of the newer workspace additions are not (see `src/components/shell/ProjectNav.jsx`, now fourteen — Phases and schedule joined the thirteen the frontend design spec §4.2 names) — Assemblies, Estimate summary, Revisions, and Final review render as disabled in the project nav, and Company library, Integrations, and Help are disabled in the main nav (`CompanyNav.jsx`). Labor and Material pricing are now built and routed, each carrying a pricing basis note, with a market estimate tier by ZIP on top of it and a supplier price-sheet round trip for turning that into a real quote; labor returned by the market feed is stored but not resolved into an estimate (docs/specs/estimate-first-pricing.md §9). Notes & assumptions is built and routed. The conversation panel is read-only: it answers and advises about what is in view, and says where a change is made; it proposes nothing yet. Threads are one per project. See docs/specs/conversation-panel.md.
+
+Phases and schedule is built ([`docs/specs/phases-and-timeline.md`](docs/specs/phases-and-timeline.md)). Every item belongs to a phase — by sheet, with a per-item override — and a project with one phase reads exactly as it did before phases existed. Stage bars and the weekly manpower chart are derived from the labor hours the product already resolves and the firm's own crew and split tables; every computed value is a starting point the estimator overrides, and an override is marked as theirs. A long-lead order-by date is drawn only from a lead time a supplier quoted or the firm entered, never from a published range — a flagged item with nothing quoted says so and shows no date. **Not built:** holidays and overtime, dependencies across phases, dragging bars, a critical path, importing the GC's schedule, sub-phases (§12 of that spec).
 
 Within notes, several things the design spec describes are not built: the `applied_action_id` column, the footer strip, sheet-scoped narrowing of a re-run, and item-scoped notes resolving to a cluster tag. See the *Not built in this slice* section of [`docs/specs/notes-and-assumptions.md`](docs/specs/notes-and-assumptions.md).

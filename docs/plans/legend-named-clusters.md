@@ -594,12 +594,12 @@ git commit -m "Rank legend rows by silhouette, and let a person pick"
 ### Task 5: The read job stores templates
 
 **Files:**
-- Modify: `api/app/engine/documents.py` (`read`, `sheet_from_row`, `sheet_to_payload`), `api/app/engine/contracts.py` (`DetectedSheet.symbol_templates`), `api/app/worker/read_job.py`
+- Modify: `api/app/engine/documents.py` (`read`, `sheet_from_row`), `api/app/engine/contracts.py` (`DetectedSheet.symbol_templates`), `api/app/worker/read_job.py`
 - Test: `api/tests/test_worker_read.py`, `api/tests/test_engine_documents.py`
 
 **Interfaces:**
 - Consumes: `legend_symbols.templates_on`.
-- Produces: `DetectedSheet.symbol_templates: list[SymbolTemplate]` (default empty), carried by `sheet_from_row`/`sheet_to_payload` as a list of dicts with `silhouette` base64-encoded; `Sheet.symbol_templates` written by the read job for `kind == "legend"`.
+- Produces: `DetectedSheet.symbol_templates: list[SymbolTemplate]` (default empty), carried by `sheet_from_row` as a list of dicts with `silhouette` base64-encoded; `Sheet.symbol_templates` written by the read job for `kind == "legend"`. (`sheet_to_payload` carries no templates — the wire payload `estimate.full_takeoff` returns per sheet doesn't need them, and the read job writes `Sheet.symbol_templates` directly — so it was correctly left unmodified.)
 
 - [ ] **Step 1: Write the failing test**
 

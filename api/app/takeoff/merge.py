@@ -181,6 +181,26 @@ def _bucket_order(item: Item) -> tuple[bool, object, uuid.UUID]:
 _VISIBLE_FIELDS = ("name", "description", "symbol", "system", "category", "quantity", "unit")
 
 
+def _engine_owns_name(item: Item) -> bool:
+    """Whether a re-run may write this row's `name`.
+
+    `name` was engine-written only until B3c made it an editable field
+    and made renaming an unclassified symbol the headline action on the
+    review workspace. An item whose name is still the engine's should
+    pick up a better one from a later run; an item an estimator renamed
+    must keep theirs, the same way `_overwrite` has always left `notes`
+    alone. `Item.name_by_estimator` is the difference, set in
+    `review._apply_edit` -- nothing already in the schema could tell the
+    two apart, and the action log records that a rename happened rather
+    than that it still stands.
+
+    Approval is not the line here: an approved item is preserved whole
+    several frames up, and CLAUDE.md's rule is about a person's
+    judgment, not about the one act that happens to be final.
+    """
+    return not item.name_by_estimator
+
+
 def _changes_visibly(item: Item, sheet: Sheet, row: dict, warning_title: str | None) -> bool:
     """Whether writing `row` onto `item` would change something the
     estimator would notice -- the test for counting a row as
@@ -197,7 +217,13 @@ def _changes_visibly(item: Item, sheet: Sheet, row: dict, warning_title: str | N
         return True
     if ReviewStatus(row["status"]) is not item.status:
         return True
-    if any(getattr(item, field) != row[field] for field in _VISIBLE_FIELDS):
+    # A field this merge is not entitled to write is not a field that
+    # changed. Without this, a re-run over an estimator-renamed row
+    # reported it reclassified while leaving every visible field exactly
+    # as they left it -- the same false count this function exists to
+    # stop reporting.
+    fields = _VISIBLE_FIELDS if _engine_owns_name(item) else tuple(f for f in _VISIBLE_FIELDS if f != "name")
+    if any(getattr(item, field) != row[field] for field in fields):
         return True
     incoming = row["warning"]["title"] if row["warning"] else None
     return incoming != warning_title
@@ -223,14 +249,17 @@ def _overwrite(item: Item, sheet: Sheet, row: dict) -> None:
 
     Deliberately does not touch `notes` -- that field is the estimator's
     own, never the engine's, and nothing here is entitled to overwrite
-    it. Deliberately does not touch `approved_by_user_id`/`approved_at`/
+    it. `name` is conditionally in the same position, and for the same
+    reason, once a person has typed one: see `_engine_owns_name`.
+    Deliberately does not touch `approved_by_user_id`/`approved_at`/
     `rejected_by_user_id`/`rejected_at` either: this function is only
     ever called on a row already confirmed not APPROVED, and rejection
     is orthogonal to the engine's fields the same way notes is.
     """
     item.sheet_id = sheet.id
     item.symbol = row["symbol"]
-    item.name = row["name"]
+    if _engine_owns_name(item):
+        item.name = row["name"]
     item.description = row["description"]
     item.system = row["system"]
     item.category = row["category"]

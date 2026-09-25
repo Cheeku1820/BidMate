@@ -60,6 +60,7 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "placements": list,
     "ai_confirmed": bool,
     "source_tag": str,
+    "name_by_estimator": bool,
     "suggestions": list,
     "updated_at": datetime,
     "warnings": list,

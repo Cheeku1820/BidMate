@@ -386,6 +386,17 @@ class Item(Base):
     # the same sheet, which is what lets a re-run recognise the item it
     # produced last time instead of replacing it blindly.
     source_tag: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    # Whether the name above is the estimator's own rather than the
+    # engine's. `name` was engine-written only until B3c task 8 made it
+    # editable; `merge._overwrite` needs to know which of the two wrote
+    # it, because a re-run may improve a name nobody chose and may never
+    # revert one someone did. Nothing else in the schema can answer that
+    # -- `version` is bumped by the re-run itself, and the action log
+    # records that a rename happened, not that it still stands (undo
+    # appends a compensating row rather than removing the original).
+    # Set in `review._apply_edit`, and carried in that edit's own
+    # before/after snapshot so undoing a rename gives the field back.
+    name_by_estimator: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     # B3c: legend rows this item's symbol looks like, best first, for an
     # estimator to pick from. Names only -- the score that ordered them
     # stops in the engine (CLAUDE.md: confidence never renders).

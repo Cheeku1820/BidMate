@@ -195,6 +195,15 @@ def _apply_edit(db: DbSession, item: Item, changes: dict, expected_version: int)
     for key, value in changes.items():
         setattr(locked, key, Decimal(str(value)) if key == "quantity" else value)
 
+    # A name a person typed is theirs from here on: `merge._overwrite`
+    # reads this and stops writing over it, so a re-run can no longer
+    # revert an accepted legend suggestion. Recorded in `before` first,
+    # so the rename's own undo hands the field back to the engine rather
+    # than leaving a claim behind for a name nobody holds any more.
+    if "name" in changes and not locked.name_by_estimator:
+        before["name_by_estimator"] = locked.name_by_estimator
+        locked.name_by_estimator = True
+
     was_unclassified = locked.status is ReviewStatus.ATTENTION and before.get("category") == "Unclassified"
     still_unclassified = locked.category == "Unclassified"
     if was_unclassified and not still_unclassified:
@@ -307,6 +316,9 @@ def add_item(db: DbSession, actor: User, *, project, sheet, name: str, symbol: s
         system=system, category="Devices" if status == "ready" else "Unclassified",
         quantity=Decimal(str(quantity)), unit="ea",
         status=ReviewStatus(status), x=x, y=y, placements=placements, source_tag=source_tag,
+        # A person typed this name into the add form; no engine row ever
+        # matches a `match:` tag, but the provenance is theirs either way.
+        name_by_estimator=True,
     )
     db.add(item)
     db.flush()

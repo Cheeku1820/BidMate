@@ -549,3 +549,61 @@ def test_merge_sheet_writes_suggestions_and_clears_them_on_a_later_run(db, proje
                           "suggestions": []}])
     db.refresh(item)
     assert item.suggestions is None
+
+
+def test_a_rerun_keeps_a_name_the_estimator_typed(client, db, project, signed_in_user):
+    """Task 8 made `name` an estimator field and Task 10 made renaming the
+    headline action on an unclassified symbol, so the engine no longer
+    owns it once a person has written it. Without this, Start takeoff
+    again silently reverted every accepted legend suggestion and every
+    hand-typed name on an item nobody had approved yet."""
+    dana = signed_in_user
+    _seed(db, dana, project, [_row("shape:abcd1234", "Unclassified symbol", status="attention", warning=_WARNING)])
+    item = db.scalars(select(Item).where(Item.source_tag == "shape:abcd1234")).one()
+    rename = client.patch(f"/api/items/{item.id}", json={"name": "Duplex receptacle"},
+                          headers={"If-Match": str(item.version)})
+    assert rename.status_code == 200, rename.text
+
+    _rerun(db, dana, project, [_row("shape:abcd1234", "Unclassified symbol", status="attention", warning=_WARNING)])
+    db.expire_all()
+    assert db.scalars(select(Item).where(Item.source_tag == "shape:abcd1234")).one().name == "Duplex receptacle"
+
+
+def test_a_rerun_still_renames_an_item_no_one_has_touched(db, project, dana):
+    """The other half: an item whose name has only ever been the
+    engine's still picks up a better one from a later run."""
+    _seed(db, dana, project, [_row("R", "Unclassified symbol (R)")])
+    _rerun(db, dana, project, [_row("R", "20A duplex receptacle")])
+    db.expire_all()
+    assert db.scalars(select(Item).where(Item.source_tag == "R")).one().name == "20A duplex receptacle"
+
+
+def test_a_rerun_over_an_estimator_name_reports_no_reclassification(db, project, dana, client, signed_in_user):
+    """A name the re-run is not entitled to write is not a field that
+    changed -- counting it would report "1 item reclassified" for a
+    re-run that left every visible field exactly as the estimator left
+    it."""
+    dana = signed_in_user
+    _seed(db, dana, project, [_row("R", "20A duplex receptacle")])
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    client.patch(f"/api/items/{item.id}", json={"name": "Isolated ground receptacle"},
+                 headers={"If-Match": str(item.version)})
+    counts = _rerun(db, dana, project, [_row("R", "20A duplex receptacle")])
+    assert counts["reclassified"] == 0
+
+
+def test_undoing_a_rename_gives_the_name_back_to_the_engine(client, db, project, signed_in_user):
+    """The flag is part of the rename's own before/after snapshot, so
+    undoing the rename undoes the claim as well -- an estimator who
+    renames and immediately reverses it has not pinned the field."""
+    dana = signed_in_user
+    _seed(db, dana, project, [_row("R", "20A duplex receptacle")])
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    client.patch(f"/api/items/{item.id}", json={"name": "Isolated ground receptacle"},
+                 headers={"If-Match": str(item.version)})
+    undo = client.post(f"/api/projects/{project.id}/undo")
+    assert undo.status_code == 200 and undo.json()["performed"] is True, undo.text
+
+    _rerun(db, dana, project, [_row("R", "Weatherproof receptacle")])
+    db.expire_all()
+    assert db.scalars(select(Item).where(Item.source_tag == "R")).one().name == "Weatherproof receptacle"

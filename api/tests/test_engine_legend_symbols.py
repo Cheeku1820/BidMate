@@ -268,3 +268,18 @@ def test_a_capped_description_ends_on_a_word_not_mid_word():
 _LONG_SOURCE = " ".join(
     f"WEATHERPROOF GROUND FAULT INTERRUPTING DUPLEX RECEPTACLE IN CAST BOX {i}" for i in range(6)
 )
+
+
+def test_a_display_list_renders_the_same_silhouette_as_its_page(legend):
+    """The sheet job clips one silhouette per shape cluster off the same
+    page, so it builds the page's display list once instead of
+    re-interpreting the content stream per clip. That is only a
+    permissible substitution if the bytes are identical -- a silhouette
+    is ranked against the legend's, and a rendering difference would
+    move the ranking without anything saying so."""
+    words = visual_words(legend)
+    draw = ls.renderer(legend)
+    rects = [g.rect for g in glyphs.glyphs_on(legend, (0, 0, legend.rect.width, legend.rect.height), words)]
+    assert rects
+    for rect in rects:
+        assert ls.silhouette(draw, rect) == ls.silhouette(legend, rect)

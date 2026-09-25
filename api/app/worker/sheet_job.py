@@ -82,9 +82,14 @@ def run(db: Session, job: Job) -> None:
         pdf = pymupdf.open(path)
         try:
             page = pdf[detected.page_index]
+            # One display list for the whole sheet, not one page render
+            # per cluster: `Page.get_pixmap` re-interprets the content
+            # stream every call and the cost is linear in shape clusters
+            # (legend_symbols.renderer carries the measurement).
+            draw = legend_symbols.renderer(page)
             for c in clusters:
                 if c.tag.startswith("shape:") and c.exemplar:
-                    c.exemplar_silhouette = legend_symbols.silhouette(page, c.exemplar)
+                    c.exemplar_silhouette = legend_symbols.silhouette(draw, c.exemplar)
         finally:
             pdf.close()
         result = sheet_mod.finish(path, detected, clusters, cls, detected_all)

@@ -216,3 +216,55 @@ def test_a_two_character_word_beside_the_glyph_is_description_not_modifier():
     assert len(t) == 1
     assert t[0].modifier == ""
     assert "4W" in t[0].description
+
+
+def _long_row_page():
+    """A tall legend glyph beside a dense multi-line text column -- the
+    row band is vertical-only (spec §11.7), so a 34 pt glyph sweeps an
+    80 pt strip and collects every line inside DESCRIPTION_REACH_PT.
+    This is the shape the reviewer measured at 329 characters."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=600, height=300)
+    s = page.new_shape()
+    s.draw_rect(pymupdf.Rect(100, 43, 134, 77))
+    s.draw_circle((117, 60), 10)
+    s.finish(color=(0, 0, 0), width=0.7)
+    s.commit()
+    line = "WEATHERPROOF GROUND FAULT INTERRUPTING DUPLEX RECEPTACLE IN CAST BOX"
+    for i in range(6):
+        page.insert_text((140, 46 + i * 6), f"{line} {i}", fontsize=5)
+    return page
+
+
+def test_a_long_legend_row_is_capped_to_a_name_its_consumers_accept():
+    """`SymbolMatch.suggested_name` is String(300) and `validate_edit`
+    refuses a name over 300 characters, so an uncapped join turns a
+    dense legend column into a match job that raises on flush and a
+    suggestion that 422s when an estimator clicks it."""
+    from app.takeoff.edit_validation import validate_edit
+    from app.takeoff.models import Item, SymbolMatch
+
+    page = _long_row_page()
+    templates = ls.templates_on(page, visual_words(page), sheet_number="E0.1")
+    row = max(templates, key=lambda t: len(t.description))
+    # Cut on a word boundary, so at most the bound and close under it.
+    assert ls.MAX_DESCRIPTION_CHARS - 20 <= len(row.description) <= ls.MAX_DESCRIPTION_CHARS
+
+    name = ls.sentence_case(row.description)
+    assert len(name) <= SymbolMatch.__table__.c.suggested_name.type.length
+    assert len(name) <= Item.__table__.c.name.type.length
+    validate_edit({"name": name})
+
+
+def test_a_capped_description_ends_on_a_word_not_mid_word():
+    page = _long_row_page()
+    row = max(ls.templates_on(page, visual_words(page)), key=lambda t: len(t.description))
+    assert row.description.endswith("…")
+    assert not row.description[:-1].endswith(" ")
+    # The last whole word before the cut survives intact.
+    assert " " + row.description[:-1].rsplit(" ", 1)[-1] + " " in " " + _LONG_SOURCE + " "
+
+
+_LONG_SOURCE = " ".join(
+    f"WEATHERPROOF GROUND FAULT INTERRUPTING DUPLEX RECEPTACLE IN CAST BOX {i}" for i in range(6)
+)

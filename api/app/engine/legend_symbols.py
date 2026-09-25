@@ -43,6 +43,20 @@ MAX_MODIFIER_CHARS = 1
 # How far right of a glyph its description can run before the words
 # belong to another column.
 DESCRIPTION_REACH_PT = 240.0
+# The longest description a row may carry. The row band is vertical
+# only (spec §11.7), so a tall glyph beside a dense text column sweeps
+# an 80 pt strip and collects every line inside the reach above -- the
+# reviewer measured a plausible row at 329 characters. Two consumers
+# refuse that: `SymbolMatch.suggested_name` is String(300) and raises on
+# flush, failing the whole symbol search; and `edit_validation` refuses a
+# name over 300, so the suggestion is unacceptable by clicking it.
+# Capped here, at the one place the join happens, for the same reason
+# `actions.commit()` caps `Action.label` at its own column width rather
+# than at each call site that builds one. 240 is well above the corpus
+# worst case (111 characters over 416 templates, spec §11.7), so no real
+# legend row is touched; a row long enough to reach it is already a bad
+# description, and a shortened suggestion beats a hard failure.
+MAX_DESCRIPTION_CHARS = 240
 # The silhouette grid, and the render it is pooled from.
 SIL = 32
 SPAN = 96
@@ -70,6 +84,18 @@ def silhouette(page, rect) -> bytes:
     cell = SPAN // SIL
     pooled = square.reshape(SIL, cell, SIL, cell).mean(axis=(1, 3))
     return bytes(np.clip(pooled * 255.0, 0, 255).astype(np.uint8).ravel())
+
+
+def _capped(description: str) -> str:
+    """`description`, no longer than MAX_DESCRIPTION_CHARS, cut on a word
+    boundary. The ellipsis is the same one `actions.commit()` uses on an
+    over-long label: a shortened name should read as shortened, not as a
+    word someone mistyped."""
+    if len(description) <= MAX_DESCRIPTION_CHARS:
+        return description
+    head = description[:MAX_DESCRIPTION_CHARS - 1]
+    whole = head.rsplit(" ", 1)[0] if " " in head else head
+    return whole.rstrip() + "…"
 
 
 def _near(rect, word: Word, gap: float) -> bool:
@@ -123,7 +149,7 @@ def templates_on(page, words: list[Word], sheet_number: str = "") -> list[Symbol
             w for w in band if w.x1 <= x0 + 1 and w.x1 >= x0 - DESCRIPTION_REACH_PT
             and w is not modifier_word]
         chosen.sort(key=lambda w: (round(w.cy), w.x0))
-        description = " ".join(w.text.strip() for w in chosen if w.text.strip())
+        description = _capped(" ".join(w.text.strip() for w in chosen if w.text.strip()))
         if not description:
             continue
         out.append(SymbolTemplate(description=description, modifier=modifier, rect=g.rect,

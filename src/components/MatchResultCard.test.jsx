@@ -3,6 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import MatchResultCard from "./MatchResultCard.jsx";
 
 const found = (n) => ({ id: "m1", status: "found", box: [100, 100, 20, 10], count: n, matches: Array.from({ length: n }, (_, i) => [100 + i * 50, 100, 20, 10]), error: "" });
+const pending = () => ({ id: "m1", status: "pending", box: [100, 100, 20, 10], count: 0, matches: [], error: "" });
 
 describe("MatchResultCard", () => {
   it("shows the count and adds with a name", () => {
@@ -67,5 +68,50 @@ describe("MatchResultCard", () => {
     render(<MatchResultCard match={{ ...found(3), suggestedName: "Duplex receptacle" }} onAccept={() => {}} onDiscard={() => {}} onRetry={() => {}} sheetNumber="E2.1" />);
     expect(screen.getByLabelText("Name").value).toBe("Duplex receptacle");
     expect(screen.getByRole("button", { name: "Add 3 to the takeoff" }).disabled).toBe(false);
+  });
+
+  it("picks up the legend suggestion when the poll resolves a pending search, not just on a fresh mount", () => {
+    const { rerender } = render(
+      <MatchResultCard match={pending()} onAccept={() => {}} onDiscard={() => {}} onRetry={() => {}} sheetNumber="E2.1" />
+    );
+    // The same component instance the app actually keeps mounted: the
+    // pending search resolves and useReviewStore's poll hands the card
+    // an updated match with the same id, not a remount.
+    rerender(
+      <MatchResultCard
+        match={{ ...found(3), id: "m1", suggestedName: "Duplex receptacle" }}
+        onAccept={() => {}}
+        onDiscard={() => {}}
+        onRetry={() => {}}
+        sheetNumber="E2.1"
+      />
+    );
+    expect(screen.getByLabelText("Name").value).toBe("Duplex receptacle");
+    expect(screen.getByRole("button", { name: "Add 3 to the takeoff" }).disabled).toBe(false);
+  });
+
+  it("does not clobber a name the estimator already typed once the card is in its found state", () => {
+    const { rerender } = render(
+      <MatchResultCard
+        match={{ ...found(3), suggestedName: "Duplex receptacle" }}
+        onAccept={() => {}}
+        onDiscard={() => {}}
+        onRetry={() => {}}
+        sheetNumber="E2.1"
+      />
+    );
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Custom name" } });
+    // A later poll tick hands down the same match (same suggestedName) --
+    // must not stomp what the estimator is typing.
+    rerender(
+      <MatchResultCard
+        match={{ ...found(3), suggestedName: "Duplex receptacle" }}
+        onAccept={() => {}}
+        onDiscard={() => {}}
+        onRetry={() => {}}
+        sheetNumber="E2.1"
+      />
+    );
+    expect(screen.getByLabelText("Name").value).toBe("Custom name");
   });
 });

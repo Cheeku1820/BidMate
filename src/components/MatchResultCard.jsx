@@ -8,6 +8,22 @@ import * as copy from "../lib/matchCopy.js";
  *  so this card carries no review label and no status colour. */
 export default function MatchResultCard({ match, onAccept, onDiscard, onRetry, sheetNumber }) {
   const [name, setName] = useState(match.suggestedName || "");
+  // `match.suggestedName` is empty while the search is still pending (B3b
+  // §9): the row is created before the worker job names it, so this card
+  // mounts and its `useState` initializer captures "" well before the
+  // legend suggestion exists. The subsequent poll (useReviewStore.js)
+  // hands the *same* component instance an updated `match` -- there is no
+  // remount for `useState`'s lazy initializer to re-run against. Track the
+  // last suggestion this instance has seen and, only when it *changes*,
+  // adopt it during render (React's documented pattern for deriving state
+  // from a prop) -- this fires exactly once, when the pending search
+  // resolves to a name, and never again while `suggestedName` stays the
+  // same, so it never overwrites a name the estimator has since typed.
+  const [seenSuggestedName, setSeenSuggestedName] = useState(match.suggestedName || "");
+  if ((match.suggestedName || "") !== seenSuggestedName) {
+    setSeenSuggestedName(match.suggestedName || "");
+    setName(match.suggestedName || "");
+  }
   const [symbol, setSymbol] = useState("receptacle");
   const [system, setSystem] = useState(SYSTEMS[0]);
   const n = match.count;

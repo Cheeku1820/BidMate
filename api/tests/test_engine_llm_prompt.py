@@ -70,3 +70,13 @@ def test_prompt_only_claims_an_image_for_shape_tags_that_actually_got_one():
     render -- so the prompt must not promise every shape: tag an image."""
     text = _prompt([{"tag": "shape:abcd1234", "count": 4}], "", "")
     assert "a shape tag with no attached image" in text
+
+
+def test_prompt_describes_the_modifier_suffix_a_shape_tag_can_carry():
+    """B3c task 6 introduced `shape:<sig>:<modifier>` beside plain
+    `shape:<sig>`. `specs_by_tag` is an exact-key lookup, so a model
+    told only about the old form and normalising a tag back to it costs
+    that cluster its row."""
+    text = _prompt([{"tag": "shape:abcd1234:3", "count": 4}], "", "")
+    assert "shape:xxxxxxxx:n" in text
+    assert "exactly as written" in text

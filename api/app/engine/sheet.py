@@ -24,9 +24,18 @@ def rows_for(
     bare_names) -- the last two feed the wiring and unmatched notes,
     which are folded up across sheets by whoever runs the whole set.
 
-    A cluster whose tag the run never classified yields no row on either
-    path: the run's classification decides what is priced, and a tag it
-    has no answer for is not quietly named here.
+    On the model path, a cluster the run's answer does not cover is
+    never dropped -- it falls through to the deterministic
+    classification, which lands it as an item that needs attention. The
+    model is free to omit a tag or to return it in a form
+    `specs_by_tag`'s exact-key lookup cannot match (a `shape:<sig>:<mod>`
+    tag normalised back to `shape:<sig>`, say), and a dropped cluster
+    would be no row, no warning and no count: silence reading as
+    completeness, which is the worst outcome this product can produce.
+    A cluster the *deterministic* path never classified still yields no
+    row, because there `classified_tags` is built from the clusters
+    themselves and a tag missing from it means the sheet is pricing
+    against another run's record.
     """
     rows: list[dict] = []
     # Item names priced without their assembly -- see resolve_assembly_parent.
@@ -39,19 +48,29 @@ def rows_for(
     if classification.source == "llm":
         for c in clusters:
             spec = classification.specs_by_tag.get(c.tag)
-            if not spec:
-                continue
-            if c.tag.startswith("shape:") and str(spec.get("catalog_id") or "").strip().casefold() in ("", "none"):
-                # The model was only ever shown an image for the largest
-                # MAX_CROPS_PER_SHEET shape clusters on a sheet (classify_job's
-                # cap), and even a cluster it did see may resolve to nothing on
-                # the catalog list. Either way there is no classification to
-                # price: land it exactly as the deterministic path lands an
-                # unrecognized shape -- classify_cluster runs the same shape:
-                # branch classify() does -- regardless of whatever confidence or
-                # cost the model attached to a name it could not tie to a
-                # catalog item. Routed through _row_from_catalog, the same
-                # builder the deterministic path uses, so the two never drift.
+            # Two ways a cluster arrives here with no usable
+            # classification. The model may not have answered about this
+            # tag at all -- it can omit one, or return it in a form this
+            # exact-key lookup cannot match, which `shape:<sig>:<mod>`
+            # made reachable by giving a tag a second shape. Or it
+            # answered about a shape and tied it to no catalog item: it
+            # was only ever shown an image for the largest
+            # MAX_CROPS_PER_SHEET shape clusters on a sheet
+            # (classify_job's cap), and even a cluster it did see may
+            # resolve to nothing on the list.
+            #
+            # Either way there is no classification to price, and
+            # dropping the cluster would leave no row, no warning and no
+            # count for devices that are on the drawing. So land it
+            # exactly as the deterministic path lands an unrecognized
+            # cluster -- classify_cluster runs the same branches
+            # classify() does -- regardless of whatever confidence or
+            # cost the model attached to a name it could not tie to a
+            # catalog item. Routed through _row_from_catalog, the same
+            # builder the deterministic path uses, so the two never
+            # drift.
+            if not spec or (c.tag.startswith("shape:")
+                            and str(spec.get("catalog_id") or "").strip().casefold() in ("", "none")):
                 item = classification_mod.classify_cluster(c, sheets, templates)
                 rows.append(_row_from_catalog(item, c, sheets, classification.labor_rate, classification.material_factor))
                 continue

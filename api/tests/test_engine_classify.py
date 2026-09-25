@@ -579,3 +579,72 @@ def test_no_templates_means_the_old_wording():
     (item,) = classify([c], [sheet], templates=[])
     assert item.suggestions == []
     assert item.warning["fix"] == "Assign a classification, or reject it if it isn't a device."
+
+
+def test_a_modifier_tag_the_model_echoed_gets_its_row():
+    """`shape:<sig>:<modifier>` is a tag like any other once the prompt
+    describes it: the spec keyed on it prices the cluster normally."""
+    from app.engine import sheet
+    from app.engine.contracts import Classification, DetectedSheet, DeviceCluster, Placement
+
+    detected_sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                                   width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    cluster = DeviceCluster(tag="shape:abcd1234:3", sheet_page_index=0,
+                            placements=[Placement(10, 10, 6, 6)] * 4, exemplar=(7, 7, 13, 13), modifier="3")
+    cls = Classification(
+        specs_by_tag={"shape:abcd1234:3": {"tag": "shape:abcd1234:3", "name": "Three-way switch",
+                                            "catalog_id": "switch_3way", "confidence": "high",
+                                            "material_cost": 12, "labor_hours": 0.4}},
+        labor_rate=80.0, material_factor=1.0, source="llm", location_note="",
+    )
+    rows, _applied, _bare = sheet.rows_for([cluster], cls, [detected_sheet])
+    (row,) = rows
+    assert row["name"] == "Three-way switch"
+    assert row["quantity"] == 4
+
+
+def test_a_modifier_tag_the_model_normalised_away_still_lands_as_an_item():
+    """The honest failure. The model answered about `shape:abcd1234`
+    while the cluster is tagged `shape:abcd1234:3`, so the exact-key
+    lookup misses. That used to produce no row, no warning and no count
+    -- a silently omitted device, which is the one outcome
+    BUILD-STAGES.md names first. It now lands the way the deterministic
+    path lands an unrecognised shape: an item that needs attention."""
+    from app.engine import sheet
+    from app.engine.contracts import Classification, DetectedSheet, DeviceCluster, Placement
+
+    detected_sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                                   width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    cluster = DeviceCluster(tag="shape:abcd1234:3", sheet_page_index=0,
+                            placements=[Placement(10, 10, 6, 6)] * 4, exemplar=(7, 7, 13, 13), modifier="3")
+    cls = Classification(
+        specs_by_tag={"shape:abcd1234": {"tag": "shape:abcd1234", "name": "Three-way switch",
+                                          "catalog_id": "switch_3way", "confidence": "high",
+                                          "material_cost": 12, "labor_hours": 0.4}},
+        labor_rate=80.0, material_factor=1.0, source="llm", location_note="",
+    )
+    rows, _applied, _bare = sheet.rows_for([cluster], cls, [detected_sheet])
+    (row,) = rows
+    assert row["status"] == "attention"
+    assert row["quantity"] == 4
+    assert row["warning"]["title"] == "Symbol not in legend"
+
+
+def test_a_text_tag_the_model_never_answered_still_lands_as_an_item():
+    """Same hole, wider: the model is free to drop any tag from its
+    answer, not only a shape one. A tag the deterministic chain knows
+    comes back named and ready; one it does not comes back as an item
+    that needs attention. Either beats no row at all."""
+    from app.engine import sheet
+    from app.engine.contracts import Classification, DetectedSheet, DeviceCluster, Placement
+
+    detected_sheet = DetectedSheet(page_index=0, number="E2.1", title="", discipline="Electrical", scale="",
+                                   width_pt=1000, height_pt=800, region=(0, 0, 1000, 800))
+    known = DeviceCluster(tag="WP", sheet_page_index=0, placements=[Placement(10, 10)] * 7)
+    unknown = DeviceCluster(tag="ZQ9", sheet_page_index=0, placements=[Placement(20, 20)] * 2)
+    cls = Classification(specs_by_tag={}, labor_rate=80.0, material_factor=1.0, source="llm", location_note="")
+    rows, _applied, _bare = sheet.rows_for([known, unknown], cls, [detected_sheet])
+    by_tag = {r["tag"]: r for r in rows}
+    assert by_tag["WP"]["quantity"] == 7 and by_tag["WP"]["status"] == "ready"
+    assert by_tag["ZQ9"]["quantity"] == 2 and by_tag["ZQ9"]["status"] == "attention"
+    assert by_tag["ZQ9"]["warning"]["title"]

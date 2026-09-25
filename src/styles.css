@@ -906,6 +906,18 @@ button {
   margin-top: 10px;
 }
 
+/* the legend-suggestion block on an unclassified item (task 10) --
+   carries no review label and no status colour, it is a shortcut into
+   the same rename `edit` already offers, not a new kind of status. */
+.suggestions {
+  display: flex;
+  flex-direction: column;
+}
+
+.suggestions .btn--block {
+  margin-top: 8px;
+}
+
 .label {
   margin: 14px 0 3px;
   font-size: 11px;

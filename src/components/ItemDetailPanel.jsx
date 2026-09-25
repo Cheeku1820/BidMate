@@ -20,6 +20,7 @@ export default function ItemDetailPanel({
   itemError, onRefreshItem, onDismissItemError,
   counts, itemsTotal, onNextIssue,
   match, onAcceptMatch, onDiscardMatch, onRetryMatch,
+  onAcceptSuggestion,
 }) {
   const aiReading = currentSheet?.aiReading;
   if (!sel && match) {
@@ -169,6 +170,17 @@ export default function ItemDetailPanel({
                 <p className="warncard__where"><span className="sr-only">Where to look: </span>{w.where}</p>
               </div>
             ))}
+
+            {sel.name === "Unclassified symbol" && sel.suggestions?.length ? (
+              <div className="suggestions">
+                <p className="label">Suggested from the legend</p>
+                {sel.suggestions.map((s) => (
+                  <button key={`${s.name}-${s.sheet}`} className="btn btn--block" onClick={() => onAcceptSuggestion(sel, s.name)}>
+                    {s.name} · from {s.sheet}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             {sel.approvedBy && (
               <>

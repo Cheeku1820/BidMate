@@ -62,4 +62,10 @@ describe("MatchResultCard", () => {
     render(<MatchResultCard match={{ ...found(3), error: "That name is already used by a different symbol on this sheet." }} onAccept={() => {}} onDiscard={() => {}} onRetry={() => {}} sheetNumber="E2.1" />);
     expect(screen.getByText("That name is already used by a different symbol on this sheet.")).toBeTruthy();
   });
+
+  it("pre-fills the name from the legend suggestion and enables Add", () => {
+    render(<MatchResultCard match={{ ...found(3), suggestedName: "Duplex receptacle" }} onAccept={() => {}} onDiscard={() => {}} onRetry={() => {}} sheetNumber="E2.1" />);
+    expect(screen.getByLabelText("Name").value).toBe("Duplex receptacle");
+    expect(screen.getByRole("button", { name: "Add 3 to the takeoff" }).disabled).toBe(false);
+  });
 });

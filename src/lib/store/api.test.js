@@ -645,7 +645,7 @@ describe("symbol matches", () => {
 
     expect(fetchMock.mock.calls[0][0]).toBe("/api/sheets/s1/matches");
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ x: 500, y: 375, w: 12, h: 12 });
-    expect(m).toEqual({ id: "m1", sheetId: "s1", box: [500, 375, 12, 12], status: "pending", count: 0, matches: [], error: "" });
+    expect(m).toEqual({ id: "m1", sheetId: "s1", box: [500, 375, 12, 12], status: "pending", count: 0, matches: [], error: "", suggestedName: "" });
   });
 
   it("getMatch maps the polled result", async () => {

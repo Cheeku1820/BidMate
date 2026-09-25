@@ -7,7 +7,7 @@ import * as copy from "../lib/matchCopy.js";
  *  counted until the estimator names it or says they are not sure --
  *  so this card carries no review label and no status colour. */
 export default function MatchResultCard({ match, onAccept, onDiscard, onRetry, sheetNumber }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(match.suggestedName || "");
   const [symbol, setSymbol] = useState("receptacle");
   const [system, setSystem] = useState(SYSTEMS[0]);
   const n = match.count;

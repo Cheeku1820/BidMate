@@ -312,6 +312,7 @@ export default function Workspace() {
             await discardMatch();
             await startMatch(sheet.id, { x: b[0], y: b[1], w: b[2], h: b[3] });
           }}
+          onAcceptSuggestion={(item, name) => editItem(item.id, { name }, item.version)}
         />
       </div>
 

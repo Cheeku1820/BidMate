@@ -260,7 +260,20 @@ export function mapMaterialRow(r) {
  *  already live in -- and never become items or count toward any
  *  total on their own; only acceptMatch()'s result does that. */
 export function mapMatch(m) {
-  return { id: m.id, sheetId: m.sheet_id, box: m.box, status: m.status, count: m.count, matches: m.matches ?? [], error: m.error ?? "" };
+  return {
+    id: m.id,
+    sheetId: m.sheet_id,
+    box: m.box,
+    status: m.status,
+    count: m.count,
+    matches: m.matches ?? [],
+    error: m.error ?? "",
+    // The legend's own name for this shape, when one clustered cleanly
+    // enough to suggest (Task 9's engine output) -- pre-fills the name
+    // field rather than leaving the estimator to retype what the
+    // legend already says.
+    suggestedName: m.suggested_name ?? "",
+  };
 }
 
 export function mapUser(u) {

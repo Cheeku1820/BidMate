@@ -13,6 +13,7 @@
    ============================================================ */
 
 import Pill from "../Pill.jsx";
+import { STATUS, STATUS_ORDER } from "../../lib/vocabulary.js";
 
 export const NONE = "—";
 export const money = (n) => "$" + Math.round(Number(n)).toLocaleString();
@@ -20,7 +21,10 @@ export const money2 = (n) => "$" + Number(n).toFixed(2);
 const percent = (n) => (n > 0 ? "+" : n < 0 ? "−" : "") + Math.abs(Number(n)).toLocaleString() + "%";
 
 export const COLUMNS = [
-  { key: "status", label: "Status", align: "left", render: (row) => <Pill status={row.status} /> },
+  {
+    key: "status", label: "Status", align: "left", render: (row) => <Pill status={row.status} />,
+    text: (row) => STATUS[row.status]?.label ?? "", sortValue: (row) => STATUS_ORDER.indexOf(row.status),
+  },
   {
     key: "itemName", label: "Item", align: "left", header: true,
     render: (row) => (
@@ -29,6 +33,7 @@ export const COLUMNS = [
         {row.basisNote ? <div className="muted">{row.basisNote}</div> : null}
       </>
     ),
+    text: (row) => row.itemName, sortValue: (row) => row.itemName,
   },
   { key: "quantity", label: "Quantity", align: "right", render: (row) => row.quantity },
   {
@@ -43,6 +48,7 @@ export const COLUMNS = [
   {
     key: "hoursSourceLabel", label: "Hours source", align: "left",
     render: (row) => (row.hoursSourceLabel ? <span className="pill pill--neutral">{row.hoursSourceLabel}</span> : NONE),
+    text: (row) => row.hoursSourceLabel ?? "",
   },
   {
     key: "rate", label: "Rate", align: "right",
@@ -56,6 +62,7 @@ export const COLUMNS = [
   {
     key: "rateSourceLabel", label: "Rate source", align: "left",
     render: (row) => (row.rateSourceLabel ? <span className="pill pill--neutral">{row.rateSourceLabel}</span> : NONE),
+    text: (row) => row.rateSourceLabel ?? "",
   },
   {
     key: "adjustmentPercent", label: "Adjustment", align: "right",

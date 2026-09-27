@@ -8,9 +8,10 @@ import openpyxl
 import pytest
 from sqlalchemy import select
 
-from app.jobs import queue
+from app.jobs import copy, queue
 from app.market.price_sheet import build_request_workbook
 from app.takeoff.models import Document, Item, Job, ReviewStatus
+from app.takeoff.schemas import PriceSheetPreviewOut
 from app.worker.price_sheet_job import _supplier_and_date
 from tests.test_worker_read import _run_all, inline  # noqa: F401
 
@@ -76,3 +77,39 @@ def test_refused_sheet_completes_with_the_reason(db, project, dana, inline, monk
     job = queue.enqueue_price_sheet(db, d, dana.id); _run_all(db)
     db.refresh(job)
     assert job.status == "done" and "Unit price" in job.payload["preview"]["refused"]
+
+
+def test_preview_lists_unreadable_rows_with_line_and_reason(db, project, sheet, item, dana, inline, monkeypatch):
+    """A supplier's "call for price" and a priced row with no item name
+    each name their own line in the preview; the item whose row could
+    not be read is still, truthfully, unpriced."""
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+    d = _sheet_doc(db, project, dana, inline, f"Item,Unit price\n{item.name},call for price\n,4\n".encode(), name="q.csv")
+    job = queue.enqueue_price_sheet(db, d, dana.id); _run_all(db)
+    db.refresh(job)
+    p = job.payload["preview"]
+    assert job.status == "done" and p["refused"] is not None
+    assert p["unreadable"] == [{"line": 2, "reason": "the price isn't a number"}, {"line": 3, "reason": "the row has no item name"}]
+    assert p["matched"] == [] and [u["item_id"] for u in p["unpriced"]] == [str(item.id)]
+
+
+def test_a_price_sheet_job_that_dies_lands_spreadsheet_copy_not_pdf_copy(db, project, dana, inline, monkeypatch):
+    """"Re-save it as PDF" is the generic read copy, and it is wrong on a
+    spreadsheet. A price_sheet job that fails for any reason the parser
+    did not catch lands its own line, naming the price request as the
+    place to start from."""
+    monkeypatch.setattr("app.db.SessionLocal", lambda: db)
+
+    def boom(data, filename):
+        raise RuntimeError("workbook exploded")
+    monkeypatch.setattr("app.worker.price_sheet_job.parse_price_sheet", boom)
+    d = _sheet_doc(db, project, dana, inline, b"Item,Unit price\nx,1\n", name="q.csv")
+    job = queue.enqueue_price_sheet(db, d, dana.id); _run_all(db)
+    db.refresh(job)
+    assert job.status == "failed" and job.error == copy.PRICE_SHEET_FAILED
+    assert "PDF" not in job.error and job.error == "The price sheet couldn't be read. Start from Download price request and upload the filled file."
+
+
+def test_preview_schema_accepts_a_payload_without_the_unreadable_group():
+    """Previews written before this group existed still read back."""
+    assert PriceSheetPreviewOut(state="ready").unreadable == []

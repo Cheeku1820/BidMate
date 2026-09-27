@@ -17,15 +17,29 @@ services:
   # looking at what was stored; the API talks to 9000. Credentials here
   # are dev-only and match api/.env.example.
   minio:
-    # minio/minio was pulled from Docker Hub in 2025 (MinIO now publishes
-    # only to quay.io) -- pulling the Docker Hub name here 404s.
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    command: server /data --console-address ":9001"
+    # Same MinIO release this has always pinned (RELEASE.2025-04-22T22-12-26Z),
+    # from the last registry that still serves it anonymously. Every other
+    # source closed in turn: Docker Hub's minio/minio and minio/mc were
+    # pulled in 2025, Bitnami moved its current catalogue behind a paid
+    # subscription, and quay.io/minio began answering 401 UNAUTHORIZED to
+    # anonymous pulls on every tag -- `latest` included -- around
+    # 2026-09-25. Bitnami left its pre-subscription images public under
+    # `bitnamilegacy`, so this is the same server at the same version.
+    #
+    # No `command`: this image configures itself from the environment, and
+    # serves the console on 9001 without being told to. Its data directory
+    # is /bitnami/minio/data rather than /data, and it runs as uid 1001.
+    # A named volume's contents are path-independent, so an existing
+    # `miniodata` volume keeps its buckets across this change -- but files
+    # written by the old root-owned image stay read-only to 1001. If a dev
+    # stack that predates this sees upload failures, chown the volume once:
+    #   docker run --rm -v takeoff-review_miniodata:/v alpine chown -R 1001:0 /v
+    image: bitnamilegacy/minio:2025.4.22-debian-12-r2
     environment:
       MINIO_ROOT_USER: bidmate
       MINIO_ROOT_PASSWORD: bidmate-dev-secret
     ports: ["9000:9000", "9001:9001"]
-    volumes: ["miniodata:/data"]
+    volumes: ["miniodata:/bitnami/minio/data"]
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 3s
@@ -33,9 +47,10 @@ services:
       retries: 20
 
   # One-shot: create the bucket, then exit. `mc mb --ignore-existing` makes
-  # a second `compose up` a no-op.
+  # a second `compose up` a no-op. Bitnami ships mc as its own image, from
+  # the same withdrawn-then-recovered catalogue as the server above.
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+    image: bitnamilegacy/minio-client:2025.7.21-debian-12-r3
     depends_on:
       minio: {condition: service_healthy}
     entrypoint: >

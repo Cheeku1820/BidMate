@@ -458,3 +458,35 @@ export function mapPlan(raw) {
   };
 }
 
+/** Wire proposal -> card shape. The card's own fields are camelCased;
+ *  `proposal` (the item arm's inner payload) is left exactly as the
+ *  server sent it, because it is posted back to
+ *  POST /items/{id}/apply-proposal verbatim. */
+export function mapPanelProposal(raw) {
+  if (!raw) return null;
+  return {
+    kind: raw.kind,
+    summary: raw.summary,
+    note: raw.note ?? null,
+    count: raw.count ?? null,
+    sheetNumber: raw.sheet_number ?? null,
+    itemId: raw.item_id ?? null,
+    approve: raw.approve ?? false,
+    proposal: raw.proposal ?? null,
+    title: raw.title ?? null,
+    body: raw.body ?? null,
+    category: raw.category ?? null,
+    usage: raw.usage ?? null,
+    statementId: raw.statement_id ?? null,
+    projectId: raw.project_id ?? null,
+    key: raw.key ?? null,
+    status: raw.status ?? null,
+    editedText: raw.edited_text ?? null,
+    currentText: raw.current_text ?? null,
+    quote: raw.quote ?? null,
+    questionTitle: raw.question_title ?? null,
+    targetsPreview: (raw.targets_preview ?? []).map((t) => ({ label: t.label, detail: t.detail })),
+    moreCount: raw.more_count ?? 0,
+  };
+}
+

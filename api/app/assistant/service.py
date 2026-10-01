@@ -21,12 +21,13 @@ from sqlalchemy import func, select
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import Session as DbSession
 
-from app.assistant import llm
+from app.assistant import llm, propose
 from app.assistant.context import build
 from app.assistant.models import ConversationMessage
 from app.assistant.prompt import SYSTEM_PROMPT, render
 from app.assistant.schemas import ScreenIn
 from app.db import SessionLocal
+from app.engine import conversation
 from app.identity.models import User
 from app.observability import request_id_var
 from app.takeoff.models import Project
@@ -103,13 +104,52 @@ def history_for_model(db: DbSession, project_id: uuid.UUID) -> list[dict]:
     return [{"role": "user" if t.role == "estimator" else "assistant", "content": t.text} for t in turns]
 
 
-def prepare(db: DbSession, *, actor: User, project: Project, text: str, screen: ScreenIn) -> tuple[str, list[dict]]:
+def _sheet_number(bundle, screen: ScreenIn) -> str:
+    if screen.sheet_id is None or not bundle.sheets:
+        return ""
+    match = next((s for s in bundle.sheets if s["id"] == str(screen.sheet_id)), None)
+    return match["number"] if match else ""
+
+
+def _selection_name(bundle, screen: ScreenIn) -> str:
+    if screen.item_id is None or not bundle.items:
+        return ""
+    match = next((i for i in bundle.items if i["id"] == str(screen.item_id)), None)
+    return match["name"] if match else ""
+
+
+def _screen_in_fields(screen: dict) -> dict:
+    """The ids `propose.build` needs, pulled back out of the descriptor
+    `prepare` passed through. Deliberately not what `_screen_line` (in
+    app.engine.conversation) reads off the same dict -- that reads only
+    name/sheet/selection/filter/records, so the model never sees an id
+    it could echo back as a target."""
+    return {"name": screen["name"], "sheet_id": screen.get("sheet_id"),
+            "item_id": screen.get("item_id"), "view": screen.get("view")}
+
+
+def prepare(db: DbSession, *, actor: User, project: Project, text: str, screen: ScreenIn) -> tuple[str, list[dict], dict]:
     """Everything the stream needs, computed while the request's session
-    is open: the rendered bundle and the turns."""
-    bundle_text = render(build(db, actor, project, screen))
+    is open: the rendered bundle, the turns, and the screen descriptor the
+    session-less generator will route with. `record_keys` is computed here
+    -- it needs a session `route_message` never gets -- and the descriptor
+    carries the real ids alongside the words the model sees, for
+    `propose.build` to rebuild a `ScreenIn` from later."""
+    bundle = build(db, actor, project, screen)
+    bundle_text = render(bundle)
     store_estimator_turn(db, actor=actor, project=project, text=text, screen=screen)
     db.commit()
-    return bundle_text, history_for_model(db, project.id)
+    screen_for_routing = {
+        "name": screen.name,
+        "sheet": _sheet_number(bundle, screen),
+        "selection": _selection_name(bundle, screen),
+        "filter": screen.view.filter if screen.view else None,
+        "records": propose.record_keys(db, project, screen),
+        "sheet_id": screen.sheet_id,
+        "item_id": screen.item_id,
+        "view": screen.view,
+    }
+    return bundle_text, history_for_model(db, project.id), screen_for_routing
 
 
 def _event(name: str, payload: dict) -> str:
@@ -126,9 +166,11 @@ def _failed(outcome: tuple[str, str]) -> str:
     return _event("error", {"code": code, "message": message})
 
 
-def answer_events(*, project_id: uuid.UUID, actor_id: uuid.UUID, bundle_text: str, messages: list[dict]) -> Iterator[str]:
-    """The SSE body. Yields delta events as text arrives, then done with
-    the stored answer's id; on failure an error event and nothing stored."""
+def answer_events(*, project_id: uuid.UUID, actor_id: uuid.UUID, bundle_text: str, messages: list[dict],
+                  message_text: str, screen: dict) -> Iterator[str]:
+    """The SSE body. Yields delta events as text arrives, then -- once the
+    answer is stored -- an optional proposal event, then done with the
+    stored answer's id; on failure an error event and nothing stored."""
     import anthropic
 
     system_blocks = [
@@ -165,4 +207,91 @@ def answer_events(*, project_id: uuid.UUID, actor_id: uuid.UUID, bundle_text: st
     except Exception:  # noqa: BLE001
         yield _failed(INTERRUPTED)
         return
+
+    proposal = propose_for(project_id=project_id, actor_id=actor_id, message_text=message_text,
+                           screen=screen, answer_id=answer_id)
+    if proposal is not None:
+        _store_proposal(answer_id, proposal)
+        try:
+            event = _event("proposal", {"id": answer_id, "proposal": proposal})
+        except (TypeError, ValueError):
+            # The answer is already on the wire and stored; a proposal
+            # that cannot be turned into JSON must not take the rest of
+            # the stream down with it -- skip the event, keep `done`.
+            logger.warning("proposal event not serializable request_id=%s", request_id_var.get(), exc_info=True)
+        else:
+            yield event
     yield _event("done", {"id": answer_id})
+
+
+def propose_for(*, project_id: uuid.UUID, actor_id: uuid.UUID, message_text: str, screen: dict,
+                answer_id: str) -> dict | None:
+    """Route the sentence and build a proposal, after the answer is
+    already on screen. Opens its own session -- the request's session is
+    long gone by the time the generator reaches here. A failure here is
+    not an error the estimator needs: they already have their answer, so
+    it is logged and swallowed rather than surfaced as one."""
+    try:
+        with answer_session() as db:
+            project = db.get(Project, project_id)
+            if project is None:
+                return None
+            route = conversation.route_message(message_text, screen=screen)
+            return propose.build(db, project=project, route=route,
+                                 screen=ScreenIn(**_screen_in_fields(screen)), message=message_text)
+    except Exception:  # noqa: BLE001 -- the answer stands; the card is enrichment
+        logger.warning("proposal unavailable request_id=%s", request_id_var.get(), exc_info=True)
+        return None
+
+
+def _store_proposal(answer_id: str, proposal: dict) -> None:
+    """Persist what `propose_for` built onto the answer's own row, in its
+    own session -- kept out of `propose_for` so a proposal still lands on
+    the row even when a caller replaces `propose_for` outright (as the
+    unit tests do), and so a storage failure here never costs the
+    estimator the proposal event already on the wire."""
+    try:
+        with answer_session() as db:
+            row = db.get(ConversationMessage, uuid.UUID(answer_id))
+            if row is not None:
+                row.proposal, row.proposal_status = proposal, "offered"
+                db.commit()
+    except Exception:  # noqa: BLE001 -- the card rendered once; only the reload would miss it
+        logger.warning("proposal store failed request_id=%s", request_id_var.get(), exc_info=True)
+
+
+def thread_view(db: DbSession, project: Project) -> list[dict]:
+    """Each message as the panel renders it, with a stored proposal's
+    status recomputed: a card whose records have moved reads stale rather
+    than offering Apply. Read-only -- staleness is recomputed on every
+    read, never written back, so a card can recover if the estimator
+    undoes whatever moved it. Never commits, and the caller must not
+    either: recomputing a plan-kind proposal's staleness runs
+    `plan_service.build_plan`, which can stage a project-stage advance
+    (`db.execute(update(...))` + `db.flush()` -- see `GET /plan`, which
+    commits right after for exactly that reason) that a GET must never
+    persist -- the router rolls back immediately after this returns."""
+    rows = list_messages(db, project.id)
+    out = []
+    for row in rows:
+        status = row.proposal_status
+        if status == "offered":
+            kind = (row.proposal or {}).get("kind")
+            if kind not in propose.PROPOSAL_KINDS:
+                # The closed set moved on, or the row predates it being
+                # enforced -- either way there is no builder left to
+                # apply this against, so it reads exactly like a record
+                # that already moved: stale, never an offer.
+                status = "stale"
+            else:
+                try:
+                    if propose.is_stale(db, project=project, proposal=row.proposal):
+                        status = "stale"
+                except Exception:  # noqa: BLE001 -- a malformed stored proposal degrades its own card, not the thread
+                    logger.warning("stale check failed for message %s request_id=%s", row.id,
+                                   request_id_var.get(), exc_info=True)
+        out.append({
+            "id": row.id, "role": row.role, "text": row.text, "screen": row.screen,
+            "created_at": row.created_at, "proposal": row.proposal, "proposal_status": status,
+        })
+    return out

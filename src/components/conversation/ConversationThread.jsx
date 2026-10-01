@@ -14,8 +14,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import AnswerText from "./AnswerText.jsx";
+import ProposalCard from "./ProposalCard.jsx";
 
-export default function ConversationThread({ messages, pending, onRetry }) {
+export default function ConversationThread({ messages, pending, onRetry, onApplyProposal, onDismissProposal }) {
   const listRef = useRef(null);
   const stickToBottom = useRef(true);
   const wasStreaming = useRef(false);
@@ -49,6 +50,14 @@ export default function ConversationThread({ messages, pending, onRetry }) {
         {messages.map((m) => (
           <li key={m.id} className={`conversation__turn conversation__turn--${m.role}`}>
             {m.role === "answer" ? <AnswerText text={m.text} /> : <p>{m.text}</p>}
+            {m.proposal ? (
+              <ProposalCard
+                proposal={m.proposal}
+                status={m.proposalStatus}
+                onApply={() => onApplyProposal(m.id, m.proposal)}
+                onDismiss={() => onDismissProposal(m.id)}
+              />
+            ) : null}
           </li>
         ))}
         {pending && (

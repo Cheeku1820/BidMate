@@ -254,6 +254,9 @@ TENANCY_TABLE = [
      lambda p, s, i: f"/api/projects/{p.id}/plan/phases", lambda p, s, i: {"name": "Phase 2"}, None),
     ("DELETE", "/api/projects/{project_id}/plan/phases/{phase_id}",
      lambda p, s, i: f"/api/projects/{p.id}/plan/phases/{uuid.uuid4()}", None, None),
+    ("PATCH", "/api/projects/{project_id}/conversation/messages/{message_id}/proposal",
+     lambda p, s, i: f"/api/projects/{p.id}/conversation/messages/{uuid.uuid4()}/proposal",
+     lambda p, s, i: {"status": "applied"}, None),
 ]
 
 TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in TENANCY_TABLE]

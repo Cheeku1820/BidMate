@@ -44,13 +44,13 @@ function setup(extra = {}) {
   const onCommit = vi.fn();
   const onCancel = vi.fn();
   const ref = createRef();
-  render(
+  const { unmount } = render(
     <DataGrid
       ref={ref} columns={columns} rows={rows} rowKey={(r) => r.id} rowLabel={(r) => r.name}
       onCommit={onCommit} onCancel={onCancel} caption="Test grid" {...extra}
     />,
   );
-  return { onCommit, onCancel, ref };
+  return { onCommit, onCancel, ref, unmount };
 }
 
 /** gridcell at (row index, column among qty/hours/note/basis). */
@@ -68,6 +68,8 @@ describe("DataGrid markup", () => {
     expect(tabbable).toHaveLength(1);
     expect(tabbable[0]).toBe(cell(0, HOURS));
     expect(cell(0, HOURS)).toHaveAttribute("aria-selected", "true");
+    expect(cell(0, HOURS)).toHaveAttribute("data-active");
+    expect(screen.getByRole("grid")).toHaveAttribute("aria-multiselectable", "true");
   });
 
   test("marks editable cells and not read-only or disabled ones", () => {
@@ -89,24 +91,44 @@ describe("DataGrid markup", () => {
 });
 
 describe("moving the active cell", () => {
-  test("arrow keys move over editable cells only and focus follows", () => {
+  test("arrow keys move one cell in any direction, read-only cells included, and focus follows", () => {
     setup();
     fireEvent.keyDown(cell(0, HOURS), { key: "ArrowRight" });
     expect(cell(0, NOTE)).toHaveAttribute("aria-selected", "true");
     expect(document.activeElement).toBe(cell(0, NOTE));
     fireEvent.keyDown(cell(0, NOTE), { key: "ArrowDown" });
     expect(cell(1, NOTE)).toHaveAttribute("aria-selected", "true");
-    fireEvent.keyDown(cell(1, NOTE), { key: "ArrowRight" }); // row 2's basis is disabled
-    expect(cell(1, NOTE)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(cell(1, NOTE), { key: "ArrowRight" }); // row 2's basis is disabled, still reachable
+    expect(cell(1, BASIS)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(cell(1, BASIS), { key: "ArrowLeft" });
+    fireEvent.keyDown(cell(1, NOTE), { key: "ArrowLeft" });
+    fireEvent.keyDown(cell(1, HOURS), { key: "ArrowLeft" });
+    expect(cell(1, 0)).toHaveAttribute("aria-selected", "true"); // the read-only Quantity cell
+    expect(document.activeElement).toBe(cell(1, 0));
   });
 
-  test("Home from the last editable cell lands on the first", () => {
+  test("Home and End reach the row's first and last cell; Tab from a read-only cell goes to the next editable one", () => {
     setup();
     fireEvent.keyDown(cell(0, HOURS), { key: "End" });
     expect(cell(0, BASIS)).toHaveAttribute("aria-selected", "true");
     fireEvent.keyDown(cell(0, BASIS), { key: "Home" });
+    const header = screen.getAllByRole("rowheader")[0];
+    expect(header).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(header);
+    fireEvent.keyDown(header, { key: "Tab" });
     expect(cell(0, HOURS)).toHaveAttribute("aria-selected", "true");
-    expect(document.activeElement).toBe(cell(0, HOURS));
+  });
+
+  test("Enter, a printable key, and Delete do nothing on a read-only cell", () => {
+    const { onCommit } = setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowLeft" }); // onto Quantity
+    expect(cell(0, 0)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(cell(0, 0), { key: "Enter" });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.keyDown(cell(0, 0), { key: "5" });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.keyDown(cell(0, 0), { key: "Delete" });
+    expect(onCommit).not.toHaveBeenCalled();
   });
 
   test("Tab wraps to the next row and Shift+Tab back", () => {
@@ -281,6 +303,88 @@ describe("footer", () => {
   });
 });
 
+describe("range selection", () => {
+  const selected = () => document.querySelectorAll('[aria-selected="true"]');
+
+  test("Shift+ArrowRight extends over a read-only cell; the focus alone is data-active", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowLeft" }); // Quantity
+    fireEvent.keyDown(cell(0, 0), { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    expect(selected()).toHaveLength(4);
+    expect(cell(0, 0)).toHaveAttribute("aria-selected", "true");
+    expect(cell(1, HOURS)).toHaveAttribute("aria-selected", "true");
+    expect(document.querySelectorAll("[data-active]")).toHaveLength(1);
+    expect(cell(1, HOURS)).toHaveAttribute("data-active");
+    expect(document.activeElement).toBe(cell(1, HOURS));
+  });
+
+  test("a plain arrow collapses the range, and so does Escape", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    expect(selected()).toHaveLength(2);
+    fireEvent.keyDown(cell(1, HOURS), { key: "ArrowUp" });
+    expect(selected()).toHaveLength(1);
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(1, HOURS), { key: "Escape" });
+    expect(selected()).toHaveLength(1);
+    expect(cell(1, HOURS)).toHaveAttribute("data-active");
+  });
+
+  test("Shift+click extends from the anchor; Ctrl+A covers the grid, focused on the first cell of the first row", () => {
+    setup();
+    fireEvent.click(cell(2, NOTE), { shiftKey: true });
+    expect(selected()).toHaveLength(6); // rows 0–2 × hours, note
+    expect(cell(2, NOTE)).toHaveAttribute("data-active");
+    fireEvent.keyDown(cell(2, NOTE), { key: "a", ctrlKey: true });
+    expect(selected()).toHaveLength(15); // 3 rows × 5 columns, rowheaders included
+    expect(screen.queryByRole("textbox")).toBeNull();
+    // Focus lands on the first cell of the first row (the row header),
+    // not the last -- Ctrl/Cmd+A on a long grid must not scroll the
+    // estimator to the bottom.
+    expect(screen.getAllByRole("rowheader")[0]).toHaveAttribute("data-active");
+    expect(cell(2, NOTE)).not.toHaveAttribute("data-active");
+  });
+
+  test("clicking a read-only cell makes it active with no editor; clicking a link inside a cell does not", () => {
+    const withLink = [...columns];
+    withLink[1] = { ...columns[1], render: (r) => <a href="#seller">{r.qty}</a> };
+    const { onCommit } = setup({ columns: withLink });
+    fireEvent.click(cell(1, 0));
+    expect(cell(1, 0)).toHaveAttribute("data-active");
+    expect(document.activeElement).toBe(cell(1, 0));
+    fireEvent.click(cell(1, 0));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    const link = screen.getAllByRole("link")[2];
+    link.focus();
+    fireEvent.click(link);
+    expect(cell(2, 0)).not.toHaveAttribute("data-active");
+    expect(document.activeElement).toBe(link);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  test("the nested-interactive Tab guard still holds with a selection active", () => {
+    // Same guard as "clicking a link... does not", but with a range
+    // selected first: the guard reads event.target, not whether a
+    // selection exists, so it must hold either way.
+    const withLink = [...columns];
+    withLink[1] = { ...columns[1], render: (r) => <a href="#seller">{r.qty}</a> };
+    setup({ columns: withLink });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    const link = screen.getAllByRole("link")[0];
+    link.focus();
+    fireEvent.keyDown(link, { key: "Tab" });
+    expect(document.activeElement).toBe(link);
+  });
+
+  test("the Clear button never renders over a multi-cell range", () => {
+    setup();
+    expect(screen.getByRole("button", { name: "Clear entry" })).toBeInTheDocument();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    expect(screen.queryByRole("button", { name: "Clear entry" })).toBeNull();
+  });
+});
+
 /* ============================================================
    Fix round (task-6 review): four Important defects found in the
    brief's own DataGrid.jsx. One focused test per defect, below.
@@ -424,5 +528,278 @@ describe("fix round: minor items", () => {
     fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
     expect(screen.getByRole("alert")).toHaveTextContent("Enter a number");
     expect(onCommit).not.toHaveBeenCalled();
+  });
+});
+
+function clipboardEvent(type, data = {}) {
+  // jsdom has no ClipboardEvent constructor with clipboardData; a plain
+  // Event with the property attached is what fireEvent passes through.
+  const store = { ...data };
+  return {
+    clipboardData: {
+      getData: (t) => store[t] ?? "",
+      setData: (t, v) => { store[t] = v; },
+      types: Object.keys(store),
+    },
+    _store: store,
+  };
+}
+
+describe("clipboard, fill, clear, undo", () => {
+  test("copy writes the range as TSV and prevents the default", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowLeft" }); // Quantity
+    fireEvent.keyDown(cell(0, 0), { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    const ev = clipboardEvent("copy");
+    const prevented = !fireEvent.copy(screen.getByRole("grid"), ev);
+    expect(prevented).toBe(true);
+    expect(ev._store["text/plain"]).toBe("1\t0.5\n2\t");
+  });
+
+  test("copy inside an open editor is left to the input", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    const ev = clipboardEvent("copy");
+    const prevented = !fireEvent.copy(screen.getByRole("textbox"), ev);
+    expect(prevented).toBe(false);
+  });
+
+  test("a real text selection inside the table wins over the range copy", () => {
+    setup();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowLeft" }); // Quantity
+    fireEvent.keyDown(cell(0, 0), { key: "ArrowRight", shiftKey: true });
+    // An estimator drag-selected a note's own text -- a real, non-collapsed
+    // window selection anchored inside the grid's table -- rather than
+    // using the grid's own cell/range selection.
+    const spy = vi.spyOn(window, "getSelection").mockReturnValue({
+      isCollapsed: false,
+      anchorNode: cell(0, NOTE),
+    });
+    const ev = clipboardEvent("copy");
+    const prevented = !fireEvent.copy(screen.getByRole("grid"), ev);
+    expect(prevented).toBe(false);
+    expect(ev._store["text/plain"]).toBeUndefined();
+    spy.mockRestore();
+  });
+
+  test("paste maps the clip through onCommitRange and never through onCommit", () => {
+    const onCommitRange = vi.fn();
+    const { onCommit } = setup({ onCommitRange });
+    fireEvent.paste(cell(0, HOURS), clipboardEvent("paste", { "text/plain": "2\tfirst\r\n3\tsecond\r\n" }));
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCommitRange).toHaveBeenCalledTimes(1);
+    expect(onCommitRange).toHaveBeenCalledWith(
+      [
+        { row: rows[0], key: "hours", value: 2 },
+        { row: rows[0], key: "note", value: "first" },
+        { row: rows[1], key: "hours", value: 3 },
+        { row: rows[1], key: "note", value: "second" },
+      ],
+      { kind: "paste" },
+    );
+  });
+
+  test("a paste with nothing applicable calls nothing; a paste while editing is left to the input", () => {
+    const onCommitRange = vi.fn();
+    const { onCommit } = setup({ onCommitRange });
+    fireEvent.paste(cell(0, HOURS), clipboardEvent("paste", { "text/plain": "abc" }));
+    expect(onCommitRange).not.toHaveBeenCalled();
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    fireEvent.paste(screen.getByRole("textbox"), clipboardEvent("paste", { "text/plain": "7" }));
+    expect(onCommitRange).not.toHaveBeenCalled();
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  test("without onCommitRange a paste goes through onCommit once per change, in order", () => {
+    const { onCommit } = setup();
+    fireEvent.paste(cell(0, HOURS), clipboardEvent("paste", { "text/plain": "2\n3" }));
+    expect(onCommit.mock.calls).toEqual([[rows[0], "hours", 2], [rows[1], "hours", 3]]);
+  });
+
+  test("Ctrl+D fills the top row down the range; on one cell it does nothing", () => {
+    const onCommitRange = vi.fn();
+    setup({ onCommitRange });
+    fireEvent.keyDown(cell(0, HOURS), { key: "d", ctrlKey: true });
+    expect(onCommitRange).not.toHaveBeenCalled();
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(1, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(2, HOURS), { key: "d", metaKey: true });
+    expect(onCommitRange).toHaveBeenCalledWith(
+      [{ row: rows[1], key: "hours", value: 0.5 }, { row: rows[2], key: "hours", value: 0.5 }],
+      { kind: "fill" },
+    );
+  });
+
+  test("Delete over a range clears every entry through onCommitRange; on one cell it still uses onCommit", () => {
+    const onCommitRange = vi.fn();
+    const { onCommit } = setup({ onCommitRange });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(1, HOURS), { key: "ArrowDown", shiftKey: true });
+    fireEvent.keyDown(cell(2, HOURS), { key: "Delete" });
+    expect(onCommitRange).toHaveBeenCalledWith(
+      [{ row: rows[0], key: "hours", value: null }, { row: rows[2], key: "hours", value: null }],
+      { kind: "clear" },
+    );
+    expect(onCommit).not.toHaveBeenCalled();
+    fireEvent.keyDown(cell(2, HOURS), { key: "Escape" });
+    fireEvent.keyDown(cell(2, HOURS), { key: "Backspace" });
+    expect(onCommit).toHaveBeenCalledWith(rows[2], "hours", null);
+  });
+
+  test("Ctrl+Z and Ctrl+Shift+Z call onUndo and onRedo on a cell, never inside an editor", () => {
+    const onUndo = vi.fn(), onRedo = vi.fn();
+    setup({ onUndo, onRedo });
+    fireEvent.keyDown(cell(0, HOURS), { key: "z", metaKey: true });
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(cell(0, HOURS), { key: "Z", ctrlKey: true, shiftKey: true });
+    expect(onRedo).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(cell(0, HOURS), { key: "Enter" });
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "z", metaKey: true });
+    expect(onUndo).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sort", () => {
+  const names = () => screen.getAllByRole("rowheader").map((h) => h.textContent);
+  const header = (label) => screen.getByRole("columnheader", { name: label });
+
+  test("a header click cycles ascending, descending, off, with aria-sort and a reordered body", () => {
+    setup();
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(header("Hours")).toHaveAttribute("aria-sort", "ascending");
+    expect(names()).toEqual(["One", "Three", "Two"]); // 0.5, 1, null last
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(header("Hours")).toHaveAttribute("aria-sort", "descending");
+    expect(names()).toEqual(["Three", "One", "Two"]);
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(header("Hours")).not.toHaveAttribute("aria-sort");
+    expect(names()).toEqual(["One", "Two", "Three"]);
+  });
+
+  test("editing a sorted cell does not move its row; a reload with the same keys keeps the order; a new key appends", () => {
+    const { rerender } = render(<DataGrid columns={columns} rows={rows} rowKey={(r) => r.id} rowLabel={(r) => r.name} onCommit={() => {}} caption="t" />);
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    expect(names()).toEqual(["One", "Three", "Two"]);
+    const edited = rows.map((r) => (r.id === "r1" ? { ...r, hours: 99 } : r));
+    rerender(<DataGrid columns={columns} rows={edited} rowKey={(r) => r.id} rowLabel={(r) => r.name} onCommit={() => {}} caption="t" />);
+    expect(names()).toEqual(["One", "Three", "Two"]);
+    const added = [...edited, { id: "r4", name: "Four", qty: 4, hours: 0, entered: false, note: "", basis: "a" }];
+    rerender(<DataGrid columns={columns} rows={added} rowKey={(r) => r.id} rowLabel={(r) => r.name} onCommit={() => {}} caption="t" />);
+    expect(names()).toEqual(["Four", "Three", "One", "Two"]); // re-sorted: the key set changed
+  });
+
+  test("selection and commits follow the displayed order", () => {
+    const { onCommit } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Hours" }));
+    // Displayed row 1 is "Three" now.
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown" });
+    fireEvent.keyDown(cell(1, HOURS), { key: "Delete" });
+    expect(onCommit).toHaveBeenCalledWith(rows[2], "hours", null);
+  });
+});
+
+describe("fill handle", () => {
+  const handle = () => document.querySelector(".grid-fill-handle");
+
+  test("renders only in the range's bottom-right cell", () => {
+    setup();
+    expect(cell(0, HOURS).contains(handle())).toBe(true);
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowRight", shiftKey: true });
+    expect(cell(0, NOTE).contains(handle())).toBe(true);
+    expect(document.querySelectorAll(".grid-fill-handle")).toHaveLength(1);
+  });
+
+  test("dragging down repeats the source rows onto the rows passed, then extends the selection", () => {
+    const onCommitRange = vi.fn();
+    setup({ onCommitRange });
+    fireEvent.mouseDown(handle());
+    fireEvent.mouseEnter(cell(1, HOURS));
+    expect(cell(1, HOURS)).toHaveAttribute("data-fill-target");
+    fireEvent.mouseEnter(cell(2, HOURS));
+    expect(cell(2, HOURS)).toHaveAttribute("data-fill-target");
+    fireEvent.mouseUp(document);
+    expect(onCommitRange).toHaveBeenCalledWith(
+      [{ row: rows[1], key: "hours", value: 0.5 }, { row: rows[2], key: "hours", value: 0.5 }],
+      { kind: "fill" },
+    );
+    expect(document.querySelectorAll('[aria-selected="true"]')).toHaveLength(3);
+    expect(cell(2, HOURS)).toHaveAttribute("data-active");
+    expect(cell(2, HOURS)).not.toHaveAttribute("data-fill-target");
+  });
+
+  test("releasing on the source row, or above it, fills nothing", () => {
+    const onCommitRange = vi.fn();
+    setup({ onCommitRange });
+    fireEvent.keyDown(cell(0, HOURS), { key: "ArrowDown" });
+    fireEvent.mouseDown(handle());
+    fireEvent.mouseEnter(cell(0, HOURS));
+    fireEvent.mouseUp(document);
+    expect(onCommitRange).not.toHaveBeenCalled();
+  });
+
+  test("unmounting mid-drag removes the document mouseup listener", () => {
+    const onCommitRange = vi.fn();
+    const { unmount } = setup({ onCommitRange });
+    fireEvent.mouseDown(handle());
+    fireEvent.mouseEnter(cell(1, HOURS));
+    unmount();
+    fireEvent.mouseUp(document);
+    expect(onCommitRange).not.toHaveBeenCalled();
+  });
+
+  test("a click on the handle with no drag neither opens the editor nor collapses the range", () => {
+    setup();
+    const before = document.querySelectorAll('[aria-selected="true"]').length;
+    fireEvent.click(handle());
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[aria-selected="true"]')).toHaveLength(before);
+  });
+});
+
+describe("resize", () => {
+  const handles = () => document.querySelectorAll(".grid-resize");
+
+  test("dragging a header edge widens that column and freezes the layout; the floor is 60px; the drag does not sort", () => {
+    setup();
+    expect(handles()).toHaveLength(5);
+    const h = handles()[2]; // Hours
+    fireEvent.mouseDown(h, { clientX: 100 });
+    expect(screen.getByRole("grid")).toHaveClass("is-resizing");
+    fireEvent.mouseMove(document, { clientX: 140 });
+    fireEvent.mouseUp(document);
+    const cols = document.querySelectorAll("colgroup col");
+    expect(cols).toHaveLength(5);
+    // jsdom reports offsetWidth 0, so the snapshot falls back to 120px.
+    expect(cols[2].style.width).toBe("160px");
+    expect(cols[1].style.width).toBe("120px");
+    expect(screen.getByRole("grid").style.tableLayout).toBe("fixed");
+    expect(screen.getByRole("grid")).not.toHaveClass("is-resizing");
+    expect(screen.getByRole("columnheader", { name: "Hours" })).not.toHaveAttribute("aria-sort");
+    fireEvent.mouseDown(h, { clientX: 100 });
+    fireEvent.mouseMove(document, { clientX: -500 });
+    fireEvent.mouseUp(document);
+    expect(document.querySelectorAll("colgroup col")[2].style.width).toBe("60px");
+  });
+
+  test("unmounting mid-drag removes the document mousemove and mouseup listeners", () => {
+    const { unmount } = setup();
+    const h = handles()[2];
+    fireEvent.mouseDown(h, { clientX: 100 });
+    const spy = vi.spyOn(document, "removeEventListener");
+    unmount();
+    expect(spy).toHaveBeenCalledWith("mousemove", expect.any(Function));
+    expect(spy).toHaveBeenCalledWith("mouseup", expect.any(Function));
+    spy.mockRestore();
+    expect(() => {
+      fireEvent.mouseMove(document, { clientX: 300 });
+      fireEvent.mouseUp(document);
+    }).not.toThrow();
+  });
+
+  test("a click on the resize handle with no drag does not sort its column", () => {
+    setup();
+    fireEvent.click(handles()[2]); // Hours
+    expect(screen.getByRole("columnheader", { name: "Hours" })).not.toHaveAttribute("aria-sort");
   });
 });

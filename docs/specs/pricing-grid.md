@@ -127,14 +127,14 @@ existing `--blue` focus ring. Keys:
 
 | Key | Moves |
 |---|---|
-| ← → ↑ ↓ | one editable cell in that direction; ↑/↓ stay in the column |
+| ← → ↑ ↓ | one cell in that direction, any column — see [spreadsheet-grid.md](spreadsheet-grid.md) |
 | Tab / Shift+Tab | next / previous editable cell, wrapping to the next / previous row |
 | Enter | opens the editor (see below); in an editor, commits and moves down |
 | Home / End | first / last editable cell in the row |
 | Any printable character | opens the editor with that character as the whole value |
 | F2 | opens the editor with the current value, caret at the end |
 
-Only editable cells participate. On the labor screen Tab walks
+On the labor screen Tab walks
 hours → rate → adjustment % → reason → next row's hours; Status, Item,
 Quantity, the two source tags, Adj. hours and Labor cost are stepped
 over. Tab out of the last editable cell of the last row leaves the grid.
@@ -505,7 +505,8 @@ Named so the next person does not read absence as oversight:
   jobs run one crew and a per-item count is the exception. That is a
   small backend addition (three counts on `Project`, one step in
   `resolve_rate`) and its own slice. Notes stay per-item and unbuilt.
-- **Range selection, fill-down, paste**, the next natural step toward a
-  spreadsheet and the one that makes a 400-row hospital set tolerable.
-- **Sort and status filter chips** on these two screens.
+- **Range selection, fill-down, paste, sort, column resize** — now
+  designed in [`spreadsheet-grid.md`](spreadsheet-grid.md), which
+  extends this grid rather than replacing it.
+- **Status filter chips** on these two screens.
 - **Screen G on the grid.**

@@ -669,9 +669,11 @@ export function createApiStore() {
       })),
       unmatched: (p.unmatched ?? []).map((u) => ({ itemName: u.item_name, unitPrice: u.unit_price, line: u.line })),
       unpriced: (p.unpriced ?? []).map((u) => ({ itemId: u.item_id, itemName: u.item_name })),
-      // Rows the sheet carried that could not be read in full -- today
-      // a lead time that is not a number of weeks. The row's price
-      // still applies; this names what was skipped, by line.
+      // Rows the sheet carried that could not be read in full -- a
+      // price that is not a number, a row with no item name, or a lead
+      // time that is not a number of weeks. Where only the lead time
+      // was unreadable the row's price still applies; either way this
+      // names what was skipped, by line.
       unreadable: (p.unreadable ?? []).map((u) => ({ line: u.line, reason: u.reason })),
     };
   }

@@ -12,7 +12,18 @@ it paid for instead of rolling it all back and re-spending it on the
 retry. And the job stops itself before the sandbox would: past
 PRICE_JOB_BUDGET_SECONDS it marks itself done and queues another
 `price` job for the same project, which skips the fresh rows and
-carries on from where this one stopped."""
+carries on from where this one stopped.
+
+One exception to the follow-on, or the two combine into a loop: a
+source that is down turns every call into a timeout, so a run spends
+its whole budget on `failed` rows and queues a follow-on that does the
+same, forever, while the workspace says "Refreshing" with Refresh
+disabled. So at the budget the follow-on is queued only when at least
+one source call this run came back with an answer -- or when no source
+call was made at all, since then nothing this run did was the problem.
+A run that got no answer from any call stops here; its rows read
+"Market estimate didn't complete" with Refresh as the fix, and Refresh
+is enabled again because nothing is queued."""
 from __future__ import annotations
 
 import statistics
@@ -96,6 +107,7 @@ def run(db: Session, job: Job) -> None:
     sources = get_sources()
     cap = settings.market_lookup_monthly_cap
     started = _clock()
+    calls = answered = 0   # source calls this run, and how many came back
     items = list(db.scalars(countable_items(project.id)))
     for item in items:
         if _clock() - started > PRICE_JOB_BUDGET_SECONDS:
@@ -103,9 +115,11 @@ def run(db: Session, job: Job) -> None:
             # committed; this one and the rest are untouched (no row
             # yet, or the row they had). Done first, then the follow-on
             # job -- enqueue_price refuses while this one still reads
-            # as running.
+            # as running. No follow-on when every source call failed:
+            # it would spend its budget the same way (module docstring).
             queue.mark_done(db, job)
-            queue.enqueue_price(db, project, job.requested_by, run_id=job.run_id)
+            if answered or not calls:
+                queue.enqueue_price(db, project, job.requested_by, run_id=job.run_id)
             break
         existing = db.get(ItemMarketPrice, item.id)
         if existing is not None and existing.outcome == "priced" and existing.lookup_id is not None \
@@ -140,11 +154,13 @@ def run(db: Session, job: Job) -> None:
         if billed_this_month(db, project.org_id) >= cap:
             _write(db, item, outcome="over_budget", source=source.name, query=lookup.query, res=None, lookup=None, run_id=job.run_id)
             continue
+        calls += 1
         try:
             res = source.lookup(lookup.query, item.unit, loc)
         except SourceError:
             _write(db, item, outcome="failed", source=source.name, query=lookup.query, res=None, lookup=None, run_id=job.run_id)
             continue
+        answered += 1
         row = cached or MarketLookup(source=source.name, query_key=key, location_key=loc, org_id=project.org_id)
         # A stale row from another org is refreshed in place, and the
         # meter row belongs to whoever paid for the call that is on it

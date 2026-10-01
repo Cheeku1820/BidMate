@@ -2,7 +2,13 @@
 that reads the filled sheet back (estimate-first-pricing §6). Pure:
 bytes in, records out. Only two cells are interpreted -- the price (a
 number) and the row key (an id the caller checks belongs to the
-project). Everything else is text, carried as text."""
+project). Everything else is text, carried as text.
+
+A row the parser can't read is reported, never raised: it lands in
+`ParsedSheet.unreadable` with its line and a reason in the estimator's
+words, so a supplier's "call for price" or a NaN cell names its own row
+in the preview instead of failing the whole upload. A blank price is
+not unreadable -- it is an unpriced row, as before."""
 from __future__ import annotations
 
 import csv
@@ -33,9 +39,23 @@ _PLAIN_NUMBER_RE = re.compile(r"^-?\d+(\.\d+)?$")
 # from the bid. Either reads back as unpriced, never as a number.
 PRICE_LIMIT = Decimal("100000000")
 
+REFUSED_ALL_UNREADABLE = "None of the rows could be read. Start from Download price request."
+# The reasons a row can be unreadable, as the preview lists them
+# ("Row 14 -- the price isn't a number").
+NOT_A_NUMBER = "the price isn't a number"
+NO_ITEM_NAME = "the row has no item name"
+ROW_UNREADABLE = "the row couldn't be read"
+NOT_A_LEAD_TIME = "the lead time isn't a number of weeks"
+
 
 def price_in_range(value: Decimal) -> bool:
-    return Decimal(0) <= value < PRICE_LIMIT
+    # NaN survives quantize and raises on comparison; ask first.
+    return value.is_finite() and Decimal(0) <= value < PRICE_LIMIT
+
+
+class RowUnreadable(Exception):
+    """A row the parser can't read; str(exc) is the reason, in the
+    estimator's words."""
 
 
 class ParsedRow(NamedTuple):
@@ -49,12 +69,12 @@ class ParsedRow(NamedTuple):
     # §7.1). Optional: a sheet from before the column existed, or a
     # supplier who left it blank, parses exactly as it always did.
     lead_weeks: int | None = None
-    lead_error: str | None = None
 
 
 class ParsedSheet(NamedTuple):
     rows: list[ParsedRow]
     refused: str | None
+    unreadable: list[tuple[int, str]] = []   # (line, reason)
 
 
 def build_request_workbook(rows: list[dict]) -> bytes:
@@ -79,19 +99,20 @@ def build_request_workbook(rows: list[dict]) -> bytes:
     return out.getvalue()
 
 
-def _price(v) -> Decimal | None:
+def _read_price(v) -> Decimal | None:
     """The one cell besides the row key that's interpreted rather than
     carried as text -- so a wrong number here is the failure this
-    module exists to prevent. A number (int/float/Decimal, but not
-    bool: `True`/`False` are never a price) converts directly. A string
-    is accepted only when, after stripping a `$`, surrounding
-    whitespace, and a leading or trailing currency word, what remains
-    is unambiguously a plain or US-grouped decimal number -- scientific
-    notation ("1e3"), a European "2.250,00", "call for price", or
-    anything else non-numeric returns None (unpriced) rather than
-    guessing. So does a number outside `price_in_range`: a negative
-    price or one the price column can't hold is listed as unpriced,
-    not carried to the apply step to fail there."""
+    module exists to prevent. Blank (None or "") is None: an unpriced
+    row. A number (int/float/Decimal, but not bool: `True`/`False` are
+    never a price) converts directly. A string is accepted only when,
+    after stripping a `$`, surrounding whitespace, and a leading or
+    trailing currency word, what remains is unambiguously a plain or
+    US-grouped decimal number. Anything else present in the cell --
+    scientific notation ("1e3"), a European "2.250,00", "call for
+    price", NaN, infinity -- raises RowUnreadable(NOT_A_NUMBER) rather
+    than guessing. A number outside `price_in_range` (negative, or one
+    the price column can't hold) returns None: the row is listed as
+    unpriced, not carried to the apply step to fail there."""
     if isinstance(v, bool):
         return None
     if v is None or v == "":
@@ -99,41 +120,56 @@ def _price(v) -> Decimal | None:
     if isinstance(v, (int, float, Decimal)):
         try:
             d = Decimal(str(v)).quantize(Decimal("0.01"))
-        except InvalidOperation:   # inf, nan
-            return None
+        except InvalidOperation:   # inf, sNaN
+            raise RowUnreadable(NOT_A_NUMBER) from None
+        if not d.is_finite():      # a quiet NaN survives quantize
+            raise RowUnreadable(NOT_A_NUMBER)
         return d if price_in_range(d) else None
     s = str(v).strip()
+    if not s:
+        return None
     s = _CURRENCY_WORD_LEAD_RE.sub("", s)
     s = _CURRENCY_WORD_TRAIL_RE.sub("", s)
     s = s.replace("$", "").strip()
     if _THOUSANDS_RE.match(s):
         s = s.replace(",", "")
     elif not _PLAIN_NUMBER_RE.match(s):
-        return None
+        raise RowUnreadable(NOT_A_NUMBER)
     try:
         d = Decimal(s).quantize(Decimal("0.01"))
     except InvalidOperation:
-        return None
+        raise RowUnreadable(NOT_A_NUMBER) from None
     return d if price_in_range(d) else None
 
 
 # A lead time is a whole number of weeks. "12 wks" is a person writing
 # a unit into a number column, not a number -- it is named back to them
-# by row rather than guessed at or dropped.
+# by row rather than guessed at or dropped. The reason carries no line:
+# the row loop pairs it with one, the way every other reason here is
+# listed.
 _LEAD_RE = re.compile(r"^\s*(\d{1,3})\s*$")
 
 
-def _lead(cell, line: int) -> tuple[int | None, str | None]:
+def _lead(cell) -> tuple[int | None, str | None]:
     if cell is None or str(cell).strip() == "":
         return None, None
     if isinstance(cell, bool):
-        return None, f"Row {line}: the lead time isn't a number of weeks"
+        return None, NOT_A_LEAD_TIME
     if isinstance(cell, (int, float)) and float(cell).is_integer() and 0 <= float(cell) < 1000:
         return int(cell), None
     match = _LEAD_RE.match(str(cell))
     if match:
         return int(match.group(1)), None
-    return None, f"Row {line}: the lead time isn't a number of weeks"
+    return None, NOT_A_LEAD_TIME
+
+
+def _price(v) -> Decimal | None:
+    """`_read_price` with the refusal folded into None -- the price, or
+    nothing usable."""
+    try:
+        return _read_price(v)
+    except RowUnreadable:
+        return None
 
 
 def _grid(data: bytes, filename: str) -> list[list]:
@@ -167,23 +203,36 @@ def parse_price_sheet(data: bytes, filename: str) -> ParsedSheet:
                                f"The price request download has them in place.")
     hi, cols = found
     rows: list[ParsedRow] = []
+    unreadable: list[tuple[int, str]] = []
     for n, row in enumerate(grid[hi + 1:], start=hi + 2):
         def cell(name):
             j = cols.get(name.lower())
             return row[j] if j is not None and j < len(row) else None
-        name = cell("Item")
-        if name is None or not str(name).strip():
-            continue
-        key = cell("Row key")
-        lead_weeks, lead_error = _lead(cell("Lead time (weeks)"), n)
-        rows.append(ParsedRow(
-            row_key=str(key).strip() if key not in (None, "") else None,
-            item_name=str(name).strip(),
-            unit_price=_price(cell("Unit price")),
-            part_no=str(cell("Supplier part no.") or "").strip()[:100],
-            notes=str(cell("Notes") or "").strip()[:500],
-            line=n,
-            lead_weeks=lead_weeks,
-            lead_error=lead_error,
-        ))
-    return ParsedSheet(rows, None)
+        if all(c is None or not str(c).strip() for c in row):
+            continue   # a formatted-but-empty row, not an unreadable one
+        try:
+            name = cell("Item")
+            if name is None or not str(name).strip():
+                raise RowUnreadable(NO_ITEM_NAME)
+            key = cell("Row key")
+            # An unreadable lead time does not cost the row: the price is
+            # what the sheet was sent for, and it still applies. So the
+            # row is kept and the lead time alone is listed, by line.
+            lead_weeks, lead_error = _lead(cell("Lead time (weeks)"))
+            rows.append(ParsedRow(
+                row_key=str(key).strip() if key not in (None, "") else None,
+                item_name=str(name).strip(),
+                unit_price=_read_price(cell("Unit price")),
+                part_no=str(cell("Supplier part no.") or "").strip()[:100],
+                notes=str(cell("Notes") or "").strip()[:500],
+                line=n,
+                lead_weeks=lead_weeks,
+            ))
+            if lead_error:
+                unreadable.append((n, lead_error))
+        except RowUnreadable as exc:
+            unreadable.append((n, str(exc)))
+        except Exception:   # noqa: BLE001 -- one bad row is listed, never the whole upload lost
+            unreadable.append((n, ROW_UNREADABLE))
+    refused = REFUSED_ALL_UNREADABLE if unreadable and not rows else None
+    return ParsedSheet(rows, refused, unreadable)

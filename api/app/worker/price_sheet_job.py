@@ -1,7 +1,11 @@
 """price_sheet: read an uploaded supplier price sheet into a preview on
 the job's payload. Nothing is applied here -- the estimator does that
 from the preview (estimate-first-pricing §6). A refused sheet is a
-completed job carrying the reason, not a failure."""
+completed job carrying the reason, not a failure, and a row the parser
+could not read is a line in the preview's `unreadable` group, not a
+failure either. A job that does fail -- storage, a workbook that opens
+and then blows up, the timeout -- lands copy.PRICE_SHEET_FAILED through
+queue.terminal_copy, never the PDF wording."""
 from __future__ import annotations
 
 import os
@@ -61,13 +65,8 @@ def run(db: Session, job: Job) -> None:
     by_id = {str(i.id): i for i in items}
     by_name = {i.name: i for i in items}
     overrides = {r.item_id: r for r in db.scalars(select(ProjectMaterialPrice).where(ProjectMaterialPrice.item_id.in_([i.id for i in items])))}
-    matched, unmatched, seen, unreadable = [], [], set(), []
+    matched, unmatched, seen = [], [], set()
     for r in parsed.rows:
-        # A row can carry a good price and a bad lead time. It stays
-        # matched -- the price applies -- and the lead time is named
-        # back by row rather than dropped (phases-and-timeline §7.1).
-        if r.lead_error:
-            unreadable.append({"line": r.line, "reason": r.lead_error})
         item = by_id.get(r.row_key or "") or (by_name.get(r.item_name) if r.row_key is None else None)
         if item is None or str(item.id) in seen:
             unmatched.append({"item_name": r.item_name, "unit_price": str(r.unit_price) if r.unit_price is not None else None, "line": r.line})
@@ -85,7 +84,11 @@ def run(db: Session, job: Job) -> None:
     unpriced = [{"item_id": str(i.id), "item_name": i.name} for i in items if str(i.id) not in priced_ids]
     supplier, date = _supplier_and_date(doc.filename)
     job.payload = {**(job.payload or {}), "preview": {
-        "matched": matched, "unmatched": unmatched, "unpriced": unpriced, "unreadable": unreadable,
-        "refused": parsed.refused,
+        "matched": matched, "unmatched": unmatched, "unpriced": unpriced, "refused": parsed.refused,
+        # Every row the parser could not read in full, the lead times
+        # among them: a row with a good price and a bad lead time stays
+        # matched -- the price applies -- and the lead time is named back
+        # by line rather than dropped (phases-and-timeline §7.1).
+        "unreadable": [{"line": line, "reason": reason} for line, reason in parsed.unreadable],
         "supplier_name": supplier, "quote_date": date}}
     db.flush()

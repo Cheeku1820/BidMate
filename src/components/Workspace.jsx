@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SYSTEMS } from "../lib/vocabulary.js";
 import { Link, useNavigate } from "react-router-dom";
 import { useWorkspaceContext } from "./project/useWorkspaceContext.js";
@@ -25,9 +25,21 @@ export default function Workspace() {
     itemError, clearItemError, setPresenceTarget, refresh,
     deleteItem, editItem, setScale, undo, redo, applyProposal,
     me, sheetId, setSheetId, selectedItemId, selectItem, project, projectId,
-    store,
+    store, phases,
   } = useWorkspaceContext();
   const navigate = useNavigate();
+
+  // Moving one item to another phase: a takeoff mutation like any
+  // other, so it goes through the store, lands in the action log, and
+  // refreshes both the snapshot and the phase list the field reads.
+  const setItemPhase = useCallback(
+    async (itemId, phaseId) => {
+      if (typeof store.setItemPhase !== "function") return;
+      await store.setItemPhase(itemId, phaseId);
+      await refresh();
+    },
+    [store, refresh],
+  );
 
   // Notes (Task 4's listNotes/createNote/updateNote/deleteNote) sit
   // outside the polled review snapshot -- a note write never changes the
@@ -318,6 +330,8 @@ export default function Workspace() {
           itemError={itemError}
           onRefreshItem={refreshItem}
           onDismissItemError={clearItemError}
+          phases={phases}
+          onSetItemPhase={setItemPhase}
           counts={counts}
           itemsTotal={items.length}
           onNextIssue={nextIssue}

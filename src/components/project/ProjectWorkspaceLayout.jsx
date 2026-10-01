@@ -70,6 +70,14 @@ function LayoutForProject({ store, me, onSignedOut, projectId }) {
     };
   }, [store, projectId]);
 
+  // The project's phases, for the screens that only show a phase once
+  // a second one exists (the item panel's field, the spreadsheet's
+  // column). Read off the polled snapshot rather than fetched here:
+  // the poll is what makes a phase a colleague added appear without a
+  // reload, and the snapshot's version is built from the action log,
+  // which every phase mutation appends to.
+  const phases = review.snapshot?.phases ?? [];
+
   const [sheetId, setSheetId] = useState(null);
   const [selectedItemId, setSelectedItemId] = useState(null);
 
@@ -135,6 +143,8 @@ function LayoutForProject({ store, me, onSignedOut, projectId }) {
         setSheetId,
         selectedItemId,
         selectItem,
+        // The project's phases, by name (see above).
+        phases,
       }}
     />
   );

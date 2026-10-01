@@ -226,7 +226,10 @@ def _overwrite(item: Item, sheet: Sheet, row: dict) -> None:
     it. Deliberately does not touch `approved_by_user_id`/`approved_at`/
     `rejected_by_user_id`/`rejected_at` either: this function is only
     ever called on a row already confirmed not APPROVED, and rejection
-    is orthogonal to the engine's fields the same way notes is.
+    is orthogonal to the engine's fields the same way notes is. Nor
+    `phase_id` (phases-and-timeline.md §3.1): a phase is a grouping the
+    estimator made, and `upsert_sheet_rows()` leaves `Sheet.phase_id`
+    alone for the same reason.
     """
     item.sheet_id = sheet.id
     item.symbol = row["symbol"]

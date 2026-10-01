@@ -28,7 +28,7 @@ from app.identity.models import User
 from app.jobs import queue
 from app.market.price_sheet import build_request_workbook, price_in_range
 from app.takeoff import actions
-from app.takeoff.models import CompanyMaterialPrice, Document, Job, ProjectMaterialPrice
+from app.takeoff.models import CompanyMaterialPrice, Document, ItemLeadTime, Job, ProjectMaterialPrice
 from app.takeoff.pricing_router import _snapshot, get_material_pricing, record_company_action
 from app.takeoff.router import load_item, load_project
 from app.takeoff.schemas import MaterialListOut, PriceSheetApplyIn, PriceSheetPreviewOut
@@ -126,6 +126,24 @@ def apply_price_sheet(project_id: uuid.UUID, document_id: uuid.UUID, body: Price
         db.add(row)
         db.flush(); db.refresh(row)
         after[item_id] = _snapshot(ProjectMaterialPrice, iid, db)
+
+        # A supplier who filled the lead-time column has quoted this
+        # item's lead time as surely as its price, so it lands the same
+        # way: on the item, sourced to them, dated to the quote
+        # (phases-and-timeline.md §7.1). Rows without one are untouched
+        # and keep the flat before/after shape.
+        lead_weeks = by_id[item_id].get("lead_weeks")
+        if lead_weeks is not None:
+            lead_before = _snapshot(ItemLeadTime, iid, db)
+            lead = db.get(ItemLeadTime, iid) or ItemLeadTime(item_id=iid)
+            lead.flagged, lead.lead_weeks, lead.source = True, int(lead_weeks), "supplier_quote"
+            lead.source_label = body.supplier_name
+            lead.quoted_at, lead.updated_by_user_id = body.quote_date, user.id
+            db.add(lead)
+            db.flush()
+            db.refresh(lead)
+            before[item_id] = {"price": before[item_id], "lead_time": lead_before}
+            after[item_id] = {"price": after[item_id], "lead_time": _snapshot(ItemLeadTime, iid, db)}
         if body.save_to_company:
             existing = db.scalars(select(CompanyMaterialPrice).where(
                 CompanyMaterialPrice.org_id == user.org_id, CompanyMaterialPrice.item_name == item.name)).one_or_none()

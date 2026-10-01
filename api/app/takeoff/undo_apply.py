@@ -15,9 +15,9 @@ each kind's `before`/`after` shape differs (see `review.py`, `bulk.py`,
   `Item` columns, restored with one `decode_snapshot()` call against
   `snapshots.ITEM_SNAPSHOT_TYPES`.
 - `delete` -- `before` is a full `Item` column snapshot plus a nested
-  `"warnings"` list and optional `"labor_line"`/`"material_price"`
-  entries (all destroyed by the cascade); `after` is `{}`. Undo
-  reconstructs the row, its warnings, and its priced overrides; redo
+  `"warnings"` list and optional `"labor_line"`/`"material_price"`/
+  `"lead_time"` entries (all destroyed by the cascade); `after` is `{}`.
+  Undo reconstructs the row, its warnings, and its priced overrides; redo
   deletes the row again and lets `ON DELETE CASCADE` take the rest with
   it, same as the original delete.
 - `bulk_approve` / `scale` -- both nest a list of per-item dicts, each
@@ -54,13 +54,15 @@ from sqlalchemy.orm import Session as DbSession
 from app.errors import DomainError
 from app.takeoff.actions import decode_snapshot
 from app.takeoff.models import (
-    Action, Item, ProjectLaborLine, ProjectMaterialPrice, Sheet, SymbolResolution, Warning,
+    Action, Item, ItemLeadTime, ProjectLaborLine, ProjectMaterialPrice, Sheet, SymbolResolution, Warning,
 )
 from app.takeoff.snapshots import (
     ITEM_SNAPSHOT_TYPES,
     ITEMS_SNAPSHOT_KEY,
     LABOR_LINE_KEY,
     LABOR_LINE_SNAPSHOT_TYPES,
+    LEAD_TIME_KEY,
+    LEAD_TIME_SNAPSHOT_TYPES,
     MATERIAL_PRICE_KEY,
     MATERIAL_PRICE_SNAPSHOT_TYPES,
     NESTED_SNAPSHOT_KEYS,
@@ -74,6 +76,17 @@ from app.takeoff.snapshots import (
 # kept as a single literal here rather than two independently-worded
 # copies of the same fact.
 _ITEM_GONE_MESSAGE = "This item was deleted by another reviewer. Refresh the sheet to see its current items."
+
+# The schedule's action kinds (phases-and-timeline.md §3.1, §3.5, §3.7),
+# reversed by `app.schedule.undo_apply` -- one branch in `apply()` below
+# hands them over, so this module stays a dispatcher. Defined here rather
+# than in `undo.py` because `undo.py` already imports this module for
+# `apply()`; the reverse import would be a cycle. `undo.py` re-exports it
+# next to `REVERSIBLE`, which is where a reader looks for the kinds.
+SCHEDULE_KINDS = frozenset({
+    "phase_create", "phase_edit", "phase_reorder", "phase_delete", "sheet_phase_set", "item_phase_set",
+    "phase_line_edit", "stage_plan_edit", "lead_time_edit", "phase_propose_apply",
+})
 
 
 def apply(db: DbSession, action: Action, direction: str) -> None:
@@ -96,9 +109,24 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
         _apply_sparse_pricing_row(db, ProjectMaterialPrice, action.item_id, MATERIAL_PRICE_SNAPSHOT_TYPES, state)
     elif action.kind == "supplier_quote_apply":
         for item_id, row_state in (state.get("rows") or {}).items():
-            _apply_sparse_pricing_row(db, ProjectMaterialPrice, uuid.UUID(item_id), MATERIAL_PRICE_SNAPSHOT_TYPES, row_state)
+            # Two row shapes: a plain price snapshot, and -- when the
+            # supplier also quoted a lead time -- {"price", "lead_time"}.
+            # Both are replayed here so an action recorded before the
+            # lead-time column existed still undoes.
+            carries_lead = isinstance(row_state, dict) and "price" in row_state
+            price_state = row_state["price"] if carries_lead else row_state
+            _apply_sparse_pricing_row(db, ProjectMaterialPrice, uuid.UUID(item_id), MATERIAL_PRICE_SNAPSHOT_TYPES, price_state)
+            if carries_lead:
+                _apply_sparse_pricing_row(
+                    db, ItemLeadTime, uuid.UUID(item_id), LEAD_TIME_SNAPSHOT_TYPES, row_state["lead_time"]
+                )
     elif action.kind == "resolve":
         _apply_resolve(db, action, direction)
+    elif action.kind in SCHEDULE_KINDS:
+        # Imported here, not at module load: app.schedule must never
+        # import this module while this module is still being built.
+        from app.schedule import undo_apply as schedule_undo
+        schedule_undo.apply(db, action, direction)
     else:  # approve, reject, unreject, edit
         _apply_item_state(db, action.item_id, state)
 
@@ -473,10 +501,10 @@ def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
     warning or a priced override some other way must still get that
     piece back, not report success while leaving it missing.
 
-    `"labor_line"`/`"material_price"` are read with `.get()`, and a
-    missing key -- an action recorded before this restore existed --
-    is treated exactly like an explicit `None`: there was nothing to
-    bring back, not an error.
+    `"labor_line"`/`"material_price"`/`"lead_time"` are read with
+    `.get()`, and a missing key -- an action recorded before this
+    restore existed -- is treated exactly like an explicit `None`: there
+    was nothing to bring back, not an error.
     """
     if direction == "before":
         state = action.before
@@ -512,15 +540,22 @@ def _apply_delete(db: DbSession, action: Action, direction: str) -> None:
             decoded_material_price = decode_snapshot(encoded_material_price, MATERIAL_PRICE_SNAPSHOT_TYPES)
             decoded_material_price.pop("item_id", None)
             _restore_sparse_row_if_missing(db, ProjectMaterialPrice, decoded["id"], decoded_material_price)
+
+        encoded_lead_time = state.get(LEAD_TIME_KEY)
+        if encoded_lead_time is not None:
+            decoded_lead_time = decode_snapshot(encoded_lead_time, LEAD_TIME_SNAPSHOT_TYPES)
+            decoded_lead_time.pop("item_id", None)
+            _restore_sparse_row_if_missing(db, ItemLeadTime, decoded["id"], decoded_lead_time)
     else:
         item = db.execute(
             select(Item).where(Item.id == action.item_id)
             .with_for_update().execution_options(populate_existing=True)
         ).scalar_one_or_none()
         if item is not None:
-            # No explicit deletion of the pricing rows here -- redo just
-            # deletes the item again, and ON DELETE CASCADE (models.py)
-            # takes ProjectLaborLine/ProjectMaterialPrice with it exactly
-            # as it did the first time, the same way it already handles
-            # the item's warnings on this same line.
+            # No explicit deletion of the pricing or lead-time rows here
+            # -- redo just deletes the item again, and ON DELETE CASCADE
+            # (models.py) takes ProjectLaborLine/ProjectMaterialPrice/
+            # ItemLeadTime with it exactly as it did the first time, the
+            # same way it already handles the item's warnings on this
+            # same line.
             db.delete(item)

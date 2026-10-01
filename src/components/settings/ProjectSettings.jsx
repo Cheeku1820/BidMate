@@ -75,6 +75,10 @@ export default function ProjectSettings({ store }) {
         const found = rows.find((row) => row.id === projectId);
         setProject(found ?? null);
         setPostalCodeValue(found?.postalCode ?? "");
+        setScheduleDates({
+          expectedAwardDate: found?.expectedAwardDate ?? null,
+          mobilizationDate: found?.mobilizationDate ?? null,
+        });
         setSavedPostalCode(found?.postalCode ?? "");
         setState(found ? "ready" : "missing");
       })
@@ -89,8 +93,30 @@ export default function ProjectSettings({ store }) {
     load();
   }, [load]);
 
+  const [scheduleDates, setScheduleDates] = useState({ expectedAwardDate: null, mobilizationDate: null });
+  const [dateError, setDateError] = useState(null);
+
   const override = (field, value) => setResolved(setProjectOverride(projectId, field, value));
   const restore = (field) => setResolved(restoreCompanyDefault(projectId, field));
+
+  // The two dates the whole timeline hangs from
+  // (phases-and-timeline.md §3.6). Typed by the estimator, never
+  // derived, and saved the way the ZIP is: audited, not undoable.
+  const saveScheduleDate = async (field, value) => {
+    if (typeof store.setScheduleDates !== "function") return;
+    const next = value || null;
+    if (next === (scheduleDates[field] ?? null)) return;
+    try {
+      const schedule = await runMutation(() => store.setScheduleDates(projectId, { [field]: next }));
+      setScheduleDates({
+        expectedAwardDate: schedule?.expectedAwardDate ?? null,
+        mobilizationDate: schedule?.mobilizationDate ?? null,
+      });
+      showToast(next ? "Changed the project schedule dates" : "Cleared a project schedule date");
+    } catch (err) {
+      setDateError(err?.message || "That change couldn't be saved. Try again.");
+    }
+  };
 
   const handleZipBlur = async () => {
     const value = postalCode.trim();
@@ -192,6 +218,31 @@ export default function ProjectSettings({ store }) {
             <dd className="tabular">{project.number || NOT_SET}</dd>
             <dt>Bid due</dt>
             <dd className="tabular">{formatCalendarDate(project.bidDueDate)}</dd>
+            <dt>
+              <label className="formfield-label" htmlFor="proj-expected-award">Expected award</label>
+            </dt>
+            <dd>
+              <input
+                id="proj-expected-award"
+                className="field"
+                type="date"
+                value={scheduleDates.expectedAwardDate ?? ""}
+                onChange={(e) => saveScheduleDate("expectedAwardDate", e.target.value)}
+              />
+            </dd>
+            <dt>
+              <label className="formfield-label" htmlFor="proj-mobilization">Mobilization</label>
+            </dt>
+            <dd>
+              <input
+                id="proj-mobilization"
+                className="field"
+                type="date"
+                value={scheduleDates.mobilizationDate ?? ""}
+                onChange={(e) => saveScheduleDate("mobilizationDate", e.target.value)}
+              />
+              {dateError ? <p className="formfield-error">{dateError}</p> : null}
+            </dd>
             <dt>Active revision set</dt>
             <dd>{project.revisionSetLabel || NOT_SET}</dd>
           </dl>

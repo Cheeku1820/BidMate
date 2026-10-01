@@ -31,8 +31,10 @@ from app.identity.models import User
 from app.takeoff.actions import commit, encode_snapshot
 from app.takeoff.concurrency import check_version, lock_item
 from app.takeoff.edit_validation import EDITABLE_FIELDS, validate_edit
-from app.takeoff.models import Action, Item, ProjectLaborLine, ProjectMaterialPrice, ReviewStatus, Warning
-from app.takeoff.snapshots import LABOR_LINE_KEY, MATERIAL_PRICE_KEY, WARNINGS_KEY, _column_snapshot
+from app.takeoff.models import (
+    Action, Item, ItemLeadTime, ProjectLaborLine, ProjectMaterialPrice, ReviewStatus, Warning,
+)
+from app.takeoff.snapshots import LABOR_LINE_KEY, LEAD_TIME_KEY, MATERIAL_PRICE_KEY, WARNINGS_KEY, _column_snapshot
 
 
 def refuse_unless_approvable(locked: Item) -> None:
@@ -247,6 +249,9 @@ def _apply_delete(db: DbSession, item: Item, expected_version: int) -> tuple[dic
     # None when the estimator never typed an override for this item.
     labor_line = db.get(ProjectLaborLine, locked.id)
     material_price = db.get(ProjectMaterialPrice, locked.id)
+    # ItemLeadTime is the same shape: one optional row keyed by the
+    # item's id, gone with the cascade, restored only if captured here.
+    lead_time = db.get(ItemLeadTime, locked.id)
     snapshot = _column_snapshot(locked)
     snapshot.pop("version", None)
     before = {
@@ -254,6 +259,7 @@ def _apply_delete(db: DbSession, item: Item, expected_version: int) -> tuple[dic
         WARNINGS_KEY: [encode_snapshot(_column_snapshot(w)) for w in warnings],
         LABOR_LINE_KEY: encode_snapshot(_column_snapshot(labor_line)) if labor_line is not None else None,
         MATERIAL_PRICE_KEY: encode_snapshot(_column_snapshot(material_price)) if material_price is not None else None,
+        LEAD_TIME_KEY: encode_snapshot(_column_snapshot(lead_time)) if lead_time is not None else None,
     }
     locked.version += 1
     db.delete(locked)

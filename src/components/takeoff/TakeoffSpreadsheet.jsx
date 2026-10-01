@@ -34,7 +34,7 @@ import BulkApproveBar from "./BulkApproveBar.jsx";
 import { STATUS } from "../../lib/vocabulary.js";
 import { countsTowardTotals } from "../../lib/rules.js";
 import { saveStateText } from "../../lib/format.js";
-import { COLUMNS, DEFAULT_VISIBLE } from "./spreadsheetColumns.js";
+import { COLUMNS, DEFAULT_VISIBLE, applicableColumns } from "./spreadsheetColumns.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 import { useConversationView } from "../conversation/screenContext.jsx";
 
@@ -61,7 +61,7 @@ const FILTER_SHORT_LABEL = { ready: "Ready", attention: "Attention", missing: "M
 const LOCKED_COLUMNS = new Set(["status", "name"]);
 
 export default function TakeoffSpreadsheet() {
-  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove, saved, toast, dismissToast, undo } =
+  const { snapshot, loading, loadError, refresh, selectedItemId, selectItem, bulkApprove, saved, toast, dismissToast, undo, phases } =
     useWorkspaceContext();
 
   const [search, setSearch] = useState("");
@@ -94,9 +94,19 @@ export default function TakeoffSpreadsheet() {
     return map;
   }, [snapshot]);
 
-  const renderCtx = useMemo(() => ({ sheetsById }), [sheetsById]);
+  const phasesById = useMemo(() => {
+    const map = {};
+    for (const phase of phases ?? []) map[phase.id] = phase;
+    return map;
+  }, [phases]);
 
-  const visibleColumns = useMemo(() => COLUMNS.filter((c) => visible.has(c.key)), [visible]);
+  const renderCtx = useMemo(
+    () => ({ sheetsById, phasesById, phases: phases ?? [] }),
+    [sheetsById, phasesById, phases],
+  );
+
+  const columns = useMemo(() => applicableColumns(renderCtx), [renderCtx]);
+  const visibleColumns = useMemo(() => columns.filter((c) => visible.has(c.key)), [columns, visible]);
 
   const allItems = snapshot?.items ?? [];
 
@@ -130,7 +140,7 @@ export default function TakeoffSpreadsheet() {
     }
 
     if (sort.key) {
-      const column = COLUMNS.find((c) => c.key === sort.key);
+      const column = columns.find((c) => c.key === sort.key);
       if (column) {
         const withKeys = result.map((item) => ({ item, key: String(column.render(item, renderCtx)) }));
         withKeys.sort((a, b) => a.key.localeCompare(b.key));
@@ -140,7 +150,7 @@ export default function TakeoffSpreadsheet() {
     }
 
     return result;
-  }, [allItems, statusFilter, search, sort, renderCtx]);
+  }, [allItems, statusFilter, search, sort, renderCtx, columns]);
 
   // The bar needs the actual item objects, looked up from the full list
   // rather than `rows` -- a checked item must keep counting toward the
@@ -295,7 +305,7 @@ export default function TakeoffSpreadsheet() {
                   </button>
                   {columnsOpen ? (
                     <div className="takeoff-columns">
-                      {COLUMNS.map((column) => (
+                      {columns.map((column) => (
                         <label key={column.key} className="switch">
                           <input
                             type="checkbox"

@@ -513,3 +513,24 @@ def test_a_rerun_records_one_action_attributed_to_the_actor(db, project, dana):
     _rerun(db, dana, project, [_row("R", "x")])
     rows = list(db.scalars(select(Action).where(Action.project_id == project.id, Action.kind == "note_apply")))
     assert len(rows) == 2 and {r.actor_user_id for r in rows} == {dana.id}
+
+
+def test_a_rerun_leaves_phase_ids_alone(db, project, dana):
+    """A phase is a grouping the estimator made; the engine owns neither
+    `Sheet.phase_id` nor `Item.phase_id`, so a re-run that matches the
+    sheet and the item in place carries both through untouched."""
+    from app.takeoff.models import Phase
+
+    _seed(db, dana, project, [_row("R", "20A duplex receptacle")])
+    sheet = db.scalars(select(Sheet).where(Sheet.project_id == project.id)).one()
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    phase = Phase(project_id=project.id, name="Phase 2", sort_order=0)
+    db.add(phase); db.flush()
+    sheet.phase_id = phase.id
+    item.phase_id = phase.id
+    db.flush()
+
+    _rerun(db, dana, project, [_row("R", "Isolated ground receptacle")])
+    db.refresh(sheet); db.refresh(item)
+    assert item.name == "Isolated ground receptacle"
+    assert sheet.phase_id == phase.id and item.phase_id == phase.id

@@ -20,7 +20,7 @@ from typing import NamedTuple
 import openpyxl
 from openpyxl.utils import get_column_letter
 
-HEADER = ("Item", "Description", "Qty", "Unit", "Unit price", "Supplier part no.", "Notes", "Row key")
+HEADER = ("Item", "Description", "Qty", "Unit", "Unit price", "Supplier part no.", "Lead time (weeks)", "Notes", "Row key")
 REQUIRED_HEADER = ("Item", "Unit price")
 _KEY_COL = HEADER.index("Row key") + 1
 # A leading or trailing currency word ("USD 9.10", "9.10 USD"), stripped
@@ -45,6 +45,7 @@ REFUSED_ALL_UNREADABLE = "None of the rows could be read. Start from Download pr
 NOT_A_NUMBER = "the price isn't a number"
 NO_ITEM_NAME = "the row has no item name"
 ROW_UNREADABLE = "the row couldn't be read"
+NOT_A_LEAD_TIME = "the lead time isn't a number of weeks"
 
 
 def price_in_range(value: Decimal) -> bool:
@@ -64,6 +65,10 @@ class ParsedRow(NamedTuple):
     part_no: str
     notes: str
     line: int
+    # The supplier's own lead time, in whole weeks (phases-and-timeline
+    # §7.1). Optional: a sheet from before the column existed, or a
+    # supplier who left it blank, parses exactly as it always did.
+    lead_weeks: int | None = None
 
 
 class ParsedSheet(NamedTuple):
@@ -78,10 +83,15 @@ def build_request_workbook(rows: list[dict]) -> bytes:
     ws.title = "Price request"
     ws.append(list(HEADER))
     for r in rows:
+        # Positional against HEADER: every blank the supplier fills in
+        # (price, part number, lead time, notes) is None here, and the
+        # row key is last. Built by length so adding a column to HEADER
+        # cannot silently shift the key into the wrong cell.
+        blanks = [None] * (len(HEADER) - 5)
         ws.append([r["item_name"], (r.get("description") or "").splitlines()[0] if r.get("description") else "",
-                   r["quantity"], r["unit"], None, None, None, str(r["item_id"])])
+                   r["quantity"], r["unit"], *blanks, str(r["item_id"])])
     ws.column_dimensions[get_column_letter(_KEY_COL)].hidden = True
-    for col, width in zip("ABCDEFG", (36, 48, 8, 8, 14, 20, 30)):
+    for col, width in zip("ABCDEFGH", (36, 48, 8, 8, 14, 20, 16, 30)):
         ws.column_dimensions[col].width = width
     ws.freeze_panes = "A2"
     out = io.BytesIO()
@@ -130,6 +140,27 @@ def _read_price(v) -> Decimal | None:
     except InvalidOperation:
         raise RowUnreadable(NOT_A_NUMBER) from None
     return d if price_in_range(d) else None
+
+
+# A lead time is a whole number of weeks. "12 wks" is a person writing
+# a unit into a number column, not a number -- it is named back to them
+# by row rather than guessed at or dropped. The reason carries no line:
+# the row loop pairs it with one, the way every other reason here is
+# listed.
+_LEAD_RE = re.compile(r"^\s*(\d{1,3})\s*$")
+
+
+def _lead(cell) -> tuple[int | None, str | None]:
+    if cell is None or str(cell).strip() == "":
+        return None, None
+    if isinstance(cell, bool):
+        return None, NOT_A_LEAD_TIME
+    if isinstance(cell, (int, float)) and float(cell).is_integer() and 0 <= float(cell) < 1000:
+        return int(cell), None
+    match = _LEAD_RE.match(str(cell))
+    if match:
+        return int(match.group(1)), None
+    return None, NOT_A_LEAD_TIME
 
 
 def _price(v) -> Decimal | None:
@@ -184,6 +215,10 @@ def parse_price_sheet(data: bytes, filename: str) -> ParsedSheet:
             if name is None or not str(name).strip():
                 raise RowUnreadable(NO_ITEM_NAME)
             key = cell("Row key")
+            # An unreadable lead time does not cost the row: the price is
+            # what the sheet was sent for, and it still applies. So the
+            # row is kept and the lead time alone is listed, by line.
+            lead_weeks, lead_error = _lead(cell("Lead time (weeks)"))
             rows.append(ParsedRow(
                 row_key=str(key).strip() if key not in (None, "") else None,
                 item_name=str(name).strip(),
@@ -191,7 +226,10 @@ def parse_price_sheet(data: bytes, filename: str) -> ParsedSheet:
                 part_no=str(cell("Supplier part no.") or "").strip()[:100],
                 notes=str(cell("Notes") or "").strip()[:500],
                 line=n,
+                lead_weeks=lead_weeks,
             ))
+            if lead_error:
+                unreadable.append((n, lead_error))
         except RowUnreadable as exc:
             unreadable.append((n, str(exc)))
         except Exception:   # noqa: BLE001 -- one bad row is listed, never the whole upload lost

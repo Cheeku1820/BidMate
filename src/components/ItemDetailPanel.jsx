@@ -17,6 +17,7 @@ export default function ItemDetailPanel({
   onRequestDelete, onShowEvidence, onStep, stepIndex, stepCount,
   itemError, onRefreshItem, onDismissItemError,
   counts, itemsTotal, onNextIssue,
+  phases = [], onSetItemPhase,
 }) {
   const aiReading = currentSheet?.aiReading;
   if (!sel) {
@@ -80,6 +81,9 @@ export default function ItemDetailPanel({
   }
 
   const itemSheet = sheets.find((s) => s.id === sel.sheetId);
+  // Where the item would sit with no override of its own: its sheet's
+  // phase, else the first. What "From its sheet" names.
+  const sheetPhaseId = itemSheet?.phaseId ?? phases[0]?.id ?? null;
 
   // DecisionArea has no item-level guard of its own -- the API refuses an
   // approve on a Missing information item regardless -- so this copy sits
@@ -156,6 +160,33 @@ export default function ItemDetailPanel({
 
             <p className="label">Location</p>
             <p className="value">Sheet {itemSheet?.number ?? sel.sheetId} · {itemSheet?.revision}</p>
+
+            {/* Only once a second phase exists: a single-phase bid has
+                nothing to choose between, so the field would be a
+                control with one option. Clearing it returns the item to
+                its sheet's phase rather than to nothing. */}
+            {phases.length > 1 ? (
+              <>
+                <p className="label"><label htmlFor="item-phase">Phase</label></p>
+                <p className="value">
+                  <select
+                    id="item-phase"
+                    value={sel.phaseOverridden ? sel.phaseId ?? "" : ""}
+                    onChange={(e) => onSetItemPhase?.(sel.id, e.target.value || null)}
+                  >
+                    <option value="">From its sheet ({phases.find((p) => p.id === sheetPhaseId)?.name ?? ""})</option>
+                    {phases.map((phase) => (
+                      <option key={phase.id} value={phase.id}>{phase.name}</option>
+                    ))}
+                  </select>
+                  {sel.phaseOverridden ? (
+                    <span className="value--muted">
+                      {" "}moved from {phases.find((p) => p.id === sheetPhaseId)?.name ?? "its sheet's phase"}
+                    </span>
+                  ) : null}
+                </p>
+              </>
+            ) : null}
 
             <p className="label">Source evidence</p>
             {sel.evidence ? (

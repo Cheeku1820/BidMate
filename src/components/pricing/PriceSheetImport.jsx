@@ -227,6 +227,9 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
                       <span aria-hidden="true"> → </span>
                       <span className="tabular">{money(row.newUnitPrice)}</span>
                     </span>
+                    {row.leadWeeks != null ? (
+                      <span className="muted">{row.leadWeeks} wk lead</span>
+                    ) : null}
                     {row.partNo ? <span className="muted">{row.partNo}</span> : null}
                     {row.notes ? <span className="muted">{row.notes}</span> : null}
                   </li>
@@ -243,6 +246,23 @@ export default function PriceSheetImport({ projectId, store, onApplied, onClose 
                   <li key={i}>
                     {row.itemName} <span className="tabular muted">{row.unitPrice != null ? money(row.unitPrice) : NONE}</span>
                   </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {(preview.unreadable?.length ?? 0) > 0 ? (
+            <div className="pricesheet-group">
+              <h4>
+                <CountLabel
+                  n={preview.unreadable.length}
+                  singular="row partly unreadable"
+                  plural="rows partly unreadable"
+                />
+              </h4>
+              <ul className="pricesheet-plainlist">
+                {preview.unreadable.map((row) => (
+                  <li key={row.line}>{row.reason}</li>
                 ))}
               </ul>
             </div>

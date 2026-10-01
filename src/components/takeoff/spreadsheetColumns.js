@@ -59,6 +59,15 @@ export const COLUMNS = [
     align: "left",
     render: (item, { sheetsById }) => sheetsById[item.sheetId]?.number ?? NONE,
   },
+  {
+    key: "phase",
+    label: "Phase",
+    align: "left",
+    // Only once a second phase exists: on a single-phase bid every row
+    // would read "Phase 1", which is a column of noise.
+    visibleWhen: (ctx) => (ctx.phases?.length ?? 0) > 1,
+    render: (item, { phasesById }) => phasesById?.[item.phaseId]?.name ?? NONE,
+  },
   { key: "notes", label: "Notes", align: "left", render: (item) => item.notes || NONE },
   // Cost columns are populated only for a priced takeoff. An item the
   // pricing step never reached carries zero, and zero is not a price --
@@ -90,3 +99,11 @@ export const COLUMNS = [
 export const DEFAULT_VISIBLE = new Set(
   COLUMNS.map((c) => c.key).filter((key) => key !== "description" && key !== "notes"),
 );
+
+/** The columns that apply to this project at all. A column with a
+ *  `visibleWhen` is not hidden-but-switchable: it does not exist until
+ *  its condition holds, so it never appears in the visibility menu
+ *  offering a column of one repeated value. */
+export function applicableColumns(ctx) {
+  return COLUMNS.filter((column) => !column.visibleWhen || column.visibleWhen(ctx));
+}

@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPanelProposal, mapPlan, mapPlanLine, mapProcessing, mapProject, mapProposal, mapQuestion, mapScopeStatement, mapSnapshot, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
+import { mapCompanyLeadTime, mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPanelProposal, mapPhaseLineTemplate, mapPlan, mapPlanLine, mapProcessing, mapProject, mapProposal, mapQuestion, mapSchedule, mapScopeStatement, mapSnapshot, mapStageCrew, mapStageSplit, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -706,10 +706,15 @@ export function createApiStore() {
       matched: (p.matched ?? []).map((m) => ({
         itemId: m.item_id, itemName: m.item_name, currentUnitPrice: m.current_unit_price,
         currentSourceLabel: m.current_source_label, newUnitPrice: m.new_unit_price, partNo: m.part_no,
-        notes: m.notes, line: m.line,
+        notes: m.notes, line: m.line, leadWeeks: m.lead_weeks ?? null,
       })),
       unmatched: (p.unmatched ?? []).map((u) => ({ itemName: u.item_name, unitPrice: u.unit_price, line: u.line })),
       unpriced: (p.unpriced ?? []).map((u) => ({ itemId: u.item_id, itemName: u.item_name })),
+      // Rows the sheet carried that could not be read in full -- a
+      // price that is not a number, a row with no item name, or a lead
+      // time that is not a number of weeks. Where only the lead time
+      // was unreadable the row's price still applies; either way this
+      // names what was skipped, by line.
       unreadable: (p.unreadable ?? []).map((u) => ({ line: u.line, reason: u.reason })),
     };
   }
@@ -761,6 +766,133 @@ export function createApiStore() {
     return request(`/api/company/labor-hours-overrides/${encodeURIComponent(itemName)}`, { method: "DELETE" });
   }
 
+  /* ==== Phases and schedule (phases-and-timeline.md §10) ====
+     Every write answers with the whole schedule, because a crew size or
+     a date moves every later bar — the screen replaces its state from
+     the response rather than refetching. `setItemPhase` is the one
+     exception: it changes an item, so it answers with the item and
+     invalidates the snapshot cache the way every item mutation does. */
+
+  async function getSchedule(projectId) {
+    return mapSchedule(await request(`/api/projects/${projectId}/schedule`));
+  }
+
+  async function createPhase(projectId, { name = "", afterPhaseId = null } = {}) {
+    return mapSchedule(await request(`/api/projects/${projectId}/phases`, {
+      method: "POST",
+      body: { name, afterPhaseId },
+    }));
+  }
+
+  async function editPhase(phaseId, changes) {
+    return mapSchedule(await request(`/api/phases/${phaseId}`, { method: "PATCH", body: changes }));
+  }
+
+  async function deletePhase(phaseId) {
+    return mapSchedule(await request(`/api/phases/${phaseId}`, { method: "DELETE" }));
+  }
+
+  async function setPhaseSheets(phaseId, sheetIds) {
+    return mapSchedule(await request(`/api/phases/${phaseId}/sheets`, { method: "PUT", body: { sheetIds } }));
+  }
+
+  async function setItemPhase(itemId, phaseId) {
+    const item = await request(`/api/items/${itemId}/phase`, { method: "PATCH", body: { phaseId } });
+    invalidateCache();
+    return mapItem(item);
+  }
+
+  async function setPhaseLine(phaseId, lineId, hours) {
+    return mapSchedule(await request(`/api/phases/${phaseId}/lines/${lineId}`, { method: "PATCH", body: { hours } }));
+  }
+
+  async function setStagePlan(phaseId, stage, changes) {
+    return mapSchedule(await request(`/api/phases/${phaseId}/stages/${stage}`, { method: "PUT", body: changes }));
+  }
+
+  async function setLeadTime(itemId, changes) {
+    return mapSchedule(await request(`/api/items/${itemId}/lead-time`, { method: "PATCH", body: changes }));
+  }
+
+  async function setScheduleDates(projectId, dates) {
+    return mapSchedule(await request(`/api/projects/${projectId}/schedule-dates`, { method: "PATCH", body: dates }));
+  }
+
+  async function proposePhases(projectId, phases = null) {
+    // The preview only. Nothing is written until applyProposedPhases
+    // sends it back, which is what makes a proposal a proposal.
+    const body = await request(`/api/projects/${projectId}/phases/propose`, { method: "POST", body: { phases } });
+    return { phases: body.phases ?? [], note: body.note ?? "" };
+  }
+
+  async function applyProposedPhases(projectId, proposal) {
+    const schedule = mapSchedule(await request(`/api/projects/${projectId}/phases/propose/apply`, {
+      method: "POST",
+      body: proposal,
+    }));
+    invalidateCache();  // sheets moved, so the snapshot's items resolve to new phases
+    return schedule;
+  }
+
+  async function getStageSplits() {
+    return (await request("/api/company/stage-splits")).map(mapStageSplit);
+  }
+
+  async function setStageSplit(categoryKey, values) {
+    return mapStageSplit(await request(`/api/company/stage-splits/${encodeURIComponent(categoryKey)}`, {
+      method: "PUT",
+      body: values,
+    }));
+  }
+
+  async function deleteStageSplit(categoryKey) {
+    return request(`/api/company/stage-splits/${encodeURIComponent(categoryKey)}`, { method: "DELETE" });
+  }
+
+  async function getStageCrews() {
+    return (await request("/api/company/stage-crews")).map(mapStageCrew);
+  }
+
+  async function setStageCrew(stage, values) {
+    return mapStageCrew(await request(`/api/company/stage-crews/${stage}`, { method: "PUT", body: values }));
+  }
+
+  async function getScheduleSettings() {
+    const body = await request("/api/company/schedule-settings");
+    return { leadTimeStaleDays: body.lead_time_stale_days };
+  }
+
+  async function setScheduleSettings(values) {
+    const body = await request("/api/company/schedule-settings", { method: "PUT", body: values });
+    return { leadTimeStaleDays: body.lead_time_stale_days };
+  }
+
+  async function getPhaseLineTemplates() {
+    return (await request("/api/company/phase-line-templates")).map(mapPhaseLineTemplate);
+  }
+
+  async function setPhaseLineTemplate(id, values) {
+    return mapPhaseLineTemplate(await request(`/api/company/phase-line-templates/${id ?? "new"}`, {
+      method: "PUT",
+      body: values,
+    }));
+  }
+
+  async function deletePhaseLineTemplate(id) {
+    return request(`/api/company/phase-line-templates/${id}`, { method: "DELETE" });
+  }
+
+  async function getCompanyLeadTimes() {
+    return (await request("/api/company/lead-times")).map(mapCompanyLeadTime);
+  }
+
+  async function setCompanyLeadTime(itemClass, values) {
+    return mapCompanyLeadTime(await request(`/api/company/lead-times/${itemClass}`, { method: "PUT", body: values }));
+  }
+
+  async function deleteCompanyLeadTime(itemClass) {
+    return request(`/api/company/lead-times/${itemClass}`, { method: "DELETE" });
+  }
   return {
     me,
     useProject,
@@ -820,5 +952,30 @@ export function createApiStore() {
     addPlanPhase,
     removePlanPhase,
     setProposalStatus,
+    getSchedule,
+    createPhase,
+    editPhase,
+    deletePhase,
+    setPhaseSheets,
+    setItemPhase,
+    setPhaseLine,
+    setStagePlan,
+    setLeadTime,
+    setScheduleDates,
+    proposePhases,
+    applyProposedPhases,
+    getStageSplits,
+    setStageSplit,
+    deleteStageSplit,
+    getStageCrews,
+    setStageCrew,
+    getScheduleSettings,
+    setScheduleSettings,
+    getPhaseLineTemplates,
+    setPhaseLineTemplate,
+    deletePhaseLineTemplate,
+    getCompanyLeadTimes,
+    setCompanyLeadTime,
+    deleteCompanyLeadTime,
   };
 }

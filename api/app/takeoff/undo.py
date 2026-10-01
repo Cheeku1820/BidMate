@@ -69,12 +69,15 @@ from app.errors import DomainError
 from app.identity.models import User
 from app.takeoff.actions import CrossOrgActionError, commit
 from app.takeoff.models import Action, Project
-from app.takeoff.undo_apply import apply as _apply
+from app.takeoff.undo_apply import SCHEDULE_KINDS, apply as _apply
 
 # Kinds that represent an original business mutation. The only kinds
-# `_root_action()` ever stops walking at.
+# `_root_action()` ever stops walking at. SCHEDULE_KINDS -- the phase,
+# stage-plan, and lead-time mutations -- are defined next to the
+# dispatcher in undo_apply.py (importing them the other way round would
+# be a cycle) and re-exported here so this stays the one list to read.
 REVERSIBLE = {"approve", "reject", "unreject", "edit", "delete", "bulk_approve", "scale", "labor_edit",
-              "material_price_edit", "supplier_quote_apply", "resolve"}
+              "material_price_edit", "supplier_quote_apply", "resolve", *SCHEDULE_KINDS}
 
 # What undo_head() targets: a root mutation, or a live "redo" -- see the
 # module docstring for why "redo" has to be included.

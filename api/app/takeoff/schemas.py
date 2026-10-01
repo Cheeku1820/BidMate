@@ -109,6 +109,12 @@ class ItemOut(BaseModel):
     # processing internal -- legitimate estimator-facing data, and the
     # merge key a re-run uses to recognise an item it already produced.
     source_tag: str = ""
+    # Which phase this item's hours belong to (phases-and-timeline.md
+    # §3.1), already resolved through `phases.phase_of` -- the client
+    # never re-derives it. None only on a project that has no phase row
+    # yet, which the client reads as "the only phase".
+    phase_id: uuid.UUID | None = None
+    phase_overridden: bool = False
 
     model_config = MODEL_CONFIG
 
@@ -144,6 +150,11 @@ class SheetOut(BaseModel):
     render_error: str = ""
     max_zoom: int | None = None
 
+    # Which phase this sheet's items inherit (phases-and-timeline.md
+    # §3.1). None until a phase row exists, which reads as the
+    # project's first phase.
+    phase_id: uuid.UUID | None = None
+
     model_config = MODEL_CONFIG
 
 
@@ -168,6 +179,8 @@ class ProjectOut(BaseModel):
     location: str
     postal_code: str | None
     bid_due_date: date | None
+    expected_award_date: date | None = None
+    mobilization_date: date | None = None
     stage: str
     revision_set_label: str
     archived_at: datetime | None
@@ -263,6 +276,25 @@ class TotalsOut(BaseModel):
     approved_units: Decimal
 
 
+class PhaseSummaryOut(BaseModel):
+    """Just enough of a phase to name one (phases-and-timeline.md §3.1).
+
+    Rides the snapshot rather than a poll of its own: the item panel and
+    the takeoff spreadsheet only need each phase's name, the snapshot is
+    already refreshed every few seconds, and its version is built from
+    the action log -- which every phase mutation appends to -- so a phase
+    a colleague adds or renames arrives on the next poll rather than on
+    a reload. The schedule screen reads the full record separately;
+    this is the shared, cheap view of it.
+    """
+
+    id: uuid.UUID
+    name: str
+    sort_order: int
+
+    model_config = MODEL_CONFIG
+
+
 class SnapshotOut(BaseModel):
     version: str
     sheets: list[SheetOut]
@@ -270,6 +302,7 @@ class SnapshotOut(BaseModel):
     totals: TotalsOut
     undo: UndoOut
     presence: list[PresenceOut]
+    phases: list[PhaseSummaryOut] = []
 
 
 # --- Mutation response models (Task 13) ---
@@ -540,10 +573,14 @@ class PriceSheetPreviewOut(BaseModel):
     matched: list[dict] = []
     unmatched: list[dict] = []
     unpriced: list[dict] = []
+    # Rows the sheet carried that could not be read in full -- a price
+    # that is not a number, a row with no item name, or a lead time that
+    # is not a number of weeks. [{line, reason}]. Where only the lead
+    # time was unreadable the row's price still applies.
+    unreadable: list[dict] = []
     refused: str | None = None
     supplier_name: str = ""
     quote_date: date | None = None
-    unreadable: list[dict] = []    # [{line, reason}] -- rows the parser could not read
     model_config = MODEL_CONFIG
 
 

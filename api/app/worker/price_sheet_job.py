@@ -78,12 +78,17 @@ def run(db: Session, job: Job) -> None:
         matched.append({"item_id": str(item.id), "item_name": item.name,
                         "current_unit_price": str(cur.price_override) if cur else None,
                         "current_source_label": {"project_price": "Project price", "allowance": "Allowance", "supplier_quote": "Supplier quote"}.get(cur.source) if cur else None,
-                        "new_unit_price": str(r.unit_price), "part_no": r.part_no, "notes": r.notes, "line": r.line})
+                        "new_unit_price": str(r.unit_price), "part_no": r.part_no, "notes": r.notes, "line": r.line,
+                        "lead_weeks": r.lead_weeks})
     priced_ids = {m["item_id"] for m in matched}
     unpriced = [{"item_id": str(i.id), "item_name": i.name} for i in items if str(i.id) not in priced_ids]
     supplier, date = _supplier_and_date(doc.filename)
     job.payload = {**(job.payload or {}), "preview": {
         "matched": matched, "unmatched": unmatched, "unpriced": unpriced, "refused": parsed.refused,
+        # Every row the parser could not read in full, the lead times
+        # among them: a row with a good price and a bad lead time stays
+        # matched -- the price applies -- and the lead time is named back
+        # by line rather than dropped (phases-and-timeline §7.1).
         "unreadable": [{"line": line, "reason": reason} for line, reason in parsed.unreadable],
         "supplier_name": supplier, "quote_date": date}}
     db.flush()

@@ -4,6 +4,8 @@ mutations and their audit log (CompanyAction)."""
 import uuid
 
 import pytest
+
+from app.market.price_sheet import HEADER
 from sqlalchemy import select, text
 from sqlalchemy.exc import InternalError, ProgrammingError
 
@@ -683,7 +685,10 @@ def test_price_request_download_is_an_xlsx_with_one_row_per_item(client, db, sig
     r = client.get(f"/api/projects/{project.id}/material-pricing/price-request")
     assert r.status_code == 200 and r.headers["content-type"].startswith("application/vnd.openxmlformats")
     ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
-    assert ws.cell(2, 1).value == item.name and ws.cell(2, 8).value == str(item.id)
+    # The row key is HEADER's last column, so it moves when a column is
+    # added before it (the supplier's lead time did).
+    key_col = len(HEADER)
+    assert ws.cell(2, 1).value == item.name and ws.cell(2, key_col).value == str(item.id)
 
 
 def test_apply_writes_supplier_quotes_as_one_undoable_action(client, db, signed_in_user, project, item):
@@ -886,3 +891,61 @@ def test_preview_reads_as_failed_with_the_jobs_error(client, db, signed_in_user,
     assert r.status_code == 200
     body = r.json()
     assert body["state"] == "failed" and body["error"] == "This file couldn't be read as a spreadsheet."
+
+
+def test_applying_a_sheet_writes_the_suppliers_lead_time_and_undo_removes_it(
+    client, db, signed_in_user, project, item, sheet
+):
+    """A supplier who filled the lead-time column has quoted the lead
+    time as surely as the price (phases-and-timeline.md §7.1), so it
+    lands on the item sourced to them and dated to the quote, inside
+    the same one undoable action the price rides."""
+    from app.takeoff.models import ItemLeadTime
+
+    project.org_id = signed_in_user.org_id
+    db.flush()
+    doc = _preview_doc(db, project, signed_in_user, [{
+        "item_id": str(item.id), "item_name": item.name, "current_unit_price": None,
+        "current_source_label": None, "new_unit_price": "12000.00", "part_no": "", "notes": "",
+        "line": 2, "lead_weeks": 40,
+    }])
+
+    applied = client.post(
+        f"/api/projects/{project.id}/material-pricing/price-sheets/{doc.id}/apply",
+        json={"item_ids": [str(item.id)], "supplier_name": "Graybar", "quote_date": "2026-09-12",
+              "save_to_company": False},
+    )
+    assert applied.status_code == 200, applied.text
+
+    db.expire_all()
+    lead = db.get(ItemLeadTime, item.id)
+    assert lead is not None
+    assert (lead.lead_weeks, lead.source, lead.source_label, str(lead.quoted_at)) == (
+        40, "supplier_quote", "Graybar", "2026-09-12",
+    )
+    assert lead.flagged is True
+
+    undone = client.post(f"/api/projects/{project.id}/undo")
+    assert undone.status_code == 200, undone.text
+    db.expire_all()
+    assert db.get(ItemLeadTime, item.id) is None
+
+
+def test_a_sheet_without_a_lead_time_applies_exactly_as_before(client, db, signed_in_user, project, item, sheet):
+    from app.takeoff.models import ItemLeadTime
+
+    project.org_id = signed_in_user.org_id
+    db.flush()
+    doc = _preview_doc(db, project, signed_in_user, [{
+        "item_id": str(item.id), "item_name": item.name, "current_unit_price": None,
+        "current_source_label": None, "new_unit_price": "9.10", "part_no": "", "notes": "", "line": 2,
+    }])
+
+    applied = client.post(
+        f"/api/projects/{project.id}/material-pricing/price-sheets/{doc.id}/apply",
+        json={"item_ids": [str(item.id)], "supplier_name": "Codale", "quote_date": "2026-09-12",
+              "save_to_company": False},
+    )
+    assert applied.status_code == 200, applied.text
+    db.expire_all()
+    assert db.get(ItemLeadTime, item.id) is None

@@ -150,10 +150,16 @@ describe("CompanyNav", () => {
 });
 
 describe("ProjectNav", () => {
-  it("lists all fourteen spec §4.2 workspaces plus the plan screen, so the workflow's shape stays visible", () => {
+  // Fifteen, not the spec's thirteen: the frontend design spec §4.2
+  // predates both "Project plan" (docs/specs/project-plan-screen.md) and
+  // "Phases and schedule" (docs/specs/phases-and-timeline.md §6). The
+  // plan screen sits in Evidence, beside what the documents say; phases
+  // sit in Cost after Labor, because they read labor's resolved hours
+  // and feed the export.
+  it("lists all fifteen workspaces, so the workflow's shape stays visible", () => {
     renderProjectNav();
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
-    expect(within(nav).getAllByRole("link")).toHaveLength(14);
+    expect(within(nav).getAllByRole("link")).toHaveLength(15);
   });
 
   it("links only the built workspaces and disables the rest by name", () => {
@@ -171,10 +177,10 @@ describe("ProjectNav", () => {
     expect(within(nav).getByRole("link", { name: /^export/i })).toHaveAttribute("href", "/projects/p1/export");
 
     const disabled = disabledItems(nav);
-    // 14 workspaces total, minus the ten now built: overview, blueprint
-    // takeoff, takeoff spreadsheet, documents (intake), notes &
-    // assumptions, project plan, labor, material pricing, export, and
-    // project settings.
+    // 15 workspaces total, minus the eleven now built: overview,
+    // blueprint takeoff, takeoff spreadsheet, documents (intake), notes
+    // & assumptions, project plan, labor, material pricing, phases and
+    // schedule, export, and project settings.
     expect(disabled).toHaveLength(4);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
@@ -258,17 +264,17 @@ describe("ProjectNav's header card fallbacks", () => {
 describe("ProjectNav as the project's rail", () => {
   it("keeps the brand and the project card out of the workspace nav", () => {
     // Both sit in the rail but neither is a workspace. While they were
-    // inside the labelled <nav>, "Project workspaces" announced fifteen
-    // destinations for fourteen workspaces.
+    // inside the labelled <nav>, "Project workspaces" announced two
+    // destinations more than there are workspaces.
     renderProjectNav({ project: projectRow(), companyName: "Meridian Electric Co." });
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
 
-    expect(within(nav).getAllByRole("link")).toHaveLength(14);
+    expect(within(nav).getAllByRole("link")).toHaveLength(15);
     expect(within(nav).queryByText("BidMate")).toBeNull();
     expect(screen.getByRole("link", { name: /bidmate/i })).toHaveAttribute("href", "/projects");
   });
 
-  it("groups the fourteen without reordering them", () => {
+  it("groups the fifteen without reordering them", () => {
     renderProjectNav({ project: projectRow() });
     const nav = screen.getByRole("navigation", { name: /project workspaces/i });
 
@@ -290,6 +296,7 @@ describe("ProjectNav as the project's rail", () => {
       "Assemblies",
       "Labor",
       "Material pricing",
+      "Phases and schedule",
       "Estimate summary",
       "Revisions",
       "Final review",

@@ -177,13 +177,17 @@ def terminal_copy(job: Job, message: str) -> str:
     no reason of its own gets the generic one -- and on a sheet, classify
     or render job that generic ("re-save the file") would be wrong,
     because the file was read fine; what failed was the takeoff (start
-    it again) or the drawing behind it (the takeoff still counts it)."""
+    it again) or the drawing behind it (the takeoff still counts it).
+    On a price_sheet job it is wrong for a different reason: the file
+    is a spreadsheet, and "re-save as PDF" is not the way back."""
     if job.kind == "sheet" and message in ("", copy.UNREADABLE):
         return copy.SHEET_FAILED
     if job.kind == "classify" and message in ("", copy.UNREADABLE):
         return copy.RUN_FAILED
     if job.kind == "render" and message in ("", copy.UNREADABLE):
         return copy.RENDER_FAILED
+    if job.kind == "price_sheet" and message in ("", copy.UNREADABLE):
+        return copy.PRICE_SHEET_FAILED
     return message or copy.UNREADABLE
 
 

@@ -24,6 +24,8 @@ import AppTopBar from "../shell/AppTopBar.jsx";
 import DataGrid from "../grid/DataGrid.jsx";
 import PriceSheetImport from "./PriceSheetImport.jsx";
 import { ALLOWANCE_REASON_MESSAGE, COLUMNS, money } from "./pricingColumns.jsx";
+import { rangeFailure, rangeToast } from "../grid/rangeCopy.js";
+import { useUndoCount } from "../grid/useUndoCount.js";
 import { NO_ZIP, REFRESHING, REFRESH_BUSY } from "./marketOutcomeCopy.js";
 import { saveStateText } from "../../lib/format.js";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
@@ -32,6 +34,18 @@ import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 // polls a takeoff run: a few seconds is fast enough to feel live without
 // hammering the API while a job works through every material row.
 const MARKET_JOB_POLL_MS = 5000;
+
+// A row's source can be "supplier_quote" (an accepted price-sheet
+// line), but the write endpoint's source is a project price or an
+// allowance, never a supplier quote (MaterialPriceUpdateIn.source,
+// api/app/takeoff/schemas.py) -- retyping a price is a project price
+// now, and the API itself clears the row's supplier provenance on
+// that transition (pricing_router.py:241). Anything a commit sends
+// as `source` folds a supplier quote down to a project price first,
+// so a single edit or a paste over quoted rows never 422s.
+function asWritableSource(source) {
+  return source === "supplier_quote" ? "project_price" : source;
+}
 
 function toastFor(key, value, row, updated) {
   if (key === "unitPrice" && value === null) {
@@ -45,7 +59,7 @@ function toastFor(key, value, row, updated) {
 }
 
 export default function MaterialPricingWorkspace() {
-  const { store, projectId, runMutation, showToast, saved, toast, dismissToast, undo } = useWorkspaceContext();
+  const { store, projectId, runMutation, showToast, saved, toast, dismissToast, undo, redo } = useWorkspaceContext();
 
   const [rows, setRows] = useState(null); // null = loading
   const [pricingNote, setPricingNote] = useState("");
@@ -89,6 +103,8 @@ export default function MaterialPricingWorkspace() {
     load();
   }, [load]);
 
+  const undoCount = useUndoCount({ undo, load, showToast });
+
   // Poll while a market-pricing run is going, so rows update as they're
   // priced; stop the moment it clears (load() itself reads the next
   // marketJob off the wire) or the screen unmounts. Same shape as
@@ -122,7 +138,9 @@ export default function MaterialPricingWorkspace() {
     try {
       const updated = await runMutation(request);
       replaceRow(row.itemId, updated);
-      showToast(toastFor(key, value, row, updated));
+      const label = toastFor(key, value, row, updated);
+      undoCount.remember({ calls: 1, cells: 1, text: label });
+      showToast(label);
     } catch (err) {
       setRows((cur) =>
         cur.map((r) => {
@@ -143,7 +161,7 @@ export default function MaterialPricingWorkspace() {
     }
     const next = {
       priceOverride: key === "unitPrice" ? value : row.unitPrice,
-      source: key === "source" ? value : row.pendingSource || row.source || "project_price",
+      source: asWritableSource(key === "source" ? value : row.pendingSource || row.source) || "project_price",
       reason: key === "reason" ? value : row.reason,
     };
     if (next.source === "allowance" && !next.reason.trim()) {
@@ -166,6 +184,74 @@ export default function MaterialPricingWorkspace() {
 
   const cancel = (row, key) => {
     if (key === "reason" && row.pendingSource) replaceRow(row.itemId, { ...row, pendingSource: undefined });
+  };
+
+  // A range lands as one call per row, because the PATCH is already the
+  // trio (docs/specs/spreadsheet-grid.md, "What the screens do with a
+  // range → Material"). Changes are grouped by row and folded over the
+  // row's state; a row whose result would be an allowance with no
+  // reason is skipped and counted, since a range cannot ask forty
+  // questions the way the single-cell flow asks one.
+  const commitRange = async (changes, { kind }) => {
+    setSaveError(null);
+    const groups = new Map();
+    for (const c of changes) {
+      if (!groups.has(c.row.itemId)) groups.set(c.row.itemId, { row: c.row, changes: [] });
+      groups.get(c.row.itemId).changes.push(c);
+    }
+    setRows((cur) =>
+      cur.map((r) => {
+        const g = groups.get(r.itemId);
+        if (!g) return r;
+        const next = { ...r, pendingSource: undefined };
+        for (const c of g.changes) next[c.key] = c.value;
+        return next;
+      }),
+    );
+    const restore = (row) =>
+      setRows((cur) =>
+        cur.map((r) => (r.itemId === row.itemId ? { ...r, unitPrice: row.unitPrice, source: row.source, reason: row.reason, pendingSource: undefined } : r)),
+      );
+    let calls = 0;
+    let cells = 0;
+    let failedCells = 0;
+    let skipped = 0;
+    for (const { row, changes: mine } of groups.values()) {
+      const merged = { ...row };
+      for (const c of mine) merged[c.key] = c.value;
+      const hasEntry = row.source != null;
+      let request;
+      if (merged.unitPrice == null) {
+        if (!hasEntry) { restore(row); continue; }
+        request = () => store.clearMaterialPrice(row.itemId);
+      } else if (!hasEntry && !mine.some((c) => c.key === "unitPrice")) {
+        restore(row);
+        continue;
+      } else {
+        const next = { priceOverride: merged.unitPrice, source: asWritableSource(merged.source) || "project_price", reason: merged.reason || "" };
+        if (next.source === "allowance" && !next.reason.trim()) {
+          skipped += 1;
+          restore(row);
+          continue;
+        }
+        request = () => store.setMaterialPrice(row.itemId, next);
+      }
+      try {
+        const updated = await runMutation(request);
+        replaceRow(row.itemId, updated);
+        calls += 1;
+        cells += mine.length;
+      } catch {
+        restore(row);
+        failedCells += mine.length;
+      }
+    }
+    if (failedCells) setSaveError(rangeFailure(failedCells, changes.length));
+    if (calls) {
+      const label = rangeToast(kind, cells, calls, { skipped, skippedWhy: "an allowance needs a reason" });
+      undoCount.remember({ calls, cells, text: label });
+      showToast(label);
+    }
   };
 
   const totals = useMemo(() => {
@@ -258,6 +344,9 @@ export default function MaterialPricingWorkspace() {
               rowLabel={(row) => row.itemName}
               onCommit={commit}
               onCancel={cancel}
+              onCommitRange={commitRange}
+              onUndo={() => undo().then(load).catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."))}
+              onRedo={() => redo().then(load).catch((err) => setSaveError(err?.message || "That change couldn't be redone. Try again."))}
               footer={footer}
               caption="Material pricing by item"
             />
@@ -279,9 +368,7 @@ export default function MaterialPricingWorkspace() {
           <button
             type="button"
             onClick={() => {
-              undo()
-                .then(load)
-                .catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
+              undoCount.undoLast(toast.text).catch((err) => setSaveError(err?.message || "That change couldn't be undone. Try again."));
               dismissToast();
             }}
           >

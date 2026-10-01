@@ -51,6 +51,7 @@ _SECTIONS = {
     "pricing": ("pricing", "items", "totals"),
     "export": ("totals", "blocking"),
     "settings": (),
+    "plan": ("documents", "sheets", "document_texts"),
 }
 
 # Documents whose extracted text is the kind an estimator asks about --

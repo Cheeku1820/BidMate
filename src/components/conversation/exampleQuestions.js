@@ -13,6 +13,7 @@ const QUESTIONS = {
   pricing: ["Where does the labor rate come from?", "Which system costs the most?", "What's the material factor based on?"],
   export: ["What's still blocking export?", "What allowances are acknowledged?", "What's excluded from scope?"],
   settings: ["What revision set is active?", "Which settings override company defaults?", "What's the project address?"],
+  plan: ["What's still open in the plan?", "What have I confirmed so far?", "What's excluded from scope?"],
 };
 
 export function exampleQuestions(name) {

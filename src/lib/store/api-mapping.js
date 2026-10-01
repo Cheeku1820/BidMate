@@ -414,8 +414,6 @@ export function proposalToWire(p) {
   };
 }
 
-
-
 /* ==== schedule (phases-and-timeline.md §10) ==== */
 
 const num = (v) => (v == null ? null : Number(v));
@@ -567,5 +565,97 @@ export function mapCompanyLeadTime(r) {
     leadWeeks: r.lead_weeks,
     sourceLabel: r.source_label,
     quotedAt: r.quoted_at,
+  };
+}
+/* ==== project plan screen ==== */
+
+/** Wire PlanLineOut -> store shape (docs/specs/project-plan-screen.md).
+ *  `page` stays the 1-based number the server sends, or null for a spec
+ *  section, which cites its document rather than a page. */
+export function mapPlanLine(raw) {
+  return {
+    key: raw.key,
+    kind: raw.kind,
+    text: raw.text,
+    foundText: raw.found_text,
+    editedText: raw.edited_text ?? null,
+    status: raw.status,
+    documentId: raw.document_id ?? null,
+    documentFilename: raw.document_filename ?? null,
+    page: raw.page ?? null,
+    quote: raw.quote ?? null,
+    division: raw.division ?? null,
+    sheetNumber: raw.sheet_number ?? null,
+    added: Boolean(raw.added),
+    phaseId: raw.phase_id ?? null,
+    places: (raw.places ?? []).map((p) => ({
+      documentId: p.document_id ?? null,
+      documentFilename: p.document_filename,
+      page: p.page ?? null,
+      quote: p.quote,
+    })),
+  };
+}
+
+/** Wire QuestionOut -> store shape. The four warning fields cross
+ *  verbatim; nothing about how the question was raised does. */
+export function mapQuestion(raw) {
+  return {
+    key: raw.key,
+    status: raw.status,
+    title: raw.title,
+    found: raw.found,
+    why: raw.why,
+    fix: raw.fix,
+    where: raw.where,
+    documentId: raw.document_id ?? null,
+    documentFilename: raw.document_filename ?? null,
+    noteId: raw.note_id ?? null,
+  };
+}
+
+export function mapPlan(raw) {
+  return {
+    readAt: raw.read_at ?? null,
+    reading: Boolean(raw.reading),
+    hasDrawings: Boolean(raw.has_drawings),
+    undecided: raw.undecided ?? 0,
+    scope: (raw.scope ?? []).map(mapScopeStatement),
+    specs: (raw.specs ?? []).map(mapPlanLine),
+    schedules: (raw.schedules ?? []).map(mapPlanLine),
+    phases: (raw.phases ?? []).map(mapPlanLine),
+    questions: (raw.questions ?? []).map(mapQuestion),
+  };
+}
+
+/** Wire proposal -> card shape. The card's own fields are camelCased;
+ *  `proposal` (the item arm's inner payload) is left exactly as the
+ *  server sent it, because it is posted back to
+ *  POST /items/{id}/apply-proposal verbatim. */
+export function mapPanelProposal(raw) {
+  if (!raw) return null;
+  return {
+    kind: raw.kind,
+    summary: raw.summary,
+    note: raw.note ?? null,
+    count: raw.count ?? null,
+    sheetNumber: raw.sheet_number ?? null,
+    itemId: raw.item_id ?? null,
+    approve: raw.approve ?? false,
+    proposal: raw.proposal ?? null,
+    title: raw.title ?? null,
+    body: raw.body ?? null,
+    category: raw.category ?? null,
+    usage: raw.usage ?? null,
+    statementId: raw.statement_id ?? null,
+    projectId: raw.project_id ?? null,
+    key: raw.key ?? null,
+    status: raw.status ?? null,
+    editedText: raw.edited_text ?? null,
+    currentText: raw.current_text ?? null,
+    quote: raw.quote ?? null,
+    questionTitle: raw.question_title ?? null,
+    targetsPreview: (raw.targets_preview ?? []).map((t) => ({ label: t.label, detail: t.detail })),
+    moreCount: raw.more_count ?? 0,
   };
 }

@@ -15,12 +15,12 @@ from pydantic import BaseModel, Field
 
 SCREEN_NAMES = (
     "overview", "documents", "confirm", "processing", "takeoff", "spreadsheet",
-    "notes", "labor", "pricing", "export", "settings",
+    "notes", "labor", "pricing", "export", "settings", "plan",
 )
 
 ScreenName = Literal[
     "overview", "documents", "confirm", "processing", "takeoff", "spreadsheet",
-    "notes", "labor", "pricing", "export", "settings",
+    "notes", "labor", "pricing", "export", "settings", "plan",
 ]
 
 # The four review labels the spreadsheet filters by; the server counts a
@@ -52,7 +52,19 @@ class MessageOut(BaseModel):
     text: str
     screen: dict | None
     created_at: datetime
+    proposal: dict | None = None
+    proposal_status: str | None = None
 
 
 class ConversationOut(BaseModel):
     messages: list[MessageOut]
+
+
+PROPOSAL_STATUSES = ("offered", "applied", "dismissed")
+
+
+class ProposalDecisionIn(BaseModel):
+    """What became of a card. Bookkeeping only: this route never touches
+    a takeoff record, and a status is not an action."""
+
+    status: Literal["applied", "dismissed"]

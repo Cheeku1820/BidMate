@@ -3384,3 +3384,49 @@ button {
 }
 .grid-resize:hover { background: var(--grid-range); }
 .grid.is-resizing, .grid.is-resizing * { user-select: none; cursor: col-resize; }
+
+/* ==== stream F: plan ==== */
+.plan-page { max-width: 960px; }
+.plan-status { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); }
+.plan-section { margin-top: 16px; }
+.plan-line .scope-row__head { flex-wrap: wrap; }
+.plan-line__stated { font-size: 12px; color: var(--plum); }
+.plan-cite { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); margin-left: auto; }
+.plan-cite__link { display: inline-flex; align-items: center; gap: 3px; color: var(--blue); text-decoration: none; }
+.plan-cite__link:hover, .plan-cite__link:focus-visible { text-decoration: underline; }
+.plan-places { list-style: none; margin: 0 0 8px; padding: 0; font-size: 12.5px; display: flex; flex-direction: column; gap: 2px; }
+.plan-places .plan-cite { margin-left: 0; }
+.plan-question { list-style: none; }
+.plan-question .warncard { margin: 0 0 10px; }
+.warncard--question { border-color: var(--line-2); background: var(--paper-0); }
+.plan-add-phase { margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; max-width: 420px; }
+.plan-add-phase__row { display: flex; gap: 8px; }
+.plan-add-phase__row .field { flex: 1; }
+.note-status--answered { background: var(--slate-tint); color: var(--slate); border-color: var(--slate-line); }
+
+/* ==== stream E: panel proposals ==== */
+.proposal-card {
+  margin: 8px 0 2px; padding: 10px 12px; border: 1px solid var(--line-2);
+  border-radius: 8px; background: var(--paper-0); display: flex; flex-direction: column; gap: 8px;
+}
+.proposal-card__summary { margin: 0; font-size: 13px; line-height: 1.45; }
+.proposal-card__note { margin: 0; font-size: 12.5px; color: var(--ink-3); }
+.proposal-card__targets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.proposal-card__target { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.proposal-card__more { font-size: 12.5px; color: var(--ink-3); }
+.proposal-card__was { text-decoration: line-through; color: var(--ink-3); }
+.proposal-card__actions { display: flex; gap: 6px; }
+.proposal-card__error { margin: 0; font-size: 12.5px; color: var(--red); }
+.proposal-card__error:empty { display: none; }
+
+/* A proposal card's own status pill (ProposalCard.jsx) -- offered,
+   applied, stale -- shares .note-status with a note's own confirmed/open
+   vocabulary (CLAUDE.md: never the four review labels, never green).
+   Offered and stale read as the plum "open" family; applied reads as
+   the slate "confirmed" family. Hue + icon + text label together, same
+   as every other status pill -- the icon and label already tell offered
+   and stale apart, so they may share a hue. .note-status--dismissed
+   above already covers a dismissed card. */
+.note-status--offered { background: var(--plum-tint); color: var(--plum); border-color: var(--plum-line); }
+.note-status--applied { background: var(--slate-tint); color: var(--slate); border-color: var(--slate-line); }
+.note-status--stale { background: var(--plum-tint); color: var(--plum); border-color: var(--plum-line); }

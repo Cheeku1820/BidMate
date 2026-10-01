@@ -70,6 +70,7 @@ import {
   FileText,
   GitCompare,
   LayoutDashboard,
+  ListChecks,
   Map,
   PanelLeftClose,
   PanelLeftOpen,
@@ -94,6 +95,7 @@ const GROUPS = [
     items: [
       { slug: "documents", label: "Documents", built: true, Icon: FileText },
       { slug: "notes", label: "Notes & assumptions", built: true, Icon: StickyNote },
+      { slug: "plan", label: "Project plan", built: true, Icon: ListChecks },
     ],
   },
   {

@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MessageSquare, PanelRightClose, Send } from "lucide-react";
 import ConversationThread from "./ConversationThread.jsx";
+import { applyProposal } from "./applyProposal.js";
 import { exampleQuestions } from "./exampleQuestions.js";
 import { SCREEN_LABELS, screenNameFromPath, useConversationScreenContext } from "./screenContext.jsx";
 import { STATUS } from "../../lib/vocabulary.js";
@@ -82,11 +83,14 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
     setDraft("");
     abort.current = new AbortController();
     try {
-      const { id } = await store.sendMessage(projectId, { text: question, screen }, (chunk) => {
+      const { id, proposal } = await store.sendMessage(projectId, { text: question, screen }, (chunk) => {
         setPending((p) => ({ state: "streaming", text: (p?.text ?? "") + chunk }));
       }, abort.current.signal);
       setPending((p) => {
-        setMessages((m) => [...(m ?? []), { id, role: "answer", text: p?.text ?? "", screen: null }]);
+        setMessages((m) => [...(m ?? []), {
+          id, role: "answer", text: p?.text ?? "", screen: null,
+          proposal: proposal ?? null, proposalStatus: proposal ? "offered" : null,
+        }]);
         return null;
       });
     } catch (err) {
@@ -113,6 +117,30 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
     });
     send(last.text);
   };
+
+  // Apply and dismiss live here, not in the thread or the card, because
+  // this is the one place that holds both `store` and `projectId`. The
+  // status write is best effort after a successful apply -- the change
+  // already landed through the record's own endpoint, so a failure here
+  // is not shown as an error, and the card settles locally either way.
+  const settleProposal = (messageId, status) => {
+    setMessages((m) => (m ?? []).map((msg) => (msg.id === messageId ? { ...msg, proposalStatus: status } : msg)));
+  };
+
+  const handleApplyProposal = useCallback(async (messageId, proposal) => {
+    await applyProposal(store, projectId, proposal);
+    try {
+      await store.setProposalStatus(projectId, messageId, "applied");
+    } catch {
+      // Best effort -- the change already landed.
+    }
+    settleProposal(messageId, "applied");
+  }, [store, projectId]);
+
+  const handleDismissProposal = useCallback(async (messageId) => {
+    await store.setProposalStatus(projectId, messageId, "dismissed");
+    settleProposal(messageId, "dismissed");
+  }, [store, projectId]);
 
   const onKeyDown = (e) => {
     // isComposing: Enter inside an IME commits the composition, not the
@@ -152,7 +180,13 @@ export default function ConversationPanel({ store, projectId, pathname, open, on
       {messages === null ? (
         <p className="conversation__empty">Loading the conversation</p>
       ) : (
-        <ConversationThread messages={messages} pending={pending} onRetry={retry} />
+        <ConversationThread
+          messages={messages}
+          pending={pending}
+          onRetry={retry}
+          onApplyProposal={handleApplyProposal}
+          onDismissProposal={handleDismissProposal}
+        />
       )}
 
       {examples.length > 0 && !unavailable && (

@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapCompanyLeadTime, mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPhaseLineTemplate, mapProcessing, mapProject, mapProposal, mapSchedule, mapScopeStatement, mapSnapshot, mapStageCrew, mapStageSplit, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
+import { mapCompanyLeadTime, mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPanelProposal, mapPhaseLineTemplate, mapPlan, mapPlanLine, mapProcessing, mapProject, mapProposal, mapQuestion, mapSchedule, mapScopeStatement, mapSnapshot, mapStageCrew, mapStageSplit, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -444,6 +444,36 @@ export function createApiStore() {
     return mapScopeStatement(await request(`/api/scope/${id}`, { method: "PATCH", body }));
   }
 
+  /** The project plan: what the documents say, derived server-side on
+   *  every read, with the estimator's decisions applied. */
+  async function getPlan(projectId) {
+    return mapPlan(await request(`/api/projects/${projectId}/plan`));
+  }
+
+  /** Exactly one of status / editedText, the same contract as decideScope.
+   *  A question comes back as a question (title, found, why, fix, where);
+   *  anything else as a line. */
+  async function decidePlanLine(projectId, key, changes) {
+    const body = {};
+    if (Object.prototype.hasOwnProperty.call(changes, "status")) body.status = changes.status;
+    if (Object.prototype.hasOwnProperty.call(changes, "editedText")) body.edited_text = changes.editedText;
+    const raw = await request(`/api/projects/${projectId}/plan/lines/${encodeURIComponent(key)}`, { method: "PATCH", body });
+    return raw && raw.title !== undefined ? mapQuestion(raw) : mapPlanLine(raw);
+  }
+
+  async function answerPlanQuestion(projectId, key, body) {
+    const raw = await request(`/api/projects/${projectId}/plan/questions/${encodeURIComponent(key)}/answer`, { method: "POST", body: { body } });
+    return mapQuestion(raw);
+  }
+
+  async function addPlanPhase(projectId, name) {
+    return mapPlanLine(await request(`/api/projects/${projectId}/plan/phases`, { method: "POST", body: { name } }));
+  }
+
+  async function removePlanPhase(projectId, phaseId) {
+    return request(`/api/projects/${projectId}/plan/phases/${phaseId}`, { method: "DELETE" });
+  }
+
   async function listDocuments(projectId) {
     const rows = await request(`/api/projects/${projectId}/documents`);
     return (rows || []).map(mapDocument);
@@ -530,6 +560,7 @@ export function createApiStore() {
     const body = await request(`/api/projects/${id}/conversation`);
     return (body?.messages ?? []).map((m) => ({
       id: m.id, role: m.role, text: m.text, screen: m.screen, createdAt: m.created_at,
+      proposal: mapPanelProposal(m.proposal), proposalStatus: m.proposal_status ?? null,
     }));
   }
 
@@ -550,6 +581,7 @@ export function createApiStore() {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let proposal = null;
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -561,11 +593,20 @@ export function createApiStore() {
         const event = parseEvent(block);
         if (!event) continue;
         if (event.name === "delta") onDelta(event.data.text);
-        else if (event.name === "done") return event.data;
+        else if (event.name === "proposal") proposal = mapPanelProposal(event.data.proposal);
+        else if (event.name === "done") return { ...event.data, proposal };
         else if (event.name === "error") throw { code: event.data.code, message: event.data.message };
       }
     }
     throw { code: "interrupted", message: "Answer interrupted — ask again" };
+  }
+
+  /** What became of a proposal card. Bookkeeping only — the change
+   *  itself went through the record's own endpoint. */
+  async function setProposalStatus(projectId, messageId, status) {
+    const raw = await request(`/api/projects/${projectId}/conversation/messages/${messageId}/proposal`,
+      { method: "PATCH", body: { status } });
+    return { ...raw, proposal: mapPanelProposal(raw.proposal), proposalStatus: raw.proposal_status ?? null };
   }
 
   // Labor and Material Pricing (task-9-brief.md): the client half of
@@ -905,6 +946,12 @@ export function createApiStore() {
     getCompanyLaborHoursOverrides,
     setCompanyLaborHoursOverride,
     deleteCompanyLaborHoursOverride,
+    getPlan,
+    decidePlanLine,
+    answerPlanQuestion,
+    addPlanPhase,
+    removePlanPhase,
+    setProposalStatus,
     getSchedule,
     createPhase,
     editPhase,

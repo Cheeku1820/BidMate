@@ -92,8 +92,15 @@ def test_the_module_imports_nothing_that_could_write():
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.Import):
             imported.update(a.name.split(".")[0] for a in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imported.add(node.module.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported.add(node.module.split(".")[0])
+            elif node.level >= 1:
+                # A bare "from . import llm" carries no `module` string
+                # for ast to report -- without this branch it would be
+                # invisible to this scan, and the boundary it exists to
+                # enforce would just be unchecked for that import form.
+                imported.update(a.name for a in node.names)
 
     # "contracts" is `from .contracts import Proposal` -- a same-package
     # relative import (level=1), which ast reports with module="contracts",
@@ -102,7 +109,16 @@ def test_the_module_imports_nothing_that_could_write():
     # "re" is the standard-library regex module, added when _match moved
     # from substring to word-boundary matching. It is pure text matching
     # with no I/O, so it does not widen the write surface this test guards.
-    allowed = {"__future__", "re", "contracts"}
+    # "logging" and "dataclasses" arrived with route_message(): a warning
+    # log line when the language call fails, and the frozen Route /
+    # RouteTargets records it returns. Neither reaches a session, an
+    # engine, or a model client.
+    # "llm" is `from . import llm` -- the language-side agent's call
+    # module (`app.engine.resolve` already imports it the same way). It
+    # imports no database session itself, and test_api_import_boundary.py
+    # is what enforces that absence at the process level; route_message()
+    # here only reads its return value and never writes.
+    allowed = {"__future__", "re", "contracts", "logging", "dataclasses", "llm"}
     assert imported <= allowed, f"conversation.py imports beyond its boundary: {imported - allowed}"
 
 
@@ -139,3 +155,120 @@ def test_a_real_reclassification_still_routes_to_reclassify():
 def test_no_anchor_yields_an_empty_target_list_not_a_guess():
     p = route("these are all type F", [])
     assert p.target_item_ids == []
+
+
+# --- route_message: the panel's entry point (conversation-panel-acts) ---
+
+from app.engine import conversation as conv
+
+
+def _screen(**over):
+    s = {"name": "takeoff", "sheet": "E2.1", "selection": "Unclassified symbol", "filter": None, "records": []}
+    s.update(over)
+    return s
+
+
+def test_route_message_falls_back_to_the_keyword_matcher_without_a_key(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: False)
+    out = conv.route_message("these are all type F", screen=_screen())
+    assert out.intent == "reclassify" and out.targets.form == "selection"
+    assert conv.route_message("ignore this wing, it's existing to remain", screen=_screen()).intent == "exclude"
+    assert conv.route_message("the ceiling in here is 14 feet", screen=_screen()).intent == "set_context"
+    assert conv.route_message("what is on this sheet?", screen=_screen()).intent == "unknown"
+
+
+def test_route_message_uses_the_call_when_a_key_is_present(monkeypatch):
+    seen = {}
+
+    def fake(message, screen_line):
+        seen["message"], seen["screen_line"] = message, screen_line
+        return {"intent": "reclassify", "target_form": "tag", "tag": "F", "record_key": "", "field": "classification", "value": "type F troffer"}
+
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", fake)
+    out = conv.route_message("all the type F fixtures on this sheet are 2x4 troffers", screen=_screen())
+    assert out.intent == "reclassify" and out.targets.form == "tag" and out.targets.tag == "F"
+    assert out.value == "type F troffer"
+    assert "E2.1" in seen["screen_line"] and "takeoff" in seen["screen_line"]
+
+
+def test_a_response_outside_the_closed_sets_becomes_unknown(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    for bad in ({"intent": "delete_project", "target_form": "view", "tag": "", "record_key": "", "field": "", "value": ""},
+                {"intent": "reclassify", "target_form": "everything", "tag": "", "record_key": "", "field": "", "value": ""},
+                {"intent": "reclassify"},
+                None):
+        monkeypatch.setattr(conv.llm, "route_message", lambda m, s, _b=bad: _b)
+        assert conv.route_message("do the thing", screen=_screen()).intent == "unknown"
+
+
+def test_a_failed_call_falls_back_rather_than_raising(monkeypatch):
+    def boom(message, screen_line):
+        raise RuntimeError("network")
+
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", boom)
+    assert conv.route_message("these are all type F", screen=_screen()).intent == "reclassify"
+
+
+def test_record_intents_need_a_record_key_the_screen_offered(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_scope", "target_form": "record", "tag": "", "record_key": "scope:abc",
+        "field": "status", "value": "confirmed"})
+    offered = conv.route_message("site lighting is by others", screen=_screen(records=["scope:abc"]))
+    assert offered.intent == "decide_scope" and offered.targets.record_key == "scope:abc"
+    # A key the screen never offered is not a target.
+    assert conv.route_message("site lighting is by others", screen=_screen(records=[])).intent == "unknown"
+
+
+def test_route_message_never_returns_item_ids_and_opens_no_session():
+    import inspect
+    src = inspect.getsource(conv)
+    assert "target_item_ids" not in inspect.getsource(conv.route_message)
+    assert "Session" not in src and "sqlalchemy" not in src
+
+
+# --- a decide_* intent needs a decision word or a reworded value, paired with `field` ---
+
+
+def test_a_decide_scope_status_field_with_a_decision_word_routes_through(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_scope", "target_form": "record", "tag": "", "record_key": "scope:abc",
+        "field": "status", "value": "confirmed"})
+    out = conv.route_message("that's right", screen=_screen(records=["scope:abc"]))
+    assert out.intent == "decide_scope" and out.field == "status" and out.value == "confirmed"
+
+
+def test_a_decide_scope_status_field_with_an_empty_value_is_unknown(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_scope", "target_form": "record", "tag": "", "record_key": "scope:abc",
+        "field": "status", "value": ""})
+    assert conv.route_message("that's right", screen=_screen(records=["scope:abc"])).intent == "unknown"
+
+
+def test_a_decide_plan_text_field_with_an_empty_value_is_unknown(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_plan", "target_form": "record", "tag": "", "record_key": "plan:spec:x:260519",
+        "field": "text", "value": ""})
+    assert conv.route_message("reword it", screen=_screen(records=["plan:spec:x:260519"])).intent == "unknown"
+
+
+def test_a_decide_plan_text_field_with_a_reworded_value_routes_through(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_plan", "target_form": "record", "tag": "", "record_key": "plan:spec:x:260519",
+        "field": "text", "value": "26 05 19 -- corrected title"})
+    out = conv.route_message("say it's corrected title instead", screen=_screen(records=["plan:spec:x:260519"]))
+    assert out.intent == "decide_plan" and out.field == "text" and out.value == "26 05 19 -- corrected title"
+
+
+def test_a_decide_scope_status_field_with_a_non_decision_word_is_unknown(monkeypatch):
+    monkeypatch.setattr(conv.llm, "available", lambda: True)
+    monkeypatch.setattr(conv.llm, "route_message", lambda m, s: {
+        "intent": "decide_scope", "target_form": "record", "tag": "", "record_key": "scope:abc",
+        "field": "status", "value": "yes"})
+    assert conv.route_message("that's right", screen=_screen(records=["scope:abc"])).intent == "unknown"

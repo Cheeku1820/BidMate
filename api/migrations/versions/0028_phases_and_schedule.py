@@ -1,11 +1,11 @@
 """phases_and_schedule
 
-Revision ID: 0026
-Revises: 0025
+Revision ID: 0028
+Revises: 0027
 Create Date: 2026-09-21 00:00:00.000000
 
-Written as 0026 on the stream-D branch; renumber at integration to sit
-behind whatever landed first, as 0025 was.
+Written as 0026 on the stream-D branch and renumbered at integration to
+sit behind what landed first: 0026_plan and 0027_conversation_proposal.
 
 docs/specs/phases-and-timeline.md §11: phases, phase lines, stage
 plans, item lead times, the four company tables, the singleton
@@ -19,8 +19,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
-revision: str = '0026'
-down_revision: Union[str, None] = '0025'
+revision: str = '0028'
+down_revision: Union[str, None] = '0027'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

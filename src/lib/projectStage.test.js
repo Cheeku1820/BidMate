@@ -92,3 +92,18 @@ describe("matchesFilter", () => {
     expect(matchesFilter(unprocessed, "readyToExport")).toBe(false);
   });
 });
+
+describe("the plan stage", () => {
+  it("sits between documents and processing and reads as Plan", () => {
+    const keys = STAGES.map((s) => s.key);
+    expect(keys.indexOf("plan")).toBe(keys.indexOf("documents") + 1);
+    expect(keys.indexOf("processing")).toBe(keys.indexOf("plan") + 1);
+    expect(stageLabel("plan")).toBe("Plan");
+  });
+
+  it("is an active project, neither processing nor complete", () => {
+    expect(matchesFilter(project({ stage: "plan", itemsTotal: 0, itemsApproved: 0 }), "active")).toBe(true);
+    expect(matchesFilter(project({ stage: "plan" }), "processing")).toBe(false);
+    expect(matchesFilter(project({ stage: "plan" }), "complete")).toBe(false);
+  });
+});

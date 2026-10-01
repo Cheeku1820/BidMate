@@ -26,7 +26,7 @@ From the spec and `CLAUDE.md`; every task inherits them.
 - Every warning carries `title, found, why, fix, where`. Sentence case everywhere; no exclamation marks, no "successfully", no "please", no "recommended" or "industry standard" for the seeded defaults — they are "the default".
 - Plain CSS tokens appended to `src/styles.css` under `/* ==== schedule ==== */`. No inline hex. `lucide-react` icons only. Tabular numerals on every number.
 - Shared files (`models.py`, `schemas.py`, `main.py`, `routes.jsx`, `ProjectNav.jsx`, `test_tenancy.py`) are appended to, never reordered (`workstreams-2026-09.md` §4).
-- The migration is written as `0026_phases_and_schedule.py` and renumbered at integration behind whatever landed first. One Alembic head at a time.
+- The migration was written as `0026_phases_and_schedule.py` and renumbered at integration to `0028_phases_and_schedule.py` (`revision = '0028'`, `down_revision = '0027'`), behind stream F's `0026_plan` and `0027_conversation_proposal`. One Alembic head at a time.
 - `npm run build` passes before every commit that touches `src/`. The corpus under `bid_examples/` is never committed and no price from it appears anywhere.
 
 ## How to run things
@@ -4768,9 +4768,15 @@ Known simplifications in this plan, each a deliberate reading of the spec rather
 `main` moved while this stream ran: stream A (pricing hardening) and
 stream B (the spreadsheet grid) merged at `54b2f14`. Two things follow.
 
-**No migration renumbering.** `main`'s head is still `0025_market_pricing`,
-so `0026_phases_and_schedule` chains cleanly. Check again at merge time —
-streams C and F merge ahead of D in the planned order.
+**Migration renumbered at integration.** When this was written `main`'s
+head was still `0025_market_pricing`, so nothing needed to move. Stream F
+then landed `0026_plan` and `0027_conversation_proposal`, which collided
+with this branch's `0026` outright — two revisions with the same id and
+two Alembic heads. `0026_phases_and_schedule.py` is now
+`0028_phases_and_schedule.py`, `revision = '0028'`,
+`down_revision = '0027'`: one linear chain, 0025 -> 0026 -> 0027 -> 0028.
+This is the check the note above said to repeat at merge time, and it is
+worth repeating again for stream C.
 
 **One real conflict, in the price sheet (Task 8).** Both branches add an
 `unreadable` group to the preview, and — fortunately — with the same

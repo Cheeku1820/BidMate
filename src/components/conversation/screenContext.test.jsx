@@ -14,7 +14,7 @@ describe("screenNameFromPath", () => {
   it("names every project route from the closed set", () => {
     expect(SCREEN_NAMES).toEqual([
       "overview", "documents", "confirm", "processing", "takeoff", "spreadsheet",
-      "notes", "labor", "pricing", "export", "settings",
+      "notes", "labor", "pricing", "export", "settings", "plan",
     ]);
     expect(screenNameFromPath("/projects/p1")).toBe("overview");
     expect(screenNameFromPath("/projects/p1/documents")).toBe("documents");
@@ -27,6 +27,7 @@ describe("screenNameFromPath", () => {
     expect(screenNameFromPath("/projects/p1/pricing")).toBe("pricing");
     expect(screenNameFromPath("/projects/p1/export")).toBe("export");
     expect(screenNameFromPath("/projects/p1/settings")).toBe("settings");
+    expect(screenNameFromPath("/projects/p1/plan")).toBe("plan");
   });
 
   it("is null off a project and for /projects/new", () => {

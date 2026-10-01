@@ -2,19 +2,20 @@
    ConfirmDrawings.test.jsx — screen D, reading the set as the worker
    has read it (store.getProcessing). What matters: it lists every
    document with what the worker made of it -- read with a sheet count,
-   still reading, or failed with the reason -- blocks starting without a
-   drawing set, flags unrecognized documents in a Needs attention section
-   above the table, lets the estimator correct a type before processing,
-   and routes Start takeoff through store.startTakeoff, treating a run
-   already in flight as already started and a set with nothing readable
-   as a message to show, not a page to leave. There is no include/exclude
-   control in this slice (see ConfirmDrawings.jsx's header) and no local
-   file picker (a document is added through screen C, the only place one
-   is actually persisted).
+   still reading, or failed with the reason -- flags unrecognized
+   documents in a Needs attention section above the table, lets the
+   estimator correct a type before processing, and hands off to the
+   project plan (a "Review the plan" link) rather than starting the
+   takeoff or showing the scope section itself -- both now live on
+   src/components/plan/. There is no include/exclude control in this
+   slice (see ConfirmDrawings.jsx's header) and no local file picker (a
+   document is added through screen C, the only place one is actually
+   persisted).
    ============================================================ */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ConfirmDrawings from "./ConfirmDrawings.jsx";
 
@@ -52,8 +53,6 @@ function makeStore(docs = []) {
     getProcessing: vi.fn().mockResolvedValue({ documents: docs, run: null }),
     setDocumentType: vi.fn().mockResolvedValue(undefined),
     startTakeoff: vi.fn().mockResolvedValue({ runId: "r1" }),
-    listScope: vi.fn().mockResolvedValue([]),
-    decideScope: vi.fn(),
   };
 }
 
@@ -64,6 +63,7 @@ const renderConfirm = (store) => {
         <Route path="/projects/:projectId/documents/confirm" element={<ConfirmDrawings store={store} />} />
         <Route path="/projects/:projectId/processing" element={<p>processing</p>} />
         <Route path="/projects/:projectId/documents" element={<p>upload</p>} />
+        <Route path="/projects/:projectId/plan" element={<p>plan</p>} />
       </Routes>
     </MemoryRouter>
   );
@@ -79,7 +79,7 @@ afterEach(() => {
 });
 
 describe("ConfirmDrawings", () => {
-  it("lists the uploaded documents and can start when a drawing set is present", async () => {
+  it("lists the uploaded documents and hands off to the plan", async () => {
     const store = makeStore([
       docFrom(pdf("cd_biddrawings.pdf"), "Drawings"),
       docFrom(pdf("specs_part_1.pdf"), "Specifications"),
@@ -88,9 +88,13 @@ describe("ConfirmDrawings", () => {
 
     expect(await screen.findByText("cd_biddrawings.pdf")).toBeTruthy();
     expect(screen.getByText("specs_part_1.pdf")).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /start takeoff/i })[0]).toBeEnabled();
+    expect(screen.getAllByRole("link", { name: "Review the plan" })[0]).toBeEnabled();
     expect(screen.queryByText(/no drawing set/i)).toBeNull();
     expect(store.getProcessing).toHaveBeenCalledWith("p1");
+
+    await userEvent.click(screen.getAllByRole("link", { name: "Review the plan" })[0]);
+    expect(await screen.findByText("plan")).toBeInTheDocument();
+    expect(store.startTakeoff).not.toHaveBeenCalled();
   });
 
   it("shows what the worker read per document -- sheet counts, reading, or the reason it failed", async () => {
@@ -160,40 +164,6 @@ describe("ConfirmDrawings", () => {
     expect(screen.queryByRole("table", { name: "Sheets in addendum.pdf" })).toBeNull();
   });
 
-  it("disables Start while a document is still being read, and says why beneath it", async () => {
-    vi.useFakeTimers();
-    const reading = docFrom(pdf("addendum.pdf"), "Drawings", { state: "reading", sheetCount: 0 });
-    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings"), reading]);
-    store.getProcessing
-      .mockResolvedValueOnce({ documents: [docFrom(pdf("cd_biddrawings.pdf"), "Drawings"), reading], run: null })
-      .mockResolvedValue({ documents: [docFrom(pdf("cd_biddrawings.pdf"), "Drawings"), { ...reading, state: "read", sheetCount: 2 }], run: null });
-    renderConfirm(store);
-    await act(() => vi.advanceTimersByTimeAsync(0));
-
-    const buttons = screen.getAllByRole("button", { name: /start takeoff/i });
-    buttons.forEach((b) => expect(b).toBeDisabled());
-    expect(screen.getByText("A drawing set is still being read. Wait for it to finish before starting the takeoff.")).toBeInTheDocument();
-    buttons.forEach((b) => expect(b).toHaveAccessibleDescription(/still being read/));
-    fireEvent.click(buttons[0]);
-    expect(store.startTakeoff).not.toHaveBeenCalled();
-
-    // Once the read lands, the gate opens and the help goes away.
-    await act(() => vi.advanceTimersByTimeAsync(3100));
-    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
-    expect(screen.queryByText(/still being read/)).toBeNull();
-  });
-
-  it("keeps Start enabled while a specification is still being read, and disables it only for drawings", async () => {
-    const store = makeStore([
-      docFrom(pdf("E.pdf"), "Drawings", { state: "read", sheetCount: 3 }),
-      docFrom(pdf("spec.pdf"), "Specifications", { state: "reading", sheetCount: 0 }),
-    ]);
-    renderConfirm(store);
-    await screen.findByText("E.pdf");
-    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
-    expect(screen.queryByText(/still being read/)).toBeNull();
-  });
-
   it("keeps polling while only a specification is still being read, so its row updates without a reload", async () => {
     vi.useFakeTimers();
     const reading = docFrom(pdf("spec.pdf"), "Specifications", { state: "reading", sheetCount: 0 });
@@ -205,108 +175,29 @@ describe("ConfirmDrawings", () => {
     await act(() => vi.advanceTimersByTimeAsync(0));
 
     expect(screen.getByText("Reading…")).toBeInTheDocument();
-    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+    screen.getAllByRole("link", { name: "Review the plan" }).forEach((b) => expect(b).toBeEnabled());
 
-    // Nothing but a specification is reading, so Start stayed enabled the
-    // whole time -- but the row still needs to hear back once the worker
-    // finishes with it, which only happens if the poll kept running.
+    // Nothing but a specification is reading, so the plan link stayed
+    // enabled the whole time -- but the row still needs to hear back once
+    // the worker finishes with it, which only happens if the poll kept
+    // running.
     await act(() => vi.advanceTimersByTimeAsync(3100));
     expect(screen.queryByText("Reading…")).toBeNull();
     expect(screen.getByText("Read")).toBeInTheDocument();
-    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+    screen.getAllByRole("link", { name: "Review the plan" }).forEach((b) => expect(b).toBeEnabled());
   });
 
-  it("stays and shows the server's message when a start is refused because a set is still being read", async () => {
-    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
-    store.startTakeoff.mockRejectedValue({
-      code: "drawings_still_reading",
-      message: "A drawing set is still being read. Wait for it to finish before starting the takeoff.",
-    });
-    renderConfirm(store);
-    await screen.findByText("cd_biddrawings.pdf");
-
-    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("A drawing set is still being read");
-    expect(screen.queryByText("processing")).toBeNull();
-  });
-
-  it("mounts the scope section above the table", async () => {
-    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
-    store.listScope.mockResolvedValue([
-      { id: "s1", kind: "by_others", text: "Temporary power by GC.", editedText: null, status: "found", documentId: "d", documentFilename: "spec.pdf", page: 2, quote: "Temporary power by GC." },
-    ]);
-    renderConfirm(store);
-
-    expect(await screen.findByText("1 statement found · 0 confirmed · 0 dismissed")).toBeInTheDocument();
-    expect(store.listScope).toHaveBeenCalledWith("p1");
-    const scope = screen.getByRole("heading", { name: "Scope stated in the documents" });
-    const [table] = screen.getAllByRole("table");
-    expect(scope.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it("starts the takeoff through the store, then goes to processing", async () => {
-    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
-    renderConfirm(store);
-    await screen.findByText("cd_biddrawings.pdf");
-
-    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
-
-    expect(store.startTakeoff).toHaveBeenCalledWith("p1");
-    expect(await screen.findByText("processing")).toBeInTheDocument();
-  });
-
-  it("treats a run already in flight as started -- goes to processing, no error", async () => {
-    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
-    store.startTakeoff.mockRejectedValue({ code: "run_in_flight", message: "A run is already in progress." });
-    renderConfirm(store);
-    await screen.findByText("cd_biddrawings.pdf");
-
-    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
-
-    expect(await screen.findByText("processing")).toBeInTheDocument();
-    expect(screen.queryByText(/already in progress/i)).toBeNull();
-  });
-
-  it("stays and shows the server's message when nothing in the set could be read", async () => {
-    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings", { state: "failed", reason: "Corrupt file.", sheetCount: 0 })]);
-    store.startTakeoff.mockRejectedValue({
-      code: "no_readable_drawings",
-      message: "None of the uploaded documents could be read. Replace the drawing set and try again.",
-    });
-    renderConfirm(store);
-    await screen.findByText("cd_biddrawings.pdf");
-
-    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("None of the uploaded documents could be read");
-    expect(screen.queryByText("processing")).toBeNull();
-    // Still here, still able to try again once the set is fixed.
-    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
-  });
-
-  it("shows any other failure's message inline and stays", async () => {
-    const store = makeStore([docFrom(pdf("cd_biddrawings.pdf"), "Drawings")]);
-    store.startTakeoff.mockRejectedValue({ code: "network", message: "Couldn't reach the server. Check the connection and try again." });
-    renderConfirm(store);
-    await screen.findByText("cd_biddrawings.pdf");
-
-    fireEvent.click(screen.getAllByRole("button", { name: /start takeoff/i })[0]);
-
-    expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
-    expect(screen.queryByText("processing")).toBeNull();
-  });
-
-  it("blocks starting when nothing is typed Drawings", async () => {
+  it("still offers the plan when nothing is typed Drawings, and says what is missing", async () => {
     const store = makeStore([docFrom(pdf("specs_part_1.pdf"), "Specifications")]);
     renderConfirm(store);
 
     expect(await screen.findByText(/no drawing set/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /start takeoff/i })[0]).toBeDisabled();
+    screen.getAllByRole("link", { name: "Review the plan" }).forEach((b) => expect(b).toBeEnabled());
 
-    // Correcting the type to Drawings unblocks it, and persists.
+    // Correcting the type to Drawings persists, and the plan link is
+    // unaffected either way -- the plan itself says what is missing.
     fireEvent.change(screen.getByLabelText(/type for specs_part_1\.pdf/i), { target: { value: "Drawings" } });
-    expect(screen.getAllByRole("button", { name: /start takeoff/i })[0]).toBeEnabled();
+    screen.getAllByRole("link", { name: "Review the plan" }).forEach((b) => expect(b).toBeEnabled());
     expect(store.setDocumentType).toHaveBeenCalledWith("doc-1", "Drawings");
   });
 
@@ -348,7 +239,6 @@ describe("ConfirmDrawings", () => {
     fireEvent.change(screen.getByLabelText(/type for cd_biddrawings\.pdf/i), { target: { value: "Scope" } });
 
     expect(screen.getByText(/1 blocking/i)).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: /start takeoff/i })[0]).toBeDisabled();
     expect(screen.getByLabelText(/blocks processing/i)).toBeTruthy();
   });
 
@@ -383,14 +273,13 @@ describe("ConfirmDrawings", () => {
 
   it("reverts the select and surfaces the server's message when a type change fails, without un-counting the document", async () => {
     // Before this the failure was swallowed: the select showed the new
-    // type, "Start takeoff" enabled on it, and the server still held
-    // the old one -- processing would have read a type the estimator
-    // never saw.
+    // type, and the server still held the old one -- processing would
+    // have read a type the estimator never saw.
     const store = makeStore([docFrom(pdf("specs_part_1.pdf"), "Specifications")]);
     store.setDocumentType.mockRejectedValue({ code: "network", message: "Couldn't reach the server. Check the connection and try again." });
     renderConfirm(store);
     await screen.findByText("specs_part_1.pdf");
-    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeDisabled());
+    screen.getAllByRole("link", { name: "Review the plan" }).forEach((b) => expect(b).toBeEnabled());
 
     const select = screen.getByLabelText(/type for specs_part_1\.pdf/i);
     fireEvent.change(select, { target: { value: "Drawings" } });
@@ -398,8 +287,6 @@ describe("ConfirmDrawings", () => {
     expect(await screen.findByText(/Couldn't reach the server/)).toBeInTheDocument();
     expect(select).toHaveValue("Specifications");
     expect(select).toHaveAccessibleDescription(/Couldn't reach the server/);
-    // The server still holds no drawing set, so the gate stays shut.
-    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeDisabled());
     // Still counted: one document, not zero.
     expect(document.querySelector(".workspace-footer-status")).toHaveTextContent("1 document");
 
@@ -408,7 +295,7 @@ describe("ConfirmDrawings", () => {
     fireEvent.change(select, { target: { value: "Drawings" } });
     await waitFor(() => expect(screen.queryByText(/Couldn't reach the server/)).not.toBeInTheDocument());
     expect(select).toHaveValue("Drawings");
-    screen.getAllByRole("button", { name: /start takeoff/i }).forEach((b) => expect(b).toBeEnabled());
+    screen.getAllByRole("link", { name: "Review the plan" }).forEach((b) => expect(b).toBeEnabled());
   });
 
   it("counts only the lines it can confirm -- a deferred line is neither confirmed nor unresolved", async () => {

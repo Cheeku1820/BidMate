@@ -15,7 +15,7 @@ from app.takeoff.models import Document, Item, Note, ReviewStatus, ScopeStatemen
 def test_screen_names_are_the_closed_set():
     assert SCREEN_NAMES == (
         "overview", "documents", "confirm", "processing", "takeoff", "spreadsheet",
-        "notes", "labor", "pricing", "export", "settings",
+        "notes", "labor", "pricing", "export", "settings", "plan",
     )
 
 

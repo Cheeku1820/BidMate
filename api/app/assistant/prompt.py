@@ -52,6 +52,7 @@ SCREEN_LABELS = {
     "pricing": "Material pricing",
     "export": "Export",
     "settings": "Project settings",
+    "plan": "Project plan",
 }
 
 

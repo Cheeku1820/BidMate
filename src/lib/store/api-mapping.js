@@ -399,3 +399,62 @@ export function proposalToWire(p) {
   };
 }
 
+/** Wire PlanLineOut -> store shape (docs/specs/project-plan-screen.md).
+ *  `page` stays the 1-based number the server sends, or null for a spec
+ *  section, which cites its document rather than a page. */
+export function mapPlanLine(raw) {
+  return {
+    key: raw.key,
+    kind: raw.kind,
+    text: raw.text,
+    foundText: raw.found_text,
+    editedText: raw.edited_text ?? null,
+    status: raw.status,
+    documentId: raw.document_id ?? null,
+    documentFilename: raw.document_filename ?? null,
+    page: raw.page ?? null,
+    quote: raw.quote ?? null,
+    division: raw.division ?? null,
+    sheetNumber: raw.sheet_number ?? null,
+    added: Boolean(raw.added),
+    phaseId: raw.phase_id ?? null,
+    places: (raw.places ?? []).map((p) => ({
+      documentId: p.document_id ?? null,
+      documentFilename: p.document_filename,
+      page: p.page ?? null,
+      quote: p.quote,
+    })),
+  };
+}
+
+/** Wire QuestionOut -> store shape. The four warning fields cross
+ *  verbatim; nothing about how the question was raised does. */
+export function mapQuestion(raw) {
+  return {
+    key: raw.key,
+    status: raw.status,
+    title: raw.title,
+    found: raw.found,
+    why: raw.why,
+    fix: raw.fix,
+    where: raw.where,
+    documentId: raw.document_id ?? null,
+    documentFilename: raw.document_filename ?? null,
+    noteId: raw.note_id ?? null,
+  };
+}
+
+export function mapPlan(raw) {
+  return {
+    readAt: raw.read_at ?? null,
+    reading: Boolean(raw.reading),
+    hasDrawings: Boolean(raw.has_drawings),
+    undecided: raw.undecided ?? 0,
+    scope: (raw.scope ?? []).map(mapScopeStatement),
+    specs: (raw.specs ?? []).map(mapPlanLine),
+    schedules: (raw.schedules ?? []).map(mapPlanLine),
+    phases: (raw.phases ?? []).map(mapPlanLine),
+    questions: (raw.questions ?? []).map(mapQuestion),
+  };
+}
+

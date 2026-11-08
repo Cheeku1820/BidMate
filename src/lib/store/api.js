@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapCompanyLeadTime, mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPanelProposal, mapPhaseLineTemplate, mapPlan, mapPlanLine, mapProcessing, mapProject, mapProposal, mapQuestion, mapSchedule, mapScopeStatement, mapSnapshot, mapStageCrew, mapStageSplit, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
+import { mapCompanyLeadTime, mapDocument, mapEstimate, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPanelProposal, mapPhaseLineTemplate, mapPlan, mapPlanLine, mapProcessing, mapProject, mapProposal, mapQuestion, mapSchedule, mapScopeStatement, mapSnapshot, mapStageCrew, mapStageSplit, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -777,6 +777,16 @@ export function createApiStore() {
     return mapSchedule(await request(`/api/projects/${projectId}/schedule`));
   }
 
+  /* The ROM estimate (docs/specs/rom-estimate.md). Its own fetch rather
+     than part of the polled snapshot: the ROM is a document an estimator
+     opens, not state the review workspace keeps in step, and it is
+     recomputed server-side on every read so an override shows up
+     without this screen holding any of it. */
+
+  async function getEstimate(projectId) {
+    return mapEstimate(await request(`/api/projects/${projectId}/estimate`));
+  }
+
   async function createPhase(projectId, { name = "", afterPhaseId = null } = {}) {
     return mapSchedule(await request(`/api/projects/${projectId}/phases`, {
       method: "POST",
@@ -953,6 +963,7 @@ export function createApiStore() {
     removePlanPhase,
     setProposalStatus,
     getSchedule,
+    getEstimate,
     createPhase,
     editPhase,
     deletePhase,

@@ -1,0 +1,92 @@
+/* ============================================================
+   EstimateSummary.jsx — the ROM estimate workspace.
+
+   A document rather than a workspace, which is the point: an estimator
+   opens this to hand a general contractor a number before the evidence
+   for every line exists. Structurally it mirrors the approved mockup at
+   docs/specs/assets/rom-mockup.html.
+
+   There is no approval control anywhere on this screen, and that is
+   deliberate rather than unbuilt. A ROM is not a bid; approval is the
+   gate on the committed number and lives in the review workspace and
+   on Export, which this screen does not touch. The qualifications block
+   is what carries the weight approval carries there — see the footer
+   copy in estimateCopy.js.
+   ============================================================ */
+
+import EstimateSection from "./EstimateSection.jsx";
+import QualificationsBlock from "./QualificationsBlock.jsx";
+import { COPY, dollars, rangeNote } from "./estimateCopy.js";
+import { useEstimate } from "./useEstimate.js";
+
+export default function EstimateSummary() {
+  const { estimate, loadError } = useEstimate();
+
+  if (loadError) {
+    return (
+      <div className="est-wrap">
+        <p className="est-error" role="alert">
+          {loadError}
+        </p>
+      </div>
+    );
+  }
+
+  if (!estimate) {
+    return (
+      <div className="est-wrap">
+        <p className="est-loading">{COPY.loading}</p>
+      </div>
+    );
+  }
+
+  const { range } = estimate;
+  const sameEnds = range.low === range.high;
+
+  return (
+    <div className="est-wrap">
+      <article className="est-doc">
+        <header className="est-head">
+          <p className="est-kicker">{COPY.kicker}</p>
+          <h1 className="est-ptitle">{estimate.projectName}</h1>
+          <p className="est-psub">
+            {[
+              estimate.revisionSetLabel,
+              `${estimate.sheetCount} electrical ${estimate.sheetCount === 1 ? "sheet" : "sheets"}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+
+          {estimate.emptyReason ? (
+            <p className="est-empty">{estimate.emptyReason}</p>
+          ) : (
+            <div className="est-headrow">
+              <p className="est-big tabular">{dollars(estimate.directCost)}</p>
+              <p className="est-bignote">
+                {!sameEnds && (
+                  <>
+                    {COPY.rangeLabel}{" "}
+                    <b className="tabular">
+                      {dollars(range.low)} – {dollars(range.high)}
+                    </b>
+                    .{" "}
+                  </>
+                )}
+                {rangeNote(estimate)}
+              </p>
+            </div>
+          )}
+        </header>
+
+        {estimate.sections.map((section, i) => (
+          <EstimateSection key={section.key} index={i + 1} section={section} />
+        ))}
+
+        <QualificationsBlock qualifications={estimate.qualifications} />
+
+        <footer className="est-foot">{COPY.footer}</footer>
+      </article>
+    </div>
+  );
+}

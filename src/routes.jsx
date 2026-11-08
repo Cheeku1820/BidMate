@@ -28,6 +28,7 @@ import NotesWorkspace from "./components/notes/NotesWorkspace.jsx";
 import LaborWorkspace from "./components/labor/LaborWorkspace.jsx";
 import MaterialPricingWorkspace from "./components/pricing/MaterialPricingWorkspace.jsx";
 import ScheduleWorkspace from "./components/schedule/ScheduleWorkspace.jsx";
+import EstimateSummary from "./components/estimate/EstimateSummary.jsx";
 import ExportPreview from "./components/export/ExportPreview.jsx";
 import PlanWorkspace from "./components/plan/PlanWorkspace.jsx";
 import CompanySettings from "./components/settings/CompanySettings.jsx";
@@ -58,6 +59,7 @@ export function appRoutes({ store, me, onSignedOut }) {
         <Route path="labor" element={<LaborWorkspace />} />
         <Route path="pricing" element={<MaterialPricingWorkspace />} />
         <Route path="schedule" element={<ScheduleWorkspace />} />
+        <Route path="estimate" element={<EstimateSummary />} />
         <Route path="export" element={<ExportPreview />} />
         <Route path="plan" element={<PlanWorkspace />} />
       </Route>

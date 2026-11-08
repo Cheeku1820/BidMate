@@ -54,6 +54,30 @@ ESTIMATED_RATE = {
     "where": "Labor pricing, rate column",
 }
 
+# --- takeoff -----------------------------------------------------------
+
+BRANCH_WIRE = {
+    "title": "Branch wire and conduit",
+    "found": "{lines} include branch wire and conduit derived from a rule of {feet} ft per device. "
+             "The drawings show homerun arrows, not routed runs.",
+    "why": "Wire and conduit are a large share of material cost, and a run length is not in the drawings for anyone to read.",
+    "where": "Company settings, and the homerun arrows on the power plans",
+}
+
+MISSING_SCALE = {
+    "title": "Scale on {sheet}",
+    "found": "{sheet} carries no single scale, and {items} on it were measured against an assumed one.",
+    "why": "Every measured length on the sheet rests on the scale, so all of them move together if it is wrong.",
+    "where": "{sheet} title block",
+}
+
+SCALED_LENGTHS = {
+    "title": "Measured lengths",
+    "found": "{items} were measured off the drawings rather than read from a written dimension.",
+    "why": "A length measured off a drawing carries the drawing's own precision, not a dimension's.",
+    "where": "Takeoff spreadsheet, measured lines",
+}
+
 # --- material ----------------------------------------------------------
 
 FIRM_PRICE = {

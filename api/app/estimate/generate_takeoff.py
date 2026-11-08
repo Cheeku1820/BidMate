@@ -109,15 +109,23 @@ def takeoff_assumptions(db: DbSession, project: Project, *,
     # 2. Items the classifier named from context rather than matched.
     inferred = [i for i in items if i.classification_basis == "inferred"]
     if inferred:
+        # Named, and the sheets named too. "2 counted lines" told a GC
+        # a count and left them to guess which symbols -- which is a
+        # disclosure that cannot be checked, and checking is the whole
+        # reason a basis is printed. Capped so a set with two hundred
+        # inferred rows states the first few and says how many more
+        # rather than printing a wall.
+        sheet_numbers = _sheet_numbers(db, inferred)
         rows.append({
             "section": "takeoff",
             "subject_kind": "project",
             "basis": "inferred",
             "title": copy.INFERRED_NAMES["title"],
             "found": copy.INFERRED_NAMES["found"].format(
-                items=copy.plural(len(inferred), "counted line")),
+                items=copy.plural(len(inferred), "counted line"),
+                names=_listed(sorted({i.name for i in inferred}))),
             "why": copy.INFERRED_NAMES["why"],
-            "where": copy.INFERRED_NAMES["where"],
+            "where": copy.INFERRED_NAMES["where"].format(sheets=_listed(sheet_numbers)),
             "source": "engine",
         })
 
@@ -163,6 +171,27 @@ def takeoff_assumptions(db: DbSession, project: Project, *,
         })
 
     return rows
+
+
+_LISTED_MAX = 6
+
+
+def _listed(values: list[str]) -> str:
+    """A readable list, bounded. "A, B and C", or "A, B, C and 40 more"."""
+    values = [v for v in values if v]
+    if not values:
+        return "the takeoff spreadsheet"
+    if len(values) > _LISTED_MAX:
+        shown = values[:_LISTED_MAX]
+        return f"{', '.join(shown)} and {len(values) - _LISTED_MAX} more"
+    if len(values) == 1:
+        return values[0]
+    return f"{', '.join(values[:-1])} and {values[-1]}"
+
+
+def _sheet_numbers(db: DbSession, items: list[Item]) -> list[str]:
+    rows = db.scalars(select(Sheet).where(Sheet.id.in_({i.sheet_id for i in items})))
+    return sorted({s.number for s in rows if s.number})
 
 
 def _feet() -> str:

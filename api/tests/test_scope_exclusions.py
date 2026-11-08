@@ -18,6 +18,14 @@ from app.takeoff.models import Assumption, Item, ReviewStatus, Sheet
 from app.takeoff.totals import rom_totals
 
 
+@pytest.fixture(autouse=True)
+def _priced_basis(project):
+    """See test_rom_totals -- resolution needs the project's own basis."""
+    project.pricing_source = "llm"
+    project.pricing_note = "Indiana regional basis"
+    return project
+
+
 def _item(project, sheet, *, system="Power", cost="100", name="Item", **kw):
     return Item(
         project_id=project.id, sheet_id=sheet.id, symbol="receptacle", name=name,
@@ -53,7 +61,7 @@ def fire_alarm_project(db, project, sheet):
 
 def test_excluded_items_leave_the_total(db, fire_alarm_project):
     p = fire_alarm_project
-    totals = rom_totals(db, p.id, exclude=excluded_item_ids(db, p.id))
+    totals = rom_totals(db, p, exclude=excluded_item_ids(db, p.id))
     assert totals.direct_cost == Decimal("300")
 
 
@@ -131,7 +139,7 @@ def test_everything_excluded_is_distinguishable_from_nothing_counted(db, project
     db.add(_exclusion(project, subject_kind="system", subject_ref="Fire alarm",
                       title="Fire alarm by others"))
     db.flush()
-    totals = rom_totals(db, project.id, exclude=excluded_item_ids(db, project.id))
+    totals = rom_totals(db, project, exclude=excluded_item_ids(db, project.id))
     assert totals.direct_cost == Decimal("0")
     assert excluded_value(db, project.id) > Decimal("0")
 

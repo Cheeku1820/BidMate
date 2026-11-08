@@ -1,19 +1,23 @@
 import uuid
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import exists, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.takeoff.models import (
+    CompanyLaborHoursOverride,
+    CompanyLaborRate,
     CompanyMaterialPrice,
     Item,
     ItemMarketPrice,
     Project,
+    ProjectLaborLine,
     ProjectMaterialPrice,
     ReviewStatus,
     Sheet,
 )
+from app.takeoff.pricing import resolve_labor, resolve_material_price
 
 # This module holds TWO aggregations over one exclusion predicate, and
 # they are different numbers on purpose.
@@ -92,9 +96,125 @@ def approved_totals(db: DbSession, project_id: uuid.UUID) -> TotalsResult:
     return result
 
 
+_CENTS = Decimal("0.01")
+
+
+def _cents(value: Decimal) -> Decimal:
+    return Decimal(value).quantize(_CENTS, rounding=ROUND_HALF_UP)
+
+
+@dataclass
+class ResolvedLine:
+    """One countable item with the price the firm's own precedence chain
+    actually resolves for it."""
+
+    item: Item
+    material_cost: Decimal          # resolved unit price x quantity
+    labor_cost: Decimal
+    labor_hours: Decimal
+    material_basis: str | None      # pricing.MaterialResolution.source_label
+    labor_hours_basis: str | None
+    labor_rate_basis: str | None
+
+    @property
+    def total_cost(self) -> Decimal:
+        return self.material_cost + self.labor_cost
+
+    @property
+    def priced(self) -> bool:
+        """Whether anything priced this line, at any amount including
+        zero. An estimator's allowance of nothing is a price somebody
+        chose; printing "not priced" over it would be the opposite of
+        the truth, and the ROM renders those two states differently."""
+        return self.material_basis is not None
+
+
+def resolved_lines(
+    db: DbSession,
+    project: Project,
+    *,
+    exclude: set[uuid.UUID] | None = None,
+) -> list[ResolvedLine]:
+    """Every countable item, priced through the firm's precedence chain.
+
+    **Why this exists rather than reading `Item.material_cost`.** Those
+    columns hold what the engine computed at ingest. The price an
+    estimator actually sees on Labor pricing and Material pricing is
+    resolved live, every read, through overrides, the firm's tables, and
+    the market feed (`app.takeoff.pricing`) -- nothing writes a resolved
+    price back onto the item. An aggregation over the stored columns
+    therefore reports the engine's first guess and ignores every quote,
+    every company price, and every number an estimator typed. A ROM
+    built on it shows $140 for a line a supplier quoted at $500.
+
+    Loaded in a fixed number of queries, mirroring
+    `pricing_router.get_labor` and `get_material_pricing` -- with one
+    difference: the org comes from the project, not from a signed-in
+    user. This runs in the worker, where there is no request, and
+    reading the org off the project is also the only correct answer:
+    the firm whose tables price a job is the firm that owns it, never
+    whoever happened to trigger the run.
+    """
+    items = [i for i in db.scalars(countable_items(project.id)) if not (exclude and i.id in exclude)]
+    if not items:
+        return []
+
+    ids = [i.id for i in items]
+    names = {i.name for i in items}
+
+    labor_lines = {r.item_id: r for r in db.scalars(
+        select(ProjectLaborLine).where(ProjectLaborLine.item_id.in_(ids))
+    )}
+    material_overrides = {r.item_id: r for r in db.scalars(
+        select(ProjectMaterialPrice).where(ProjectMaterialPrice.item_id.in_(ids))
+    )}
+    markets = {r.item_id: r for r in db.scalars(
+        select(ItemMarketPrice).where(ItemMarketPrice.item_id.in_(ids))
+    )}
+    company_rates = db.get(CompanyLaborRate, project.org_id)
+    company_hours = {r.item_name: r for r in db.scalars(
+        select(CompanyLaborHoursOverride).where(
+            CompanyLaborHoursOverride.org_id == project.org_id,
+            CompanyLaborHoursOverride.item_name.in_(names),
+        )
+    )}
+    company_prices = {r.item_name: r for r in db.scalars(
+        select(CompanyMaterialPrice).where(
+            CompanyMaterialPrice.org_id == project.org_id,
+            CompanyMaterialPrice.item_name.in_(names),
+        )
+    )}
+
+    lines: list[ResolvedLine] = []
+    for item in items:
+        labor = resolve_labor(
+            item, project, labor_lines.get(item.id),
+            company_rates=company_rates, company_hours=company_hours.get(item.name),
+        )
+        material = resolve_material_price(
+            item, project, material_overrides.get(item.id),
+            company_prices.get(item.name), market=markets.get(item.id),
+        )
+        unit_price = material.unit_price
+        lines.append(ResolvedLine(
+            item=item,
+            # Quantized to cents. `unit_price * quantity` multiplies two
+            # Numerics and lands at four decimal places, which would put
+            # "850.0000" on the wire for a document whose every other
+            # figure is money.
+            material_cost=_cents((unit_price * item.quantity) if unit_price is not None else Decimal("0")),
+            labor_cost=_cents(labor.labor_cost if labor.labor_cost is not None else Decimal("0")),
+            labor_hours=labor.adjusted_hours if labor.adjusted_hours is not None else Decimal("0"),
+            material_basis=material.source_label,
+            labor_hours_basis=labor.hours_source_label,
+            labor_rate_basis=labor.rate_source_label,
+        ))
+    return lines
+
+
 @dataclass
 class RomTotals:
-    """The ROM's item-level arithmetic.
+    """The ROM's arithmetic, over resolved prices.
 
     `cost_by_system` is DOLLARS, deliberately not sharing the name
     `TotalsResult.by_system` carries for a sum of *quantities*. One
@@ -104,8 +224,7 @@ class RomTotals:
 
     Deliberately holds no counted/assumed tally. Origin is a property of
     the assumption records, not of an item, and `app.estimate.assemble`
-    is where those are already in hand -- keeping that out of here is
-    what lets this stay a pure aggregation over `countable_items()`.
+    is where those are already in hand.
     """
 
     cost_by_system: dict[str, Decimal] = field(default_factory=dict)
@@ -115,37 +234,20 @@ class RomTotals:
     direct_cost: Decimal = Decimal("0")
     item_count: int = 0
     unpriced_count: int = 0
-
-
-def _has_a_price():
-    """True where something priced this item, at any amount including zero.
-
-    The three sources `pricing.resolve_material_price` resolves through,
-    asked as existence rather than as a value -- because the question is
-    not "what does it cost" but "did anything decide". An estimator's
-    allowance of nothing, or work logged as by others, is a price
-    somebody chose; printing "not priced" over it would be the opposite
-    of the truth, and the ROM renders those two states differently.
-    """
-    return (
-        exists().where(ProjectMaterialPrice.item_id == Item.id)
-        | exists().where(
-            (ItemMarketPrice.item_id == Item.id) & (ItemMarketPrice.outcome == "priced")
-        )
-        | exists().where(
-            (CompanyMaterialPrice.org_id == Project.org_id)
-            & (CompanyMaterialPrice.item_name == Item.name)
-        )
-    )
+    # Systems carrying at least one line nothing priced, and how many.
+    # A rolled-up system total that silently omits a line is a number
+    # that looks complete and is not -- the ROM renders this beside the
+    # system it belongs to.
+    unpriced_by_system: dict[str, int] = field(default_factory=dict)
 
 
 def rom_totals(
     db: DbSession,
-    project_id: uuid.UUID,
+    project: Project,
     *,
     exclude: set[uuid.UUID] | None = None,
 ) -> RomTotals:
-    """Every countable item, whatever its review status.
+    """Every countable item at its resolved price, whatever its status.
 
     No status filter, by design: a ROM is produced the moment processing
     finishes, before anybody has approved anything, and an estimate that
@@ -153,34 +255,24 @@ def rom_totals(
     The document says on its face that nothing in it is approved.
 
     `exclude` is how scope exclusions leave the number
-    (`app.estimate.exclusions`). It is a keyword from the first commit
-    rather than a later addition so there is never a second query that
+    (`app.estimate.exclusions`), so there is never a second query that
     re-implements the exclusion with its own filters -- ROADMAP
     invariant 1.
+
+    Takes a `Project` rather than a `project_id`: resolution needs the
+    org's tables and the project's own pricing basis, and passing the
+    row the caller already loaded is better than re-fetching it here.
     """
-    query = countable_items(project_id).join(Project, Project.id == Item.project_id)
-    if exclude:
-        query = query.where(Item.id.not_in(exclude))
-
-    rows = db.execute(
-        query.with_only_columns(
-            Item.system,
-            func.sum(Item.material_cost),
-            func.sum(Item.labor_cost),
-            func.sum(Item.labor_hours),
-            func.sum(Item.total_cost),
-            func.count(),
-            func.count().filter((Item.total_cost == 0) & ~_has_a_price()),
-        ).group_by(Item.system)
-    ).all()
-
     result = RomTotals()
-    for system, material, labor, hours, total, count, unpriced in rows:
-        result.cost_by_system[system] = result.cost_by_system.get(system, Decimal("0")) + total
-        result.material_cost += material
-        result.labor_cost += labor
-        result.labor_hours += hours
-        result.direct_cost += total
-        result.item_count += count
-        result.unpriced_count += unpriced
+    for line in resolved_lines(db, project, exclude=exclude):
+        system = line.item.system
+        result.cost_by_system[system] = result.cost_by_system.get(system, Decimal("0")) + line.total_cost
+        result.material_cost += line.material_cost
+        result.labor_cost += line.labor_cost
+        result.labor_hours += line.labor_hours
+        result.direct_cost += line.total_cost
+        result.item_count += 1
+        if not line.priced:
+            result.unpriced_count += 1
+            result.unpriced_by_system[system] = result.unpriced_by_system.get(system, 0) + 1
     return result

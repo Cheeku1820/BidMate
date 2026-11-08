@@ -46,6 +46,12 @@ NOTES_CAP = 1200
 # for the notes block ahead of the schedule cap -- at most two joins
 # (schedule-notes, notes-context) can land before the notes block ends.
 _SEPARATOR_SLACK = 4
+# The other-documents block's own cap, deliberately OUTSIDE
+# PROMPT_BUDGET: that budget sizes the schedule-and-notes split, and
+# this block is appended after it. The real maximum the prompt can
+# carry is therefore PROMPT_BUDGET + CONTEXT_CAP plus the template, and
+# `test_the_whole_prompt_is_bounded` asserts the total rather than
+# leaving a reader to assume one number covered both.
 CONTEXT_CAP = 12000
 
 # Any run of "===...===", wherever it sits within a line -- not only a
@@ -55,10 +61,28 @@ CONTEXT_CAP = 12000
 # is left open rather than chased.
 _HEADER_RUN_RE = re.compile(r"===.*===")
 
+# The triple quote that delimits the untrusted block inside
+# `llm._prompt`. Extracted text carrying one closes that block early,
+# and everything after it reads as the prompt's own prose rather than as
+# data -- an instruction/data boundary break, not a cosmetic one.
+# Neutralised by breaking the run with a zero-width space, so a
+# legitimate quotation still reads as one.
+_FENCE_RE = re.compile(r'"{3,}')
+_FENCE_REPLACEMENT = '"​"​"'
+
 
 def _defang_block_headers(text: str) -> str:
-    """Neutralise any "=== ... ===" run that could be mistaken for one of
-    this module's own block headers, wherever it appears.
+    """Neutralise anything in untrusted text that could be mistaken for
+    this module's own framing: a "=== ... ===" block header, or the
+    triple quote that closes the data block it is rendered inside.
+
+    The fence matters as much as the header. `llm._prompt` interpolates
+    this text between literal triple quotes, so a payload carrying its
+    own fence ends the quoted block and everything after it reads as the
+    prompt's own prose. Raising PROMPT_BUDGET tenfold means a payload
+    deep inside a schedule now reaches the model where the old 6,000-
+    character slice discarded it unread, so this is load-bearing in a
+    way it was not before.
 
     The parameters `context` and `estimator_notes` are already kept
     separate -- but the *rendered* text is one string, and a specification
@@ -91,6 +115,9 @@ def _defang_block_headers(text: str) -> str:
     """
     if not text:
         return text
+    # Fence first, then headers: a payload can carry both, and the
+    # header substitution must not be able to reintroduce a fence.
+    text = _FENCE_RE.sub(_FENCE_REPLACEMENT, text)
     return _HEADER_RUN_RE.sub(lambda m: m.group(0).replace("=", "-"), text)
 
 

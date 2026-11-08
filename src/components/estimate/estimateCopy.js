@@ -36,6 +36,11 @@ export const COPY = {
   qualificationsTitle: "Qualifications — what this number assumes",
   qualificationsLead: "Generated from every assumed line above. This list is the condition of the price.",
 
+  /* The pending banner's own heading. The body text is the server's,
+     because what is missing (not run / failed) is the server's fact. */
+  pendingHeading: "Not ready to hand over",
+  unpricedHeading: "Lines carrying no price",
+
   notPriced: "Not priced",
   notPricedTitle: "Nothing priced this line. It carries no cost in the total above.",
   excludedLabel: "removed from the total",
@@ -47,6 +52,7 @@ export const COPY = {
      corrects a number, it is not an approval, and a ROM has no
      approval step to borrow words from. */
   overrideOpen: "I know this one",
+  overrideEdit: "Change this",
   overrideLabel: "Enter the value",
   overrideSave: "Enter",
   overrideSaving: "Saving…",

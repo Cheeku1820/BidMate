@@ -718,5 +718,6 @@ export function mapEstimate(e) {
       excludedValue: num(q.excluded_value),
     })),
     emptyReason: e.empty_reason ?? null,
+    pendingReason: e.pending_reason ?? null,
   };
 }

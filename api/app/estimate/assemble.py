@@ -47,7 +47,7 @@ from app.estimate.schemas import (
     QualificationOut,
     RangeOut,
 )
-from app.takeoff.models import Assumption, Document, Item, Project, ScopeStatement, Sheet
+from app.takeoff.models import Assumption, Document, Item, Job, Project, ScopeStatement, Sheet
 from app.takeoff.totals import countable_items, rom_totals
 
 SECTION_LABELS = {
@@ -63,6 +63,18 @@ SECTION_LABELS = {
 _LIVE_SCOPE_STATUSES = ("found", "confirmed")
 
 NOTHING_PROCESSED = "No documents have been processed for this project yet, so there is nothing to estimate."
+# A project with counted work and no disclosures. Never shown as a
+# finished ROM: an assumptions list that is empty because generation has
+# not run looks exactly like one that is empty because nothing was
+# assumed, and those are opposite claims.
+GENERATION_PENDING = (
+    "This estimate's assumptions have not been worked out yet. The number below is the takeoff's own "
+    "figures and does not yet state what had to be assumed to reach it, so it is not ready to hand over."
+)
+GENERATION_FAILED = (
+    "This estimate's assumptions could not be worked out. The number below does not state what had to be "
+    "assumed to reach it, so it is not ready to hand over. Start the takeoff again to rebuild them."
+)
 NOTHING_READABLE = "No sheet in this set could be read, so nothing was counted."
 NOTHING_COUNTED = "The drawings were read but no Division 26 items were counted on them."
 EVERYTHING_EXCLUDED = "Every counted line is excluded by the scope assumptions below, so this estimate carries no cost."
@@ -129,8 +141,9 @@ def _scope_counted(db: DbSession, project: Project) -> list[EstimateLineOut]:
     return lines
 
 
-def _takeoff_counted(db: DbSession, project: Project,
-                     exclude: set[uuid.UUID]) -> list[EstimateLineOut]:
+def _takeoff_counted(db: DbSession, project: Project, exclude: set[uuid.UUID],
+                     unpriced_by_system: dict[str, int],
+                     cost_by_system: dict[str, Decimal]) -> list[EstimateLineOut]:
     """Counted work, one line per system.
 
     Quantity is deliberately absent from the rolled-up line: a system
@@ -142,18 +155,35 @@ def _takeoff_counted(db: DbSession, project: Project,
     query = countable_items(project.id)
     if exclude:
         query = query.where(Item.id.not_in(exclude))
-    rows = db.execute(
-        query.with_only_columns(Item.system, func.count(), func.sum(Item.total_cost))
-        .group_by(Item.system)
-        .order_by(func.sum(Item.total_cost).desc())
+    # Counts come from the database; MONEY comes from `rom_totals`'s
+    # resolved figures. A second SUM over `Item.total_cost` here would
+    # be the engine's stored guess sitting beside the resolved total and
+    # disagreeing with it -- the bug `resolved_lines` exists to close.
+    counts = db.execute(
+        query.with_only_columns(Item.system, func.count()).group_by(Item.system)
     ).all()
+    rows = sorted(
+        ((system, count, cost_by_system.get(system, Decimal("0"))) for system, count in counts),
+        key=lambda r: (-r[2], r[0]),
+    )
     lines = []
     for system, count, cost in rows:
+        unpriced = unpriced_by_system.get(system, 0)
+        found = f"{count} counted line{'' if count == 1 else 's'}."
+        if unpriced:
+            # A rolled-up total that silently omits a line is a number
+            # that looks complete and is not. Said on the row itself,
+            # beside the figure it is missing from, rather than left to
+            # a project-level count the reader has to connect.
+            found += (
+                f" {unpriced} of them carry no price, so this figure does not include "
+                f"{'it' if unpriced == 1 else 'them'}."
+            )
         lines.append(EstimateLineOut(
             title=system,
             origin="counted",
             where="Takeoff spreadsheet",
-            found=f"{count} counted line{'' if count == 1 else 's'}.",
+            found=found,
             value=str(count),
             unit="lines" if count != 1 else "line",
             amount=cost,
@@ -253,14 +283,42 @@ def _qualifications(assumptions: list[Assumption],
     ]
 
 
-def _empty_reason(db: DbSession, project: Project, totals, excluded: Decimal) -> str | None:
+def _pending_reason(db: DbSession, project: Project, totals, assumptions: list[Assumption]) -> str | None:
+    """Whether this document is safe to hand to a GC.
+
+    Counted work plus no disclosures is the dangerous state, and it is
+    reachable three ways: a project that predates this feature, a run
+    whose estimate job is still queued, and one whose job failed after
+    its three attempts. All three previously rendered a confident
+    number with an empty qualifications block.
+    """
+    if totals.item_count == 0 or assumptions:
+        return None
+    failed = db.scalars(
+        select(Job).where(
+            Job.project_id == project.id, Job.kind == "estimate", Job.status == "failed",
+        )
+    ).first()
+    return GENERATION_FAILED if failed is not None else GENERATION_PENDING
+
+
+def _empty_reason(db: DbSession, project: Project, totals,
+                  exclude: set[uuid.UUID]) -> str | None:
+    """Why this estimate is empty, when it is.
+
+    Keyed off WHAT scope removed, not off what it cost. An exclusion
+    that removed an unpriced line removed work all the same, and
+    checking the dollars instead reported "the drawings were read but
+    nothing was counted" over a project whose every line scope had
+    taken out -- the opposite claim.
+    """
     if totals.item_count > 0:
         return None
+    if exclude:
+        return EVERYTHING_EXCLUDED
     sheets = list(db.scalars(select(Sheet).where(
         Sheet.project_id == project.id, Sheet.superseded_at.is_(None)
     )))
-    if excluded > 0:
-        return EVERYTHING_EXCLUDED
     if not sheets:
         return NOTHING_PROCESSED
     if all(s.unreadable_reason for s in sheets):
@@ -272,7 +330,7 @@ def build_estimate_out(db: DbSession, project: Project) -> EstimateOut:
     """One read, assembling the whole document."""
     exclude = excluded_item_ids(db, project.id)
     excluded = excluded_value(db, project.id)
-    totals = rom_totals(db, project.id, exclude=exclude)
+    totals = rom_totals(db, project, exclude=exclude)
 
     assumptions = list(db.scalars(
         select(Assumption)
@@ -292,7 +350,8 @@ def build_estimate_out(db: DbSession, project: Project) -> EstimateOut:
             counted = _scope_counted(db, project)
             subtotal = None
         elif key == "takeoff":
-            counted = _takeoff_counted(db, project, exclude)
+            counted = _takeoff_counted(db, project, exclude, totals.unpriced_by_system,
+                                       totals.cost_by_system)
             subtotal = None
         elif key == "labor":
             counted = _cost_counted(db, project, labor=True, totals=totals)
@@ -330,5 +389,6 @@ def build_estimate_out(db: DbSession, project: Project) -> EstimateOut:
         excluded_value=excluded,
         sections=sections,
         qualifications=_qualifications(assumptions, removed),
-        empty_reason=_empty_reason(db, project, totals, excluded),
+        empty_reason=_empty_reason(db, project, totals, exclude),
+        pending_reason=_pending_reason(db, project, totals, assumptions),
     )

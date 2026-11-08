@@ -90,7 +90,13 @@ SECTIONS: tuple[str, ...] = ("scope", "takeoff", "labor", "material")
 # single row. `system` carries its subject in `subject_ref` rather than
 # `subject_id`, because a system is a name and not a row -- it is what
 # "fire alarm by others" has to be able to point at.
-SUBJECT_KINDS: tuple[str, ...] = ("project", "sheet", "item", "system")
+# `name_like` carries a keyword in `subject_ref` and matches item names
+# case-insensitively. It exists because a system is too coarse for some
+# real exclusions: a counted fire-alarm device may classify as "Life
+# safety", but so do exit signs, which ARE Division 26 work this
+# estimate includes -- excluding the whole system to catch the first
+# would silently remove the second.
+SUBJECT_KINDS: tuple[str, ...] = ("project", "sheet", "item", "system", "name_like")
 
 # Who put it there. The engine's own rows are deleted and rewritten on
 # every run; an estimator's are not (CLAUDE.md: "the engine never
@@ -166,10 +172,10 @@ def validate_assumption(raw: dict) -> dict:
         value = str(raw.get(field) or "").strip()
         return value or None
 
-    if subject_kind == "system" and not str(raw.get("subject_ref") or "").strip():
+    if subject_kind in ("system", "name_like") and not str(raw.get("subject_ref") or "").strip():
         raise DomainError(
             "invalid_assumption",
-            "An assumption scoped to a system must name the system in subject_ref. "
+            f"An assumption scoped to a {subject_kind} must name it in subject_ref. "
             "Without it the exclusion covers nothing and silently removes no money, "
             "which reads as applied and is not.",
             status=422,

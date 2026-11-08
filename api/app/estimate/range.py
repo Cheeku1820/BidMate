@@ -28,7 +28,7 @@ breath.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
 from app.errors import DomainError
 from app.estimate.basis import BASIS
@@ -88,10 +88,18 @@ def budget_range(direct_cost: Decimal, exposures: list[Exposure]) -> RangeResult
             )
         spread += exposure.dollars * spec.spread
 
-    spread = spread.quantize(_WHOLE_DOLLAR, rounding=ROUND_HALF_UP)
-    center = Decimal(direct_cost).quantize(_WHOLE_DOLLAR, rounding=ROUND_HALF_UP)
+    center = Decimal(direct_cost)
+    # Rounded outward, never to nearest: a range is a claim that the
+    # number lies inside it, and `budget_range(140.49, [])` rounding to
+    # [140, 140] put the point estimate outside its own range. Floor the
+    # low, ceil the high, and the claim stays true at any spread --
+    # including zero, where the range becomes [140, 141] rather than a
+    # false point. The spread itself is reported at nearest, because it
+    # is a width rather than a bound.
+    low = (center - spread).to_integral_value(rounding=ROUND_FLOOR)
+    high = (center + spread).to_integral_value(rounding=ROUND_CEILING)
     return RangeResult(
-        low=max(Decimal("0"), center - spread),
-        high=center + spread,
-        spread_dollars=spread,
+        low=max(Decimal("0"), low),
+        high=high,
+        spread_dollars=spread.quantize(_WHOLE_DOLLAR, rounding=ROUND_HALF_UP),
     )

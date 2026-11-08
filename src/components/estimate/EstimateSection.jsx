@@ -91,7 +91,7 @@ export default function EstimateSection({ index, section, onOverride }) {
                   <span className={`est-tag est-tag-${line.origin}`} title={origin(line).title}>
                     {origin(line).label}
                   </span>
-                  {line.origin === "assumed" && line.id && onOverride && (
+                  {line.id && onOverride && (line.origin === "assumed" || line.source === "estimator") && (
                     <OverrideBox line={line} onOverride={onOverride} />
                   )}
                 </td>

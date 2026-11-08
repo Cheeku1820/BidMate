@@ -40,6 +40,15 @@ from app.takeoff.router import load_project, not_found
 # ceiling height somebody went and looked at.
 OVERRIDE_BASIS = "estimator_entered"
 
+# Sections whose numbers are resolved from the pricing tables rather
+# than stated on the assumption. An override here would be a second
+# source of truth for a price, which is how the document ends up
+# disagreeing with itself.
+_PRICED_SECTIONS = {
+    "labor": "Labor pricing",
+    "material": "Material pricing",
+}
+
 _MAX_VALUE = 100   # mirrors Assumption.value's String(100)
 _MAX_UNIT = 20     # mirrors Assumption.unit's String(20)
 
@@ -70,6 +79,19 @@ def _snapshot(row: Assumption) -> dict:
     """
     return {
         "assumption_id": str(row.id),
+        # The identity `write.regenerate` keys off, carried so an undo
+        # or redo can refind this disclosure after a re-run deleted the
+        # row and wrote a fresh one with a new id. Without it, redo
+        # looked up a dead UUID, skipped, and recorded a successful
+        # compensating action that restored nothing.
+        "identity": {
+            "project_id": str(row.project_id),
+            "section": row.section,
+            "subject_kind": row.subject_kind,
+            "subject_id": str(row.subject_id) if row.subject_id else None,
+            "subject_ref": row.subject_ref,
+            "title": row.title,
+        },
         "value": row.value,
         "unit": row.unit,
         "found": row.found,
@@ -82,7 +104,19 @@ def _snapshot(row: Assumption) -> dict:
 
 def override(db: DbSession, *, row: Assumption, actor: User,
              value: str | None, unit: str | None = None) -> Assumption:
-    """Replace an assumed number with one the estimator entered."""
+    """Replace an assumed number with one the estimator entered.
+
+    Scoped to assumptions that state a *fact* -- a ceiling height, a
+    crew mix -- rather than a price. A fact is what the next run reads;
+    a price is resolved from the pricing tables on every read, and
+    overriding the note instead of the price would leave the document
+    stating one number while carrying another. Both refusals say which
+    screen owns the number.
+
+    The line says so too: an entered fact takes effect when the takeoff
+    next runs against it, and `found` states that rather than implying
+    the total already moved.
+    """
     cleaned = (value or "").strip()
     if not cleaned:
         raise DomainError(
@@ -111,6 +145,20 @@ def override(db: DbSession, *, row: Assumption, actor: User,
             "Add or edit the scope statement, and the estimate follows it.",
             status=422,
         )
+    # A price is not a disclosure, and typing over the disclosure would
+    # leave the line reading one number while the estimate carried
+    # another. Labor and Material pricing are where a price is entered,
+    # they already write through `commit()`, and the ROM reads the result
+    # -- so the fix for a wrong price is one screen away rather than a
+    # second, contradicting write path here.
+    if row.section in _PRICED_SECTIONS:
+        raise DomainError(
+            "invalid_override",
+            f"This line's number comes from {_PRICED_SECTIONS[row.section]}. Enter the price there and "
+            "this estimate follows it, including its budget range. Typing over the note here would leave "
+            "the line stating one number while the estimate carried another.",
+            status=422,
+        )
 
     before = _snapshot(row)
     stamped = datetime.now(timezone.utc)
@@ -121,7 +169,9 @@ def override(db: DbSession, *, row: Assumption, actor: User,
     row.created_by_user_id = actor.id
     # The line is no longer derived, and the document has to say who to
     # ask about it instead of which table it came from.
-    row.found = f"Entered by {actor.name}."
+    row.found = (
+        f"Entered by {actor.name}. The next takeoff run prices the estimate against this value."
+    )
     row.where = f"Entered by {actor.name}, {stamped:%b %-d, %Y}"
     row.basis = OVERRIDE_BASIS
     db.flush()

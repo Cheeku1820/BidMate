@@ -29,7 +29,7 @@ depends_on: Union[str, Sequence[str], None] = None
 # rule, and a row that reaches the table through a script rather than
 # through `validate_assumption` must still be refused.
 _SECTIONS = "'scope', 'takeoff', 'labor', 'material'"
-_SUBJECT_KINDS = "'project', 'sheet', 'item', 'system'"
+_SUBJECT_KINDS = "'project', 'sheet', 'item', 'system', 'name_like'"
 _SOURCES = "'engine', 'estimator'"
 _BASES = (
     "'supplier_quote', 'firm_default', 'market_estimate', 'class_average', "

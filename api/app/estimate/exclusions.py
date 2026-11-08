@@ -26,11 +26,11 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session as DbSession
 
-from app.takeoff.models import Assumption, Item
-from app.takeoff.totals import countable_items
+from app.takeoff.models import Assumption, Item, Project
+from app.takeoff.totals import countable_items, resolved_lines
 
 
 # What an exclusion points at, independent of whether it has been
@@ -88,9 +88,10 @@ def resolve_subjects(db: DbSession, project_id: uuid.UUID,
     """
     sheet_ids = {sid for kind, sid, _ in subjects if kind == "sheet" and sid}
     item_ids = {sid for kind, sid, _ in subjects if kind == "item" and sid}
-    systems = {ref for kind, _, ref in subjects if kind == "system" and ref}
+    systems = {ref.strip().lower() for kind, _, ref in subjects if kind == "system" and ref}
+    names = {ref.strip().lower() for kind, _, ref in subjects if kind == "name_like" and ref}
 
-    if not (sheet_ids or item_ids or systems):
+    if not (sheet_ids or item_ids or systems or names):
         return set()
 
     clauses = []
@@ -99,7 +100,19 @@ def resolve_subjects(db: DbSession, project_id: uuid.UUID,
     if item_ids:
         clauses.append(Item.id.in_(item_ids))
     if systems:
-        clauses.append(Item.system.in_(systems))
+        # Case-insensitive: the classifier writes "Life safety", a
+        # corrected row may say "life safety", and an exclusion that
+        # matched only one spelling would claim to have removed work it
+        # left in the price.
+        clauses.append(func.lower(Item.system).in_(systems))
+    if names:
+        for name in sorted(names):
+            # Escaped, so a keyword containing % or _ matches literally
+            # rather than as a wildcard -- a stored subject_ref is
+            # generator-written today, but it is also user-reachable
+            # through an estimator's scope text tomorrow.
+            escaped = name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            clauses.append(func.lower(Item.name).like(f"%{escaped}%", escape="\\"))
 
     resolved = db.execute(
         countable_items(project_id)
@@ -135,6 +148,23 @@ def excluded_from_rows(db: DbSession, project_id: uuid.UUID, rows: list[dict]) -
     )
 
 
+def _resolved_costs(db: DbSession, project_id: uuid.UUID) -> dict[uuid.UUID, Decimal]:
+    """Each countable item's RESOLVED cost, keyed by item id.
+
+    Deliberately not `Item.total_cost`: that column is the engine's
+    figure from ingest, and the price the estimate actually carries is
+    resolved live from the overrides, the firm's tables, and the market
+    feed. Stating "$12,400 of counted work was excluded" off the stored
+    column would report a different number than the one the exclusion
+    removed from the total -- the same mismatch `resolved_lines` exists
+    to close, applied to subtraction.
+    """
+    project = db.get(Project, project_id)
+    if project is None:
+        return {}
+    return {line.item.id: line.total_cost for line in resolved_lines(db, project)}
+
+
 def excluded_value_by_assumption(db: DbSession, project_id: uuid.UUID) -> dict[uuid.UUID, Decimal]:
     """Dollars each individual exclusion removed, keyed by assumption id.
 
@@ -152,12 +182,7 @@ def excluded_value_by_assumption(db: DbSession, project_id: uuid.UUID) -> dict[u
     if not rows:
         return {}
 
-    costs = {
-        item_id: cost
-        for item_id, cost in db.execute(
-            countable_items(project_id).with_only_columns(Item.id, Item.total_cost)
-        ).all()
-    }
+    costs = _resolved_costs(db, project_id)
 
     out: dict[uuid.UUID, Decimal] = {}
     for row in rows:
@@ -176,9 +201,5 @@ def excluded_value(db: DbSession, project_id: uuid.UUID) -> Decimal:
     ids = excluded_item_ids(db, project_id)
     if not ids:
         return Decimal("0")
-    rows = db.execute(
-        countable_items(project_id)
-        .with_only_columns(Item.total_cost)
-        .where(Item.id.in_(ids))
-    ).scalars()
-    return sum(rows, Decimal("0"))
+    costs = _resolved_costs(db, project_id)
+    return sum((costs.get(i, Decimal("0")) for i in ids), Decimal("0"))

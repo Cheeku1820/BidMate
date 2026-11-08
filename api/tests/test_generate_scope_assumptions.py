@@ -50,11 +50,20 @@ def test_silent_document_set_yields_standard_exclusions(db, project):
 
 
 def test_every_standard_exclusion_is_offered_when_nothing_is_said(db, project):
-    rows = scope_assumptions(db, project)
-    assert len(rows) == len(STANDARD_EXCLUSIONS)
+    """One row per SUBJECT, not one per boundary. Fire alarm emits a
+    system row plus one per item-name keyword, because a counted
+    fire-alarm device may be filed under "Life safety" alongside exit
+    signs -- which are in scope, so the exclusion names the equipment
+    rather than reaching for the whole system."""
+    titles = {a["title"] for a in scope_assumptions(db, project)}
+    assert titles == {e.title for e in STANDARD_EXCLUSIONS}
 
 
-def test_an_addressed_exclusion_is_not_assumed(db, project, document):
+def test_an_included_statement_produces_no_exclusion_at_all(db, project, document):
+    """The documents put the work IN the price, so nothing is assumed and
+    nothing is removed. The bug this guards: keyword matching used to
+    suppress the assumption regardless of direction, so a statement
+    saying "included" read the same as one saying "by others"."""
     db.add(_statement(project, document,
                       text="Temporary power and lighting for construction is included.",
                       kind="included"))
@@ -62,23 +71,49 @@ def test_an_addressed_exclusion_is_not_assumed(db, project, document):
     assert not any("Temporary power" in a["title"] for a in scope_assumptions(db, project))
 
 
-def test_an_exclusion_the_documents_already_state_is_not_assumed(db, project, document):
-    """The document saying "trenching by others" is a counted scope
-    statement. Repeating it as an assumption would disclose a fact the
-    documents carry, which overstates what had to be assumed."""
+def test_a_stated_exclusion_still_removes_the_work(db, project, document):
+    """The high-severity bug Codex found. A document saying "trenching by
+    others" used to suppress the default assumption AND produce no
+    exclusion record, so the work stayed in the price -- the exact
+    inverse of "scope filters the number". It now emits an exclusion
+    that quotes the document rather than claiming the estimate assumed
+    it."""
     db.add(_statement(project, document, text="Trenching and backfill by others.",
                       kind="by_others"))
     db.flush()
-    assert not any("Trenching" in a["title"] for a in scope_assumptions(db, project))
+    row = one(scope_assumptions(db, project), title_contains="Trenching")
+    assert row["basis"] == "standard_exclusion"
+    assert "The documents state it" in row["found"]
+    assert "Trenching and backfill by others." in row["found"]
+    assert row["where"] == "Scope, as read from the documents"
 
 
-def test_extracted_scope_statements_are_not_assumptions(db, project, document):
-    """A scope letter that addresses everything leaves nothing to
-    assume."""
+def test_an_alternate_is_read_as_out_of_this_number(db, project, document):
+    """Priced separately is not priced here."""
+    db.add(_statement(project, document, text="Trenching and backfill, alternate.",
+                      kind="alternate"))
+    db.flush()
+    assert any("Trenching" in a["title"] for a in scope_assumptions(db, project))
+
+
+def test_a_scope_letter_that_includes_everything_assumes_nothing(db, project, document):
     for exclusion in STANDARD_EXCLUSIONS:
-        db.add(_statement(project, document, text=f"{exclusion.keywords[0]} is by others."))
+        db.add(_statement(project, document, text=f"{exclusion.keywords[0]} is included.",
+                          kind="included"))
     db.flush()
     assert scope_assumptions(db, project) == []
+
+
+def test_a_scope_letter_that_excludes_everything_states_rather_than_assumes(db, project, document):
+    """Every boundary addressed, so nothing is assumed -- but every one
+    still has to remove its work, quoting the document that said so."""
+    for exclusion in STANDARD_EXCLUSIONS:
+        db.add(_statement(project, document, text=f"{exclusion.keywords[0]} is by others.",
+                          kind="by_others"))
+    db.flush()
+    rows = scope_assumptions(db, project)
+    assert rows
+    assert all("The documents state it" in a["found"] for a in rows)
 
 
 def test_a_dismissed_statement_does_not_address_the_topic(db, project, document):
@@ -92,23 +127,26 @@ def test_a_dismissed_statement_does_not_address_the_topic(db, project, document)
 
 def test_a_confirmed_statement_addresses_the_topic(db, project, document):
     db.add(_statement(project, document, text="Temporary power is included.",
-                      status="confirmed"))
+                      kind="included", status="confirmed"))
     db.flush()
     assert not any("Temporary power" in a["title"] for a in scope_assumptions(db, project))
 
 
 def test_an_estimators_edit_is_read_as_the_statement(db, project, document):
-    s = _statement(project, document, text="Something unrelated.")
+    s = _statement(project, document, text="Something unrelated.", kind="by_others")
     s.edited_text = "Temporary power by the general contractor."
     db.add(s)
     db.flush()
-    assert not any("Temporary power" in a["title"] for a in scope_assumptions(db, project))
+    row = one(scope_assumptions(db, project), title_contains="Temporary power")
+    # Quotes the estimator's correction, not the text it replaced.
+    assert "Temporary power by the general contractor." in row["found"]
 
 
 def test_matching_is_case_insensitive(db, project, document):
-    db.add(_statement(project, document, text="TEMPORARY POWER BY OTHERS."))
+    db.add(_statement(project, document, text="TEMPORARY POWER BY OTHERS.", kind="by_others"))
     db.flush()
-    assert not any("Temporary power" in a["title"] for a in scope_assumptions(db, project))
+    row = one(scope_assumptions(db, project), title_contains="Temporary power")
+    assert "The documents state it" in row["found"]
 
 
 # --- what an exclusion is allowed to remove ----------------------------
@@ -122,10 +160,36 @@ def test_boilerplate_exclusions_are_project_scoped_and_remove_nothing(db, projec
     assert all(a.get("subject_ref") is None for a in rows)
 
 
-def test_an_exclusion_that_can_remove_counted_work_names_its_system(db, project):
-    a = one(scope_assumptions(db, project), title_contains="Fire alarm")
-    assert a["subject_kind"] == "system"
-    assert a["subject_ref"] == "Fire alarm"
+def test_an_exclusion_that_can_remove_counted_work_names_its_subjects(db, project):
+    rows = [a for a in scope_assumptions(db, project) if "Fire alarm" in a["title"]]
+    assert {a["subject_kind"] for a in rows} == {"system", "name_like"}
+    assert "Fire alarm" in {a["subject_ref"] for a in rows if a["subject_kind"] == "system"}
+
+
+def test_the_fire_alarm_exclusion_does_not_reach_for_life_safety_wholesale(db, project):
+    """Exit signs classify as "Life safety" and ARE Division 26 work
+    this estimate includes. An exclusion naming that system to catch a
+    fire-alarm device would silently remove them -- a smaller,
+    internally consistent, confidently wrong number."""
+    systems = {a["subject_ref"] for a in scope_assumptions(db, project)
+               if a["subject_kind"] == "system"}
+    assert "Life safety" not in systems
+
+
+def test_fire_alarm_equipment_keywords_name_nothing_ambiguous(db, project):
+    """Deliberately not "horn" or "bell", which appear in other
+    contexts."""
+    names = {a["subject_ref"] for a in scope_assumptions(db, project)
+             if a["subject_kind"] == "name_like"}
+    assert "horn" not in names
+    assert "bell" not in names
+    assert "fire alarm" in names
+
+
+def test_every_name_scoped_exclusion_names_a_keyword(db, project):
+    for a in scope_assumptions(db, project):
+        if a["subject_kind"] == "name_like":
+            assert a["subject_ref"]
 
 
 def test_every_system_scoped_exclusion_names_a_system(db, project):
@@ -148,7 +212,7 @@ def test_every_generated_assumption_validates(db, project):
         validate_assumption(a)
 
 
-def test_every_exclusion_says_it_was_assumed_and_can_be_changed(db, project):
+def test_every_assumed_exclusion_says_no_document_addressed_it(db, project):
     """The copy is re-pointed from the plan's "state it here as an
     answer" to "this estimate assumed it" -- a ROM has already made the
     call, and the reader needs to know which call was made."""

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session as DbSession
 from app.errors import DomainError
 from app.identity.models import User
 from app.scope.schemas import SCOPE_STATUSES
+from app.jobs import queue
 from app.takeoff import actions
 from app.takeoff.models import Project, ScopeStatement
 from app.takeoff.router import load_project, not_found
@@ -120,4 +121,15 @@ def decide(
         db, actor=actor, project_id=statement.project_id, kind="scope_decide",
         label=label, before=before, after=_snapshot(statement),
     )
+
+    # A scope decision changes what the estimate covers, so the ROM's
+    # exclusions have to be worked out again (rom-estimate.md, "scope
+    # filters the number"). Without this, confirming that work the
+    # documents excluded is actually included left the stored exclusion
+    # subtracting money until somebody happened to start another
+    # takeoff. Queued, not run inline: generation is a batch walk over
+    # every item on the project and a PATCH should not wait on it.
+    project = db.get(Project, statement.project_id)
+    if project is not None:
+        queue.enqueue_estimate(db, project, actor.id)
     return statement

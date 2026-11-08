@@ -43,8 +43,19 @@ class StandardExclusion:
     excluded" are the same fact, and requiring an exact phrase would
     mean assuming an exclusion a document already stated.
 
-    `system` is set only where the takeoff could have counted the work.
-    None means project-scoped -- stated, removing nothing.
+    `systems` and `item_names` are set only where the takeoff could have
+    counted the work. Both are tuples, and the split matters:
+
+    - `systems` excludes a whole system. Safe only where every item in
+      it is out of scope.
+    - `item_names` excludes by item name, within any system. This is
+      what fire alarm needs: a counted fire-alarm device classifies as
+      "Life safety", but so do exit signs, which ARE Division 26 work
+      this estimate includes. Excluding the system to catch the first
+      would silently remove the second -- a smaller, internally
+      consistent, confidently wrong number.
+
+    Both empty means project-scoped: stated, removing nothing.
     """
 
     title: str
@@ -52,7 +63,8 @@ class StandardExclusion:
     why: str
     where: str
     keywords: tuple[str, ...]
-    system: str | None = None
+    systems: tuple[str, ...] = ()
+    item_names: tuple[str, ...] = ()
 
 
 # Ordered the way the document prints them: the one that can move money
@@ -68,7 +80,14 @@ STANDARD_EXCLUSIONS: tuple[StandardExclusion, ...] = (
             "or not counting them changes the number by more than any other scope boundary.",
         where="Scope documents were read for fire alarm language; none was found.",
         keywords=("fire alarm", "fa system", "nac ", "notification appliance"),
-        system="Fire alarm",
+        # "Fire alarm" as a system is unambiguous where a row carries it.
+        systems=("Fire alarm",),
+        # And by name, for the rows the classifier files under "Life
+        # safety" alongside exit signs. Every keyword here names fire
+        # alarm equipment and nothing else -- deliberately not "horn" or
+        # "bell", which appear in other contexts.
+        item_names=("fire alarm", "pull station", "notification appliance",
+                    "smoke detector", "duct detector", "horn/strobe"),
     ),
     StandardExclusion(
         title="Temporary power excluded",
@@ -139,22 +158,123 @@ def _addressed(db: DbSession, project: Project) -> str:
     return " \n ".join(parts).lower()
 
 
+def _direction(statement: ScopeStatement) -> str:
+    """Whether a statement puts the work in or out.
+
+    `ScopeStatement.kind` is the engine's own four-value vocabulary:
+    `included`, `excluded`, `by_others`, `alternate`. The first means
+    the work is in the price, the next two mean it is not, and
+    `alternate` means it is priced separately -- which for a ROM's
+    purposes is "not in this number".
+    """
+    return "in" if statement.kind == "included" else "out"
+
+
+def _statements(db: DbSession, project: Project) -> list[ScopeStatement]:
+    return list(db.scalars(
+        select(ScopeStatement).where(
+            ScopeStatement.project_id == project.id,
+            ScopeStatement.status.in_(_ADDRESSING_STATUSES),
+        )
+    ))
+
+
+def _text_of(statement: ScopeStatement) -> str:
+    return " \n ".join([
+        statement.text or "", statement.edited_text or "", statement.quote or "",
+    ]).lower()
+
+
 def scope_assumptions(db: DbSession, project: Project) -> list[dict]:
-    """One exclusion per boundary the documents left open."""
-    haystack = _addressed(db, project)
+    """What this estimate decided about each scope boundary.
+
+    Two outcomes per boundary, not one:
+
+    - **No document addressed it.** The estimate takes the default
+      position and discloses it as a `standard_exclusion` -- an
+      assumption, because nobody said.
+    - **A document excluded it.** That is not an assumption; it is what
+      the documents say. But it still has to *remove the work from the
+      number*, which is the whole of "scope filters the number", so it
+      is emitted as a `standard_exclusion` carrying the statement's own
+      words and marked as stated rather than assumed.
+
+    The bug this shape fixes: matching a keyword used to suppress the
+    default assumption regardless of direction, and a stated exclusion
+    produced no exclusion record at all. A scope letter saying "fire
+    alarm by others" therefore silenced the disclosure AND left the fire
+    alarm work in the price -- the exact inverse of what the sentence
+    asked for.
+    """
+    statements = _statements(db, project)
     rows = []
+
     for exclusion in STANDARD_EXCLUSIONS:
-        if any(keyword in haystack for keyword in exclusion.keywords):
+        matched = [s for s in statements
+                   if any(keyword in _text_of(s) for keyword in exclusion.keywords)]
+
+        if not matched:
+            # Nobody said. The estimate decides, and discloses that it did.
+            for kind, subject_ref in _subjects(exclusion):
+                rows.append(_exclusion_row(exclusion, kind, subject_ref, stated=None))
             continue
-        rows.append({
+
+        # A document addressed it. Honour what it said -- and only
+        # remove work when the statement actually puts it out of scope.
+        # An "included" statement means the work is in the price, so
+        # nothing is excluded and nothing is assumed.
+        out = [s for s in matched if _direction(s) == "out"]
+        if not out:
+            continue
+        for kind, subject_ref in _subjects(exclusion):
+            rows.append(_exclusion_row(exclusion, kind, subject_ref, stated=out[0]))
+
+    return rows
+
+
+def _subjects(exclusion: StandardExclusion) -> list[tuple[str, str | None]]:
+    """What this exclusion points at, one row per subject.
+
+    An exclusion naming neither a system nor an item name resolves to
+    nothing and is stated for the reader -- the boilerplate case.
+    """
+    subjects = [("system", s) for s in exclusion.systems]
+    subjects += [("name_like", n) for n in exclusion.item_names]
+    return subjects or [("project", None)]
+
+
+def _exclusion_row(exclusion: StandardExclusion, subject_kind: str, subject_ref: str | None,
+                   *, stated: ScopeStatement | None) -> dict:
+    """One exclusion, either assumed or quoted from the documents.
+
+    `basis` is `standard_exclusion` either way, because what the row
+    *does* is identical -- it removes work from the number, and
+    `exclusions.py` resolves both the same. What differs is `found` and
+    `where`: a stated exclusion quotes the document, so the reader can
+    see the estimate followed the scope letter rather than guessing at
+    it.
+    """
+    if stated is None:
+        return {
             "section": "scope",
-            "subject_kind": "system" if exclusion.system else "project",
-            "subject_ref": exclusion.system,
+            "subject_kind": subject_kind,
+            "subject_ref": subject_ref,
             "basis": "standard_exclusion",
             "title": exclusion.title,
             "found": exclusion.found,
             "why": exclusion.why,
             "where": exclusion.where,
             "source": "engine",
-        })
-    return rows
+        }
+    quoted = (stated.edited_text or stated.text or "").strip()
+    return {
+        "section": "scope",
+        "subject_kind": subject_kind,
+        "subject_ref": subject_ref,
+        "basis": "standard_exclusion",
+        "title": exclusion.title,
+        "found": f"The documents state it: \u201c{quoted}\u201d",
+        "why": exclusion.why,
+        "where": "Scope, as read from the documents",
+        "source": "engine",
+    }

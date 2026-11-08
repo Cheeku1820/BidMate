@@ -274,3 +274,97 @@ def test_override_requires_a_signed_in_user(client, db, org):
     db.add(row)
     db.commit()
     assert client.patch(url(row), json={"value": "16"}).status_code == 401
+
+
+# --- the review's findings, pinned -------------------------------------
+
+
+def test_a_priced_line_cannot_be_overridden_here(client, db, project_with_assumptions):
+    """Codex review, finding 3. The PATCH used to change the disclosure
+    and nothing else, so overriding a $48,900 class-average note to 900
+    left the line stating 900 while the estimate still carried 48,900.
+    A price is entered on its own screen, which already writes through
+    commit() and which the ROM reads."""
+    row = Assumption(
+        project_id=project_with_assumptions.id, section="material", basis="class_average",
+        subject_kind="project", title="Switchboard SB-1",
+        found="No quote on file", why="Gear moves a budget most", where="Material pricing",
+        value="$48,900", source="engine",
+    )
+    db.add(row)
+    db.commit()
+    response = client.patch(url(row), json={"value": "900"})
+    assert response.status_code == 422
+    assert "Material pricing" in response.json()["detail"]["message"]
+
+
+def test_a_labor_line_points_at_labor_pricing(client, db, project_with_assumptions):
+    row = Assumption(
+        project_id=project_with_assumptions.id, section="labor", basis="firm_default",
+        subject_kind="project", title="Labor rate",
+        found="No project rate set", why="Every labor dollar rests on it",
+        where="Company settings", value="$68.00 / hr", source="engine",
+    )
+    db.add(row)
+    db.commit()
+    assert "Labor pricing" in client.patch(url(row), json={"value": "74"}).json()["detail"]["message"]
+
+
+def test_an_entered_fact_says_the_next_run_applies_it(client, ceiling):
+    """A ceiling height is what the next run reads, so the line must not
+    imply the total already moved."""
+    body = client.patch(url(ceiling), json={"value": "16"}).json()
+    assert "next takeoff run" in find_line(body, "ceiling")["found"]
+
+
+def test_an_override_survives_undo_regeneration_and_redo(db, project_with_assumptions, dana):
+    """Codex review, finding 10. Undo restores source="engine", which
+    makes the row eligible for deletion by the next regeneration -- and
+    regeneration writes a fresh row with a NEW id. Redo used to look up
+    the dead UUID, skip, and record a SUCCESSFUL compensating action
+    that restored nothing. A market-pricing pass re-queues generation on
+    its own, so this was reachable without a manual re-run.
+
+    Built on a disclosure the generators actually produce, so the
+    regeneration in the middle really does delete and replace the row --
+    which is the whole mechanism under test.
+    """
+    from app.estimate.override import override
+    from app.estimate.write import regenerate
+    from app.takeoff import undo as undo_svc
+
+    regenerate(db, project_with_assumptions)
+    db.commit()
+    row = db.query(Assumption).filter(
+        Assumption.project_id == project_with_assumptions.id,
+        Assumption.section == "takeoff",
+        Assumption.basis == "rule_of_thumb",
+    ).one()
+    original_id, title = row.id, row.title
+
+    override(db, row=row, actor=dana, value="45")
+    db.commit()
+
+    undo_svc.undo(db, actor=dana, project_id=project_with_assumptions.id)
+    db.commit()
+    db.expire_all()
+    assert db.get(Assumption, original_id).value == "30"
+
+    # The re-run deletes that engine row and writes a new one with a
+    # different id.
+    regenerate(db, project_with_assumptions)
+    db.commit()
+    db.expire_all()
+    assert db.get(Assumption, original_id) is None
+
+    undo_svc.redo(db, actor=dana, project_id=project_with_assumptions.id)
+    db.commit()
+    db.expire_all()
+
+    survivors = db.query(Assumption).filter(
+        Assumption.project_id == project_with_assumptions.id,
+        Assumption.title == title,
+    ).all()
+    assert len(survivors) == 1, "the redo must land on the regenerated row, not duplicate it"
+    assert survivors[0].value == "45"
+    assert survivors[0].source == "estimator"

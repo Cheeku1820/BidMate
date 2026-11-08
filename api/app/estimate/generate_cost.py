@@ -33,23 +33,12 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.estimate import copy
 from app.estimate.range import Exposure
-from app.takeoff.models import (
-    CompanyLaborHoursOverride,
-    CompanyLaborRate,
-    CompanyMaterialPrice,
-    Item,
-    ItemMarketPrice,
-    Project,
-    ProjectLaborLine,
-    ProjectMaterialPrice,
-)
-from app.takeoff.pricing import resolve_labor, resolve_material_price
-from app.takeoff.totals import countable_items
+from app.takeoff.models import Item, Project, Sheet
+from app.takeoff.totals import ResolvedLine, resolved_lines
 
 # The resolvers' own source labels, mapped to the basis vocabulary.
 # `None` means the number came from this job and nothing was assumed, so
@@ -78,73 +67,27 @@ LABOR_BASIS: dict[str | None, str | None] = {
 _GROUPED = ("firm_default", "class_average")
 
 
-def _loaded(db: DbSession, project: Project, exclude: set[uuid.UUID] | None):
-    """Every countable item with its four resolver inputs, loaded in a
-    fixed number of queries.
-
-    Mirrors `pricing_router.get_labor` and `get_material_pricing`'s own
-    loading, with one difference: the org comes from the project, not
-    from a signed-in user. This runs in the worker, where there is no
-    request and no user, and reading the org off the project is also the
-    only correct answer -- the firm whose tables price a job is the firm
-    that owns it, never whoever happened to trigger the run.
-    """
-    items = [i for i in db.scalars(countable_items(project.id)) if not (exclude and i.id in exclude)]
-    if not items:
-        return []
-
-    ids = [i.id for i in items]
-    names = {i.name for i in items}
-
-    labor_lines = {r.item_id: r for r in db.scalars(
-        select(ProjectLaborLine).where(ProjectLaborLine.item_id.in_(ids))
-    )}
-    material_overrides = {r.item_id: r for r in db.scalars(
-        select(ProjectMaterialPrice).where(ProjectMaterialPrice.item_id.in_(ids))
-    )}
-    markets = {r.item_id: r for r in db.scalars(
-        select(ItemMarketPrice).where(ItemMarketPrice.item_id.in_(ids))
-    )}
-    company_rates = db.get(CompanyLaborRate, project.org_id)
-    company_hours = {r.item_name: r for r in db.scalars(
-        select(CompanyLaborHoursOverride).where(
-            CompanyLaborHoursOverride.org_id == project.org_id,
-            CompanyLaborHoursOverride.item_name.in_(names),
-        )
-    )}
-    company_prices = {r.item_name: r for r in db.scalars(
-        select(CompanyMaterialPrice).where(
-            CompanyMaterialPrice.org_id == project.org_id,
-            CompanyMaterialPrice.item_name.in_(names),
-        )
-    )}
-
-    loaded = []
-    for item in items:
-        labor = resolve_labor(
-            item, project, labor_lines.get(item.id),
-            company_rates=company_rates, company_hours=company_hours.get(item.name),
-        )
-        material = resolve_material_price(
-            item, project, material_overrides.get(item.id),
-            company_prices.get(item.name), market=markets.get(item.id),
-        )
-        loaded.append((item, labor, material))
-    return loaded
 
 
 def _grouped_line(template: dict, *, section: str, basis: str, items: list[Item],
-                  value: str | None = None, unit: str | None = None) -> dict:
+                  kind: str, value: str | None = None, unit: str | None = None) -> dict:
     """One assumption standing for every item that shares a basis.
 
     The count goes in `found` rather than being left for the reader to
     infer: "forty-two receptacles" and "one receptacle" are different
     disclosures, and a line that does not say which is a line that
     cannot be checked.
+
+    `kind` goes into `subject_ref` so two disclosures in one section can
+    never collide on identity. The firm-table and derived hours
+    disclosures share the title "Installation hours" on purpose -- it is
+    the right words for both -- so the title alone is not an identity,
+    and `write.regenerate`'s dedup keys off the full subject.
     """
     return {
         "section": section,
         "subject_kind": "project",
+        "subject_ref": f"{section}:{kind}",
         "basis": basis,
         "title": template["title"],
         "found": template["found"].format(items=copy.plural(len(items), "line")),
@@ -164,31 +107,29 @@ def labor_assumptions(db: DbSession, project: Project, *,
     hours times a rate, so those are the two numbers a reader needs to
     interrogate; a per-item breakdown would bury both.
     """
-    loaded = _loaded(db, project, exclude)
-    if not loaded:
-        return []
-
     hours_groups: dict[str, list[Item]] = {}
     rate_groups: dict[str, list[Item]] = {}
-    for item, labor, _ in loaded:
-        # An unresolved line assumed nothing -- there is no number to
-        # disclose, and Task 8 renders it as not priced instead.
-        if labor.labor_cost is None:
+    for line in resolved_lines(db, project, exclude=exclude):
+        # A line whose labor did not resolve assumed nothing -- there is
+        # no number to disclose, and the ROM renders it as not priced.
+        if line.labor_rate_basis is None and line.labor_hours_basis is None:
             continue
-        hours_basis = LABOR_BASIS.get(labor.hours_source_label)
+        hours_basis = LABOR_BASIS.get(line.labor_hours_basis)
         if hours_basis:
-            hours_groups.setdefault(hours_basis, []).append(item)
-        rate_basis = LABOR_BASIS.get(labor.rate_source_label)
+            hours_groups.setdefault(hours_basis, []).append(line.item)
+        rate_basis = LABOR_BASIS.get(line.labor_rate_basis)
         if rate_basis:
-            rate_groups.setdefault(rate_basis, []).append(item)
+            rate_groups.setdefault(rate_basis, []).append(line.item)
 
     rows = []
     for basis, items in sorted(hours_groups.items()):
         template = copy.FIRM_HOURS if basis == "firm_default" else copy.ESTIMATED_HOURS
-        rows.append(_grouped_line(template, section="labor", basis=basis, items=items))
+        rows.append(_grouped_line(template, section="labor", basis=basis, items=items,
+                                  kind="hours"))
     for basis, items in sorted(rate_groups.items()):
         template = copy.FIRM_RATE if basis == "firm_default" else copy.ESTIMATED_RATE
-        rows.append(_grouped_line(template, section="labor", basis=basis, items=items))
+        rows.append(_grouped_line(template, section="labor", basis=basis, items=items,
+                                  kind="rate"))
     return rows
 
 
@@ -199,14 +140,11 @@ def material_assumptions(db: DbSession, project: Project, *,
     Firm-price-list lines are grouped; class averages are named one by
     one. See the module docstring for why the grouping is not uniform.
     """
-    loaded = _loaded(db, project, exclude)
-    if not loaded:
-        return []
-
     firm_priced: list[Item] = []
     rows = []
-    for item, _, material in loaded:
-        basis = MATERIAL_BASIS.get(material.source_label)
+    for line in resolved_lines(db, project, exclude=exclude):
+        item = line.item
+        basis = MATERIAL_BASIS.get(line.material_basis)
         if basis == "firm_default":
             firm_priced.append(item)
         elif basis == "class_average":
@@ -218,15 +156,27 @@ def material_assumptions(db: DbSession, project: Project, *,
                 "title": copy.CLASS_AVERAGE["title"].format(name=item.name),
                 "found": copy.CLASS_AVERAGE["found"],
                 "why": copy.CLASS_AVERAGE["why"],
-                "where": copy.CLASS_AVERAGE["where"].format(name=item.name),
-                "value": copy.dollars(item.material_cost) or None,
+                # Names the sheet the gear was counted on, not just the
+                # screen: a GC asking "which switchboard" needs the
+                # drawing, and a disclosure that cannot be traced to one
+                # is a disclosure that cannot be checked.
+                "where": copy.CLASS_AVERAGE["where"].format(
+                    name=item.name, sheet=_sheet_number(db, item)),
+                # The RESOLVED price, not the engine's stored column --
+                # the document must disclose the number it printed.
+                "value": copy.dollars(line.material_cost) or None,
                 "source": "engine",
             })
 
     if firm_priced:
         rows.insert(0, _grouped_line(copy.FIRM_PRICE, section="material",
-                                     basis="firm_default", items=firm_priced))
+                                     basis="firm_default", items=firm_priced, kind="price"))
     return rows
+
+
+def _sheet_number(db: DbSession, item: Item) -> str:
+    sheet = db.get(Sheet, item.sheet_id)
+    return sheet.number if sheet is not None else ""
 
 
 def cost_exposures(db: DbSession, project: Project, *,
@@ -239,21 +189,31 @@ def cost_exposures(db: DbSession, project: Project, *,
     would force a choice between disclosing a quote as an assumption or
     pricing a market estimate as if it were quoted.
 
-    Labor and material dollars are reported separately even when they
-    sit on the same item, because they rest on different bases -- the
-    hours can come from the firm's table while the material came from a
-    supplier's quote.
-    """
-    loaded = _loaded(db, project, exclude)
-    if not loaded:
-        return []
+    **A labor dollar rests on two bases, and both count.** The hours can
+    come from the firm's table (±10%) while the rate was derived (±20%);
+    the cost is hours times rate, so it is loose on both counts and the
+    spec's linear combination wants both reported. An earlier version
+    took the rate basis `or` the hours basis, which silently discarded
+    whichever came second and narrowed the range on an assumption nobody
+    had checked -- the one direction an error here must never go.
 
+    **An inferred identity widens the range too.** A quoted price for
+    the wrong item is not a reliable number, so a line whose name was
+    read from context rather than matched to a legend row carries its
+    own exposure on top of whatever priced it.
+    """
     buckets: dict[str, Decimal] = {}
-    for item, labor, material in loaded:
-        material_basis = MATERIAL_BASIS.get(material.source_label)
-        if material_basis:
-            buckets[material_basis] = buckets.get(material_basis, Decimal("0")) + item.material_cost
-        labor_basis = LABOR_BASIS.get(labor.rate_source_label) or LABOR_BASIS.get(labor.hours_source_label)
-        if labor_basis and labor.labor_cost is not None:
-            buckets[labor_basis] = buckets.get(labor_basis, Decimal("0")) + item.labor_cost
+
+    def add(basis: str | None, dollars: Decimal) -> None:
+        if basis and dollars:
+            buckets[basis] = buckets.get(basis, Decimal("0")) + dollars
+
+    for line in resolved_lines(db, project, exclude=exclude):
+        add(MATERIAL_BASIS.get(line.material_basis), line.material_cost)
+        # Both halves, not one: see the docstring.
+        add(LABOR_BASIS.get(line.labor_hours_basis), line.labor_cost)
+        add(LABOR_BASIS.get(line.labor_rate_basis), line.labor_cost)
+        if line.item.classification_basis == "inferred":
+            add("inferred", line.total_cost)
+
     return [Exposure(basis, dollars) for basis, dollars in sorted(buckets.items()) if dollars > 0]

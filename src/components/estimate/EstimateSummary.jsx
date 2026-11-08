@@ -17,6 +17,7 @@
 import EstimateSection from "./EstimateSection.jsx";
 import QualificationsBlock from "./QualificationsBlock.jsx";
 import { COPY, dollars, rangeNote } from "./estimateCopy.js";
+import { downloadRom } from "./romDownload.js";
 import { useEstimate } from "./useEstimate.js";
 
 export default function EstimateSummary() {
@@ -47,7 +48,14 @@ export default function EstimateSummary() {
     <div className="est-wrap">
       <article className="est-doc">
         <header className="est-head">
-          <p className="est-kicker">{COPY.kicker}</p>
+          <div className="est-headtop">
+            <p className="est-kicker">{COPY.kicker}</p>
+            {!estimate.emptyReason && (
+              <button type="button" className="btn est-download" onClick={() => downloadRom(estimate)}>
+                {COPY.download}
+              </button>
+            )}
+          </div>
           <h1 className="est-ptitle">{estimate.projectName}</h1>
           <p className="est-psub">
             {[
@@ -57,6 +65,13 @@ export default function EstimateSummary() {
               .filter(Boolean)
               .join(" · ")}
           </p>
+
+          {estimate.pendingReason && (
+            <div className="est-pending" role="status">
+              <p className="est-pending-head">{COPY.pendingHeading}</p>
+              <p className="est-pending-body">{estimate.pendingReason}</p>
+            </div>
+          )}
 
           {estimate.emptyReason ? (
             <p className="est-empty">{estimate.emptyReason}</p>
@@ -74,6 +89,16 @@ export default function EstimateSummary() {
                   </>
                 )}
                 {rangeNote(estimate)}
+                {estimate.unpricedCount > 0 && (
+                  <>
+                    {" "}
+                    <b>
+                      {estimate.unpricedCount}{" "}
+                      {estimate.unpricedCount === 1 ? "line carries" : "lines carry"} no price and
+                      {estimate.unpricedCount === 1 ? " is" : " are"} not in this number.
+                    </b>
+                  </>
+                )}
               </p>
             </div>
           )}

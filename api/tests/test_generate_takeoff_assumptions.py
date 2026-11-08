@@ -80,7 +80,11 @@ def test_branch_footage_is_one_project_line_not_one_per_device(db, project, shee
     rows = [a for a in takeoff_assumptions(db, project) if a["basis"] == "rule_of_thumb"]
     assert len(rows) == 1
     assert rows[0]["subject_kind"] == "project"
-    assert "40" in rows[0]["found"]
+    # Deliberately does NOT claim a line count. The engine prices a line
+    # it could not match to a catalog item bare, with no assembly, and
+    # nothing on the item records which way it went -- so "40 lines
+    # include branch wire" was a claim this module cannot establish.
+    assert "priced bare" in rows[0]["found"]
 
 
 def test_a_project_with_no_priced_devices_has_no_footage_assumption(db, project, sheet):

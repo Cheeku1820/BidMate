@@ -77,3 +77,32 @@ def test_exposure_dollars_may_exceed_the_total_without_breaking():
     ])
     assert r.spread_dollars == Decimal("25")
     assert (r.low, r.high) == (Decimal("75"), Decimal("125"))
+
+
+# --- rounding (Codex review, finding 15) -------------------------------
+
+
+def test_the_point_estimate_is_always_inside_its_own_range():
+    """`budget_range(140.49, [])` used to round to [140, 140], putting
+    the number outside the range that claims to contain it. Bounds round
+    outward now, never to nearest."""
+    r = budget_range(Decimal("140.49"), [])
+    assert r.low <= Decimal("140.49") <= r.high
+
+
+def test_a_fractional_center_with_a_tiny_spread_still_brackets_it():
+    r = budget_range(Decimal("1000.50"), [Exposure("firm_default", Decimal("1"))])
+    assert r.low <= Decimal("1000.50") <= r.high
+
+
+def test_a_whole_dollar_center_with_no_spread_is_still_a_point():
+    """Rounding outward must not invent a width where there is none."""
+    r = budget_range(Decimal("50000"), [])
+    assert (r.low, r.high, r.spread_dollars) == (Decimal("50000"), Decimal("50000"), Decimal("0"))
+
+
+def test_inferred_is_a_recognised_exposure_basis():
+    """An inferred identity widens the range: a quoted price for the
+    wrong item is not a reliable number (Codex review, finding 5)."""
+    r = budget_range(Decimal("1000"), [Exposure("inferred", Decimal("400"))])
+    assert r.spread_dollars == Decimal("100")

@@ -110,4 +110,10 @@ class EstimateOut(BaseModel):
     # and a $0 that says why are different documents, and only one of
     # them is honest.
     empty_reason: str | None = None
+    # Set when the project has counted work but no generated
+    # disclosures: the estimate job has not run, is still queued, or
+    # failed. A ROM with costs and an empty assumptions list reads as
+    # fully counted, which is the one way this document can overstate
+    # what it knows -- so the screen refuses to present it as finished.
+    pending_reason: str | None = None
     model_config = MODEL_CONFIG

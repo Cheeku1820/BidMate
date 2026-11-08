@@ -37,6 +37,25 @@ from app.takeoff.models import Assumption, Project
 # engine's agents through `from app.engine import ...`.
 
 
+def _identity(row) -> tuple:
+    """What makes one disclosure the same disclosure across runs.
+
+    Accepts a stored `Assumption` or a validated dict. Deliberately NOT
+    the title: a title is words for a reader, and two real disclosures
+    can share one. The subject plus the basis is what actually
+    identifies the thing being disclosed.
+    """
+    get = row.get if isinstance(row, dict) else lambda k: getattr(row, k, None)
+    return (
+        get("section"),
+        get("subject_kind") or "project",
+        str(get("subject_id")) if get("subject_id") else None,
+        get("subject_ref"),
+        get("basis"),
+        get("title"),
+    )
+
+
 def generate(db: DbSession, project: Project) -> list[dict]:
     """Every assumption for one project, validated, not yet written.
 
@@ -83,19 +102,26 @@ def regenerate(db: DbSession, project: Project) -> int:
     # An estimator's override of a generated assumption keeps that
     # assumption's identity, so a regenerated row that duplicates one
     # the estimator already settled must not reappear beside it.
+    #
+    # Keyed off the FULL subject, not the title. Two switchboards on one
+    # job legitimately share the name "Switchboard SB-1" and are
+    # different disclosures; keying on title alone meant overriding one
+    # suppressed both, and a labor section carries two distinct "
+    # Installation hours" disclosures (the firm's table and a derived
+    # basis) that would suppress each other.
     overridden = {
-        (section, title)
-        for section, title in db.execute(
-            select(Assumption.section, Assumption.title).where(
+        _identity(row)
+        for row in db.scalars(
+            select(Assumption).where(
                 Assumption.project_id == project.id,
                 Assumption.source == "estimator",
             )
-        ).all()
+        )
     }
 
     written = 0
     for row in rows:
-        if (row["section"], row["title"]) in overridden:
+        if _identity(row) in overridden:
             continue
         db.add(Assumption(
             project_id=project.id,

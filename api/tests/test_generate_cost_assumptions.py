@@ -260,3 +260,81 @@ def test_no_generated_copy_names_a_model_or_a_confidence(db, estimated_project, 
     blob = " ".join(f"{a['title']} {a['found']} {a['why']} {a['where']}" for a in rows).lower()
     for forbidden in ("model", "confidence", "claude", "gpt", "token", "prompt", "llm", "%"):
         assert forbidden not in blob, forbidden
+
+
+# --- the review's findings, pinned -------------------------------------
+
+
+def test_labor_exposure_reports_both_the_hours_and_the_rate_basis(db, project, sheet, org):
+    """Codex review, finding 8. The cost is hours times rate, so a line
+    whose hours came from the firm's table (10%) and whose rate was
+    derived (20%) is loose on both counts. An earlier version took one
+    basis `or` the other and silently discarded the second, narrowing
+    the range on an assumption nobody had checked."""
+    project.pricing_source = "llm"
+    project.pricing_note = "Indiana regional basis"
+    db.add(CompanyLaborHoursOverride(org_id=org.id, item_name="20A duplex receptacle",
+                                     hours_per_unit=Decimal("2")))
+    db.add(_item(project, sheet, labor_cost="1000", labor_hours="2"))
+    db.flush()
+    bases = {e.basis for e in cost_exposures(db, project)}
+    assert "firm_default" in bases     # the hours
+    assert "class_average" in bases    # the rate
+
+
+def test_an_inferred_identity_widens_the_range_even_when_quoted(db, project, sheet):
+    """Codex review, finding 5. A quoted price for the wrong item is not
+    a reliable number, so the inference carries its own exposure on top
+    of whatever priced it."""
+    item = _item(project, sheet, name="Switchboard", material="48900", labor_cost="0", labor_hours="0")
+    item.classification_basis = "inferred"
+    db.add(item)
+    db.flush()
+    db.add(ProjectMaterialPrice(item_id=item.id, price_override=Decimal("48900"),
+                                source="supplier_quote", supplier_name="Codale"))
+    db.flush()
+    inferred = [e for e in cost_exposures(db, project) if e.basis == "inferred"]
+    assert inferred
+    assert inferred[0].dollars == Decimal("48900")
+
+
+def test_a_class_average_discloses_the_resolved_price_not_the_stored_column(db, project, sheet):
+    """Codex review, finding 1, applied to the disclosure: the value
+    printed beside a line has to be the number the estimate carried."""
+    project.pricing_source = "llm"
+    project.pricing_note = "Indiana regional basis"
+    db.add(_item(project, sheet, name="Switchboard SB-1", material="48900",
+                 labor_cost="0", labor_hours="0"))
+    db.flush()
+    a = one(material_assumptions(db, project), title_contains="Switchboard")
+    assert "48,900" in a["value"]
+
+
+def test_a_class_average_names_the_sheet_it_was_counted_on(db, project, sheet):
+    """Codex review, finding 12. "Material pricing" alone does not let a
+    GC find which switchboard."""
+    project.pricing_source = "llm"
+    project.pricing_note = "Indiana regional basis"
+    db.add(_item(project, sheet, name="Switchboard SB-1", material="48900",
+                 labor_cost="0", labor_hours="0"))
+    db.flush()
+    a = one(material_assumptions(db, project), title_contains="Switchboard")
+    assert sheet.number in a["where"]
+
+
+def test_two_labor_disclosures_in_one_section_have_distinct_identities(db, project, sheet, org):
+    """Codex review, finding 9. The firm-table and derived hours
+    disclosures share the title "Installation hours" -- it is the right
+    words for both -- so the title cannot be the identity."""
+    project.pricing_source = "llm"
+    project.pricing_note = "Indiana regional basis"
+    db.add(CompanyLaborRate(org_id=org.id, journeyman_rate=Decimal("68"),
+                            foreman_rate=Decimal("82"), apprentice_rate=Decimal("41")))
+    item = _item(project, sheet)
+    db.add(item)
+    db.flush()
+    db.add(ProjectLaborLine(item_id=item.id, crew_journeyman=2))
+    db.flush()
+    rows = labor_assumptions(db, project)
+    refs = [a["subject_ref"] for a in rows]
+    assert len(set(refs)) == len(refs)

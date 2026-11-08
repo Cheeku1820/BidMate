@@ -58,8 +58,15 @@ ESTIMATED_RATE = {
 
 BRANCH_WIRE = {
     "title": "Branch wire and conduit",
-    "found": "{lines} include branch wire and conduit derived from a rule of {feet} ft per device. "
-             "The drawings show homerun arrows, not routed runs.",
+    # Deliberately does NOT claim that every priced line includes an
+    # assembly. The engine prices a line it could not match to a catalog
+    # item bare, with no rough-in at all, and nothing on the item records
+    # which way it went -- so "N lines include branch wire" was a claim
+    # this module cannot establish. What it can say is what rule was used
+    # where one was, and that the rest are bare.
+    "found": "Branch wire and conduit are included at a rule of {feet} ft per device wherever a line "
+             "matched a catalog assembly. The drawings show homerun arrows, not routed runs. A line the "
+             "takeoff could not match to an assembly is priced bare, with no rough-in.",
     "why": "Wire and conduit are a large share of material cost, and a run length is not in the drawings for anyone to read.",
     "where": "Company settings, and the homerun arrows on the power plans",
 }
@@ -81,9 +88,11 @@ SCALED_LENGTHS = {
 INFERRED_NAMES = {
     "title": "Item names read from context",
     "found": "{items} were named from the surrounding schedule text rather than from a legend row that "
-             "defines the symbol.",
+             "defines the symbol: {names}.",
     "why": "The quantity was counted from the drawings either way; what the item is was read rather than matched.",
-    "where": "Takeoff spreadsheet, and the legend sheets in the set",
+    # Names the sheets, so the GC can find the symbols in question
+    # rather than being told a count and left to guess.
+    "where": "{sheets}, and the legend sheets in the set",
 }
 
 # --- material ----------------------------------------------------------
@@ -99,5 +108,7 @@ CLASS_AVERAGE = {
     "title": "{name}",
     "found": "No quote and no price on file. Priced at what gear of this class costs.",
     "why": "This is not a supplier price, and gear like this is where a budget moves most.",
-    "where": "Material pricing, {name}",
+    # Names the sheet, not just the screen: a GC asking "which
+    # switchboard" needs the drawing it was counted on.
+    "where": "{sheet}, and Material pricing",
 }

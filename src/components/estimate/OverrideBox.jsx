@@ -41,7 +41,11 @@ export default function OverrideBox({ line, onOverride }) {
   if (!open) {
     return (
       <button type="button" className="est-override-open" onClick={() => setOpen(true)}>
-        {COPY.overrideOpen}
+        {/* "Change this" once it is already the estimator's, so a typo
+            has a way back. An entered line reads as counted and used to
+            lose this control entirely, which left no correction path on
+            this screen at all. */}
+        {line.source === "estimator" ? COPY.overrideEdit : COPY.overrideOpen}
       </button>
     );
   }

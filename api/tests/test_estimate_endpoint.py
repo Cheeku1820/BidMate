@@ -11,7 +11,7 @@ from decimal import Decimal
 import pytest
 
 from app.estimate.write import regenerate
-from app.takeoff.models import Assumption, Item, ReviewStatus, Sheet
+from app.takeoff.models import Assumption, Item, ProjectMaterialPrice, ReviewStatus, Sheet
 
 
 def url(project):
@@ -204,8 +204,13 @@ def test_an_exclusion_states_the_dollars_it_removed(client, db, priced_project):
     db.commit()
     body = client.get(url(priced_project)).json()
     assert body["excluded_value"] == "500.00"
-    line = find_line(body, "Fire alarm by others")
-    assert line["amount"] == "500.00"
+    # Several "Fire alarm by others" lines exist -- one per subject the
+    # exclusion names (a system plus the equipment keywords), so the
+    # assertion is that the dollars land on the one that removed them,
+    # not on whichever matched first.
+    fire = [l for s in body["sections"] for l in s["lines"] if "fire alarm by others" in l["title"].lower()]
+    assert fire
+    assert "500.00" in {l["amount"] for l in fire}
     # And the money is out of the total.
     assert body["direct_cost"] == "450.00"
 
@@ -274,10 +279,19 @@ def test_a_set_that_read_but_counted_nothing_says_so(client, db, org, signed_in_
 
 def test_everything_excluded_is_not_a_bare_zero(client, db, org, signed_in_user):
     """Review Focus 3 -- $0 because scope removed it all is a different
-    document from $0 because nothing was counted."""
+    document from $0 because nothing was counted.
+
+    The project carries a pricing basis because `excluded_value` reports
+    RESOLVED dollars: without one nothing resolves, the figure is zero,
+    and the test would be asserting against an unpriced project rather
+    than the one it means to describe. `empty_reason` itself keys off
+    what was excluded rather than what it cost, so the banner is right
+    either way -- this asserts the dollars as well.
+    """
     from app.takeoff.models import Project
 
-    p = Project(org_id=org.id, name="All excluded", revision_set_label="")
+    p = Project(org_id=org.id, name="All excluded", revision_set_label="",
+                pricing_source="llm", pricing_note="Indiana regional basis")
     db.add(p)
     db.flush()
     s = _sheet(p)
@@ -338,3 +352,78 @@ def test_a_missing_project_is_the_same_404(client, signed_in_user):
         id = _uuid.uuid4()
 
     assert client.get(url(_Fake())).status_code == 404
+
+
+# --- the review's findings, pinned -------------------------------------
+
+
+def test_the_number_follows_a_supplier_quote(client, db, priced_project):
+    """Codex review, finding 1. The ROM used to sum the engine's stored
+    cost columns, so a quote nobody disputed never reached the document
+    an estimator hands a GC."""
+    item = db.query(Item).filter(Item.name == "20A duplex receptacle").one()
+    db.add(ProjectMaterialPrice(item_id=item.id, price_override=Decimal("500"),
+                                source="supplier_quote", supplier_name="Codale"))
+    db.commit()
+    body = client.get(url(priced_project)).json()
+    # 500 quoted + 40 labor on that line, plus the 250/60 troffer line.
+    assert body["direct_cost"] == "850.00"
+
+
+def test_an_unpriced_line_says_so_on_the_system_it_sits_in(client, db, priced_project):
+    """Codex review, finding 4. An unpriced item used to add zero to its
+    system's rolled-up total and vanish -- a figure that looked complete
+    and was not."""
+    s = db.query(Sheet).filter(Sheet.project_id == priced_project.id).first()
+    db.add(_item(priced_project, s, name="Unclassified symbol", material="0", labor="0"))
+    db.commit()
+    body = client.get(url(priced_project)).json()
+    takeoff = next(sec for sec in body["sections"] if sec["key"] == "takeoff")
+    power = next(l for l in takeoff["lines"] if l["title"] == "Power")
+    assert "carry no price" in power["found"] or "carries no price" in power["found"]
+    assert body["unpriced_count"] == 1
+
+
+def test_a_project_with_no_generated_disclosures_is_not_presented_as_ready(
+        client, db, org, signed_in_user):
+    """Codex review, finding 6. Costs with an empty qualifications block
+    read as fully counted, which is the one way this document can
+    overstate what it knows. Reachable by a project that predates the
+    feature, a queued job, or a failed one."""
+    from app.takeoff.models import Project
+
+    p = Project(org_id=org.id, name="No disclosures yet", revision_set_label="",
+                pricing_source="llm", pricing_note="Indiana regional basis")
+    db.add(p)
+    db.flush()
+    s = _sheet(p)
+    db.add(s)
+    db.flush()
+    db.add(_item(p, s))
+    db.commit()
+
+    body = client.get(url(p)).json()
+    assert body["pending_reason"]
+    assert "not ready to hand over" in body["pending_reason"]
+    assert body["qualifications"] == []
+
+
+def test_a_failed_generation_says_so_rather_than_saying_pending(client, db, org, signed_in_user):
+    from app.takeoff.models import Job, Project
+
+    p = Project(org_id=org.id, name="Failed generation", revision_set_label="",
+                pricing_source="llm", pricing_note="Indiana regional basis")
+    db.add(p)
+    db.flush()
+    s = _sheet(p)
+    db.add(s)
+    db.flush()
+    db.add(_item(p, s))
+    db.add(Job(org_id=org.id, project_id=p.id, kind="estimate", status="failed",
+               max_attempts=3, attempts=3))
+    db.commit()
+    assert "Start the takeoff again" in client.get(url(p)).json()["pending_reason"]
+
+
+def test_a_generated_project_carries_no_pending_reason(client, priced_project):
+    assert client.get(url(priced_project)).json()["pending_reason"] is None

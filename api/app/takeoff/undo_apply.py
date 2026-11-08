@@ -135,30 +135,72 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
         _apply_item_state(db, action.item_id, state)
 
 
+_ASSUMPTION_NON_COLUMNS = ("assumption_id", "identity")
+
+
+def _find_assumption(db: DbSession, state: dict) -> Assumption | None:
+    """The row this action targets, by id, then by identity.
+
+    The identity fallback is what makes undo/redo survive a re-run.
+    `write.regenerate` deletes every `source="engine"` row and writes a
+    fresh set with new ids, and undo restores `source="engine"` -- so
+    the sequence override, undo, re-run, redo used to look up a UUID
+    the re-run had deleted, skip, and record a *successful*
+    compensating action that restored nothing. The estimator's value was
+    gone and the action log said it had been put back.
+
+    A market-pricing pass re-queues generation on its own, so this was
+    reachable without anybody triggering a second takeoff by hand.
+
+    The identity is the same tuple `write._identity` dedups on: the
+    subject plus the title, never the row's id.
+    """
+    assumption_id = state.get("assumption_id")
+    if assumption_id:
+        row = db.get(Assumption, uuid.UUID(assumption_id))
+        if row is not None:
+            return row
+
+    identity = state.get("identity") or {}
+    if not identity.get("project_id"):
+        return None
+    subject_id = identity.get("subject_id")
+    return db.scalars(
+        select(Assumption).where(
+            Assumption.project_id == uuid.UUID(identity["project_id"]),
+            Assumption.section == identity.get("section"),
+            Assumption.subject_kind == (identity.get("subject_kind") or "project"),
+            Assumption.subject_id == (uuid.UUID(subject_id) if subject_id else None),
+            Assumption.subject_ref == identity.get("subject_ref"),
+            Assumption.title == identity.get("title"),
+        )
+    ).first()
+
+
 def _apply_assumption(db: DbSession, action: Action, state: dict) -> None:
     """Reverses an `assumption_edit` onto one ROM assumption row.
 
     Merges only the columns the override touched, the way
-    `_apply_item_state()` does: `section`, `title`, and `basis` identify
-    the assumption, and restoring them would let an undo move a
-    disclosure into a different section.
+    `_apply_item_state()` does: `section` and `title` identify the
+    assumption, and restoring them would let an undo move a disclosure
+    into a different section. `basis` IS restored, because the override
+    replaces it.
 
-    An assumption the next run deleted is a skip rather than a 409. The
-    row is regenerable -- the next `estimate` job rebuilds it from the
-    drawings -- so there is nothing an estimator can do about the
-    failure and nothing lost by the undo being a no-op. That is the
-    opposite reading from `_apply_sparse_pricing_row`'s, and the reason
-    is the difference between a derived disclosure and a person's
-    pricing entry.
+    An assumption that no longer exists under its id is refound by
+    identity (see `_find_assumption`). Only when neither resolves is
+    this a skip rather than a 409: the row is regenerable -- the next
+    `estimate` job rebuilds it from the drawings -- so there is nothing
+    an estimator can do about the failure and nothing lost by the undo
+    being a no-op. That is the opposite reading from
+    `_apply_sparse_pricing_row`'s, and the reason is the difference
+    between a derived disclosure and a person's own pricing entry.
     """
-    assumption_id = (action.after or {}).get("assumption_id") or (action.before or {}).get("assumption_id")
-    if not assumption_id:
-        return
-    row = db.get(Assumption, uuid.UUID(assumption_id))
+    row = _find_assumption(db, state)
     if row is None:
         return
     decoded = decode_snapshot(
-        {k: v for k, v in state.items() if k != "assumption_id"}, ASSUMPTION_SNAPSHOT_TYPES
+        {k: v for k, v in state.items() if k not in _ASSUMPTION_NON_COLUMNS},
+        ASSUMPTION_SNAPSHOT_TYPES,
     )
     for key, value in decoded.items():
         setattr(row, key, value)

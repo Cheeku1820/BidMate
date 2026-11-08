@@ -42,6 +42,16 @@ export const COPY = {
   subtotalLabel: "Subtotal",
 
   download: "Download estimate",
+
+  /* The override. "Enter" rather than "Confirm" throughout: this
+     corrects a number, it is not an approval, and a ROM has no
+     approval step to borrow words from. */
+  overrideOpen: "I know this one",
+  overrideLabel: "Enter the value",
+  overrideSave: "Enter",
+  overrideSaving: "Saving…",
+  overrideCancel: "Cancel",
+  overrideError: "That value could not be saved. Check it and try again.",
 };
 
 export function sectionTally(section) {

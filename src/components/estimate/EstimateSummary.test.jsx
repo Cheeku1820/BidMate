@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EstimateSummary from "./EstimateSummary.jsx";
 
@@ -78,9 +79,42 @@ function estimate(extra = {}) {
 beforeEach(() => {
   context = {
     projectId: "p1",
-    store: { getEstimate: vi.fn().mockResolvedValue(estimate()) },
+    store: {
+      getEstimate: vi.fn().mockResolvedValue(estimate()),
+      overrideAssumption: vi.fn(),
+    },
+    runMutation: vi.fn((fn) => fn()),
+    showToast: vi.fn(),
   };
 });
+
+/* An assumed line with an id — what the override control attaches to.
+   The rolled-up counted lines carry no id, which is why they get no
+   box: there is no single row behind them to override. */
+function withCeiling() {
+  return estimate({
+    sections: [
+      section("takeoff", "Takeoff quantities", {
+        countedCount: 0,
+        assumedCount: 1,
+        lines: [
+          line({
+            id: "a1",
+            title: "Showroom ceiling height",
+            origin: "assumed",
+            basis: "inferred",
+            basisLabel: "Inferred from context",
+            found: "No reflected ceiling plan in the set.",
+            value: "14",
+            unit: "ft",
+            amount: null,
+            source: "engine",
+          }),
+        ],
+      }),
+    ],
+  });
+}
 
 describe("EstimateSummary", () => {
   it("renders four sections in spec order", async () => {
@@ -224,6 +258,65 @@ describe("EstimateSummary", () => {
     render(<EstimateSummary />);
     expect(await screen.findByText("$211,400")).toBeInTheDocument();
     expect(screen.getByText("$274,800")).toBeInTheDocument();
+  });
+
+  it("offers an override on an assumed line", async () => {
+    context.store.getEstimate = vi.fn().mockResolvedValue(withCeiling());
+    render(<EstimateSummary />);
+    expect(await screen.findByRole("button", { name: /i know this one/i })).toBeInTheDocument();
+  });
+
+  it("offers no override on a rolled-up counted line", async () => {
+    // Rolled-up lines carry no id -- there is no single row behind
+    // "Power" to override, which is why the control is absent rather
+    // than disabled.
+    context.store.getEstimate = vi.fn().mockResolvedValue(
+      estimate({ sections: [section("takeoff", "Takeoff quantities")] }),
+    );
+    render(<EstimateSummary />);
+    await screen.findByText("Power");
+    expect(screen.queryByRole("button", { name: /i know this one/i })).not.toBeInTheDocument();
+  });
+
+  it("offers no override on a scope exclusion, because scope is changed by stating scope", async () => {
+    render(<EstimateSummary />);
+    const row = (await screen.findByText("Temporary power excluded")).closest("tr");
+    expect(within(row).queryByRole("button", { name: /i know this one/i })).not.toBeInTheDocument();
+  });
+
+  it("sends the typed value and keeps the unit", async () => {
+    const user = userEvent.setup();
+    context.store.getEstimate = vi.fn().mockResolvedValue(withCeiling());
+    context.store.overrideAssumption = vi.fn().mockResolvedValue(withCeiling());
+    render(<EstimateSummary />);
+
+    await user.click(await screen.findByRole("button", { name: /i know this one/i }));
+    const field = screen.getByLabelText(/enter the value/i);
+    await user.clear(field);
+    await user.type(field, "16");
+    await user.click(screen.getByRole("button", { name: "Enter" }));
+
+    expect(context.store.overrideAssumption).toHaveBeenCalledWith("a1", { value: "16", unit: "ft" });
+  });
+
+  it("asks to enter a value rather than to confirm one", async () => {
+    const user = userEvent.setup();
+    context.store.getEstimate = vi.fn().mockResolvedValue(withCeiling());
+    render(<EstimateSummary />);
+    await user.click(await screen.findByRole("button", { name: /i know this one/i }));
+    // A ROM has no approval step, so the control must not borrow its words.
+    expect(screen.queryByRole("button", { name: /confirm/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
+  });
+
+  it("reports a failed override next to the field", async () => {
+    const user = userEvent.setup();
+    context.store.getEstimate = vi.fn().mockResolvedValue(withCeiling());
+    context.runMutation = vi.fn().mockRejectedValue(new Error("nope"));
+    render(<EstimateSummary />);
+    await user.click(await screen.findByRole("button", { name: /i know this one/i }));
+    await user.click(screen.getByRole("button", { name: "Enter" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
 
   it("names a recovery action when the estimate cannot be loaded", async () => {

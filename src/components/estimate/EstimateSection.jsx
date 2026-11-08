@@ -8,6 +8,7 @@
    four review labels follow, applied to a different axis.
    ============================================================ */
 
+import OverrideBox from "./OverrideBox.jsx";
 import { ORIGIN, COPY, dollars } from "./estimateCopy.js";
 
 function Amount({ line }) {
@@ -43,7 +44,7 @@ function Value({ line }) {
   );
 }
 
-export default function EstimateSection({ index, section }) {
+export default function EstimateSection({ index, section, onOverride }) {
   const origin = (line) => ORIGIN[line.origin] || ORIGIN.counted;
 
   return (
@@ -90,6 +91,9 @@ export default function EstimateSection({ index, section }) {
                   <span className={`est-tag est-tag-${line.origin}`} title={origin(line).title}>
                     {origin(line).label}
                   </span>
+                  {line.origin === "assumed" && line.id && onOverride && (
+                    <OverrideBox line={line} onOverride={onOverride} />
+                  )}
                 </td>
                 <td className="est-qty">
                   <Value line={line} />

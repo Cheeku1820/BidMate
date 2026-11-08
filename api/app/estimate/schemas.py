@@ -46,6 +46,20 @@ class EstimateLineOut(BaseModel):
     model_config = MODEL_CONFIG
 
 
+class AssumptionOverrideIn(BaseModel):
+    """What the estimator typed over an assumed number.
+
+    `unit` is optional and `None` means "leave it as it was" -- an
+    estimator correcting a ceiling height from 14 to 16 should not have
+    to retype "ft". Clearing a unit is not offered: the shape has no way
+    to distinguish it from "unchanged", and a unit is a property of the
+    quantity rather than something that goes away.
+    """
+
+    value: str
+    unit: str | None = None
+
+
 class EstimateSectionOut(BaseModel):
     key: str                       # app.estimate.basis.SECTIONS
     label: str

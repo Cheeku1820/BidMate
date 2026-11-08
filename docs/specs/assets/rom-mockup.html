@@ -1,0 +1,182 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root{
+    --paper-0:#f7f5f0; --paper-1:#fbfaf7; --surface:#fff;
+    --line-1:#e4e1d9; --line-2:#cfcbc0; --line-3:#a9a49a;
+    --ink-1:#1b1a18; --ink-2:#56534d; --ink-3:#86827a;
+    --blue:#23528f; --blue-tint:#e8f0fa; --blue-line:#b6cde9;
+    --amber:#9c5f06; --amber-tint:#fbf0dc; --amber-line:#e8cf9c;
+    --slate:#3d5566; --slate-tint:#e8eef1; --slate-line:#c3d1d8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink-1)}
+  .tab{font-variant-numeric:tabular-nums}
+  .doc{background:var(--surface);border:1px solid var(--line-1);border-radius:8px;overflow:hidden}
+
+  .head{padding:20px 22px;border-bottom:2px solid var(--ink-1);background:var(--paper-1)}
+  .kicker{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  .ptitle{font-size:21px;font-weight:650;margin:6px 0 2px}
+  .psub{font-size:13px;color:var(--ink-2)}
+  .headrow{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-top:14px}
+  .big{font-size:30px;font-weight:650;letter-spacing:-.01em}
+  .bignote{font-size:12px;color:var(--ink-2);text-align:right;max-width:230px;line-height:1.4}
+
+  .sec{border-bottom:1px solid var(--line-1)}
+  .sechead{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+    padding:13px 22px;background:var(--paper-0);border-bottom:1px solid var(--line-1)}
+  .secname{font-size:14px;font-weight:650}
+  .tally{font-size:11.5px;color:var(--ink-2)}
+  .tally b{font-weight:600;color:var(--ink-1)}
+
+  table{width:100%;border-collapse:collapse}
+  td{padding:9px 10px;border-bottom:1px solid var(--line-1);vertical-align:top;font-size:13.5px}
+  tr:last-child td{border-bottom:none}
+  td.first{padding-left:22px;width:46%}
+  td.amt{padding-right:22px;text-align:right;white-space:nowrap;width:17%}
+  .srcrow{display:block;font-size:11.5px;color:var(--ink-3);margin-top:3px}
+  .srcrow a{color:var(--blue);text-decoration:underline;text-underline-offset:2px}
+
+  .tag{display:inline-block;font-size:10.5px;font-weight:650;letter-spacing:.05em;
+    text-transform:uppercase;padding:2px 6px;border-radius:3px;white-space:nowrap}
+  .t-count{background:var(--slate-tint);color:var(--slate);border:1px solid var(--slate-line)}
+  .t-assume{background:var(--amber-tint);color:var(--amber);border:1px solid var(--amber-line)}
+  tr.assumed td.first{border-left:3px dashed var(--amber);padding-left:19px}
+  tr.counted td.first{border-left:3px solid var(--slate-line);padding-left:19px}
+
+  .subtot{background:var(--paper-1)}
+  .subtot td{font-weight:650;font-size:13.5px;border-bottom:none}
+
+  .qual{padding:18px 22px;background:var(--amber-tint)}
+  .qualh{font-size:13px;font-weight:650;margin-bottom:4px}
+  .qualp{font-size:12.5px;color:var(--ink-2);margin:0 0 10px}
+  ol{margin:0;padding-left:19px}
+  ol li{font-size:12.5px;margin-bottom:6px;line-height:1.45}
+  .where{color:var(--ink-3)}
+
+  .foot{padding:14px 22px;font-size:11.5px;color:var(--ink-2);background:var(--paper-1);line-height:1.5}
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <div class="head">
+    <div class="kicker">Rough order of magnitude · Division 26</div>
+    <div class="ptitle">Kittle's Saxony — Furniture Showroom</div>
+    <div class="psub">Hudson Electric · Indiana · 11 electrical sheets · 5 Nov 2026</div>
+    <div class="headrow">
+      <div class="big tab">$486,200</div>
+      <div class="bignote">Budget range <b class="tab">$413,000 – $559,000</b>. 23 of 61 lines are assumed; every one is listed below.</div>
+    </div>
+  </div>
+
+  <!-- SCOPE -->
+  <div class="sec">
+    <div class="sechead">
+      <span class="secname">1 · Scope</span>
+      <span class="tally"><b>4</b> read from documents · <b>3</b> assumed</span>
+    </div>
+    <table>
+      <tr class="counted"><td class="first">Division 26 power, lighting and devices throughout
+        <span class="srcrow">Stated — <a>Scope letter, p.2 ¶1</a></span></td>
+        <td><span class="tag t-count">Counted</span></td><td class="amt"></td></tr>
+      <tr class="counted"><td class="first">Fire alarm by others
+        <span class="srcrow">Stated — <a>Scope letter, p.2 ¶4</a></span></td>
+        <td><span class="tag t-count">Counted</span></td><td class="amt"></td></tr>
+      <tr class="assumed"><td class="first">Temporary power excluded
+        <span class="srcrow">Not addressed in any document — standard exclusion applied</span></td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt"></td></tr>
+      <tr class="assumed"><td class="first">Trenching, backfill and concrete pads by others
+        <span class="srcrow">Not addressed — <a>ES100 site plan</a> shows routing, no responsibility note</span></td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt"></td></tr>
+    </table>
+  </div>
+
+  <!-- TAKEOFF -->
+  <div class="sec">
+    <div class="sechead">
+      <span class="secname">2 · Takeoff quantities</span>
+      <span class="tally"><b>147</b> counted units · <b>9</b> assumed lines</span>
+    </div>
+    <table>
+      <tr class="counted"><td class="first">2x4 LED troffer, type F
+        <span class="srcrow">62 counted on <a>EL101</a> — <a>view evidence</a></span></td>
+        <td><span class="tag t-count">Counted</span></td><td class="amt tab">62 ea</td></tr>
+      <tr class="counted"><td class="first">20A duplex receptacle
+        <span class="srcrow">48 counted on <a>EP101</a>, <a>EP102</a> — <a>view evidence</a></span></td>
+        <td><span class="tag t-count">Counted</span></td><td class="amt tab">48 ea</td></tr>
+      <tr class="assumed"><td class="first">Branch circuit homerun, #12 THHN in 3/4" EMT
+        <span class="srcrow">Arrows shown, no routes drawn — firm rule of 62 ft per device applied</span></td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt tab">6,820 ft</td></tr>
+      <tr class="assumed"><td class="first">Showroom ceiling height for fixture drops</td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt tab">14 ft</td></tr>
+      <tr class="assumed"><td class="first">Panel SB-1 feeder length
+        <span class="srcrow">One-line shows connection, no run length — scaled from <a>ES100</a></span></td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt tab">185 ft</td></tr>
+      <tr class="subtot"><td class="first">61 lines</td><td></td><td class="amt tab">—</td></tr>
+    </table>
+  </div>
+
+  <!-- LABOR -->
+  <div class="sec">
+    <div class="sechead">
+      <span class="secname">3 · Labor</span>
+      <span class="tally"><b>0</b> quoted · <b>5</b> assumed</span>
+    </div>
+    <table>
+      <tr class="assumed"><td class="first">Journeyman rate, Indiana
+        <span class="srcrow">No project rate set — firm default table</span></td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt tab">$68.00 / hr</td></tr>
+      <tr class="assumed"><td class="first">Installation hours, all counted items
+        <span class="srcrow">Firm labor-unit table, by category</span></td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt tab">1,284 hr</td></tr>
+      <tr class="assumed"><td class="first">Crew mix, rough-in</td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt tab">1F / 2J / 2A</td></tr>
+      <tr class="subtot"><td class="first">Labor subtotal</td><td></td><td class="amt tab">$211,400</td></tr>
+    </table>
+  </div>
+
+  <!-- MATERIAL -->
+  <div class="sec">
+    <div class="sechead">
+      <span class="secname">4 · Material</span>
+      <span class="tally"><b>31</b> market-priced · <b>6</b> assumed</span>
+    </div>
+    <table>
+      <tr class="counted"><td class="first">Lighting package, type F and type G
+        <span class="srcrow">Market estimate by ZIP 46032 — fetched 4 Nov 2026</span></td>
+        <td><span class="tag t-count">Counted</span></td><td class="amt tab">$94,600</td></tr>
+      <tr class="assumed"><td class="first">Switchboard SB-1, 1200A
+        <span class="srcrow">No quote on file — class average applied, not a supplier price</span></td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt tab">$48,900</td></tr>
+      <tr class="assumed"><td class="first">Wire and conduit
+        <span class="srcrow">Priced against the assumed footage in section 2</span></td>
+        <td><span class="tag t-assume">Assumed</span></td><td class="amt tab">$61,300</td></tr>
+      <tr class="subtot"><td class="first">Material subtotal</td><td></td><td class="amt tab">$274,800</td></tr>
+    </table>
+  </div>
+
+  <!-- QUALIFICATIONS -->
+  <div class="qual">
+    <div class="qualh">Qualifications — what this number assumes</div>
+    <p class="qualp">Generated from every assumed line above. This list is the condition of the price.</p>
+    <ol>
+      <li>Conduit and wire quantities are derived from a 62 ft per device rule, not from routed runs. <span class="where">Drawings show homerun arrows only.</span></li>
+      <li>Showroom ceiling assumed at 14 ft. <span class="where">No reflected ceiling plan in the set.</span></li>
+      <li>Switchboard SB-1 carries a class-average price, not a supplier quote. <span class="where">No quote on file; lead time not established.</span></li>
+      <li>Temporary power, trenching, backfill and concrete pads are excluded. <span class="where">Not addressed in the scope letter.</span></li>
+      <li>Labor is priced at the firm default Indiana rate with no project adjustment.</li>
+    </ol>
+  </div>
+
+  <div class="foot">
+    Rough order of magnitude for budgeting. Quantities marked <b>Assumed</b> were not read from the drawings
+    and are stated above with the basis used. Not a bid. Supersede with a hard number once the assumptions
+    above are confirmed or priced.
+  </div>
+
+</div>
+</body>
+</html>

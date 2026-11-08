@@ -69,11 +69,20 @@ EVERYTHING_EXCLUDED = "Every counted line is excluded by the scope assumptions b
 
 
 def _assumption_line(row: Assumption, removed: Decimal | None) -> EstimateLineOut:
+    """One assumption as a line -- or, once an estimator has overridden
+    it, as a counted one.
+
+    An override is the moment a derived number stops being derived:
+    somebody went and measured the ceiling. The row keeps its identity
+    so the next run leaves it alone, but it is no longer an assumption
+    and must not be tagged or qualified as one. `source` is the whole
+    test, which is why it is also what `_qualifications` filters on.
+    """
     spec = BASIS.get(row.basis)
     return EstimateLineOut(
         id=row.id,
         title=row.title,
-        origin="assumed",
+        origin="counted" if row.source == "estimator" else "assumed",
         basis=row.basis,
         basis_label=spec.label if spec else None,
         where=row.where,
@@ -215,7 +224,11 @@ def _qualifications(assumptions: list[Assumption],
     """
     seen: set[tuple[str, str]] = set()
     unique: list[Assumption] = []
-    for row in assumptions:
+    # An overridden row is a number a person entered. It is not a
+    # condition of the price -- there is nothing for a reader to check
+    # beyond asking the person named on the line -- so it leaves the
+    # block in the same breath it stops being assumed.
+    for row in (r for r in assumptions if r.source != "estimator"):
         key = (row.basis, row.title)
         if key in seen:
             continue
@@ -287,13 +300,18 @@ def build_estimate_out(db: DbSession, project: Project) -> EstimateOut:
         else:
             counted = _cost_counted(db, project, labor=False, totals=totals)
             subtotal = totals.material_cost
+        # Counted from the lines' own origins rather than from the two
+        # list lengths: an overridden assumption sits in the `assumed`
+        # list and renders as counted, and a tally that disagreed with
+        # the rows under it would be the document contradicting itself.
+        lines = counted + assumed
         sections.append(EstimateSectionOut(
             key=key,
             label=SECTION_LABELS[key],
-            counted_count=len(counted),
-            assumed_count=len(assumed),
+            counted_count=sum(1 for l in lines if l.origin == "counted"),
+            assumed_count=sum(1 for l in lines if l.origin == "assumed"),
             subtotal=subtotal,
-            lines=counted + assumed,
+            lines=lines,
         ))
 
     rng = budget_range(totals.direct_cost, _exposures(db, project, exclude))
@@ -307,7 +325,7 @@ def build_estimate_out(db: DbSession, project: Project) -> EstimateOut:
         direct_cost=totals.direct_cost,
         range=RangeOut(low=rng.low, high=rng.high, spread=rng.spread_dollars),
         counted_count=totals.item_count,
-        assumed_count=len(assumptions),
+        assumed_count=sum(1 for a in assumptions if a.source != "estimator"),
         unpriced_count=totals.unpriced_count,
         excluded_value=excluded,
         sections=sections,

@@ -3572,3 +3572,32 @@ button {
   background: var(--paper-1);
   line-height: 1.5;
 }
+
+/* The override control. "I know this one" sits inside the origin cell
+   of an assumed row, so the affordance is adjacent to the tag that
+   explains why it is there. */
+.est-override-open {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.est-override-open:hover { color: var(--blue-dark, var(--blue)); }
+.est-override { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.est-override-label { font-size: 11px; color: var(--ink-2); flex-basis: 100%; }
+.est-override-input {
+  width: 84px;
+  font-size: 12.5px;
+  padding: 3px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.est-override-save, .est-override-cancel { font-size: 11.5px; padding: 3px 8px; }
+.est-override-error { flex-basis: 100%; font-size: 11px; color: var(--red); margin: 2px 0 0; }

@@ -20,7 +20,7 @@ import { COPY, dollars, rangeNote } from "./estimateCopy.js";
 import { useEstimate } from "./useEstimate.js";
 
 export default function EstimateSummary() {
-  const { estimate, loadError } = useEstimate();
+  const { estimate, loadError, overrideLine } = useEstimate();
 
   if (loadError) {
     return (
@@ -80,7 +80,7 @@ export default function EstimateSummary() {
         </header>
 
         {estimate.sections.map((section, i) => (
-          <EstimateSection key={section.key} index={i + 1} section={section} />
+          <EstimateSection key={section.key} index={i + 1} section={section} onOverride={overrideLine} />
         ))}
 
         <QualificationsBlock qualifications={estimate.qualifications} />

@@ -787,6 +787,17 @@ export function createApiStore() {
     return mapEstimate(await request(`/api/projects/${projectId}/estimate`));
   }
 
+  /* An override answers with the whole document: it moves the budget
+     range, a section tally, and the qualifications block at once, so
+     the screen replaces its state from the response rather than
+     reassembling any of that itself. */
+
+  async function overrideAssumption(assumptionId, { value, unit = null }) {
+    return mapEstimate(
+      await request(`/api/assumptions/${assumptionId}`, { method: "PATCH", body: { value, unit } }),
+    );
+  }
+
   async function createPhase(projectId, { name = "", afterPhaseId = null } = {}) {
     return mapSchedule(await request(`/api/projects/${projectId}/phases`, {
       method: "POST",
@@ -964,6 +975,7 @@ export function createApiStore() {
     setProposalStatus,
     getSchedule,
     getEstimate,
+    overrideAssumption,
     createPhase,
     editPhase,
     deletePhase,

@@ -33,8 +33,24 @@ from app.takeoff.models import Assumption, Item
 from app.takeoff.totals import countable_items
 
 
-def _exclusions(db: DbSession, project_id: uuid.UUID) -> list[Assumption]:
-    """Scope assumptions whose basis is `standard_exclusion`.
+# What an exclusion points at, independent of whether it has been
+# stored yet: (subject_kind, subject_id, subject_ref). The generator
+# needs to resolve exclusions it has only just produced -- scope decides
+# what is in before the other sections price it -- and writing rows to
+# the database purely to be able to read them back would make the
+# cascade depend on a transaction that has not been decided to commit.
+Subject = tuple[str, uuid.UUID | None, str | None]
+
+
+def _subject(row) -> Subject:
+    """Accepts a stored `Assumption` or a validated assumption dict."""
+    if isinstance(row, dict):
+        return (row.get("subject_kind") or "project", row.get("subject_id"), row.get("subject_ref"))
+    return (row.subject_kind, row.subject_id, row.subject_ref)
+
+
+def is_exclusion(row) -> bool:
+    """A `scope` assumption whose basis is `standard_exclusion`.
 
     Both halves of that predicate matter. A `scope` assumption on some
     other basis describes the scope boundary the estimate was read
@@ -42,6 +58,12 @@ def _exclusions(db: DbSession, project_id: uuid.UUID) -> list[Assumption]:
     some other section is a generator bug, and silently honouring it
     would let a takeoff-section mistake remove money.
     """
+    if isinstance(row, dict):
+        return row.get("section") == "scope" and row.get("basis") == "standard_exclusion"
+    return row.section == "scope" and row.basis == "standard_exclusion"
+
+
+def _exclusions(db: DbSession, project_id: uuid.UUID) -> list[Assumption]:
     return list(
         db.execute(
             select(Assumption).where(
@@ -53,7 +75,8 @@ def _exclusions(db: DbSession, project_id: uuid.UUID) -> list[Assumption]:
     )
 
 
-def _resolve(db: DbSession, project_id: uuid.UUID, rows: list[Assumption]) -> set[uuid.UUID]:
+def resolve_subjects(db: DbSession, project_id: uuid.UUID,
+                     subjects: list[Subject]) -> set[uuid.UUID]:
     """One query per exclusion kind, all of them off `countable_items()`.
 
     A `project`-scoped exclusion resolves to nothing on purpose. Most
@@ -63,9 +86,9 @@ def _resolve(db: DbSession, project_id: uuid.UUID, rows: list[Assumption]) -> se
     moves no money. Treating `project` as "everything" would make a
     boilerplate exclusion zero out the whole estimate.
     """
-    sheet_ids = {r.subject_id for r in rows if r.subject_kind == "sheet" and r.subject_id}
-    item_ids = {r.subject_id for r in rows if r.subject_kind == "item" and r.subject_id}
-    systems = {r.subject_ref for r in rows if r.subject_kind == "system" and r.subject_ref}
+    sheet_ids = {sid for kind, sid, _ in subjects if kind == "sheet" and sid}
+    item_ids = {sid for kind, sid, _ in subjects if kind == "item" and sid}
+    systems = {ref for kind, _, ref in subjects if kind == "system" and ref}
 
     if not (sheet_ids or item_ids or systems):
         return set()
@@ -96,7 +119,51 @@ def excluded_item_ids(db: DbSession, project_id: uuid.UUID) -> set[uuid.UUID]:
     after it was written -- resolves to nothing, because the resolution
     goes through `countable_items()` and that item is already gone.
     """
-    return _resolve(db, project_id, _exclusions(db, project_id))
+    return resolve_subjects(db, project_id, [_subject(r) for r in _exclusions(db, project_id)])
+
+
+def excluded_from_rows(db: DbSession, project_id: uuid.UUID, rows: list[dict]) -> set[uuid.UUID]:
+    """The same resolution, over assumptions not yet written.
+
+    What `app.estimate.write.generate` uses so the cascade -- scope
+    decides what is in, then the other sections price what is left --
+    can run in one pass without the generator depending on rows being
+    committed first.
+    """
+    return resolve_subjects(
+        db, project_id, [_subject(r) for r in rows if is_exclusion(r)]
+    )
+
+
+def excluded_value_by_assumption(db: DbSession, project_id: uuid.UUID) -> dict[uuid.UUID, Decimal]:
+    """Dollars each individual exclusion removed, keyed by assumption id.
+
+    Resolved one exclusion at a time rather than by dividing the total,
+    so the figure printed beside "fire alarm by others" is the fire
+    alarm work and not a share of something. Two exclusions covering the
+    same item will each report that item's dollars -- the overlap is
+    real, both statements removed it, and the project total
+    (`excluded_value`) is what dedupes. A reader adding the per-line
+    figures and getting more than the total is reading two overlapping
+    exclusions correctly; a reader seeing half the fire alarm value
+    beside the fire alarm line would be reading a fiction.
+    """
+    rows = _exclusions(db, project_id)
+    if not rows:
+        return {}
+
+    costs = {
+        item_id: cost
+        for item_id, cost in db.execute(
+            countable_items(project_id).with_only_columns(Item.id, Item.total_cost)
+        ).all()
+    }
+
+    out: dict[uuid.UUID, Decimal] = {}
+    for row in rows:
+        ids = resolve_subjects(db, project_id, [_subject(row)])
+        out[row.id] = sum((costs.get(i, Decimal("0")) for i in ids), Decimal("0"))
+    return out
 
 
 def excluded_value(db: DbSession, project_id: uuid.UUID) -> Decimal:

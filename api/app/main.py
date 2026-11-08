@@ -12,6 +12,7 @@ from app.collab.router import router as collab_router
 from app.db import get_db
 from app.documents.router import router as documents_router
 from app.errors import DomainError, domain_error_handler
+from app.estimate.router import router as estimate_router
 from app.jobs.router import router as processing_router
 from app.observability import RequestIdMiddleware, configure_logging, request_id_var
 from app.scope.router import router as scope_router
@@ -123,6 +124,7 @@ app.include_router(tiles_router)
 app.include_router(conversation_router)
 app.include_router(plan_router)
 app.include_router(schedule_router)
+app.include_router(estimate_router)
 
 
 @app.get("/api/health")

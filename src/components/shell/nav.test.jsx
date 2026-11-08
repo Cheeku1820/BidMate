@@ -177,11 +177,11 @@ describe("ProjectNav", () => {
     expect(within(nav).getByRole("link", { name: /^export/i })).toHaveAttribute("href", "/projects/p1/export");
 
     const disabled = disabledItems(nav);
-    // 15 workspaces total, minus the eleven now built: overview,
+    // 15 workspaces total, minus the twelve now built: overview,
     // blueprint takeoff, takeoff spreadsheet, documents (intake), notes
     // & assumptions, project plan, labor, material pricing, phases and
-    // schedule, export, and project settings.
-    expect(disabled).toHaveLength(4);
+    // schedule, estimate summary, export, and project settings.
+    expect(disabled).toHaveLength(3);
     const names = disabled.map((el) => el.getAttribute("aria-label"));
     expect(new Set(names).size).toBe(names.length);
   });

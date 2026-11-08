@@ -62,6 +62,11 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "placements": list,
     "ai_confirmed": bool,
     "source_tag": str,
+    # rom-estimate.md. Captured like every other mapped column so a
+    # delete-undo restores the item exactly as it was -- without an
+    # entry here `decode_snapshot` raises, which is the loud failure its
+    # own docstring promises for an untyped snapshot field.
+    "classification_basis": str,
     # The per-item phase override (phases-and-timeline §3.1). Nullable --
     # None when the item inherits its sheet's phase.
     "phase_id": uuid.UUID,

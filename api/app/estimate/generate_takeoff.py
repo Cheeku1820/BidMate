@@ -17,6 +17,9 @@ are not in the file for anyone to read:
   choice that was never made.
 - **A length measured off the drawing at all**, as opposed to read from
   a written dimension.
+- **An item named from context** rather than matched to a legend row
+  that defines its symbol (`Item.classification_basis`). The count is
+  still counted; what the thing is was read rather than looked up.
 
 What is deliberately NOT produced here: a total footage figure. The
 assembly expansion folds wire and conduit into each parent device's
@@ -103,7 +106,22 @@ def takeoff_assumptions(db: DbSession, project: Project, *,
             "source": "engine",
         })
 
-    # 2. A sheet with no single scale, carrying measured items.
+    # 2. Items the classifier named from context rather than matched.
+    inferred = [i for i in items if i.classification_basis == "inferred"]
+    if inferred:
+        rows.append({
+            "section": "takeoff",
+            "subject_kind": "project",
+            "basis": "inferred",
+            "title": copy.INFERRED_NAMES["title"],
+            "found": copy.INFERRED_NAMES["found"].format(
+                items=copy.plural(len(inferred), "counted line")),
+            "why": copy.INFERRED_NAMES["why"],
+            "where": copy.INFERRED_NAMES["where"],
+            "source": "engine",
+        })
+
+    # 3. A sheet with no single scale, carrying measured items.
     measured = [i for i in items if _is_measured(i)]
     if measured:
         by_sheet: dict[uuid.UUID, list[Item]] = {}
@@ -131,7 +149,7 @@ def takeoff_assumptions(db: DbSession, project: Project, *,
                 "source": "engine",
             })
 
-        # 3. Every measured length, scaled rather than dimensioned.
+        # 4. Every measured length, scaled rather than dimensioned.
         rows.append({
             "section": "takeoff",
             "subject_kind": "project",

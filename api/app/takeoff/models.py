@@ -325,6 +325,15 @@ class ScopeStatement(Base):
 
 class Item(Base):
     __tablename__ = "items"
+    __table_args__ = (
+        # Mirrors migration 0031 and `ingest.map_payload`'s own filter:
+        # a closed vocabulary with one member, enforced at the database
+        # too so a row written by a script is refused the same way.
+        CheckConstraint(
+            "classification_basis is null or classification_basis in ('inferred')",
+            name="ck_items_classification_basis",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
@@ -373,6 +382,17 @@ class Item(Base):
     # the same sheet, which is what lets a re-run recognise the item it
     # produced last time instead of replacing it blindly.
     source_tag: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    # How this item got its name, when that was not a match
+    # (rom-estimate.md). "inferred" means the classifier named the
+    # cluster from surrounding context rather than from a legend row
+    # that defines the tag -- a real, checkable distinction, and the ROM
+    # discloses it. NULL means the name came from a legend match or from
+    # the deterministic path, neither of which is an inference.
+    #
+    # Deliberately NOT a confidence (ROADMAP invariant 7): it records
+    # which method named the row, which is the same fact for every
+    # project and is printed in words, never as a number.
+    classification_basis: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Optimistic-concurrency counter for the five single-item mutations
     # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
     # is driven by `onupdate=func.now()` and therefore transaction-

@@ -3,6 +3,7 @@ must arrive at the classifier as different things. A drawing set is
 untrusted input; a note is a person's instruction.
 """
 from app.engine import estimate as estimate_mod
+from app.engine.context import PROMPT_BUDGET
 
 
 def test_estimator_notes_are_labelled_separately_from_document_text():
@@ -98,14 +99,25 @@ def test_oversized_notes_do_not_crowd_out_schedule_text():
     schedule text out of the window the classifier actually reads, AND
     that the notes survive in that same window rather than the reverse
     mistake (a large, ordinary schedule silently pushing the notes out).
-    llm._prompt() truncates the blob this function returns to its own
-    [:6000] before the model ever sees it, so that is the real budget --
-    checked against blob[:6000], not the full string."""
+    `build_classifier_context` is the one place the size is decided, so
+    `PROMPT_BUDGET` is the real window and the reservation is computed
+    against it -- checked against blob[:PROMPT_BUDGET], not the full
+    string.
+
+    Was blob[:6000] until Task 12 of docs/plans/rom-estimate.md:
+    `llm._prompt` used to re-slice this blob to its own 6,000, so that --
+    not PROMPT_BUDGET -- was the real window, and the two caps
+    compounded. The second cap is gone."""
     huge_notes = [{"scope": "project", "title": "t", "body": "b" * 5000, "source_ref": ""} for _ in range(20)]
     schedule = _realistic_luminaire_schedule()
-    assert len(schedule) > 6000, "fixture must exceed the real budget on its own to exercise the bug"
+    # The fixture has to be long enough that a naive implementation
+    # would let it crowd the notes out. It no longer has to exceed
+    # PROMPT_BUDGET itself -- that is now 60,000 and a realistic
+    # luminaire schedule is several KB -- so the bug this test guards is
+    # exercised by the reservation arithmetic, which runs at any size.
+    assert len(schedule) > 6000, "fixture must be a realistic multi-KB schedule to exercise the bug"
     blob = estimate_mod.build_classifier_context(schedule_text=schedule, context="", estimator_notes=huge_notes)
-    window = blob[:6000]
+    window = blob[:PROMPT_BUDGET]
     assert schedule[:200] in window
     assert "=== Estimator notes and assumptions ===" in window
 

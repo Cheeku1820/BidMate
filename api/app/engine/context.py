@@ -11,18 +11,36 @@ from __future__ import annotations
 
 import re
 
-# llm._prompt() truncates whatever blob this function builds to its own
-# [:6000] before it ever reaches the model -- that slice, not any cap
-# defined here, is the real budget, and it is used below to size the
-# schedule/notes split, not just documented. Duplicating the number is an
-# accepted coupling; llm.py is not touched by this module.
-PROMPT_BUDGET = 6000
+# The real budget for the schedule-and-notes blob, and the only cap on
+# it: `llm._prompt()` used to re-slice whatever this function built to
+# its own `[:6000]`, so the two caps compounded and the smaller one won
+# silently. `_prompt` now interpolates the blob as given, and this is the
+# single place the size is decided.
+#
+# Raised from 6,000 to 60,000 characters deliberately. A full luminaire
+# schedule plus a panel schedule plus a legend on a mid-size commercial
+# set runs well past 6,000 on its own, so the old cap meant the
+# classifier was asked to name fixture-type letters while being shown a
+# fraction of the schedule that defines them -- and then its uncertainty
+# surfaced as an unclassified symbol the estimator had to resolve by
+# hand. Most of those were a context problem rather than a capability
+# limit. 60,000 characters is roughly 15,000 tokens, comfortable for the
+# model and still a hard bound, because an unbounded blob is a cost and
+# latency surface on a 400-sheet set.
+#
+# **More untrusted document text reaching the prompt makes
+# `_defang_block_headers` more load-bearing, not less.** Every block
+# added below still passes through it.
+PROMPT_BUDGET = 60000
 # The notes block's cap on its own line content (before the header text
 # that wraps it). Kept well under PROMPT_BUDGET so a maximal payload is
 # still a small, predictable fraction of the real window once reserved --
 # see build_classifier_context, which reserves exactly this block's
 # length out of PROMPT_BUDGET before it caps the schedule text, so the
-# reservation is real rather than incidental.
+# reservation is real rather than incidental. Deliberately NOT raised
+# alongside PROMPT_BUDGET: notes are a person's own sentences about one
+# project, and 1,200 characters is already generous for that. The block
+# that needed room was the schedule.
 NOTES_CAP = 1200
 # Chars of "\n\n".join separators to leave slack for when reserving room
 # for the notes block ahead of the schedule cap -- at most two joins

@@ -78,6 +78,14 @@ SCALED_LENGTHS = {
     "where": "Takeoff spreadsheet, measured lines",
 }
 
+INFERRED_NAMES = {
+    "title": "Item names read from context",
+    "found": "{items} were named from the surrounding schedule text rather than from a legend row that "
+             "defines the symbol.",
+    "why": "The quantity was counted from the drawings either way; what the item is was read rather than matched.",
+    "where": "Takeoff spreadsheet, and the legend sheets in the set",
+}
+
 # --- material ----------------------------------------------------------
 
 FIRM_PRICE = {

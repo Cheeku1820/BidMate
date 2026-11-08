@@ -70,6 +70,23 @@ def phase(db, project, dana):
 
 
 @pytest.fixture
+def assumption(db, project, dana):
+    """One ROM assumption, for the override route keyed by
+    assumption_id rather than project_id."""
+    from app.takeoff.models import Assumption
+
+    row = Assumption(
+        project_id=project.id, section="takeoff", basis="inferred", subject_kind="project",
+        title="Showroom ceiling height", found="No reflected ceiling plan in the set",
+        why="Fixture drop lengths depend on it", where="EL101",
+        value="14", unit="ft", source="engine",
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+@pytest.fixture
 def note(db, project, dana):
     n = Note(
         project_id=project.id, scope="project", title="Existing panel to remain",
@@ -238,6 +255,8 @@ TENANCY_TABLE = [
      lambda p, s, i: {"title": "t", "body": "b", "category": "existing_condition"}, None),
     ("GET", "/api/projects/{project_id}/schedule",
      lambda p, s, i: f"/api/projects/{p.id}/schedule", None, None),
+    ("GET", "/api/projects/{project_id}/estimate",
+     lambda p, s, i: f"/api/projects/{p.id}/estimate", None, None),
     ("POST", "/api/projects/{project_id}/phases",
      lambda p, s, i: f"/api/projects/{p.id}/phases", lambda p, s, i: {"name": "Phase 2"}, None),
     ("PATCH", "/api/projects/{project_id}/schedule-dates",
@@ -355,6 +374,18 @@ PHASE_TENANCY_TABLE = [
 ]
 
 PHASE_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in PHASE_TENANCY_TABLE]
+
+# The one assumption-keyed route, same shape and same reasoning as
+# NOTE_TENANCY_TABLE and PHASE_TENANCY_TABLE above: it needs an
+# `Assumption` row, which the main table's (p, s, i) lambdas were never
+# written to accept. `GET /api/projects/{project_id}/estimate` IS
+# project-keyed and lives in TENANCY_TABLE above instead.
+ASSUMPTION_TENANCY_TABLE = [
+    ("PATCH", "/api/assumptions/{assumption_id}",
+     lambda a: f"/api/assumptions/{a.id}", lambda a: {"value": "16"}, None),
+]
+
+ASSUMPTION_TENANCY_IDS = [f"{method} {template}" for method, template, _, _, _ in ASSUMPTION_TENANCY_TABLE]
 
 SCOPE_TENANCY_TABLE = [
     ("PATCH", "/api/scope/{statement_id}",
@@ -565,6 +596,36 @@ def test_an_unauthenticated_caller_gets_401_on_every_phase_route(
     assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
 
 
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", ASSUMPTION_TENANCY_TABLE, ids=ASSUMPTION_TENANCY_IDS)
+def test_a_rival_org_gets_404_on_every_assumption_route(
+    client, dana, rival, assumption, method, path_template, path_fn, body_fn, headers_fn
+):
+    _sign_in_as(client, "rival@example.com", "hunter2")
+    path = path_fn(assumption)
+    body = body_fn(assumption) if body_fn else None
+    headers = headers_fn(assumption) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 404, (
+        f"{method} {path} leaked status {response.status_code} to a rival org, expected 404"
+    )
+    assert response.json()["detail"]["code"] == "project_not_found"
+
+
+@pytest.mark.parametrize("method, path_template, path_fn, body_fn, headers_fn", ASSUMPTION_TENANCY_TABLE, ids=ASSUMPTION_TENANCY_IDS)
+def test_an_unauthenticated_caller_gets_401_on_every_assumption_route(
+    client, assumption, method, path_template, path_fn, body_fn, headers_fn
+):
+    path = path_fn(assumption)
+    body = body_fn(assumption) if body_fn else None
+    headers = headers_fn(assumption) if headers_fn else None
+
+    response = client.request(method, path, json=body, headers=headers)
+
+    assert response.status_code == 401, f"{method} {path} did not require a session: {response.status_code}"
+
+
 # --- The document routes, keyed by document_id rather than project_id ---
 
 
@@ -720,6 +781,7 @@ def test_every_project_scoped_route_is_covered_by_the_tenancy_table():
         | {(method, template) for method, template, _, _, _ in DOCUMENT_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in SCOPE_TENANCY_TABLE}
         | {(method, template) for method, template, _, _, _ in PHASE_TENANCY_TABLE}
+        | {(method, template) for method, template, _, _, _ in ASSUMPTION_TENANCY_TABLE}
         | {(method, template) for method, template, _, _ in MULTIPART_TENANCY_TABLE}
         | NON_PROJECT_SCOPED_ROUTES
     )

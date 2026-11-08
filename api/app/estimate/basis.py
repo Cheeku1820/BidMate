@@ -2,8 +2,9 @@
 
 docs/specs/rom-estimate.md. A ROM line is either `counted` -- read out
 of the drawings -- or `assumed`, and an assumed line is worthless
-without a basis a reader can check. The eight keys below are the closed
-set of ways this product is willing to produce a number nobody counted.
+without a basis a reader can check. The keys below are the closed set of
+ways this product is willing to produce a number nobody counted, plus
+the two that mean somebody stood behind it.
 
 **`counted`/`assumed` is a different axis from the four review labels.**
 Those describe an item's evidence and govern approval. This describes
@@ -68,6 +69,15 @@ BASIS: dict[str, BasisSpec] = {
     # way. Zero spread: it moves the number by removing scope, and the
     # amount it removed is stated instead.
     "standard_exclusion": BasisSpec("Standard exclusion", Decimal("0")),
+    # A number the estimator typed over an assumption
+    # (`app.estimate.override`). Zero spread, for the same reason
+    # `supplier_quote` has none: somebody stood behind it, so it is not
+    # an estimate. Its own key rather than reusing `supplier_quote`,
+    # because "Supplier quote" is the wrong sentence to print beside a
+    # ceiling height somebody measured -- and a closed vocabulary that
+    # cannot say the one thing an estimator does on this screen is an
+    # incomplete vocabulary, not a vocabulary worth bending.
+    "estimator_entered": BasisSpec("Entered by the estimator", Decimal("0")),
 }
 
 # The four sections of the document, in the order they are rendered --

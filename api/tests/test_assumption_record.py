@@ -15,7 +15,7 @@ from app.estimate.basis import BASIS, SECTIONS, validate_assumption
 def test_basis_set_is_closed_and_carries_spreads():
     assert set(BASIS) == {
         "supplier_quote", "firm_default", "market_estimate", "class_average",
-        "inferred", "rule_of_thumb", "scaled", "standard_exclusion",
+        "inferred", "rule_of_thumb", "scaled", "standard_exclusion", "estimator_entered",
     }
     assert BASIS["supplier_quote"].spread == Decimal("0")
     assert BASIS["standard_exclusion"].spread == Decimal("0")
@@ -25,6 +25,9 @@ def test_basis_set_is_closed_and_carries_spreads():
     assert BASIS["scaled"].spread == Decimal("0.20")
     assert BASIS["inferred"].spread == Decimal("0.25")
     assert BASIS["rule_of_thumb"].spread == Decimal("0.25")
+    # A number a person entered is not an estimate, the same reading a
+    # supplier's quote gets.
+    assert BASIS["estimator_entered"].spread == Decimal("0")
 
 
 def test_every_basis_carries_estimator_facing_label():

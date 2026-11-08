@@ -54,9 +54,11 @@ from sqlalchemy.orm import Session as DbSession
 from app.errors import DomainError
 from app.takeoff.actions import decode_snapshot
 from app.takeoff.models import (
-    Action, Item, ItemLeadTime, ProjectLaborLine, ProjectMaterialPrice, Sheet, SymbolResolution, Warning,
+    Action, Assumption, Item, ItemLeadTime, ProjectLaborLine, ProjectMaterialPrice, Sheet, SymbolResolution,
+    Warning,
 )
 from app.takeoff.snapshots import (
+    ASSUMPTION_SNAPSHOT_TYPES,
     ITEM_SNAPSHOT_TYPES,
     ITEMS_SNAPSHOT_KEY,
     LABOR_LINE_KEY,
@@ -122,6 +124,8 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
                 )
     elif action.kind == "resolve":
         _apply_resolve(db, action, direction)
+    elif action.kind == "assumption_edit":
+        _apply_assumption(db, action, state)
     elif action.kind in SCHEDULE_KINDS:
         # Imported here, not at module load: app.schedule must never
         # import this module while this module is still being built.
@@ -129,6 +133,35 @@ def apply(db: DbSession, action: Action, direction: str) -> None:
         schedule_undo.apply(db, action, direction)
     else:  # approve, reject, unreject, edit
         _apply_item_state(db, action.item_id, state)
+
+
+def _apply_assumption(db: DbSession, action: Action, state: dict) -> None:
+    """Reverses an `assumption_edit` onto one ROM assumption row.
+
+    Merges only the columns the override touched, the way
+    `_apply_item_state()` does: `section`, `title`, and `basis` identify
+    the assumption, and restoring them would let an undo move a
+    disclosure into a different section.
+
+    An assumption the next run deleted is a skip rather than a 409. The
+    row is regenerable -- the next `estimate` job rebuilds it from the
+    drawings -- so there is nothing an estimator can do about the
+    failure and nothing lost by the undo being a no-op. That is the
+    opposite reading from `_apply_sparse_pricing_row`'s, and the reason
+    is the difference between a derived disclosure and a person's
+    pricing entry.
+    """
+    assumption_id = (action.after or {}).get("assumption_id") or (action.before or {}).get("assumption_id")
+    if not assumption_id:
+        return
+    row = db.get(Assumption, uuid.UUID(assumption_id))
+    if row is None:
+        return
+    decoded = decode_snapshot(
+        {k: v for k, v in state.items() if k != "assumption_id"}, ASSUMPTION_SNAPSHOT_TYPES
+    )
+    for key, value in decoded.items():
+        setattr(row, key, value)
 
 
 def _row_exists(db: DbSession, model: type, pk: uuid.UUID) -> bool:

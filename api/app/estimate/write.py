@@ -22,12 +22,19 @@ from __future__ import annotations
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session as DbSession
 
+from app.estimate import generate_cost, generate_scope, generate_takeoff
 from app.estimate.basis import validate_assumption
 from app.estimate.exclusions import excluded_from_rows
-from app.estimate.generate_cost import labor_assumptions, material_assumptions
-from app.estimate.generate_scope import scope_assumptions
-from app.estimate.generate_takeoff import takeoff_assumptions
 from app.takeoff.models import Assumption, Project
+
+# The four generators are reached through their modules rather than
+# imported by name. A by-name import binds the function into this
+# module's namespace, which makes it unreachable from the module a
+# reader would naturally patch -- and a test that cannot stub a
+# generator cannot assert that a malformed one fails the run instead of
+# writing a disclosure nobody can check, which is the whole point of
+# the validation below. The same reason classify_job.py reaches the
+# engine's agents through `from app.engine import ...`.
 
 
 def generate(db: DbSession, project: Project) -> list[dict]:
@@ -40,7 +47,7 @@ def generate(db: DbSession, project: Project) -> list[dict]:
     counts it, labor and material price it -- expressed as an argument
     rather than as a comment.
     """
-    scope = [validate_assumption(row) for row in scope_assumptions(db, project)]
+    scope = [validate_assumption(row) for row in generate_scope.scope_assumptions(db, project)]
 
     # Resolved against what scope just produced rather than against what
     # the last run stored, so a changed scope letter takes effect in the
@@ -50,9 +57,9 @@ def generate(db: DbSession, project: Project) -> list[dict]:
 
     produced = (
         scope
-        + takeoff_assumptions(db, project, exclude=exclude)
-        + labor_assumptions(db, project, exclude=exclude)
-        + material_assumptions(db, project, exclude=exclude)
+        + generate_takeoff.takeoff_assumptions(db, project, exclude=exclude)
+        + generate_cost.labor_assumptions(db, project, exclude=exclude)
+        + generate_cost.material_assumptions(db, project, exclude=exclude)
     )
     return [validate_assumption(row) for row in produced]
 

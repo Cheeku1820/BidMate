@@ -140,6 +140,34 @@ def enqueue_price(db: Session, project: Project, requested_by: uuid.UUID | None,
     return job
 
 
+def enqueue_estimate(db: Session, project: Project, requested_by: uuid.UUID | None,
+                     run_id: uuid.UUID | None = None) -> Job | None:
+    """Regenerate this project's ROM assumptions (rom-estimate.md).
+
+    One per project at a time, like `price` above: the body deletes and
+    rewrites every generated row for the project, so two of them racing
+    would be two writers of one set with no useful outcome, only a
+    chance of a half-written document.
+
+    Queued twice on a normal run, on purpose. Once by the run that just
+    finished, because the spec's premise is that a ROM exists the moment
+    processing does -- an estimator who uploads at 4pm the day before a
+    bid gets a number, not a spinner. Then again by the market-pricing
+    job when it lands, because that run turns class averages into market
+    estimates and the disclosures have to follow. `regenerate` is
+    idempotent, so the second pass is a correction rather than a
+    duplicate.
+    """
+    if db.scalars(select(Job).where(
+            Job.kind == "estimate", Job.project_id == project.id, Job.status.in_(_IN_FLIGHT))).first():
+        return None
+    job = Job(org_id=project.org_id, project_id=project.id, kind="estimate", run_id=run_id,
+              requested_by=requested_by, max_attempts=MAX_ATTEMPTS)
+    db.add(job)
+    db.flush()
+    return job
+
+
 _READY = text(
     "status = 'queued' AND (not_before IS NULL OR not_before <= now()) AND "
     "(kind <> 'sheet' OR run_id IN (SELECT run_id FROM jobs WHERE kind = 'classify' AND status = 'done'))"

@@ -33,7 +33,7 @@ _SUBJECT_KINDS = "'project', 'sheet', 'item', 'system'"
 _SOURCES = "'engine', 'estimator'"
 _BASES = (
     "'supplier_quote', 'firm_default', 'market_estimate', 'class_average', "
-    "'inferred', 'rule_of_thumb', 'scaled', 'standard_exclusion'"
+    "'inferred', 'rule_of_thumb', 'scaled', 'standard_exclusion', 'estimator_entered'"
 )
 
 

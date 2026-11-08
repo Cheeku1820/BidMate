@@ -160,6 +160,12 @@ def _finish_project(db: Session, project: Project, classify_job: Job) -> None:
     # requester since deleted (requested_by SET NULL) still gets the
     # items priced, so this goes before the actor check below.
     queue.enqueue_price(db, project, classify_job.requested_by, run_id=classify_job.run_id)
+    # The ROM exists the moment processing does (rom-estimate.md): an
+    # estimator who uploads at 4pm the day before a bid gets a number
+    # with its assumptions stated, not a spinner. The price job queues
+    # this again when it lands, because market estimates change the
+    # bases the disclosures name.
+    queue.enqueue_estimate(db, project, classify_job.requested_by, run_id=classify_job.run_id)
     actor = db.get(User, classify_job.requested_by) if classify_job.requested_by else None
     if actor is None:
         # The action log needs a person; a run nobody is recorded as

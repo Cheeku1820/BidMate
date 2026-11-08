@@ -772,6 +772,12 @@ class Assumption(Base):
     # `countable_items()` and drops what no longer resolves, which is a
     # visible rule rather than a database side effect.
     subject_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # The subject when it is not a row -- a system name, for
+    # `subject_kind="system"` ("fire alarm by others"). Deliberately not
+    # folded into `value`: that field is the assumed number the document
+    # prints, and a field that sometimes means "the number" and
+    # sometimes means "what this covers" is the one nobody can read.
+    subject_ref: Mapped[str | None] = mapped_column(String(100), nullable=True)
     title: Mapped[str] = mapped_column(Text)
     found: Mapped[str] = mapped_column(Text)
     why: Mapped[str] = mapped_column(Text)

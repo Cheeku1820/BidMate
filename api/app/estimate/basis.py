@@ -75,9 +75,12 @@ BASIS: dict[str, BasisSpec] = {
 # is in, the takeoff counts it, labor and material price it.
 SECTIONS: tuple[str, ...] = ("scope", "takeoff", "labor", "material")
 
-# What an assumption is attached to. `project` is the default: a scope
-# exclusion or a firm labor rate belongs to no single row.
-SUBJECT_KINDS: tuple[str, ...] = ("project", "sheet", "item")
+# What an assumption is attached to. `project` is the default: a firm
+# labor rate, or an exclusion of work nobody counted, belongs to no
+# single row. `system` carries its subject in `subject_ref` rather than
+# `subject_id`, because a system is a name and not a row -- it is what
+# "fire alarm by others" has to be able to point at.
+SUBJECT_KINDS: tuple[str, ...] = ("project", "sheet", "item", "system")
 
 # Who put it there. The engine's own rows are deleted and rewritten on
 # every run; an estimator's are not (CLAUDE.md: "the engine never
@@ -153,10 +156,20 @@ def validate_assumption(raw: dict) -> dict:
         value = str(raw.get(field) or "").strip()
         return value or None
 
+    if subject_kind == "system" and not str(raw.get("subject_ref") or "").strip():
+        raise DomainError(
+            "invalid_assumption",
+            "An assumption scoped to a system must name the system in subject_ref. "
+            "Without it the exclusion covers nothing and silently removes no money, "
+            "which reads as applied and is not.",
+            status=422,
+        )
+
     return {
         "section": section,
         "subject_kind": subject_kind,
         "subject_id": raw.get("subject_id"),
+        "subject_ref": opt("subject_ref"),
         "title": str(raw["title"]).strip(),
         "found": str(raw["found"]).strip(),
         "why": str(raw["why"]).strip(),

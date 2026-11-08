@@ -29,7 +29,7 @@ depends_on: Union[str, Sequence[str], None] = None
 # rule, and a row that reaches the table through a script rather than
 # through `validate_assumption` must still be refused.
 _SECTIONS = "'scope', 'takeoff', 'labor', 'material'"
-_SUBJECT_KINDS = "'project', 'sheet', 'item'"
+_SUBJECT_KINDS = "'project', 'sheet', 'item', 'system'"
 _SOURCES = "'engine', 'estimator'"
 _BASES = (
     "'supplier_quote', 'firm_default', 'market_estimate', 'class_average', "
@@ -48,6 +48,12 @@ def upgrade() -> None:
         # subject_kind, and an orphan is resolved away by
         # app.estimate.exclusions rather than cascade-deleted.
         sa.Column('subject_id', UUID(as_uuid=True), nullable=True),
+        # The subject when it is not a row: a system name, for
+        # "fire alarm by others". Separate from `value` on purpose --
+        # `value` is the assumed number the document prints, and
+        # overloading it to sometimes mean "what this exclusion covers"
+        # is how the one field nobody can read two ways gets created.
+        sa.Column('subject_ref', sa.String(100), nullable=True),
         sa.Column('title', sa.Text(), nullable=False),
         sa.Column('found', sa.Text(), nullable=False),
         sa.Column('why', sa.Text(), nullable=False),

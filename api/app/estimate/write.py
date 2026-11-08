@@ -19,7 +19,7 @@ a partial warning for the same reason.
 """
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session as DbSession
 
 from app.estimate import generate_cost, generate_scope, generate_takeoff
@@ -40,10 +40,22 @@ from app.takeoff.models import Assumption, Project
 def _identity(row) -> tuple:
     """What makes one disclosure the same disclosure across runs.
 
-    Accepts a stored `Assumption` or a validated dict. Deliberately NOT
-    the title: a title is words for a reader, and two real disclosures
-    can share one. The subject plus the basis is what actually
-    identifies the thing being disclosed.
+    Accepts a stored `Assumption` or a validated dict. The section plus
+    the full subject plus the title: the subject alone is too coarse (a
+    labor section carries a hours disclosure and a rate disclosure
+    against the same project, which is why `generate_cost` puts the kind
+    in `subject_ref`), and the title alone is too coarse the other way
+    (two switchboards on one job legitimately share a name).
+
+    **`basis` is deliberately NOT part of it.** It was, and that is a
+    bug with a reproducible symptom: an override rewrites `basis` to
+    `estimator_entered`, so the overridden row no longer matched the
+    engine row it replaced, and the next run wrote the engine's version
+    back beside it -- the document then showed "45 ft per device,
+    Counted" and "30 ft per device, Assumed" as two live disclosures of
+    one fact. The basis is a *property* of a disclosure, and the one
+    property an override exists to change; identity cannot include the
+    thing that changes.
     """
     get = row.get if isinstance(row, dict) else lambda k: getattr(row, k, None)
     return (
@@ -51,7 +63,6 @@ def _identity(row) -> tuple:
         get("subject_kind") or "project",
         str(get("subject_id")) if get("subject_id") else None,
         get("subject_ref"),
-        get("basis"),
         get("title"),
     )
 
@@ -90,7 +101,24 @@ def regenerate(db: DbSession, project: Project) -> int:
     generator bug leaves the previous run's disclosures in place rather
     than leaving the document with none. A ROM with stale assumptions is
     wrong; a ROM with no assumptions looks fully counted, which is worse.
+
+    Serialized per project by a transaction-scoped advisory lock. Two
+    estimate jobs for one project can now be in flight at once -- that
+    is deliberate, see `queue.enqueue_estimate` for why collapsing them
+    lost an estimator's scope decision -- and this is what keeps the two
+    from being two writers of one set. The lock is held to the end of
+    the transaction and released by the commit or rollback, so a worker
+    that dies mid-body does not leave it stuck.
     """
+    # hashtextextended over the project uuid: pg_advisory_xact_lock wants
+    # a bigint, and the uuid is the natural key. A collision between two
+    # different projects would only make them take turns, never produce
+    # a wrong number.
+    db.execute(
+        text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": str(project.id)},
+    )
+
     rows = generate(db, project)
 
     db.execute(
@@ -101,14 +129,9 @@ def regenerate(db: DbSession, project: Project) -> int:
     )
     # An estimator's override of a generated assumption keeps that
     # assumption's identity, so a regenerated row that duplicates one
-    # the estimator already settled must not reappear beside it.
-    #
-    # Keyed off the FULL subject, not the title. Two switchboards on one
-    # job legitimately share the name "Switchboard SB-1" and are
-    # different disclosures; keying on title alone meant overriding one
-    # suppressed both, and a labor section carries two distinct "
-    # Installation hours" disclosures (the firm's table and a derived
-    # basis) that would suppress each other.
+    # the estimator already settled must not reappear beside it. See
+    # `_identity` for what that identity is and, in particular, for why
+    # the basis is not part of it.
     overridden = {
         _identity(row)
         for row in db.scalars(
@@ -137,6 +160,7 @@ def regenerate(db: DbSession, project: Project) -> int:
             value=row.get("value"),
             unit=row.get("unit"),
             source="engine",
+            origin=row.get("origin") or "assumed",
         ))
         written += 1
     db.flush()

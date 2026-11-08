@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from app.market.price_sheet import HEADER
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.exc import InternalError, ProgrammingError
 
 from app.takeoff.models import Action, ProjectLaborLine, ProjectMaterialPrice
@@ -949,3 +949,51 @@ def test_a_sheet_without_a_lead_time_applies_exactly_as_before(client, db, signe
     assert applied.status_code == 200, applied.text
     db.expire_all()
     assert db.get(ItemLeadTime, item.id) is None
+
+
+# --- the ROM follows a price (second Codex review, finding 11) ---------
+
+
+def test_a_material_price_entry_requeues_the_rom_estimate(client, db, project, item, signed_in_user):
+    """The ROM's totals resolve live, but the sentences explaining them
+    are stored rows, and the two parted company on every pricing edit: a
+    switchboard generated at a $1,000 class average and then quoted at
+    $5,000 printed a $5,000 total beside "$1,000 -- no quote and no
+    price on file". A disclosure that contradicts the number beside it
+    is worse than no disclosure, because the reader cannot tell which
+    half to believe.
+    """
+    from app.takeoff.models import Job
+
+    response = client.patch(f"/api/items/{item.id}/material-price",
+                            json={"price_override": "5000", "source": "project_price"})
+    assert response.status_code == 200
+    queued = db.scalars(select(Job).where(
+        Job.project_id == project.id, Job.kind == "estimate")).all()
+    assert len(queued) == 1
+    assert queued[0].status == "queued"
+
+
+def test_a_labor_entry_requeues_the_rom_estimate(client, db, project, item, signed_in_user):
+    from app.takeoff.models import Job
+
+    assert client.patch(f"/api/items/{item.id}/labor",
+                        json={"hours_override": "3"}).status_code == 200
+    assert db.scalars(select(Job).where(
+        Job.project_id == project.id, Job.kind == "estimate")).all()
+
+
+def test_clearing_a_material_price_requeues_the_rom_estimate(client, db, project, item, signed_in_user):
+    """Clearing falls the row back to a company price, a regional
+    baseline, or nothing -- a different number, so a different
+    disclosure."""
+    from app.takeoff.models import Job
+
+    client.patch(f"/api/items/{item.id}/material-price",
+                 json={"price_override": "5000", "source": "project_price"})
+    db.execute(delete(Job).where(Job.project_id == project.id, Job.kind == "estimate"))
+    db.flush()
+
+    assert client.delete(f"/api/items/{item.id}/material-price").status_code == 200
+    assert db.scalars(select(Job).where(
+        Job.project_id == project.id, Job.kind == "estimate")).all()

@@ -31,13 +31,24 @@ class ScopeStatementOut(BaseModel):
 
 
 class ScopeDecisionIn(BaseModel):
-    """Exactly one of the two is expected -- `service.decide()` is the
+    """Exactly one of the three is expected -- `service.decide()` is the
     single place that enforces that, with the estimator-facing rejection,
     the same split `documents.schemas.DocumentTypeIn`'s docstring
     explains for `doc_type`: a field validator's message here would be
     field-name-first pydantic phrasing rather than the sentence-case copy
-    the product speaks, and leaving both fields unvalidated at the wire
-    keeps that one rejection message in one place."""
+    the product speaks, and leaving the fields unvalidated at the wire
+    keeps that one rejection message in one place.
+
+    `kind` is the direction -- whether the statement puts the work in
+    the price or out of it. It is settable because the ROM reads it to
+    decide what scope removes from the number
+    (`app.estimate.generate_scope`), and correcting the sentence was not
+    enough: an estimator who edited "Fire alarm by others" to "Fire
+    alarm is included" changed only the text, so the estimate went on
+    removing the fire alarm and quoted the inclusion as its reason.
+    Direction is a fact to set, not a sentence to be parsed -- parsing
+    it would be a second classifier beside `app.engine.scope`."""
 
     status: str | None = None
     edited_text: str | None = None
+    kind: str | None = None

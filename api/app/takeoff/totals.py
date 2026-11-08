@@ -115,18 +115,52 @@ class ResolvedLine:
     material_basis: str | None      # pricing.MaterialResolution.source_label
     labor_hours_basis: str | None
     labor_rate_basis: str | None
+    # Whether `resolve_labor` produced a cost -- hours AND a rate. Kept
+    # as its own flag rather than inferred from the two labels, because
+    # a label can be present on a half-resolved row (the tier tags still
+    # show what was entered) and only the cost says the arithmetic ran.
+    labor_resolved: bool = False
 
     @property
     def total_cost(self) -> Decimal:
         return self.material_cost + self.labor_cost
 
     @property
-    def priced(self) -> bool:
-        """Whether anything priced this line, at any amount including
+    def material_priced(self) -> bool:
+        """Whether anything priced the material, at any amount including
         zero. An estimator's allowance of nothing is a price somebody
         chose; printing "not priced" over it would be the opposite of
         the truth, and the ROM renders those two states differently."""
         return self.material_basis is not None
+
+    @property
+    def labor_priced(self) -> bool:
+        """Whether this line's labor is accounted for.
+
+        True when hours and a rate both resolved. Also true when the
+        item carries no hours at all -- there is no labor to price, so
+        nothing is missing, and `pricing._resolve_hours` cannot tell
+        that case from an unresolvable one (it reads a stored zero as
+        falsy and returns None for both). Checking the item's own hours
+        is what separates them, and it has to be checked, or every line
+        the engine priced with zero labor would report missing cost it
+        never had.
+        """
+        return self.labor_resolved or not self.item.labor_hours
+
+    @property
+    def priced(self) -> bool:
+        """Whether this line's whole cost resolved.
+
+        Both halves, not just material. It used to be material alone,
+        and the failure was quiet in the direction that matters: a $500
+        switchboard with two installation hours and no resolvable labor
+        rate contributed $500 and counted as fully priced, so the
+        document showed a complete-looking figure that was missing its
+        labor and said nothing about it. Missing cost has to be either
+        in the number or named; it cannot be neither.
+        """
+        return self.material_priced and self.labor_priced
 
 
 def resolved_lines(
@@ -208,6 +242,7 @@ def resolved_lines(
             material_basis=material.source_label,
             labor_hours_basis=labor.hours_source_label,
             labor_rate_basis=labor.rate_source_label,
+            labor_resolved=labor.labor_cost is not None,
         ))
     return lines
 
@@ -234,10 +269,12 @@ class RomTotals:
     direct_cost: Decimal = Decimal("0")
     item_count: int = 0
     unpriced_count: int = 0
-    # Systems carrying at least one line nothing priced, and how many.
-    # A rolled-up system total that silently omits a line is a number
-    # that looks complete and is not -- the ROM renders this beside the
-    # system it belongs to.
+    # Systems carrying at least one line whose cost did not fully
+    # resolve, and how many. "Fully" is the operative word: a line with
+    # a material price and no resolvable labor rate counts here, because
+    # the figure beside it is real and short. A rolled-up system total
+    # that silently omits part of a line is a number that looks complete
+    # and is not -- the ROM renders this beside the system it belongs to.
     unpriced_by_system: dict[str, int] = field(default_factory=dict)
 
 

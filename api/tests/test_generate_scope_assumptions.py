@@ -243,3 +243,66 @@ def test_scope_assumptions_are_project_scoped(db, project, org, document):
     db.add(_statement(project, document, text="Temporary power is included."))
     db.flush()
     assert any("Temporary power" in a["title"] for a in scope_assumptions(db, other))
+
+
+# --- the vocabulary gap (second Codex review, finding 2) ---------------
+
+
+def test_an_equipment_name_the_documents_include_is_not_excluded(db, project, document):
+    """The over-removal half. "Smoke detectors are included" matched none
+    of the fire alarm KEYWORDS, so the boundary read as unaddressed, the
+    default exclusion was assumed, and the smoke detector the documents
+    had just put IN the price was removed from it.
+
+    `StandardExclusion.vocabulary` now makes this structural rather than
+    remembered: anything the exclusion can delete is also something a
+    document can mention to take the decision away from it.
+    """
+    db.add(_statement(project, document, text="Smoke detectors are included.", kind="included"))
+    db.flush()
+    assert not any("Fire alarm" in a["title"] for a in scope_assumptions(db, project))
+
+
+def test_every_removable_name_can_also_address_its_boundary(db, project):
+    """The rule itself, over every exclusion rather than one example. A
+    keyword list narrower than the delete list is a silent gap in
+    whichever direction the document happens to word it."""
+    for exclusion in STANDARD_EXCLUSIONS:
+        for name in exclusion.item_names + exclusion.systems:
+            assert name.lower() in exclusion.vocabulary, (exclusion.title, name)
+
+
+def test_the_fire_alarm_exclusion_covers_the_equipment_a_real_set_carries(db, project):
+    """The under-removal half. "Fire alarm by others" left `Heat
+    detector` and `Horn strobe` in the price, because neither was on the
+    name list -- an exclusion the document states and the number does
+    not honour. Both punctuations of horn/strobe are covered, because a
+    classifier writes whichever the legend used."""
+    names = {a["subject_ref"] for a in scope_assumptions(db, project)
+             if a["subject_kind"] == "name_like"}
+    for equipment in ("heat detector", "horn/strobe", "horn strobe", "annunciator"):
+        assert equipment in names, equipment
+
+
+# --- origin (second Codex review, finding 13) --------------------------
+
+
+def test_an_assumed_exclusion_is_assumed(db, project):
+    rows = scope_assumptions(db, project)
+    assert rows
+    assert {a["origin"] for a in rows} == {"assumed"}
+
+
+def test_a_stated_exclusion_is_counted_not_assumed(db, project, document):
+    """The spec's own definition of counted includes "a scope statement
+    extracted with a verbatim quote", and this row is one. Tagging it
+    assumed told the reader the estimate had guessed at a boundary the
+    scope letter spelled out, and it inflated the assumed tally by one
+    row per subject the exclusion covers -- seven, for fire alarm."""
+    db.add(_statement(project, document, text="Fire alarm by others.", kind="by_others"))
+    db.flush()
+    stated = [a for a in scope_assumptions(db, project) if "Fire alarm" in a["title"]]
+    assert stated
+    assert {a["origin"] for a in stated} == {"counted"}
+    # Still an exclusion: it moved money, whatever it is tagged.
+    assert {a["basis"] for a in stated} == {"standard_exclusion"}

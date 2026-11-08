@@ -43,7 +43,8 @@ def get_scope(project_id: uuid.UUID, user: User = Depends(current_user), db: DbS
 @router.patch("/scope/{statement_id}", response_model=ScopeStatementOut)
 def patch_scope(statement_id: uuid.UUID, payload: ScopeDecisionIn, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> ScopeStatementOut:
     statement = service.load_statement(statement_id, db, user)
-    service.decide(db, actor=user, statement=statement, status=payload.status, edited_text=payload.edited_text)
+    service.decide(db, actor=user, statement=statement, status=payload.status,
+                   edited_text=payload.edited_text, kind=payload.kind)
     db.commit()
     document = db.get(Document, statement.document_id)
     return _out(statement, document.filename if document else "")

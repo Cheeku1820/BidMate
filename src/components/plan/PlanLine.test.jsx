@@ -6,7 +6,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import PlanLine from "./PlanLine.jsx";
+import PlanLine, { DECIDE_FAILED } from "./PlanLine.jsx";
 import { documentPageHref } from "./pageLink.js";
 
 const line = (o) => ({
@@ -116,5 +116,56 @@ describe("PlanLine", () => {
     const pill = container.querySelector(".note-status.note-status--confirmed");
     expect(pill).not.toBeNull();
     expect(pill.querySelector("svg")).not.toBeNull();
+  });
+});
+
+describe("the direction control", () => {
+  /* Second Codex review, finding 1. The direction moves money: the ROM
+     estimate reads it to decide what scope removes from the number.
+     Correcting the sentence was not enough, and that gap was silent in
+     the worst direction — an estimator who changed "Fire alarm by
+     others" to "Fire alarm is included" saw their own words on the page
+     while the estimate kept subtracting the fire alarm work. */
+
+  const scope = (o) => line({ kind: "by_others", text: "Fire alarm by others.", ...o });
+
+  it("appears on a scope statement and reflects its current direction", () => {
+    render(<PlanLine line={scope()} onDecide={vi.fn()} />);
+    const select = screen.getByLabelText("This work is");
+    expect(select).toHaveValue("by_others");
+  });
+
+  it("offers all four directions in the documents' own words", () => {
+    render(<PlanLine line={scope()} onDecide={vi.fn()} />);
+    const labels = [...screen.getByLabelText("This work is").options].map((o) => o.textContent);
+    expect(labels).toEqual(["Included in this price", "Excluded", "By others", "An alternate"]);
+  });
+
+  it("writes the new direction through onDecide", async () => {
+    const onDecide = vi.fn().mockResolvedValue({});
+    render(<PlanLine line={scope()} onDecide={onDecide} />);
+    await userEvent.selectOptions(screen.getByLabelText("This work is"), "included");
+    expect(onDecide).toHaveBeenCalledWith({ kind: "included" });
+  });
+
+  it("says what the choice does to the number", () => {
+    render(<PlanLine line={scope()} onDecide={vi.fn()} />);
+    expect(screen.getByText(/left out of the number/i)).toBeInTheDocument();
+  });
+
+  it("does not appear on a derived line, which has no direction", () => {
+    /* A spec section or a schedule is not in or out of a price. */
+    render(<PlanLine line={line()} onDecide={vi.fn()} />);
+    expect(screen.queryByLabelText("This work is")).toBeNull();
+  });
+
+  it("states the failure and leaves the direction alone when the save is refused", async () => {
+    const onDecide = vi.fn().mockRejectedValue(new Error("nope"));
+    render(<PlanLine line={scope()} onDecide={onDecide} />);
+    await userEvent.selectOptions(screen.getByLabelText("This work is"), "included");
+    expect(await screen.findByText(DECIDE_FAILED)).toBeInTheDocument();
+    // The row follows its caller's answer, so a refused change is not
+    // shown as taken — same contract every other control here has.
+    expect(screen.getByLabelText("This work is")).toHaveValue("by_others");
   });
 });

@@ -50,6 +50,16 @@ export function romFileName(estimate) {
 }
 
 export function toRomCsv(estimate) {
+  // Above the column header, when the document is not finished. The
+  // screen shows this warning and the download used to drop it, so the
+  // one artifact that actually leaves the building — the file emailed
+  // to a GC — was the only place it did not appear. A total with an
+  // empty qualifications block and no explanation reads as a complete
+  // estimate, which is the precise failure this feature exists to
+  // prevent.
+  const prefix = estimate.pendingReason
+    ? [[`Not ready to hand over: ${estimate.pendingReason}`], []]
+    : [];
   const rows = [];
 
   for (const section of estimate.sections) {
@@ -123,7 +133,9 @@ export function toRomCsv(estimate) {
     "Rough order of magnitude for budgeting. Lines marked Assumed were not read from the drawings. Not a bid.",
   ]);
 
-  return [ROM_COLUMNS, ...rows].map((row) => row.map(escape).join(",")).join("\r\n");
+  return [...prefix, ROM_COLUMNS, ...rows]
+    .map((row) => row.map(escape).join(","))
+    .join("\r\n");
 }
 
 export function downloadRom(estimate) {

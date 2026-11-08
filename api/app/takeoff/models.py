@@ -817,6 +817,16 @@ class Assumption(Base):
     excluded_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     # app.estimate.basis.SOURCES -- "engine" | "estimator"
     source: Mapped[str] = mapped_column(String(20), default="engine", server_default="engine")
+    # app.estimate.basis.ORIGINS -- "assumed" | "counted". Stored rather
+    # than derived from `source`, because the two answer different
+    # questions and disagree in a case that matters: an exclusion the
+    # documents themselves stated is written by the engine
+    # (`source="engine"`) and yet its number came from the documents, so
+    # the spec's own definition makes it `counted` ("a scope statement
+    # extracted with a verbatim quote"). Deriving origin from `source`
+    # tagged seven quoted fire-alarm rows "Assumed" and inflated the
+    # assumed tally with work the scope letter spelled out.
+    origin: Mapped[str] = mapped_column(String(20), default="assumed", server_default="assumed")
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

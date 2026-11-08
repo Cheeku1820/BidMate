@@ -200,3 +200,69 @@ def test_rom_totals_honours_an_exclusion_set(db, mixed_statuses, sheet):
 
 def test_an_empty_exclusion_set_excludes_nothing(db, mixed_statuses):
     assert rom_totals(db, mixed_statuses, exclude=set()).direct_cost == Decimal("400")
+
+
+# --- labor that did not resolve (second Codex review, finding 6) --------
+
+
+def _labored(project, sheet, *, name="Switchboard SB-1", material="500", hours="2"):
+    """An item carrying REAL installation hours. The helper above sets
+    zero, which is the case where there is no labor to price at all."""
+    return Item(
+        project_id=project.id, sheet_id=sheet.id, symbol="panel", name=name,
+        system="Service and distribution", category="Equipment", quantity=1, unit="EA",
+        status=ReviewStatus.READY, x=100, y=100,
+        material_cost=Decimal(material), labor_cost=Decimal("0"),
+        labor_hours=Decimal(hours), total_cost=Decimal(material),
+    )
+
+
+def test_a_line_with_real_hours_and_no_resolvable_rate_is_unpriced(db, project, sheet):
+    """`priced` used to read material alone, so a $500 switchboard with
+    two installation hours and no resolvable rate contributed $500 and
+    counted as fully priced -- a complete-looking figure missing its
+    labor, with nothing on the document saying so.
+
+    `labor_cost` of 0 here is what makes the rate unresolvable:
+    `pricing._resolve_rate`'s estimated-basis path divides cost by
+    hours and guards against exactly this.
+    """
+    row = _labored(project, sheet)
+    db.add(row)
+    db.flush()
+    db.add(ProjectMaterialPrice(item_id=row.id, price_override=Decimal("500"),
+                                source="supplier_quote"))
+    db.flush()
+    t = rom_totals(db, project)
+    assert t.direct_cost == Decimal("500.00")
+    assert t.labor_cost == Decimal("0.00")
+    # The money is short and the document is told so, rather than the
+    # figure reading as whole.
+    assert t.unpriced_count == 1
+    assert t.unpriced_by_system == {"Service and distribution": 1}
+
+
+def test_a_line_with_no_hours_at_all_is_not_reported_as_missing_labor(db, project, sheet):
+    """The other half of the same predicate, and the reason it cannot
+    just be "labor resolved". An item the engine priced with zero hours
+    has no labor to price, and `_resolve_hours` reads a stored zero as
+    falsy and returns None for it -- indistinguishable from an
+    unresolvable one unless the item's own hours are checked. Without
+    that check every zero-labor line would report cost it never had."""
+    db.add(_item(project, sheet, cost="100"))
+    db.flush()
+    t = rom_totals(db, project)
+    assert t.unpriced_count == 0
+
+
+def test_a_fully_resolved_line_is_priced_on_both_halves(db, project, sheet):
+    """The engine's own figures resolve both: `pricing_source="llm"`
+    plus stored hours and cost give an estimated basis for each."""
+    row = _labored(project, sheet, material="500", hours="2")
+    row.labor_cost = Decimal("130")
+    row.total_cost = Decimal("630")
+    db.add(row)
+    db.flush()
+    t = rom_totals(db, project)
+    assert t.unpriced_count == 0
+    assert t.labor_cost == Decimal("130.00")

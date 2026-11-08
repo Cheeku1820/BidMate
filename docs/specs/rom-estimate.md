@@ -381,3 +381,51 @@ the review workspace. The action log and `commit()`. Layer toggles
 never touching totals. The engine's five-agent split and the
 Counting/Classification boundary. The rule that agents stop at direct
 cost. Phases and schedule.
+
+## Not built in this slice
+
+Everything above is built except the following, each of which was found
+by review and is recorded here rather than left to be rediscovered.
+
+- **An override does not feed back into the priced quantities.** An
+  estimator who enters 45 ft per device over the branch-footage rule
+  changes the disclosure and stands behind the figure; the assemblies
+  the run already priced stay built on the firm's 30. No part of the
+  engine reads assumption rows. The copy used to promise that the next
+  run would price against the entered value, which was not true, and a
+  false promise is a worse version of the gap than a silence — it now
+  says who stands behind the figure and nothing more. Closing this
+  properly means `app.engine.assemblies` consuming a per-project rule,
+  which is the same shape as the firm-default question above and should
+  be settled with it.
+- **Only the canned boundaries filter the number.** A stated exclusion
+  removes work when it matches one of `STANDARD_EXCLUSIONS` — fire
+  alarm, temporary power, trenching, pads, patching, utility work. A
+  scope letter saying "all lighting fixtures by others" is read,
+  rendered as a counted scope statement, and removes nothing, because
+  resolving an arbitrary sentence to a set of counted items is a
+  classification and this product has exactly one path to a
+  classification (`CLAUDE.md`: "Conversation routes; it does not
+  answer"). The honest interim is that the document shows the statement
+  and the number does not reflect it. Routing it through
+  `engine.conversation.route()` as a proposal the estimator applies is
+  the shape that fits; a second keyword matcher is not.
+- **The branch-footage rule contributes no width to the budget range.**
+  Every other basis puts its spread on the dollars that depend on it.
+  The feet-per-device rule's dollars are not separable: `engine/rows.py`
+  folds the assembly's material and labour into the item's own single
+  cost column, and a resolved supplier price replaces that figure
+  outright. Attributing a dollar exposure would mean inventing one, and
+  a fabricated number inside the mechanism that exists to disclose
+  fabricated numbers is the wrong trade. The assumption is still listed
+  in the qualifications block, so the reader is told; the range just
+  does not widen for it.
+- **A company-level rate or price change does not regenerate the
+  disclosures.** A project-level pricing edit does
+  (`pricing_router._requeue_rom`). A company labor rate reaches every
+  project in the org at once, and fanning a job out per project from one
+  PUT is a decision about queue load rather than about correctness —
+  `ROADMAP.md` 2.5 lists per-tenant concurrency limits as unbuilt, and
+  this wants them first. Until then a firm that changes a rate sees
+  correct totals immediately and stale cost sentences until the next
+  run.

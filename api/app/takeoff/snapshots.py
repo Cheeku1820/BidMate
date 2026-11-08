@@ -161,6 +161,7 @@ ASSUMPTION_SNAPSHOT_TYPES: dict[str, type] = {
     "where": str,
     "basis": str,
     "source": str,
+    "origin": str,
     "created_by_user_id": uuid.UUID,
 }
 

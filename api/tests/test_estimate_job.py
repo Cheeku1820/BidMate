@@ -232,8 +232,68 @@ def test_a_completed_run_enqueues_an_estimate(db, processed_project, dana):
     assert job.kind == "estimate"
 
 
-def test_only_one_estimate_job_per_project_is_in_flight(db, processed_project, dana):
+def test_only_one_estimate_job_per_project_is_queued(db, processed_project, dana):
     from app.jobs import queue
 
     assert queue.enqueue_estimate(db, processed_project, dana.id) is not None
     assert queue.enqueue_estimate(db, processed_project, dana.id) is None
+
+
+def test_a_running_estimate_job_does_not_swallow_a_later_request(db, processed_project, dana):
+    """Second Codex review, finding 4. Deduping against a RUNNING job
+    lost decisions outright: a worker reads the scope, the estimator
+    confirms that work the documents excluded is actually included,
+    enqueue returns None because that worker is still going, and the
+    worker then writes the exclusion it had already computed. The
+    project is left excluding $500 with no pending job and nothing on
+    the document saying so -- an estimator's decision silently
+    discarded, which is the one thing CLAUDE.md says the engine never
+    does.
+
+    A QUEUED job has read nothing yet, so folding a second request into
+    it loses nothing, and that dedup stays (the test above).
+    """
+    from app.jobs import queue
+
+    first = queue.enqueue_estimate(db, processed_project, dana.id)
+    first.status = "running"
+    db.flush()
+
+    second = queue.enqueue_estimate(db, processed_project, dana.id)
+    assert second is not None
+    assert second.status == "queued"
+
+
+def test_two_estimate_jobs_for_one_project_do_not_both_rewrite_the_set(db, processed_project):
+    """What makes the overlap above safe. `regenerate` takes a
+    transaction-scoped advisory lock on the project, so two bodies
+    serialize rather than both deleting and rewriting one set. Asserted
+    by taking the lock in a second connection and watching this one
+    wait -- a plain call proves nothing about contention.
+    """
+    from sqlalchemy import text
+
+    from app.estimate.write import regenerate
+    from tests.conftest import TestSession
+
+    # The test session's own sessionmaker, so both connections are on
+    # the test database. An advisory lock is per-database: taking it
+    # through `app.db.SessionLocal` would lock the dev database and
+    # conflict with nothing here.
+    other = TestSession()
+    try:
+        other.execute(
+            text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": str(processed_project.id)},
+        )
+        # Held by `other` until its rollback below, so this one cannot
+        # take it. `lock_timeout` turns the wait into a visible error
+        # rather than a hung test.
+        db.execute(text("set local lock_timeout = '750ms'"))
+        with pytest.raises(Exception) as caught:
+            regenerate(db, processed_project)
+        assert "lock" in str(caught.value).lower() or "timeout" in str(caught.value).lower()
+    finally:
+        other.rollback()
+        other.close()
+        db.rollback()

@@ -98,6 +98,11 @@ def _snapshot(row: Assumption) -> dict:
         "where": row.where,
         "basis": row.basis,
         "source": row.source,
+        # The tag on the line. An undo that restored the value and left
+        # the row Counted would put the engine's number back under the
+        # estimator's label -- a derived figure presented as one
+        # somebody stood behind.
+        "origin": row.origin,
         "created_by_user_id": str(row.created_by_user_id) if row.created_by_user_id else None,
     }
 
@@ -167,11 +172,21 @@ def override(db: DbSession, *, row: Assumption, actor: User,
     row.unit = cleaned_unit
     row.source = "estimator"
     row.created_by_user_id = actor.id
+    row.origin = "counted"
     # The line is no longer derived, and the document has to say who to
     # ask about it instead of which table it came from.
-    row.found = (
-        f"Entered by {actor.name}. The next takeoff run prices the estimate against this value."
-    )
+    #
+    # Deliberately does NOT promise the next run prices against this
+    # value, which is what it used to say and was not true: no part of
+    # the engine reads these rows, so entering 45 ft per device changed
+    # the disclosure and left the assemblies built on 30. A document
+    # that states a figure the number was not computed from is the
+    # confidently-wrong shape this whole feature exists to prevent, and
+    # a promise is a worse version of it than a silence. What the
+    # override does today is stand behind the figure and say who to ask;
+    # feeding it back into the priced quantities is listed as not built
+    # in docs/specs/rom-estimate.md.
+    row.found = f"Entered by {actor.name}, who stands behind this figure."
     row.where = f"Entered by {actor.name}, {stamped:%b %-d, %Y}"
     row.basis = OVERRIDE_BASIS
     db.flush()

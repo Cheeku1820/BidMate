@@ -3391,6 +3391,13 @@ button {
 .plan-section { margin-top: 16px; }
 .plan-line .scope-row__head { flex-wrap: wrap; }
 .plan-line__stated { font-size: 12px; color: var(--plum); }
+
+/* The direction control. A persistent visible label, like every other
+   field in the product -- this one changes what the estimate prices,
+   so it is the last place for a placeholder standing in for a label. */
+.plan-line__direction { margin: 8px 0 10px; }
+.plan-line__select { width: auto; min-width: 200px; }
+.plan-line__directionhint { font-size: 12px; margin: 4px 0 0; }
 .plan-cite { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); margin-left: auto; }
 .plan-cite__link { display: inline-flex; align-items: center; gap: 3px; color: var(--blue); text-decoration: none; }
 .plan-cite__link:hover, .plan-cite__link:focus-visible { text-decoration: underline; }
@@ -3533,7 +3540,16 @@ button {
 .est-origin { width: 14%; }
 
 /* The two origin tags. The word is the primary channel; hue is the
-   second, and the dashed edge below is the third. */
+   second, and the dashed edge below is the third.
+
+   Assumed is PLUM, not amber, and that is not a taste call. Amber is
+   the four review labels' "Needs attention" hue (`.pill--attention`
+   uses these exact three tokens), and counted/assumed is a different
+   axis on a document that has no approval step -- an amber tag reading
+   ASSUMED beside an amber pill reading Needs attention is how the four
+   labels quietly become five. Plum is the token pair the product
+   already reserves for a second vocabulary, for the same reason, on
+   note status (`.note-status--open`). */
 .est-tag {
   display: inline-block;
   font-size: 10.5px;
@@ -3545,24 +3561,24 @@ button {
   white-space: nowrap;
 }
 .est-tag-counted { background: var(--slate-tint); color: var(--slate); border: 1px solid var(--slate-line); }
-.est-tag-assumed { background: var(--amber-tint); color: var(--amber); border: 1px solid var(--amber-line); }
+.est-tag-assumed { background: var(--plum-tint); color: var(--plum); border: 1px solid var(--plum-line); }
 
-.est-row.est-assumed .est-first { border-left: 3px dashed var(--amber); padding-left: 19px; }
+.est-row.est-assumed .est-first { border-left: 3px dashed var(--plum); padding-left: 19px; }
 .est-row.est-counted .est-first { border-left: 3px solid var(--slate-line); padding-left: 19px; }
 
 .est-unpriced { color: var(--ink-3); font-style: italic; font-size: 12.5px; }
-.est-removed { color: var(--amber); }
+.est-removed { color: var(--plum); }
 
 .est-subtot { background: var(--paper-1); }
 .est-subtot td { font-weight: 650; font-size: 13.5px; border-bottom: none; }
 
-.est-qual { padding: 18px 22px; background: var(--amber-tint); }
+.est-qual { padding: 18px 22px; background: var(--plum-tint); }
 .est-qual-title { font-size: 13px; font-weight: 650; margin: 0 0 4px; }
 .est-qual-lead { font-size: 12.5px; color: var(--ink-2); margin: 0 0 10px; }
 .est-qual-list { margin: 0; padding-left: 19px; }
 .est-qual-list li { font-size: 12.5px; margin-bottom: 8px; line-height: 1.45; }
 .est-qual-found { display: block; }
-.est-qual-removed { display: block; color: var(--amber); font-weight: 600; margin-top: 2px; }
+.est-qual-removed { display: block; color: var(--plum); font-weight: 600; margin-top: 2px; }
 .est-qual-where { display: block; color: var(--ink-3); margin-top: 2px; }
 
 .est-foot {
@@ -3606,6 +3622,11 @@ button {
    reads as fully counted, which is the one way this document can
    overstate what it knows -- so it says so before the number. Amber,
    not red: nothing is broken, the document is simply unfinished. */
+/* Amber here and nowhere else on this screen. This is a warning about
+   the DOCUMENT -- its disclosures have not been generated yet, so do
+   not hand it over -- not a tag on a line, so it is not the
+   counted/assumed axis borrowing a review hue. The origin tags above
+   are plum for exactly that reason. */
 .est-pending {
   margin: 14px 0 0;
   padding: 10px 12px;

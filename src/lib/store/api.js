@@ -441,6 +441,11 @@ export function createApiStore() {
     const body = {};
     if (Object.prototype.hasOwnProperty.call(changes, "status")) body.status = changes.status;
     if (Object.prototype.hasOwnProperty.call(changes, "editedText")) body.edited_text = changes.editedText;
+    // The direction — whether this statement puts the work in the price
+    // or out of it. Separate from the text on purpose: the ROM reads
+    // this field to decide what scope removes from the number, and
+    // rewording the sentence never changed it.
+    if (Object.prototype.hasOwnProperty.call(changes, "kind")) body.kind = changes.kind;
     return mapScopeStatement(await request(`/api/scope/${id}`, { method: "PATCH", body }));
   }
 

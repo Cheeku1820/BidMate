@@ -103,6 +103,15 @@ SUBJECT_KINDS: tuple[str, ...] = ("project", "sheet", "item", "system", "name_li
 # discards a person's judgment").
 SOURCES: tuple[str, ...] = ("engine", "estimator")
 
+# Where the number came from -- the ROM's one axis, and the whole of it.
+# Deliberately separate from SOURCES, which says who wrote the row: the
+# two disagree for an exclusion the documents stated, which the engine
+# writes and which is nonetheless `counted`, because the spec defines
+# counted as including "a scope statement extracted with a verbatim
+# quote". Defaulting to `assumed` is the safe direction: a row that
+# forgot to say reads as less certain than it is, never as more.
+ORIGINS: tuple[str, ...] = ("assumed", "counted")
+
 # The four questions an assumption answers, plus where it came from and
 # where to look. `found`/`why`/`where` are the warning schema's own
 # three; `basis` is this record's addition, and it is the one that makes
@@ -168,6 +177,15 @@ def validate_assumption(raw: dict) -> dict:
             status=422,
         )
 
+    origin = str(raw.get("origin") or "assumed").strip()
+    if origin not in ORIGINS:
+        raise DomainError(
+            "invalid_assumption",
+            f"An assumption carries an unrecognized origin {origin!r}. "
+            f"A ROM line's number is one of: {', '.join(ORIGINS)}.",
+            status=422,
+        )
+
     def opt(field: str) -> str | None:
         value = str(raw.get(field) or "").strip()
         return value or None
@@ -195,4 +213,5 @@ def validate_assumption(raw: dict) -> dict:
         "unit": opt("unit"),
         "excluded_value": raw.get("excluded_value"),
         "source": source,
+        "origin": origin,
     }

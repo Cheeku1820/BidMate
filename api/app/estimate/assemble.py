@@ -48,7 +48,7 @@ from app.estimate.schemas import (
     RangeOut,
 )
 from app.takeoff.models import Assumption, Document, Item, Job, Project, ScopeStatement, Sheet
-from app.takeoff.totals import countable_items, rom_totals
+from app.takeoff.totals import countable_items, resolved_lines, rom_totals
 
 SECTION_LABELS = {
     "scope": "Scope",
@@ -81,20 +81,27 @@ EVERYTHING_EXCLUDED = "Every counted line is excluded by the scope assumptions b
 
 
 def _assumption_line(row: Assumption, removed: Decimal | None) -> EstimateLineOut:
-    """One assumption as a line -- or, once an estimator has overridden
-    it, as a counted one.
+    """One disclosure as a line, tagged with where its number came from.
 
-    An override is the moment a derived number stops being derived:
-    somebody went and measured the ceiling. The row keeps its identity
-    so the next run leaves it alone, but it is no longer an assumption
-    and must not be tagged or qualified as one. `source` is the whole
-    test, which is why it is also what `_qualifications` filters on.
+    `row.origin` is read, not derived. It used to be computed as
+    "estimator means counted, engine means assumed", which is right for
+    an override -- the moment a derived number stops being derived,
+    because somebody went and measured the ceiling -- and wrong for an
+    exclusion the scope letter itself stated. That row is written by the
+    engine and its number came from the documents, so the spec counts it
+    (`counted` includes "a scope statement extracted with a verbatim
+    quote"). Deriving it tagged seven quoted fire-alarm rows Assumed.
+
+    Note that origin is not what decides the qualifications block:
+    `_qualifications` filters on `source`, because a stated exclusion is
+    counted and still moved money, and money that moved is exactly what
+    that block exists to name.
     """
     spec = BASIS.get(row.basis)
     return EstimateLineOut(
         id=row.id,
         title=row.title,
-        origin="counted" if row.source == "estimator" else "assumed",
+        origin=row.origin,
         basis=row.basis,
         basis_label=spec.label if spec else None,
         where=row.where,
@@ -171,13 +178,20 @@ def _takeoff_counted(db: DbSession, project: Project, exclude: set[uuid.UUID],
         unpriced = unpriced_by_system.get(system, 0)
         found = f"{count} counted line{'' if count == 1 else 's'}."
         if unpriced:
-            # A rolled-up total that silently omits a line is a number
-            # that looks complete and is not. Said on the row itself,
-            # beside the figure it is missing from, rather than left to
-            # a project-level count the reader has to connect.
+            # A rolled-up total that silently omits part of a line is a
+            # number that looks complete and is not. Said on the row
+            # itself, beside the figure it is missing from, rather than
+            # left to a project-level count the reader has to connect.
+            #
+            # "Part of" rather than "no price": a line can resolve its
+            # material and fail to resolve a labor rate, and the old
+            # copy -- "this figure does not include them" -- was then
+            # wrong in the reassuring direction, because the material
+            # WAS included and only the labor was missing.
             found += (
-                f" {unpriced} of them carry no price, so this figure does not include "
-                f"{'it' if unpriced == 1 else 'them'}."
+                f" {unpriced} of {'them' if count > 1 else 'these'} "
+                f"{'is' if unpriced == 1 else 'are'} missing part of "
+                f"{'its' if unpriced == 1 else 'their'} cost, so this figure is lower than the work."
             )
         lines.append(EstimateLineOut(
             title=system,
@@ -224,14 +238,22 @@ def _cost_counted(db: DbSession, project: Project, *, labor: bool,
 
 
 def _exposures(db: DbSession, project: Project, exclude: set[uuid.UUID]) -> list[Exposure]:
-    """What widens the range. See the module docstring for the gap."""
+    """What widens the range. See the module docstring for the gap.
+
+    The measured-length exposure is summed over RESOLVED costs, not
+    `Item.total_cost`. The stored column is the engine's figure from
+    ingest, and the dollars a scaled length actually puts at risk are
+    the dollars the document prints for it: a measured run stored at
+    $1,000 and supplier-quoted at $5,000 was producing a +/- 20% band
+    around the wrong $1,000, so the range came out $4,800-$5,200 on a
+    $5,000 line whose own basis says it could be a fifth out. Same
+    mismatch `resolved_lines` exists to close, applied to the spread.
+    """
     exposures = list(cost_exposures(db, project, exclude=exclude))
 
-    query = countable_items(project.id)
-    if exclude:
-        query = query.where(Item.id.not_in(exclude))
     measured = sum(
-        (i.total_cost for i in db.scalars(query) if _is_measured(i)),
+        (line.total_cost for line in resolved_lines(db, project, exclude=exclude)
+         if _is_measured(line.item)),
         Decimal("0"),
     )
     if measured > 0:
@@ -247,23 +269,41 @@ def _qualifications(assumptions: list[Assumption],
     forty items is one qualification, and a re-run that regenerated it
     must not make it two.
 
+    **The deduped rows' dollars are added, not discarded.** One
+    exclusion covers several subjects -- "Fire alarm by others" is a
+    system row plus eleven equipment-name rows -- and each of those
+    resolved its own share of the money. Keeping only the first row's
+    figure reported $200 of a $500 removal, or nothing at all, depending
+    on which subject happened to sort first, while the total correctly
+    showed $500 gone. A qualification whose stated amount disagrees with
+    the total it caused is the one kind of arithmetic a reader checks.
+
+    Summing is right here and would be wrong at the project level, which
+    is why `excluded_value` dedupes by item instead: two rows of ONE
+    exclusion cover disjoint subjects, so their dollars add, whereas two
+    separate exclusions may both cover one item and that item's dollars
+    left the number once.
+
     Ordered scope exclusions first, because an exclusion changes what
     the number covers rather than how precise it is, and a reader who
     stops after three lines should have read the ones that moved money.
     Then by the basis's own width, widest first.
     """
-    seen: set[tuple[str, str]] = set()
-    unique: list[Assumption] = []
+    first: dict[tuple[str, str], Assumption] = {}
+    totals: dict[tuple[str, str], Decimal] = {}
     # An overridden row is a number a person entered. It is not a
     # condition of the price -- there is nothing for a reader to check
     # beyond asking the person named on the line -- so it leaves the
     # block in the same breath it stops being assumed.
     for row in (r for r in assumptions if r.source != "estimator"):
         key = (row.basis, row.title)
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(row)
+        first.setdefault(key, row)
+        value = removed.get(row.id)
+        if value is None:
+            value = row.excluded_value
+        if value:
+            totals[key] = totals.get(key, Decimal("0")) + Decimal(value)
+    unique = list(first.values())
 
     def sort_key(row: Assumption):
         is_exclusion = row.basis == "standard_exclusion"
@@ -277,7 +317,7 @@ def _qualifications(assumptions: list[Assumption],
             why=row.why,
             where=row.where,
             basis_label=(BASIS.get(row.basis).label if BASIS.get(row.basis) else row.basis),
-            excluded_value=removed.get(row.id) or row.excluded_value,
+            excluded_value=totals.get((row.basis, row.title)),
         )
         for row in sorted(unique, key=sort_key)
     ]

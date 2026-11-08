@@ -380,7 +380,8 @@ def test_an_unpriced_line_says_so_on_the_system_it_sits_in(client, db, priced_pr
     body = client.get(url(priced_project)).json()
     takeoff = next(sec for sec in body["sections"] if sec["key"] == "takeoff")
     power = next(l for l in takeoff["lines"] if l["title"] == "Power")
-    assert "carry no price" in power["found"] or "carries no price" in power["found"]
+    assert "missing part of" in power["found"]
+    assert "lower than the work" in power["found"]
     assert body["unpriced_count"] == 1
 
 
@@ -427,3 +428,65 @@ def test_a_failed_generation_says_so_rather_than_saying_pending(client, db, org,
 
 def test_a_generated_project_carries_no_pending_reason(client, priced_project):
     assert client.get(url(priced_project)).json()["pending_reason"] is None
+
+
+# --- second Codex review -----------------------------------------------
+
+
+def test_a_multi_subject_exclusion_reports_all_the_money_it_removed(
+        client, db, priced_project):
+    """Finding 10. One exclusion covers several subjects -- "Fire alarm
+    by others" is a system row plus eleven equipment-name rows -- and
+    the qualifications block deduped them on (basis, title) while
+    keeping only the FIRST row's dollars. So a $200 pull station plus a
+    $300 smoke detector correctly left $500 out of the total, and the
+    qualification beside it reported $200, $300, or nothing, depending
+    on which subject happened to sort first.
+
+    A qualification whose stated amount disagrees with the total it
+    caused is the one kind of arithmetic a reader checks.
+    """
+    s = db.query(Sheet).filter(Sheet.project_id == priced_project.id).first()
+    db.add(_item(priced_project, s, name="Manual pull station", system="Life safety",
+                 material="200", labor="0"))
+    db.add(_item(priced_project, s, name="Smoke detector", system="Life safety",
+                 material="300", labor="0"))
+    db.commit()
+    regenerate(db, priced_project)
+    db.commit()
+
+    body = client.get(url(priced_project)).json()
+    fire = next(q for q in body["qualifications"] if "Fire alarm" in q["title"])
+    assert fire["excluded_value"] == "500.00"
+    assert body["excluded_value"] == "500.00"
+
+
+def test_the_range_widens_around_the_resolved_price_of_a_measured_run(
+        client, db, priced_project):
+    """Finding 8. The measured-length exposure summed `Item.total_cost`,
+    the engine's figure from ingest, so a run stored at $1,000 and
+    supplier-quoted at $5,000 got a +/- 20% band around the wrong
+    $1,000 -- $4,800 to $5,200 on a line whose own basis says it could
+    be a fifth out. Same mismatch `resolved_lines` exists to close,
+    applied to the spread.
+    """
+    s = db.query(Sheet).filter(Sheet.project_id == priced_project.id).first()
+    run = _item(priced_project, s, name="Panel SB-1 feeder",
+                system="Service and distribution", material="1000", labor="0")
+    run.unit = "ft"
+    run.quantity = Decimal("1")
+    run.path = [[10, 10], [90, 90]]
+    db.add(run)
+    db.flush()
+    db.add(ProjectMaterialPrice(item_id=run.id, price_override=Decimal("5000"),
+                                source="supplier_quote"))
+    db.commit()
+    regenerate(db, priced_project)
+    db.commit()
+
+    body = client.get(url(priced_project)).json()
+    spread = Decimal(body["range"]["spread"])
+    # 20% of the resolved $5,000 is $1,000; 20% of the stored $1,000 is
+    # $200. The assertion is on the floor rather than the exact figure
+    # because other bases contribute to the same range.
+    assert spread >= Decimal("1000")

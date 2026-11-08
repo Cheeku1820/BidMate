@@ -66,6 +66,27 @@ class StandardExclusion:
     systems: tuple[str, ...] = ()
     item_names: tuple[str, ...] = ()
 
+    @property
+    def vocabulary(self) -> tuple[str, ...]:
+        """Every phrase that counts as the documents addressing this
+        boundary: the explicit keywords plus every equipment name the
+        exclusion would remove.
+
+        The two lists used to be read separately, and the gap between
+        them moved money in both directions. "Smoke detectors are
+        included" matched none of the fire alarm keywords, so the
+        boundary read as unaddressed, the default exclusion was assumed,
+        and the smoke detector the documents had just put IN the price
+        was removed from it. The rule is now structural rather than
+        remembered: anything this exclusion can delete is also something
+        a document can mention to take the decision away from it.
+        """
+        # Lowercased, because `_text_of` lowercases the haystack and a
+        # system name is capitalised the way the classifier writes it.
+        return tuple(dict.fromkeys(
+            k.lower() for k in self.keywords + self.item_names + self.systems
+        ))
+
 
 # Ordered the way the document prints them: the one that can move money
 # first, then the boilerplate. Wording follows `app/plan/copy.py`'s
@@ -79,15 +100,24 @@ STANDARD_EXCLUSIONS: tuple[StandardExclusion, ...] = (
         why="Fire alarm devices appear on electrical plans and are often a separate contract, so counting them "
             "or not counting them changes the number by more than any other scope boundary.",
         where="Scope documents were read for fire alarm language; none was found.",
-        keywords=("fire alarm", "fa system", "nac ", "notification appliance"),
+        keywords=("fire alarm", "fa system", "nac ", "facp"),
         # "Fire alarm" as a system is unambiguous where a row carries it.
         systems=("Fire alarm",),
         # And by name, for the rows the classifier files under "Life
         # safety" alongside exit signs. Every keyword here names fire
         # alarm equipment and nothing else -- deliberately not "horn" or
-        # "bell", which appear in other contexts.
+        # "bell" alone, which appear in other contexts.
+        #
+        # The list has to cover the equipment a real set carries, not a
+        # sample of it: "fire alarm by others" that left `Heat detector`
+        # and `Horn strobe` in the price is an exclusion the document
+        # states and the number does not honour. Both punctuations of
+        # horn/strobe are here because a classifier writes whichever the
+        # legend used.
         item_names=("fire alarm", "pull station", "notification appliance",
-                    "smoke detector", "duct detector", "horn/strobe"),
+                    "smoke detector", "duct detector", "heat detector",
+                    "beam detector", "horn/strobe", "horn strobe",
+                    "notification strobe", "annunciator"),
     ),
     StandardExclusion(
         title="Temporary power excluded",
@@ -138,26 +168,6 @@ STANDARD_EXCLUSIONS: tuple[StandardExclusion, ...] = (
 _ADDRESSING_STATUSES = ("found", "confirmed")
 
 
-def _addressed(db: DbSession, project: Project) -> str:
-    """Every scope statement on this project, folded into one haystack.
-
-    The estimator's edit and the verbatim quote are both searched
-    alongside the extracted text: an edit is what the statement now
-    means, and the quote is what the document literally said, and a
-    boundary addressed in either is addressed.
-    """
-    rows = db.scalars(
-        select(ScopeStatement).where(
-            ScopeStatement.project_id == project.id,
-            ScopeStatement.status.in_(_ADDRESSING_STATUSES),
-        )
-    )
-    parts = []
-    for row in rows:
-        parts.extend([row.text or "", row.edited_text or "", row.quote or ""])
-    return " \n ".join(parts).lower()
-
-
 def _direction(statement: ScopeStatement) -> str:
     """Whether a statement puts the work in or out.
 
@@ -166,6 +176,17 @@ def _direction(statement: ScopeStatement) -> str:
     the work is in the price, the next two mean it is not, and
     `alternate` means it is priced separately -- which for a ROM's
     purposes is "not in this number".
+
+    Read off `kind` and nothing else, on purpose. The keyword match
+    above searches the estimator's edit as well as the extracted text,
+    because an edit is what the statement now says -- but direction is
+    not inferred from those words. Inferring it would be a second
+    classifier beside `app.engine.scope`, and two paths to one
+    classification drift (CLAUDE.md: "Conversation routes; it does not
+    answer"). `kind` is instead settable directly, through the same
+    PATCH that confirms and dismisses, so an estimator who sees the
+    direction read wrong corrects the fact rather than rewording the
+    sentence and hoping.
     """
     return "in" if statement.kind == "included" else "out"
 
@@ -211,7 +232,7 @@ def scope_assumptions(db: DbSession, project: Project) -> list[dict]:
 
     for exclusion in STANDARD_EXCLUSIONS:
         matched = [s for s in statements
-                   if any(keyword in _text_of(s) for keyword in exclusion.keywords)]
+                   if any(keyword in _text_of(s) for keyword in exclusion.vocabulary)]
 
         if not matched:
             # Nobody said. The estimate decides, and discloses that it did.
@@ -265,6 +286,9 @@ def _exclusion_row(exclusion: StandardExclusion, subject_kind: str, subject_ref:
             "why": exclusion.why,
             "where": exclusion.where,
             "source": "engine",
+            # Nobody said, so the estimate decided. That is the
+            # definition of assumed.
+            "origin": "assumed",
         }
     quoted = (stated.edited_text or stated.text or "").strip()
     return {
@@ -277,4 +301,12 @@ def _exclusion_row(exclusion: StandardExclusion, subject_kind: str, subject_ref:
         "why": exclusion.why,
         "where": "Scope, as read from the documents",
         "source": "engine",
+        # Counted: the spec's own definition includes "a scope statement
+        # extracted with a verbatim quote", and this row is one. Tagging
+        # it assumed told the reader the estimate had guessed at a
+        # boundary the scope letter spelled out, and inflated the
+        # assumed tally by one row per subject the exclusion covers.
+        # It stays in the qualifications block regardless -- it moved
+        # money, and that is what the block is for.
+        "origin": "counted",
     }

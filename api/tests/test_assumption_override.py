@@ -11,6 +11,9 @@ from decimal import Decimal
 
 import pytest
 
+from sqlalchemy import select
+
+from app.estimate.override import override
 from app.takeoff.models import Action, Assumption, Item, Project, ReviewStatus, Sheet
 from app.worker.estimate_job import run as run_estimate_job
 from tests.test_estimate_job import job_for
@@ -310,11 +313,21 @@ def test_a_labor_line_points_at_labor_pricing(client, db, project_with_assumptio
     assert "Labor pricing" in client.patch(url(row), json={"value": "74"}).json()["detail"]["message"]
 
 
-def test_an_entered_fact_says_the_next_run_applies_it(client, ceiling):
-    """A ceiling height is what the next run reads, so the line must not
-    imply the total already moved."""
+def test_an_entered_fact_does_not_promise_the_next_run_prices_against_it(client, ceiling):
+    """Second Codex review, finding 5. The copy used to say "the next
+    takeoff run prices the estimate against this value," and nothing in
+    the engine reads these rows -- entering 45 ft per device left the
+    assemblies built on 30. A document stating a figure the number was
+    not computed from is the confidently-wrong shape this feature
+    exists to prevent, and promising it is the worst version.
+
+    What the line may say is who stands behind the figure. Feeding an
+    override back into the priced quantities is listed as not built.
+    """
     body = client.patch(url(ceiling), json={"value": "16"}).json()
-    assert "next takeoff run" in find_line(body, "ceiling")["found"]
+    found = find_line(body, "ceiling")["found"]
+    assert "next takeoff run" not in found
+    assert "Dana Whitfield" in found
 
 
 def test_an_override_survives_undo_regeneration_and_redo(db, project_with_assumptions, dana):
@@ -368,3 +381,68 @@ def test_an_override_survives_undo_regeneration_and_redo(db, project_with_assump
     assert len(survivors) == 1, "the redo must land on the regenerated row, not duplicate it"
     assert survivors[0].value == "45"
     assert survivors[0].source == "estimator"
+
+
+# --- identity (second Codex review, finding 9) -------------------------
+
+
+def test_an_overridden_assumption_is_not_duplicated_by_the_next_run(
+        db, project_with_assumptions, dana):
+    """`write._identity` used to include `basis`, and an override
+    rewrites the basis to `estimator_entered` -- so the overridden row
+    stopped matching the engine row it replaced, and the next
+    regeneration wrote the engine's version back beside it. The document
+    then showed "45 ft per device, Counted" and "30 ft per device,
+    Assumed" as two live disclosures of one fact.
+
+    The basis is a property of a disclosure and the one property an
+    override exists to change; identity cannot include the thing that
+    changes.
+    """
+    from app.estimate.write import regenerate
+
+    regenerate(db, project_with_assumptions)
+    db.commit()
+    row = db.query(Assumption).filter(
+        Assumption.project_id == project_with_assumptions.id,
+        Assumption.basis == "rule_of_thumb",
+    ).one()
+    title = row.title
+
+    override(db, row=row, actor=dana, value="45", unit="ft per device")
+    db.commit()
+
+    regenerate(db, project_with_assumptions)
+    db.commit()
+
+    survivors = db.scalars(select(Assumption).where(
+        Assumption.project_id == project_with_assumptions.id,
+        Assumption.title == title)).all()
+    assert len(survivors) == 1
+    assert survivors[0].value == "45"
+    assert survivors[0].source == "estimator"
+    assert survivors[0].origin == "counted"
+
+
+def test_an_undone_override_restores_the_assumed_tag(db, project_with_assumptions, dana):
+    """`origin` is snapshotted, so an undo that put the engine's number
+    back cannot leave the row wearing the estimator's label -- a derived
+    figure presented as one somebody stood behind."""
+    from app.estimate.write import regenerate
+    from app.takeoff import undo as undo_svc
+
+    regenerate(db, project_with_assumptions)
+    db.commit()
+    row = db.query(Assumption).filter(
+        Assumption.project_id == project_with_assumptions.id,
+        Assumption.basis == "rule_of_thumb",
+    ).one()
+    override(db, row=row, actor=dana, value="45", unit="ft per device")
+    db.commit()
+    assert row.origin == "counted"
+
+    undo_svc.undo(db, actor=dana, project_id=project_with_assumptions.id)
+    db.commit()
+    db.refresh(row)
+    assert row.origin == "assumed"
+    assert row.source == "engine"

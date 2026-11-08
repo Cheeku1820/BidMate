@@ -144,10 +144,23 @@ def enqueue_estimate(db: Session, project: Project, requested_by: uuid.UUID | No
                      run_id: uuid.UUID | None = None) -> Job | None:
     """Regenerate this project's ROM assumptions (rom-estimate.md).
 
-    One per project at a time, like `price` above: the body deletes and
-    rewrites every generated row for the project, so two of them racing
-    would be two writers of one set with no useful outcome, only a
-    chance of a half-written document.
+    Deduped against a QUEUED job only, deliberately not against a
+    running one. Collapsing onto a running job lost decisions outright:
+    a worker reads the scope, the estimator confirms that the work is
+    actually included, enqueue returns None because that worker is still
+    going, and the worker then writes the exclusion it had already
+    computed. The project is left excluding $500 with no pending job and
+    nothing on the document saying so -- an estimator's decision
+    silently discarded, which is the one thing CLAUDE.md says the engine
+    never does.
+
+    A queued job, by contrast, has not read anything yet, so folding a
+    second request into it loses nothing.
+
+    Two of them can therefore overlap, and `app.estimate.write.regenerate`
+    takes a per-project advisory lock so they serialize instead of both
+    rewriting one set. The later one wins, which is the right winner:
+    it read the newer decision.
 
     Queued twice on a normal run, on purpose. Once by the run that just
     finished, because the spec's premise is that a ROM exists the moment
@@ -159,7 +172,7 @@ def enqueue_estimate(db: Session, project: Project, requested_by: uuid.UUID | No
     duplicate.
     """
     if db.scalars(select(Job).where(
-            Job.kind == "estimate", Job.project_id == project.id, Job.status.in_(_IN_FLIGHT))).first():
+            Job.kind == "estimate", Job.project_id == project.id, Job.status == "queued")).first():
         return None
     job = Job(org_id=project.org_id, project_id=project.id, kind="estimate", run_id=run_id,
               requested_by=requested_by, max_attempts=MAX_ATTEMPTS)

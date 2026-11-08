@@ -168,6 +168,30 @@ describe("toRomCsv", () => {
   });
 });
 
+describe("the unfinished-estimate warning", () => {
+  it("leads the file when the document is not ready to hand over", () => {
+    /* Second Codex review, finding 7. The screen shows this warning and
+       the download dropped it, so the one artifact that actually leaves
+       the building was the only place it did not appear. */
+    const csv = toRomCsv(
+      estimate({ pendingReason: "The disclosures for this estimate have not been generated yet." }),
+    );
+    expect(rows(csv)[0]).toContain("Not ready to hand over");
+    expect(rows(csv)[0]).toContain("have not been generated yet");
+  });
+
+  it("puts it above the column header, not inside the table", () => {
+    const csv = toRomCsv(estimate({ pendingReason: "Not generated yet." }));
+    const header = rows(csv).indexOf(ROM_COLUMNS.join(","));
+    expect(header).toBeGreaterThan(0);
+    expect(rows(csv)[0].startsWith("Not ready")).toBe(true);
+  });
+
+  it("says nothing when the document is finished", () => {
+    expect(toRomCsv(estimate())).not.toContain("Not ready to hand over");
+  });
+});
+
 describe("romFileName", () => {
   it("names the project and says what the file is", () => {
     expect(romFileName({ projectName: "Kittle's Saxony" })).toBe(

@@ -93,7 +93,13 @@ def available() -> bool:
 
 def _prompt(tags: list[dict], schedule_text: str, location: str) -> str:
     tag_lines = "\n".join(f"- {t['tag']}: appears {t['count']} time(s)" for t in tags)
-    schedule = (schedule_text or "").strip()[:6000]
+    # No slice here. `context.build_classifier_context` already budgeted
+    # this blob against `PROMPT_BUDGET`, defanged every block header in
+    # it, and reserved the estimator's notes out of the schedule's share.
+    # A second cap at this layer silently overrode all three -- the
+    # smaller number won, and the reservation that was supposed to keep a
+    # person's notes from being cut was the first thing cut.
+    schedule = (schedule_text or "").strip()
     # Enumerated from CATALOG rather than written out, so a new catalog
     # item is offered to the classifier the moment it exists instead of
     # waiting for someone to remember this string.

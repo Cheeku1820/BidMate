@@ -70,6 +70,8 @@ Once you've uploaded and processed a drawing set, the workspace surfaces whateve
 
 **Put the hours in time.** Open **Phases and schedule**. The hours the takeoff already resolved are split across the six stages electrical work runs in — demolition, rough-in, wire pull, gear, trim, close-out — sized by the firm's crew for each, and drawn as bars on a week grid with the weekly manpower chart a GC asks for underneath. Everything computed says so and can be typed over; an override says it is yours. Where the drawings phase the job — `E-1.0` against `XE-1.0`, as the example set does — **Propose phases from sheet numbers** offers the split and writes nothing until you confirm, as one undoable action. Flag a switchboard as long-lead and the timeline counts an order-by date back from the stage that installs it, from a lead time a supplier quoted or your firm entered. Nothing here changes what is counted.
 
+**Hand a GC a number before anything is approved.** Open **Estimate summary**. It exists the moment processing does — no approval step, no blocking gate — and every line says whether it was *Counted* from the documents or *Assumed*. An assumed line names what it rests on: a firm default, a market estimate, a rule of thumb, a length scaled off a sheet whose scale nobody confirmed. The budget range underneath the total is those assumptions' spread in dollars, not a confidence score. Type over any assumption and the number moves, attributed to you and undoable, and it survives the next run. Download it and every disclosure goes in the file with the total.
+
 **Hit the blocking rule.** Click **Finish review** while any *Missing information* item remains. Completion is blocked, the blocking items are listed with direct links, and only *Needs attention* items can be carried forward — after an explicit acknowledgment checkbox.
 
 ---
@@ -149,6 +151,12 @@ src/
     conversation/              the panel — read-only in this slice
       ConversationPanel.jsx    the column: header, thread, composer, collapsed strip
       screenContext.jsx        the closed set of screen names (mirrored by api/app/assistant/schemas.py); selection and view reporting
+    estimate/                  the ROM — counted and assumed, with a budget range
+      EstimateSummary.jsx      the screen: the number, the range, four sections, qualifications
+      EstimateSection.jsx      one section's lines, each marked counted or assumed
+      OverrideBox.jsx          the estimator typing over an assumption, on the line that states it
+      estimateCopy.js          the ROM's own words — counted/assumed, not the four review labels
+      romDownload.js           the ROM as a CSV, every disclosure included
 ```
 
 The API modules behind those screens:
@@ -185,6 +193,14 @@ api/app/assistant/
   context.py                   what each screen puts in view, through the API's existing read paths
   prompt.py                    the frozen prompt; extracted text rendered as data, never instruction
   service.py, router.py        one thread per project; the answer streams over server-sent events
+api/app/estimate/
+  basis.py                     the nine bases an assumed number can rest on, and each one's spread
+  generate_scope.py            exclusions no document addressed, and the ones the documents stated
+  generate_takeoff.py          quantities derived rather than counted — branch footage, unscaled sheets
+  generate_cost.py             what priced each line, read back off the existing resolvers
+  exclusions.py                the one place an assumption subtracts, through countable_items()
+  range.py                     the budget range as a dollar-weighted spread over basis classes
+  write.py                     generate / regenerate — an estimator's override survives a re-run
 ```
 
 Uploaded files are stored in MinIO (S3 in deployment) under a key built from the owning org and project, with one row per upload in the `documents` table carrying its hash and storage key. The API streams and hashes a file; it never opens one — that's the worker's job, inside the sandbox above. Design in [`docs/specs/documents-stored.md`](docs/specs/documents-stored.md) and [`docs/specs/engine-behind-the-api.md`](docs/specs/engine-behind-the-api.md).
@@ -209,8 +225,9 @@ Below 1024px the workspace shows a "use a larger screen" message rather than deg
 
 - **Sync is a poll, not a push channel.** The client polls the API every few seconds for changes from other reviewers, rather than receiving them immediately over a WebSocket. Undo is also still a single shared linear stack, so one reviewer can undo another's action from underneath them — shared undo needs conflict resolution, either operational transforms or per-user undo stacks with a merge policy, and that decision is still open.
 - **The schedule stops at working days.** Phases, stages, crews, the weekly manpower chart, and long-lead order-by dates are built ([`docs/specs/phases-and-timeline.md`](docs/specs/phases-and-timeline.md)), but the calendar is Monday to Friday with no holidays and no overtime, phases run in order rather than through real dependencies, bars are edited in fields rather than dragged, and nothing imports the GC's own schedule. A lead time comes only from a supplier's quote or the firm's dated entry — flagged gear with neither says "Not yet quoted" and draws no date.
-- **Export produces a CSV, not yet a real Excel workbook.**
-- **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Estimate summary, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. Labor and Material pricing are now built and routed, each carrying a pricing basis note. See [`ROADMAP.md`](ROADMAP.md).
+- **Export produces a CSV, not yet a real Excel workbook.** The ROM download is a CSV for the same reason.
+- **The ROM stops at total direct cost.** Estimate summary carries no markup, overhead, profit, bond, or tax — that spread is the judgment a contractor is legally bound by, and no part of this system proposes it. Labor returned by the market feed is stored but still not resolved into the number.
+- **All eleven screens from the original spec are routed and built**, along with Notes & assumptions. Several of the newer workspace additions in the project nav are not — Assemblies, Revisions, and Final review render as disabled with a reason, same for Company library, Integrations, and Help in the main nav. Labor and Material pricing are now built and routed, each carrying a pricing basis note. Estimate summary is built, and produces a CSV rather than a styled document, same as Export. See [`ROADMAP.md`](ROADMAP.md).
 - **The conversation panel is read-only.** It answers questions about the screen in view and says where a change is made; it does not propose or apply changes yet. It needs `ANTHROPIC_API_KEY` on the API container; without one the panel says so and nothing else is affected.
 - **Market estimates are catalog and shopping prices, not contractor net pricing.** The supplier price sheet is how a real quote gets in.
 - **The pricing grid edits one cell at a time.** Labor and Material pricing behave like a spreadsheet at the cell level — click or type to edit, Tab/Enter/arrows to move, Delete to clear an entry — but there is no range selection, fill-down, or paste yet. Crew mix and per-line notes are stored by the API and not shown; a project default crew mix in project settings is the intended next step.

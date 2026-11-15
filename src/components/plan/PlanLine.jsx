@@ -26,6 +26,24 @@ const STATUS = {
   dismissed: { label: "Dismissed", Icon: X },
 };
 
+/* The direction a scope statement puts the work in, in the documents'
+   own words. Rendered only on lines that carry a `kind` — scope
+   statements — because a spec section or a schedule has no direction.
+
+   This exists because the direction moves money: the ROM estimate
+   reads it to decide what scope removes from the number. Correcting the
+   sentence was not enough, and that gap was silent in the worst
+   direction — an estimator who changed "Fire alarm by others" to "Fire
+   alarm is included" saw their own words on the page while the estimate
+   kept subtracting the fire alarm work and cited the corrected sentence
+   as its reason. */
+export const DIRECTIONS = [
+  ["included", "Included in this price"],
+  ["excluded", "Excluded"],
+  ["by_others", "By others"],
+  ["alternate", "An alternate"],
+];
+
 export const DECIDE_FAILED = "Couldn't save that decision. Try again.";
 
 export function LineStatus({ status }) {
@@ -91,6 +109,7 @@ export default function PlanLine({ line, onDecide, onRemove = null, children = n
   };
 
   const textareaId = `plan-text-${id}`;
+  const directionId = `plan-direction-${id}`;
 
   return (
     <li className="scope-row plan-line">
@@ -126,6 +145,29 @@ export default function PlanLine({ line, onDecide, onRemove = null, children = n
         <>
           <p className="scope-row__text">{current}</p>
           {edited ? <p className="scope-row__original muted">Original: {original}</p> : null}
+          {line.kind ? (
+            <div className="plan-line__direction">
+              <label className="formfield-label" htmlFor={directionId}>
+                This work is
+              </label>
+              <select
+                id={directionId}
+                className="field plan-line__select"
+                value={line.kind}
+                disabled={saving}
+                onChange={(e) => decide({ kind: e.target.value })}
+              >
+                {DIRECTIONS.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <p className="plan-line__directionhint muted">
+                What the estimate prices. Anything other than included is left out of the number.
+              </p>
+            </div>
+          ) : null}
           {children}
           <div className="scope-row__actions">
             {line.status !== "confirmed" ? (

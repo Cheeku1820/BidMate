@@ -11,23 +11,47 @@ from __future__ import annotations
 
 import re
 
-# llm._prompt() truncates whatever blob this function builds to its own
-# [:6000] before it ever reaches the model -- that slice, not any cap
-# defined here, is the real budget, and it is used below to size the
-# schedule/notes split, not just documented. Duplicating the number is an
-# accepted coupling; llm.py is not touched by this module.
-PROMPT_BUDGET = 6000
+# The real budget for the schedule-and-notes blob, and the only cap on
+# it: `llm._prompt()` used to re-slice whatever this function built to
+# its own `[:6000]`, so the two caps compounded and the smaller one won
+# silently. `_prompt` now interpolates the blob as given, and this is the
+# single place the size is decided.
+#
+# Raised from 6,000 to 60,000 characters deliberately. A full luminaire
+# schedule plus a panel schedule plus a legend on a mid-size commercial
+# set runs well past 6,000 on its own, so the old cap meant the
+# classifier was asked to name fixture-type letters while being shown a
+# fraction of the schedule that defines them -- and then its uncertainty
+# surfaced as an unclassified symbol the estimator had to resolve by
+# hand. Most of those were a context problem rather than a capability
+# limit. 60,000 characters is roughly 15,000 tokens, comfortable for the
+# model and still a hard bound, because an unbounded blob is a cost and
+# latency surface on a 400-sheet set.
+#
+# **More untrusted document text reaching the prompt makes
+# `_defang_block_headers` more load-bearing, not less.** Every block
+# added below still passes through it.
+PROMPT_BUDGET = 60000
 # The notes block's cap on its own line content (before the header text
 # that wraps it). Kept well under PROMPT_BUDGET so a maximal payload is
 # still a small, predictable fraction of the real window once reserved --
 # see build_classifier_context, which reserves exactly this block's
 # length out of PROMPT_BUDGET before it caps the schedule text, so the
-# reservation is real rather than incidental.
+# reservation is real rather than incidental. Deliberately NOT raised
+# alongside PROMPT_BUDGET: notes are a person's own sentences about one
+# project, and 1,200 characters is already generous for that. The block
+# that needed room was the schedule.
 NOTES_CAP = 1200
 # Chars of "\n\n".join separators to leave slack for when reserving room
 # for the notes block ahead of the schedule cap -- at most two joins
 # (schedule-notes, notes-context) can land before the notes block ends.
 _SEPARATOR_SLACK = 4
+# The other-documents block's own cap, deliberately OUTSIDE
+# PROMPT_BUDGET: that budget sizes the schedule-and-notes split, and
+# this block is appended after it. The real maximum the prompt can
+# carry is therefore PROMPT_BUDGET + CONTEXT_CAP plus the template, and
+# `test_the_whole_prompt_is_bounded` asserts the total rather than
+# leaving a reader to assume one number covered both.
 CONTEXT_CAP = 12000
 
 # Any run of "===...===", wherever it sits within a line -- not only a
@@ -37,10 +61,28 @@ CONTEXT_CAP = 12000
 # is left open rather than chased.
 _HEADER_RUN_RE = re.compile(r"===.*===")
 
+# The triple quote that delimits the untrusted block inside
+# `llm._prompt`. Extracted text carrying one closes that block early,
+# and everything after it reads as the prompt's own prose rather than as
+# data -- an instruction/data boundary break, not a cosmetic one.
+# Neutralised by breaking the run with a zero-width space, so a
+# legitimate quotation still reads as one.
+_FENCE_RE = re.compile(r'"{3,}')
+_FENCE_REPLACEMENT = '"​"​"'
+
 
 def _defang_block_headers(text: str) -> str:
-    """Neutralise any "=== ... ===" run that could be mistaken for one of
-    this module's own block headers, wherever it appears.
+    """Neutralise anything in untrusted text that could be mistaken for
+    this module's own framing: a "=== ... ===" block header, or the
+    triple quote that closes the data block it is rendered inside.
+
+    The fence matters as much as the header. `llm._prompt` interpolates
+    this text between literal triple quotes, so a payload carrying its
+    own fence ends the quoted block and everything after it reads as the
+    prompt's own prose. Raising PROMPT_BUDGET tenfold means a payload
+    deep inside a schedule now reaches the model where the old 6,000-
+    character slice discarded it unread, so this is load-bearing in a
+    way it was not before.
 
     The parameters `context` and `estimator_notes` are already kept
     separate -- but the *rendered* text is one string, and a specification
@@ -73,6 +115,9 @@ def _defang_block_headers(text: str) -> str:
     """
     if not text:
         return text
+    # Fence first, then headers: a payload can carry both, and the
+    # header substitution must not be able to reintroduce a fence.
+    text = _FENCE_RE.sub(_FENCE_REPLACEMENT, text)
     return _HEADER_RUN_RE.sub(lambda m: m.group(0).replace("=", "-"), text)
 
 

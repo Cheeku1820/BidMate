@@ -325,6 +325,15 @@ class ScopeStatement(Base):
 
 class Item(Base):
     __tablename__ = "items"
+    __table_args__ = (
+        # Mirrors migration 0031 and `ingest.map_payload`'s own filter:
+        # a closed vocabulary with one member, enforced at the database
+        # too so a row written by a script is refused the same way.
+        CheckConstraint(
+            "classification_basis is null or classification_basis in ('inferred')",
+            name="ck_items_classification_basis",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
@@ -373,6 +382,17 @@ class Item(Base):
     # the same sheet, which is what lets a re-run recognise the item it
     # produced last time instead of replacing it blindly.
     source_tag: Mapped[str] = mapped_column(String(50), default="", server_default="")
+    # How this item got its name, when that was not a match
+    # (rom-estimate.md). "inferred" means the classifier named the
+    # cluster from surrounding context rather than from a legend row
+    # that defines the tag -- a real, checkable distinction, and the ROM
+    # discloses it. NULL means the name came from a legend match or from
+    # the deterministic path, neither of which is an inference.
+    #
+    # Deliberately NOT a confidence (ROADMAP invariant 7): it records
+    # which method named the row, which is the same fact for every
+    # project and is printed in words, never as a number.
+    classification_basis: Mapped[str | None] = mapped_column(String(30), nullable=True)
     # Optimistic-concurrency counter for the five single-item mutations
     # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
     # is driven by `onupdate=func.now()` and therefore transaction-
@@ -728,6 +748,87 @@ class Note(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Assumption(Base):
+    """A number in the ROM estimate that nobody counted, and what it was
+    based on (docs/specs/rom-estimate.md).
+
+    `basis` is the whole point. A ROM hands a GC a number before the
+    evidence for it exists, so the document's defense is not approval --
+    there is no approval step on it -- but that every line nobody counted
+    says so, says what it was derived from, and says where to look. An
+    assumption without a basis is a disclosure that cannot be checked,
+    which reads as one and is not; `app.estimate.basis.validate_assumption`
+    refuses it at the boundary.
+
+    `counted`/`assumed` is deliberately NOT the four review labels. Those
+    describe an *item's evidence* and decide whether it may be approved;
+    this describes where a *ROM line's number* came from. Sharing a
+    vocabulary -- or a colour, or a pill component -- between the two is
+    how a fifth review status gets invented by accident, exactly as
+    `Note.status` above exists separately to avoid.
+
+    `source` is what survives a re-run. The engine's rows are deleted and
+    regenerated on every run; an estimator's override is never touched
+    (CLAUDE.md: "the engine never discards a person's judgment").
+    """
+
+    __tablename__ = "assumptions"
+    __table_args__ = (
+        Index("ix_assumptions_project_section", "project_id", "section"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    # app.estimate.basis.SECTIONS
+    section: Mapped[str] = mapped_column(String(20))
+    # app.estimate.basis.SUBJECT_KINDS -- "project" | "sheet" | "item"
+    subject_kind: Mapped[str] = mapped_column(String(20), default="project", server_default="project")
+    # Deliberately no foreign key: the target table depends on
+    # `subject_kind`, and a sheet or item that later disappears should
+    # leave the assumption orphaned rather than cascade-deleting it
+    # silently -- `app.estimate.exclusions` resolves subjects through
+    # `countable_items()` and drops what no longer resolves, which is a
+    # visible rule rather than a database side effect.
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    # The subject when it is not a row -- a system name, for
+    # `subject_kind="system"` ("fire alarm by others"). Deliberately not
+    # folded into `value`: that field is the assumed number the document
+    # prints, and a field that sometimes means "the number" and
+    # sometimes means "what this covers" is the one nobody can read.
+    subject_ref: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    title: Mapped[str] = mapped_column(Text)
+    found: Mapped[str] = mapped_column(Text)
+    why: Mapped[str] = mapped_column(Text)
+    where: Mapped[str] = mapped_column(Text)
+    # app.estimate.basis.BASIS
+    basis: Mapped[str] = mapped_column(String(30))
+    # The assumed number itself, as the words the document prints ("14",
+    # "6,820", "$68.00 / hr"). A string, not a Numeric: a ceiling height,
+    # a crew mix, and a rate are all "the assumed value" on the same
+    # document, and the section that renders them does not do arithmetic
+    # on them -- the arithmetic already happened on the items.
+    value: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Dollars a `standard_exclusion` removed from the total. Stated
+    # rather than merely subtracted: scope silently eating $40,000 is the
+    # one way this document can be confidently wrong in a reader's favour.
+    excluded_value: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # app.estimate.basis.SOURCES -- "engine" | "estimator"
+    source: Mapped[str] = mapped_column(String(20), default="engine", server_default="engine")
+    # app.estimate.basis.ORIGINS -- "assumed" | "counted". Stored rather
+    # than derived from `source`, because the two answer different
+    # questions and disagree in a case that matters: an exclusion the
+    # documents themselves stated is written by the engine
+    # (`source="engine"`) and yet its number came from the documents, so
+    # the spec's own definition makes it `counted` ("a scope statement
+    # extracted with a verbatim quote"). Deriving origin from `source`
+    # tagged seven quoted fire-alarm rows "Assumed" and inflated the
+    # assumed tally with work the scope letter spelled out.
+    origin: Mapped[str] = mapped_column(String(20), default="assumed", server_default="assumed")
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class MarketLookup(Base):

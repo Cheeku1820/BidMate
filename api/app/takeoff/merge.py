@@ -249,6 +249,7 @@ def _overwrite(item: Item, sheet: Sheet, row: dict) -> None:
     item.total_cost = row["total_cost"]
     item.ai_confirmed = row["ai_confirmed"]
     item.source_tag = row["source_tag"]
+    item.classification_basis = row["classification_basis"]
     item.evidence = row["evidence"]
     # Bumped exactly like every other mutation that changes a row's
     # fields (review._apply_edit, undo_apply._apply_item_state) -- a
@@ -394,7 +395,8 @@ def merge_sheet(db, *, project, sheet, rows, ai_reading) -> MergeCounts:
                 placements=row["placements"], material_cost=row["material_cost"],
                 labor_hours=row["labor_hours"], labor_cost=row["labor_cost"],
                 total_cost=row["total_cost"], ai_confirmed=row["ai_confirmed"],
-                source_tag=row["source_tag"], evidence=row["evidence"],
+                source_tag=row["source_tag"], classification_basis=row["classification_basis"],
+                evidence=row["evidence"],
             )
             db.add(item)
             db.flush()

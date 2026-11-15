@@ -659,3 +659,65 @@ export function mapPanelProposal(raw) {
     moreCount: raw.more_count ?? 0,
   };
 }
+
+/* --- the ROM estimate (docs/specs/rom-estimate.md) -----------------
+
+   `amount` stays null rather than becoming 0: a line nothing could
+   price and a line an estimator priced at zero are different facts, and
+   the workspace renders them differently. `num(null)` already answers
+   null, so this is a property of that helper being used rather than a
+   default being applied — worth saying out loud, because a `?? 0` added
+   here later would silently turn "not priced" into "$0". */
+
+export function mapEstimateLine(l) {
+  return {
+    id: l.id ?? null,
+    title: l.title,
+    origin: l.origin,
+    basis: l.basis ?? null,
+    basisLabel: l.basis_label ?? null,
+    where: l.where ?? "",
+    found: l.found ?? null,
+    why: l.why ?? null,
+    value: l.value ?? null,
+    unit: l.unit ?? null,
+    amount: num(l.amount),
+    source: l.source ?? null,
+  };
+}
+
+export function mapEstimate(e) {
+  return {
+    projectName: e.project_name ?? "",
+    revisionSetLabel: e.revision_set_label ?? "",
+    sheetCount: e.sheet_count ?? 0,
+    directCost: num(e.direct_cost) ?? 0,
+    range: {
+      low: num(e.range?.low) ?? 0,
+      high: num(e.range?.high) ?? 0,
+      spread: num(e.range?.spread) ?? 0,
+    },
+    countedCount: e.counted_count ?? 0,
+    assumedCount: e.assumed_count ?? 0,
+    unpricedCount: e.unpriced_count ?? 0,
+    excludedValue: num(e.excluded_value) ?? 0,
+    sections: (e.sections || []).map((s) => ({
+      key: s.key,
+      label: s.label,
+      countedCount: s.counted_count ?? 0,
+      assumedCount: s.assumed_count ?? 0,
+      subtotal: num(s.subtotal),
+      lines: (s.lines || []).map(mapEstimateLine),
+    })),
+    qualifications: (e.qualifications || []).map((q) => ({
+      title: q.title,
+      found: q.found,
+      why: q.why,
+      where: q.where,
+      basisLabel: q.basis_label,
+      excludedValue: num(q.excluded_value),
+    })),
+    emptyReason: e.empty_reason ?? null,
+    pendingReason: e.pending_reason ?? null,
+  };
+}

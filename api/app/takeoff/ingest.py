@@ -415,6 +415,12 @@ def map_payload(payload: dict, valid_sheet_numbers: set[str] | None = None) -> M
             # row carries one, so a missing tag maps to "" rather than
             # None or a KeyError.
             "source_tag": str(raw.get("tag") or ""),
+            # "inferred" when the classifier named this cluster from
+            # context rather than from a legend row (rom-estimate.md).
+            # Anything else the engine might send is dropped rather than
+            # stored: the column is a closed vocabulary, and the honest
+            # answer for an unrecognized value is "not an inference".
+            "classification_basis": "inferred" if raw.get("classification_basis") == "inferred" else None,
             "warning": item_warning,
             "evidence": {
                 "detail": f"Counted from the drawing at {n_places} location{'s' if n_places != 1 else ''}",

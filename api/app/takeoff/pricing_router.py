@@ -174,6 +174,30 @@ def material_row_for(item, project, db: DbSession, user: User) -> MaterialRowOut
     return _material_row_out(item, resolution, override, market, lookup, sheet.number if sheet else "")
 
 
+def _requeue_rom(db: DbSession, project: Project, user: User) -> None:
+    """A price changed, so the ROM's disclosures about prices are stale.
+
+    The ROM's totals resolve live, but the sentences explaining them are
+    stored rows (`app.estimate.write`), and the two parted company on
+    every pricing edit: a switchboard generated at a $1,000 class
+    average and then quoted at $5,000 printed a $5,000 total beside
+    "$1,000 -- no quote and no price on file". The disclosure that
+    contradicts the number beside it is worse than no disclosure,
+    because the reader cannot tell which half to believe.
+
+    Queued, not run inline, for the reason the scope decision is: a
+    regeneration is a batch walk over every item on the project and a
+    PATCH on one cell should not wait on it.
+
+    Company-level rate and price changes are NOT covered here -- they
+    reach every project in the org at once, and fanning out a job per
+    project from one PUT is a decision about queue load rather than
+    correctness. Listed as not built in docs/specs/rom-estimate.md.
+    """
+    if project is not None:
+        queue.enqueue_estimate(db, project, user.id)
+
+
 @router.patch("/items/{item_id}/labor", response_model=LaborRowOut)
 def patch_labor(
     item_id: uuid.UUID,
@@ -215,8 +239,9 @@ def patch_labor(
         label=f"Updated labor for {item.name}", item_id=item_id,
         before=before or {}, after=after,
     )
-    db.commit()
     project = db.get(Project, item.project_id)
+    _requeue_rom(db, project, user)
+    db.commit()
     return labor_row_for(item, project, db, user)
 
 
@@ -253,8 +278,9 @@ def patch_material_price(
         label=f"Updated material price for {item.name}", item_id=item_id,
         before=before or {}, after=after,
     )
-    db.commit()
     project = db.get(Project, item.project_id)
+    _requeue_rom(db, project, user)
+    db.commit()
     return material_row_for(item, project, db, user)
 
 
@@ -284,8 +310,9 @@ def delete_material_price(
         label=f"Cleared material price for {item.name}", item_id=item_id,
         before=before, after={},
     )
-    db.commit()
     project = db.get(Project, item.project_id)
+    _requeue_rom(db, project, user)
+    db.commit()
     return material_row_for(item, project, db, user)
 
 

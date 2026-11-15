@@ -62,6 +62,11 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     "placements": list,
     "ai_confirmed": bool,
     "source_tag": str,
+    # rom-estimate.md. Captured like every other mapped column so a
+    # delete-undo restores the item exactly as it was -- without an
+    # entry here `decode_snapshot` raises, which is the loud failure its
+    # own docstring promises for an untyped snapshot field.
+    "classification_basis": str,
     # The per-item phase override (phases-and-timeline §3.1). Nullable --
     # None when the item inherits its sheet's phase.
     "phase_id": uuid.UUID,
@@ -138,6 +143,26 @@ LEAD_TIME_SNAPSHOT_TYPES: dict[str, type] = {
     "needed_for_stage": str,
     "updated_by_user_id": uuid.UUID,
     "updated_at": datetime,
+}
+
+# The columns an estimator's override of a ROM assumption touches
+# (rom-estimate.md). Deliberately only those columns, not the whole row:
+# `section` and `title` identify the assumption, and an undo that
+# restored them could move a disclosure into a different section -- the
+# same reason `_apply_item_state()` merges only the columns its action
+# recorded rather than restoring a full row. `basis` IS here, because an
+# override replaces it (`estimate.override.OVERRIDE_BASIS`), and an undo
+# that left it behind would leave the line claiming a person entered a
+# number the engine had just put back.
+ASSUMPTION_SNAPSHOT_TYPES: dict[str, type] = {
+    "value": str,
+    "unit": str,
+    "found": str,
+    "where": str,
+    "basis": str,
+    "source": str,
+    "origin": str,
+    "created_by_user_id": uuid.UUID,
 }
 
 SYMBOL_RESOLUTION_SNAPSHOT_TYPES: dict[str, type] = {

@@ -43,7 +43,7 @@
    seed-fixture.js is split out of seed.js.
    ============================================================ */
 
-import { mapCompanyLeadTime, mapDocument, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPanelProposal, mapPhaseLineTemplate, mapPlan, mapPlanLine, mapProcessing, mapProject, mapProposal, mapQuestion, mapSchedule, mapScopeStatement, mapSnapshot, mapStageCrew, mapStageSplit, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
+import { mapCompanyLeadTime, mapDocument, mapEstimate, mapItem, mapLaborRow, mapMaterialRow, mapNote, mapPanelProposal, mapPhaseLineTemplate, mapPlan, mapPlanLine, mapProcessing, mapProject, mapProposal, mapQuestion, mapSchedule, mapScopeStatement, mapSnapshot, mapStageCrew, mapStageSplit, mapUser, noteToWire, proposalToWire } from "./api-mapping.js";
 
 const POLL_INTERVAL_MS = 3000;
 
@@ -441,6 +441,11 @@ export function createApiStore() {
     const body = {};
     if (Object.prototype.hasOwnProperty.call(changes, "status")) body.status = changes.status;
     if (Object.prototype.hasOwnProperty.call(changes, "editedText")) body.edited_text = changes.editedText;
+    // The direction — whether this statement puts the work in the price
+    // or out of it. Separate from the text on purpose: the ROM reads
+    // this field to decide what scope removes from the number, and
+    // rewording the sentence never changed it.
+    if (Object.prototype.hasOwnProperty.call(changes, "kind")) body.kind = changes.kind;
     return mapScopeStatement(await request(`/api/scope/${id}`, { method: "PATCH", body }));
   }
 
@@ -777,6 +782,27 @@ export function createApiStore() {
     return mapSchedule(await request(`/api/projects/${projectId}/schedule`));
   }
 
+  /* The ROM estimate (docs/specs/rom-estimate.md). Its own fetch rather
+     than part of the polled snapshot: the ROM is a document an estimator
+     opens, not state the review workspace keeps in step, and it is
+     recomputed server-side on every read so an override shows up
+     without this screen holding any of it. */
+
+  async function getEstimate(projectId) {
+    return mapEstimate(await request(`/api/projects/${projectId}/estimate`));
+  }
+
+  /* An override answers with the whole document: it moves the budget
+     range, a section tally, and the qualifications block at once, so
+     the screen replaces its state from the response rather than
+     reassembling any of that itself. */
+
+  async function overrideAssumption(assumptionId, { value, unit = null }) {
+    return mapEstimate(
+      await request(`/api/assumptions/${assumptionId}`, { method: "PATCH", body: { value, unit } }),
+    );
+  }
+
   async function createPhase(projectId, { name = "", afterPhaseId = null } = {}) {
     return mapSchedule(await request(`/api/projects/${projectId}/phases`, {
       method: "POST",
@@ -953,6 +979,8 @@ export function createApiStore() {
     removePlanPhase,
     setProposalStatus,
     getSchedule,
+    getEstimate,
+    overrideAssumption,
     createPhase,
     editPhase,
     deletePhase,

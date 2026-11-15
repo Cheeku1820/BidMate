@@ -175,4 +175,9 @@ def run(db: Session, job: Job) -> None:
         # price now, so a kill later in the loop keeps them. The job row
         # stays `running`; handlers.run marks it done at the end.
         db.commit()
+    # Market estimates have just turned some class averages into market
+    # estimates, so the ROM's disclosures no longer match what priced
+    # the lines. Regenerating is idempotent; this is a correction, not a
+    # duplicate (queue.enqueue_estimate).
+    queue.enqueue_estimate(db, project, job.requested_by, run_id=job.run_id)
     db.flush()

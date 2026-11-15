@@ -205,6 +205,12 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
         "labor_cost": labor,
         "total_cost": round(material + labor, 2),
         "symbol": spec.get("symbol", ""),
+        # Set by classification._mark_inferred when no legend on the set
+        # defines this tag. Only the model-classified path can carry it:
+        # the deterministic path below matches against the legend by
+        # construction, so an absent value there means "matched", not
+        # "unknown".
+        "classification_basis": spec.get("classification_basis"),
         "warning": warning,
     }
 

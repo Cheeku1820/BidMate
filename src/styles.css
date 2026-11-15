@@ -3391,6 +3391,13 @@ button {
 .plan-section { margin-top: 16px; }
 .plan-line .scope-row__head { flex-wrap: wrap; }
 .plan-line__stated { font-size: 12px; color: var(--plum); }
+
+/* The direction control. A persistent visible label, like every other
+   field in the product -- this one changes what the estimate prices,
+   so it is the last place for a placeholder standing in for a label. */
+.plan-line__direction { margin: 8px 0 10px; }
+.plan-line__select { width: auto; min-width: 200px; }
+.plan-line__directionhint { font-size: 12px; margin: 4px 0 0; }
 .plan-cite { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); margin-left: auto; }
 .plan-cite__link { display: inline-flex; align-items: center; gap: 3px; color: var(--blue); text-decoration: none; }
 .plan-cite__link:hover, .plan-cite__link:focus-visible { text-decoration: underline; }
@@ -3430,3 +3437,206 @@ button {
 .note-status--offered { background: var(--plum-tint); color: var(--plum); border-color: var(--plum-line); }
 .note-status--applied { background: var(--slate-tint); color: var(--slate); border-color: var(--slate-line); }
 .note-status--stale { background: var(--plum-tint); color: var(--plum); border-color: var(--plum-line); }
+
+/* ============================================================
+   The ROM estimate (docs/specs/rom-estimate.md).
+
+   Reuses --slate for counted and --amber for assumed; no new hex. The
+   choice of those two tokens is deliberate and is the same reasoning
+   noteVocabulary.js's colours follow: --blue, --green, --amber-as-a-
+   status and --red belong to the four review labels, and counted/
+   assumed is a different axis. --slate and --plum exist in this file
+   expressly to keep a second vocabulary from borrowing the first's
+   colours.
+
+   One wrinkle worth naming: --amber IS one of the four labels' hues
+   (Needs attention). It is safe here only because nothing on this
+   screen is a status pill — assumed rows never carry an icon from the
+   status set, never say "Needs attention", and always carry the word
+   "Assumed" plus a dashed left edge. If a status pill is ever added to
+   this screen, this choice has to be revisited.
+   ============================================================ */
+
+.est-wrap { padding: 24px; max-width: 1100px; margin: 0 auto; }
+.est-loading, .est-error { color: var(--ink-2); font-size: 14px; }
+.est-error { color: var(--red); }
+
+.est-doc {
+  background: var(--surface);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.est-head { padding: 20px 22px; border-bottom: 2px solid var(--ink-1); background: var(--paper-1); }
+.est-kicker {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 600;
+}
+.est-ptitle { font-size: 21px; font-weight: 650; margin: 6px 0 2px; }
+.est-psub { font-size: 13px; color: var(--ink-2); margin: 0; }
+.est-headrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.est-big { font-size: 30px; font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+.est-bignote {
+  font-size: 12px;
+  color: var(--ink-2);
+  text-align: right;
+  max-width: 280px;
+  line-height: 1.4;
+  margin: 0;
+}
+.est-empty {
+  margin: 14px 0 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  background: var(--paper-0);
+  border: 1px solid var(--line-1);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.est-section { border-bottom: 1px solid var(--line-1); }
+.est-sechead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 13px 22px;
+  background: var(--paper-0);
+  border-bottom: 1px solid var(--line-1);
+  flex-wrap: wrap;
+}
+.est-secname { font-size: 14px; font-weight: 650; margin: 0; }
+.est-secnum { color: var(--ink-3); margin-right: 4px; }
+.est-tally { font-size: 11.5px; color: var(--ink-2); margin: 0; }
+.est-tally b { font-weight: 600; color: var(--ink-1); }
+.est-sec-empty { padding: 12px 22px; font-size: 13px; color: var(--ink-3); margin: 0; }
+
+.est-table { width: 100%; border-collapse: collapse; }
+.est-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-1);
+  vertical-align: top;
+  font-size: 13.5px;
+}
+.est-table tr:last-child td { border-bottom: none; }
+.est-first { padding-left: 22px; width: 46%; }
+.est-title { display: block; }
+.est-src { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 3px; }
+.est-qty { white-space: nowrap; width: 16%; }
+.est-value { color: var(--ink-2); font-size: 13px; }
+.est-amt { padding-right: 22px; text-align: right; white-space: nowrap; width: 17%; }
+.est-origin { width: 14%; }
+
+/* The two origin tags. The word is the primary channel; hue is the
+   second, and the dashed edge below is the third.
+
+   Assumed is PLUM, not amber, and that is not a taste call. Amber is
+   the four review labels' "Needs attention" hue (`.pill--attention`
+   uses these exact three tokens), and counted/assumed is a different
+   axis on a document that has no approval step -- an amber tag reading
+   ASSUMED beside an amber pill reading Needs attention is how the four
+   labels quietly become five. Plum is the token pair the product
+   already reserves for a second vocabulary, for the same reason, on
+   note status (`.note-status--open`). */
+.est-tag {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.est-tag-counted { background: var(--slate-tint); color: var(--slate); border: 1px solid var(--slate-line); }
+.est-tag-assumed { background: var(--plum-tint); color: var(--plum); border: 1px solid var(--plum-line); }
+
+.est-row.est-assumed .est-first { border-left: 3px dashed var(--plum); padding-left: 19px; }
+.est-row.est-counted .est-first { border-left: 3px solid var(--slate-line); padding-left: 19px; }
+
+.est-unpriced { color: var(--ink-3); font-style: italic; font-size: 12.5px; }
+.est-removed { color: var(--plum); }
+
+.est-subtot { background: var(--paper-1); }
+.est-subtot td { font-weight: 650; font-size: 13.5px; border-bottom: none; }
+
+.est-qual { padding: 18px 22px; background: var(--plum-tint); }
+.est-qual-title { font-size: 13px; font-weight: 650; margin: 0 0 4px; }
+.est-qual-lead { font-size: 12.5px; color: var(--ink-2); margin: 0 0 10px; }
+.est-qual-list { margin: 0; padding-left: 19px; }
+.est-qual-list li { font-size: 12.5px; margin-bottom: 8px; line-height: 1.45; }
+.est-qual-found { display: block; }
+.est-qual-removed { display: block; color: var(--plum); font-weight: 600; margin-top: 2px; }
+.est-qual-where { display: block; color: var(--ink-3); margin-top: 2px; }
+
+.est-foot {
+  padding: 14px 22px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  background: var(--paper-1);
+  line-height: 1.5;
+}
+
+/* The override control. "I know this one" sits inside the origin cell
+   of an assumed row, so the affordance is adjacent to the tag that
+   explains why it is there. */
+.est-override-open {
+  display: block;
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.est-override-open:hover { color: var(--blue-dark, var(--blue)); }
+.est-override { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.est-override-label { font-size: 11px; color: var(--ink-2); flex-basis: 100%; }
+.est-override-input {
+  width: 84px;
+  font-size: 12.5px;
+  padding: 3px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.est-override-save, .est-override-cancel { font-size: 11.5px; padding: 3px 8px; }
+.est-override-error { flex-basis: 100%; font-size: 11px; color: var(--red); margin: 2px 0 0; }
+
+/* The not-ready banner. A ROM with costs and no stated assumptions
+   reads as fully counted, which is the one way this document can
+   overstate what it knows -- so it says so before the number. Amber,
+   not red: nothing is broken, the document is simply unfinished. */
+/* Amber here and nowhere else on this screen. This is a warning about
+   the DOCUMENT -- its disclosures have not been generated yet, so do
+   not hand it over -- not a tag on a line, so it is not the
+   counted/assumed axis borrowing a review hue. The origin tags above
+   are plum for exactly that reason. */
+.est-pending {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  background: var(--amber-tint);
+  border: 1px solid var(--amber-line);
+  border-left: 3px solid var(--amber);
+  border-radius: 6px;
+}
+.est-pending-head { margin: 0 0 2px; font-size: 13px; font-weight: 650; color: var(--amber); }
+.est-pending-body { margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
+
+.est-headtop { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.est-download { font-size: 12.5px; padding: 5px 10px; white-space: nowrap; }

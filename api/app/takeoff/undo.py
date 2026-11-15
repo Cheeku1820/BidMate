@@ -77,7 +77,7 @@ from app.takeoff.undo_apply import SCHEDULE_KINDS, apply as _apply
 # dispatcher in undo_apply.py (importing them the other way round would
 # be a cycle) and re-exported here so this stays the one list to read.
 REVERSIBLE = {"approve", "reject", "unreject", "edit", "delete", "bulk_approve", "scale", "labor_edit",
-              "material_price_edit", "supplier_quote_apply", "resolve", *SCHEDULE_KINDS}
+              "material_price_edit", "supplier_quote_apply", "resolve", "assumption_edit", *SCHEDULE_KINDS}
 
 # What undo_head() targets: a root mutation, or a live "redo" -- see the
 # module docstring for why "redo" has to be included.

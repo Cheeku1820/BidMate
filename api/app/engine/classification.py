@@ -286,7 +286,7 @@ def classify_run(
         try:
             result = llm.estimate(tags, full_context, location)
             return Classification(
-                specs_by_tag={i["tag"]: i for i in result["items"]},
+                specs_by_tag=_mark_inferred({i["tag"]: i for i in result["items"]}, sheets),
                 labor_rate=float(result["location_labor_rate"]),
                 material_factor=float(result["material_factor"]),
                 source="llm",
@@ -303,6 +303,39 @@ def classify_run(
         location_note=location_note,
         classified_tags={c.tag for c in clusters},
     )
+
+
+def _mark_inferred(specs: dict[str, dict], sheets: list[DetectedSheet]) -> dict[str, dict]:
+    """Tag every spec whose tag no legend on the set defines.
+
+    The distinction the ROM discloses is *matched* against *inferred*: a
+    tag the legend defines was looked up, and a tag it does not was
+    named from the surrounding schedule text and the model's own
+    knowledge of how electrical drawings are drafted. Both are useful;
+    only one is a reading of the documents.
+
+    Deliberately keyed off the parsed legend rather than off the
+    model's own `confidence` field. Confidence decides the review status
+    and is never shown (ROADMAP invariant 7); a legend row either exists
+    or it does not, which is a fact about the drawings that an estimator
+    can go and check -- and checking is the whole point of printing a
+    basis.
+    """
+    # Only `kind == "symbol"` counts as a definition. An abbreviation
+    # block entry ("WP" = weatherproof) modifies a device rather than
+    # naming one, and the deterministic path above already treats the two
+    # differently -- reading an abbreviation as a match here would call a
+    # tag "matched" against a row that never said what it is.
+    defined = {
+        str(entry.symbol or "").strip().upper()
+        for sheet in sheets
+        for entry in (sheet.legend or [])
+        if getattr(entry, "kind", None) == "symbol"
+    }
+    for tag, spec in specs.items():
+        if str(tag).strip().upper() not in defined:
+            spec["classification_basis"] = "inferred"
+    return specs
 
 
 def classify_cluster(cluster: DeviceCluster, sheets: list[DetectedSheet]) -> ClassifiedItem:

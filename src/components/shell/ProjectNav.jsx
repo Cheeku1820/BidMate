@@ -112,7 +112,7 @@ const GROUPS = [
       { slug: "labor", label: "Labor", built: true, Icon: Users },
       { slug: "pricing", label: "Material pricing", built: true, Icon: DollarSign },
       { slug: "schedule", label: "Phases and schedule", built: true, Icon: CalendarRange },
-      { slug: "estimate", label: "Estimate summary", built: false, Icon: Calculator },
+      { slug: "estimate", label: "Estimate summary", built: true, Icon: Calculator },
     ],
   },
   {

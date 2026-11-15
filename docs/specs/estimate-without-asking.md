@@ -389,6 +389,14 @@ the row. The sort-and-filter control stays in slice 3.
 A new generator writing `Item` rows with `origin = "assumed"` for work
 never counted, each paired with an `Assumption` row that discloses it.
 
+**Every case writes the same thing: one companion allowance line,**
+attached to a real sheet, carrying money the counted lines do not. The
+counted line is read and never rewritten — it keeps saying exactly what
+was counted, and the allowance sits beside it saying what we think the
+gap costs. Writing a guessed cost onto the counted item instead would
+overwrite what the engine read, and `merge.py` would fight it on every
+subsequent run.
+
 **Every guessed quantity is relative to what this project itself
 counted, never an absolute constant.** A sheet that failed to read is
 guessed from its sibling sheets' counts; a missing system is a share of
@@ -411,11 +419,18 @@ today and identifying symbols, resolving scale, and counting are not.
    only one where quantity is solid and money is not.
 2. **A sheet with no confirmed scale carrying measured items.** Today
    these are *Missing information* and contribute nothing to the number.
-   Assume a scale from the sheet's siblings or the firm's rule, basis
+   Assume a length from the sheet's siblings or the firm's rule, basis
    `scaled`, and disclose it. **The item keeps its `missing` status** —
    Export still blocks until a person sets the scale, which is the
    firewall working exactly as designed. What changes is that the ROM
    stops being silently short while that is outstanding.
+
+   **`Sheet.scale` is never written.** A stored scale is
+   indistinguishable from a confirmed one, which would turn a guess into
+   evidence and release every blocked item on the sheet. This is the most
+   dangerous write in the design and the answer is simply not to make it:
+   the money rides on a companion line, and the sheet stays unscaled
+   until a person says otherwise.
 3. **A sheet counted implausibly thin** relative to its siblings. Top it
    up to the sibling median, `class_average`. The threshold is a product
    question — see *left to the builder* — and this case shares its whole

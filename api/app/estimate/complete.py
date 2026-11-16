@@ -51,8 +51,8 @@ from sqlalchemy.orm import Session as DbSession
 
 from app.estimate import complete_copy as copy
 from app.estimate import building_type, siblings
-from app.takeoff import confidence
-from app.takeoff.models import Project, ScopeStatement, Sheet
+from app.takeoff import confidence, undo
+from app.takeoff.models import Action, Item, Project, ReviewStatus, ScopeStatement, Sheet
 from app.takeoff.totals import ResolvedLine, resolved_lines
 
 # A sheet whose scale is absent, or which carries two labels and so has
@@ -159,8 +159,29 @@ class _ClassAverage:
     def __init__(self, lines: list[ResolvedLine]) -> None:
         self._by_system: dict[str, tuple[Decimal, Decimal, Decimal]] = {}
         total_material = total_hours = total_qty = Decimal("0")
+        # Case 5 takes a share of *all* the counted electrical work, so
+        # this one deliberately includes measured runs -- conduit is
+        # counted electrical work and a fire alarm allowance sized
+        # against a job's devices alone would understate it. Kept
+        # separate from the per-unit figures above, which must count
+        # devices only.
+        counted_total = Decimal("0")
+        for line in lines:
+            if line.priced and line.item.origin == "counted":
+                counted_total += line.total_cost
+        self._counted_total = counted_total
         for line in lines:
             if not line.priced or line.item.origin != "counted":
+                continue
+            # Devices only. Feet and devices are not the same quantity,
+            # and summing them into one denominator is a per-unit figure
+            # of nothing: on a job with two 60-device sheets at $6,000
+            # each, adding 10,000 ft of conduit at $10,000 dropped the
+            # per-device average from $100 to $1.52 and an empty-sheet
+            # allowance from $6,000 to $130. `siblings.plan_sheet_counts`
+            # already excludes measured lines from its own counts for
+            # exactly this reason; the two had to agree.
+            if _measured(line):
                 continue
             qty = Decimal(line.item.quantity or 0)
             if qty <= 0:
@@ -191,8 +212,9 @@ class _ClassAverage:
 
     @property
     def total_cost(self) -> Decimal:
-        material, _, _ = self._whole_job
-        return material
+        """Every dollar this project counted and priced, measured runs
+        included. Case 5's share base."""
+        return self._counted_total
 
 
 def _money(per_unit: tuple[Decimal, Decimal], quantity: Decimal,
@@ -358,7 +380,15 @@ def _unscaled(lines: list[ResolvedLine], sheets: dict[uuid.UUID, Sheet],
         if sheet is None:
             continue
         if (sheet.scale or "").strip().lower() in NO_SINGLE_SCALE:
-            by_sheet.setdefault(sheet.id, []).append(line)
+            # Only runs that are NOT already in the number. A measured
+            # row on an unscaled sheet can still resolve a price -- its
+            # `missing` status does not keep it out of `rom_totals`,
+            # which applies no status filter by design -- and an
+            # allowance covering it bills the same footage twice. The
+            # case is "measured runs that cannot convert to feet", and a
+            # priced one evidently did.
+            if not line.priced:
+                by_sheet.setdefault(sheet.id, []).append(line)
         elif line.priced:
             confirmed_cost += line.material_cost
             confirmed_hours += line.labor_hours
@@ -391,7 +421,8 @@ def _unscaled(lines: list[ResolvedLine], sheets: dict[uuid.UUID, Sheet],
     return rows
 
 
-def _against_siblings(counts: list[tuple[str, int]], sheets: dict[uuid.UUID, Sheet],
+def _against_siblings(counts: list[tuple[str, int]], with_items: set[str],
+                      sheets: dict[uuid.UUID, Sheet],
                       averages: _ClassAverage, labor_rate: Decimal) -> list[dict]:
     """Cases 3 and 4 -- a sheet thin or empty against its siblings.
 
@@ -428,6 +459,14 @@ def _against_siblings(counts: list[tuple[str, int]], sheets: dict[uuid.UUID, She
             continue
 
         empty = counted == 0
+        # A sheet with zero DEVICES but real counted work on it -- a
+        # riser, a single-line diagram, a sheet of measured feeder runs
+        # -- was read correctly and has no devices to find. Case 4's
+        # definition is "produced no items at all"; this produced items.
+        # Guessing devices onto it is the fabrication the slice exists
+        # to prevent, and the thin comparison is meaningless there too.
+        if empty and number in with_items:
+            continue
         words = copy.EMPTY if empty else copy.THIN
         # A page that rendered or read only partly is a named
         # adjustment, not a different kind of guess -- the count is over
@@ -491,6 +530,44 @@ def _document_mentions(db: DbSession, project: Project,
     return found
 
 
+def _covered_systems(lines: list[ResolvedLine]) -> set[str]:
+    """Which guessable systems this job demonstrably counted work in.
+
+    **Reads the item's own name, not only its system**, and that is the
+    whole point of the function. The classifier has no "Fire alarm"
+    system at all -- `engine.contracts.RESOLVE_SYSTEMS` is Lighting,
+    Power, Distribution, Low voltage, Life safety, Unknown -- so a
+    counted smoke detector classifies as *Life safety*. Comparing system
+    strings therefore reported "no fire alarm work was found on this
+    set" on every project in existence, including ones carrying eight
+    counted smoke detectors, and added an allowance on top of work that
+    was already in the number.
+
+    This is the same trap `generate_scope.StandardExclusion.vocabulary`
+    documents from the other direction: "a counted fire-alarm device may
+    classify as 'Life safety', but so do exit signs, which ARE Division
+    26 work this estimate includes". One vocabulary, read against both
+    the system and the name, is what keeps the two cases apart -- a
+    smoke detector covers fire alarm, an exit sign does not.
+    """
+    covered: set[str] = set()
+    for line in lines:
+        if line.item.origin != "counted":
+            continue
+        text = " ".join([
+            line.item.system or "", line.item.name or "",
+            line.item.category or "", line.item.description or "",
+        ]).lower()
+        for system, words in SYSTEM_VOCABULARY.items():
+            if system.lower() in text or any(word in text for word in words):
+                covered.add(system)
+        # An exact system match still counts on its own, for the systems
+        # the classifier does name (Life safety, Low voltage).
+        if line.item.system:
+            covered.add(line.item.system)
+    return covered
+
+
 def _system_allowances(db: DbSession, project: Project, lines: list[ResolvedLine],
                        sheets: dict[uuid.UUID, Sheet], averages: _ClassAverage,
                        labor_rate: Decimal) -> list[dict]:
@@ -513,9 +590,7 @@ def _system_allowances(db: DbSession, project: Project, lines: list[ResolvedLine
     if counted_cost <= 0:
         return []
 
-    counted_systems = {
-        line.item.system for line in lines if line.item.origin == "counted"
-    }
+    counted_systems = _covered_systems(lines)
 
     mentions = _document_mentions(db, project, sheets)
 
@@ -647,7 +722,276 @@ def completion_lines(db: DbSession, project: Project, *,
     return [
         *_unidentified(lines, sheets, averages, labor_rate),
         *_unscaled(lines, sheets, labor_rate),
-        *_against_siblings(siblings.plan_sheet_counts(db, project), sheets,
+        *_against_siblings(siblings.plan_sheet_counts(db, project),
+                           siblings.sheets_with_items(db, project), sheets,
                            averages, labor_rate),
         *_system_allowances(db, project, lines, sheets, averages, labor_rate),
+    ]
+
+
+# --- writing ---------------------------------------------------------------
+#
+# Deliberately NOT routed through `merge_sheet`, even though completion
+# is engine output and that is the one write path for engine output. Its
+# merge key is `(sheet_number, source_tag)`, and a companion has no
+# symbol tag to key on -- inventing one would fabricate a cluster that
+# `resolve_apply.py` would then offer to apply to "every one like this"
+# across the set. What this path borrows instead is `merge.py`'s two
+# *rules*, which are the part that matters: never overwrite a person's
+# judgment, and never resurrect what a person deleted.
+
+# Where a companion records which gap it covers. `evidence` is already
+# the item's "why should I believe this" field and is already JSONB, so
+# no column is needed -- and the spec's own description of a completion
+# row is that it shows why the work is believed to be there *in place
+# of* an evidence crop.
+CASE_KEY = "completion_case"
+# The system this companion was written FOR, stored beside the case.
+#
+# Deliberately not read back off `Item.system`, which is the bug this
+# key exists to fix: identity used the live column, so an estimator
+# moving a Power allowance to Lighting made the next run's Power
+# identity unmatched and a second row appeared beside theirs. Worse, a
+# deletion recorded the edited system, so the identity it suppressed was
+# not the identity the next run proposed and the allowance came back
+# from the dead. Identity cannot include a field an estimator can edit
+# -- the same argument `write._identity` makes for leaving `basis` out.
+SYSTEM_KEY = "completion_system"
+# The `version` this module last wrote. What tells the engine's own
+# rewrite from a person's edit, now that a rewrite bumps `version` like
+# every other write path does (`app.takeoff.concurrency`).
+ENGINE_VERSION_KEY = "engine_version"
+
+
+def _identity(sheet_id, case: str | None, system: str | None) -> tuple:
+    """What makes one companion the same companion across runs.
+
+    The sheet it sits on, the gap it covers, and the system it was
+    written for. Deliberately not the name (an estimator may retitle
+    it), not the amount (that is what a re-run is for), and not the
+    confidence.
+    """
+    return (str(sheet_id), case, system)
+
+
+def _identity_of(item) -> tuple:
+    """Read entirely out of `evidence`, never off the live columns, so an
+    estimator's edit cannot move a row's identity out from under the
+    engine."""
+    evidence = item.evidence if isinstance(item.evidence, dict) else {}
+    return _identity(item.sheet_id, evidence.get(CASE_KEY), evidence.get(SYSTEM_KEY))
+
+
+def _untouched(item) -> bool:
+    """Whether the engine still owns this row.
+
+    Approved, rejected, no longer `ready`, or at a `version` this module
+    did not write: any one of them and the row is a person's. It is
+    skipped rather than rewritten, and it is not deleted either.
+
+    The version test reads the engine's own recorded version rather than
+    `version == 1`. It has to: a reprice bumps `version` so a client
+    holding a stale one is refused, and comparing against 1 would make
+    the engine's first rewrite look like somebody's edit and freeze the
+    row forever -- never updated again, never removed when its gap
+    closed.
+    """
+    evidence = item.evidence if isinstance(item.evidence, dict) else {}
+    return (
+        item.status is ReviewStatus.READY
+        and item.approved_by_user_id is None
+        and item.rejected_at is None
+        and item.version == evidence.get(ENGINE_VERSION_KEY)
+    )
+
+
+def _deliberately_deleted(db: DbSession, project: Project) -> set[tuple]:
+    """The identities a person deleted and has not undone.
+
+    Deletion is a hard row delete, so the items table cannot tell "an
+    estimator deleted this" from "this never existed" -- but the action
+    log can, and it is the system of record for exactly this question.
+    The same walk `merge._deliberately_deleted` does, over the same
+    liveness rule (`undo._live`), keyed on this module's identity rather
+    than on the symbol tag.
+
+    A set rather than a count, unlike merge's: a companion identity is
+    unique per project by construction, so one deletion suppresses one
+    row and there is no "three untagged items, one deleted" case.
+    """
+    rows = undo._action_summaries(db, project.id)
+    live = undo._live(rows)
+    ids = [r.id for r in rows if r.kind == "delete" and live[r.id]]
+    if not ids:
+        return set()
+
+    deleted: set[tuple] = set()
+    for action in db.scalars(select(Action).where(Action.id.in_(ids))):
+        snapshot = action.before or {}
+        if snapshot.get("origin") != "assumed":
+            continue
+        evidence = snapshot.get("evidence")
+        evidence = evidence if isinstance(evidence, dict) else {}
+        case = evidence.get(CASE_KEY)
+        if case is None:
+            continue
+        # Both halves out of `evidence`, same as `_identity_of`. Reading
+        # the system off the snapshot's live column meant a deletion
+        # after an edit suppressed the wrong identity and the allowance
+        # was resurrected.
+        deleted.add(_identity(snapshot.get("sheet_id"), case, evidence.get(SYSTEM_KEY)))
+    return deleted
+
+
+def write_completion(db: DbSession, project: Project) -> int:
+    """Write this project's companion allowances. Returns how many.
+
+    Three outcomes per existing companion, and the asymmetry between
+    them is the whole design:
+
+    - **A person has touched it** -- approved, edited, rejected. Left
+      exactly as it is, and the run's matching line is dropped rather
+      than written beside it.
+    - **The engine still owns it and the gap is still there.** Rewritten
+      in place, so a changed class average moves the allowance.
+    - **The engine still owns it and the gap has closed** -- somebody
+      classified the symbol, set the scale, counted the sheet. Removed,
+      because otherwise the real price lands beside a guess for the same
+      work and the number double-counts it.
+    """
+    proposed = {_identity(line["sheet_id"], line["case"], line["system"]): line
+                for line in completion_lines(db, project)}
+
+    existing = list(db.scalars(
+        select(Item)
+        .where(Item.project_id == project.id, Item.origin == "assumed")
+        .order_by(Item.id)
+        .with_for_update()
+    ))
+
+    written = 0
+    for item in existing:
+        identity = _identity_of(item)
+        if not _untouched(item):
+            # Theirs. Drop the line that matched it so it is not written
+            # a second time beside their version.
+            proposed.pop(identity, None)
+            continue
+        line = proposed.pop(identity, None)
+        if line is None:
+            db.delete(item)
+            continue
+        _apply(item, line)
+        written += 1
+
+    for identity in _deliberately_deleted(db, project):
+        proposed.pop(identity, None)
+
+    for line in proposed.values():
+        db.add(_new_item(project, line))
+        written += 1
+
+    db.flush()
+    return written
+
+
+def _new_item(project: Project, line: dict) -> Item:
+    item = Item(
+        id=uuid.uuid4(), project_id=project.id, sheet_id=line["sheet_id"],
+        # No symbol tag, by the argument above, and no symbol glyph
+        # either: nothing was read off the page, so there is no shape to
+        # draw. `x`/`y`/`path`/`placements` stay null for the same
+        # reason, which is why `BlueprintCanvas` gains a coordinate
+        # guard.
+        symbol="", source_tag="",
+        name=line["name"], description="", system=line["system"],
+        category=line["category"], quantity=line["quantity"], unit=line["unit"],
+        status=ReviewStatus.READY, origin="assumed",
+    )
+    # `version` defaults to 1 on an unflushed row, and a brand-new row
+    # has nothing to bump from.
+    item.version = 1
+    _apply(item, line, fresh=True)
+    return item
+
+
+def _apply(item: Item, line: dict, *, fresh: bool = False) -> None:
+    """Set every field this module owns. Deliberately does not touch
+    `notes`, `phase_id`, or any approval/rejection column -- the same
+    fields `merge._overwrite` leaves alone, for the same reason: they
+    are the estimator's, never the engine's.
+
+    Bumps `version` on a rewrite, exactly as `merge._overwrite` does.
+    Without it a reviewer holding the row at $100 could approve it after
+    a reprice moved it to $564 and get no stale-version refusal
+    (`app.takeoff.concurrency`), which is the one protection every other
+    single-item write path provides. The engine records the version it
+    wrote so its own bump does not read as somebody's edit -- see
+    `_untouched`.
+    """
+    if not fresh:
+        item.version += 1
+    item.name = line["name"]
+    item.system = line["system"]
+    item.category = line["category"]
+    item.quantity = line["quantity"]
+    item.unit = line["unit"]
+    item.origin = "assumed"
+    item.material_cost = line["material_cost"]
+    item.labor_hours = line["labor_hours"]
+    item.labor_cost = line["labor_cost"]
+    item.total_cost = line["total_cost"]
+    item.confidence = line["confidence"]
+    item.confidence_reasons = line["confidence_reasons"]
+    item.evidence = {
+        # In place of an evidence crop: why the work is believed to be
+        # there, and where to look.
+        "detail": line["found"],
+        "sheet": line["sheet_number"],
+        "has_image": False,
+        # The identity triple's two mutable halves, frozen here so an
+        # estimator's later edit cannot move them, plus the version this
+        # write produced.
+        CASE_KEY: line["case"],
+        SYSTEM_KEY: line["system"],
+        ENGINE_VERSION_KEY: item.version,
+    }
+
+
+def completion_assumptions(db: DbSession, project: Project, *,
+                           exclude: set[uuid.UUID] | None = None) -> list[dict]:
+    """One disclosure per companion, in the shape the three existing
+    generators return, so `validate_assumption` accepts them unchanged.
+
+    **An allowance without this is the anti-goal the spec names first:**
+    "an assumed number that does not say it is assumed". The whole
+    licence to add money nobody counted comes from the disclosure, so
+    these are built from the same lines the items were written from
+    rather than from the items -- one source, no way to drift.
+    """
+    return [
+        {
+            "section": "takeoff",
+            "subject_kind": "sheet",
+            "subject_id": line["sheet_id"],
+            # Two companions can share a sheet (an unidentified cluster
+            # and an unscaled run), and `write._identity` is
+            # (section, subject, subject_ref, title) -- so the case goes
+            # in `subject_ref` to keep them from collapsing into one
+            # disclosure the way `generate_cost` puts its kind there.
+            "subject_ref": line["case"],
+            "basis": line["basis"],
+            "title": line["title"],
+            "found": line["found"],
+            "why": line["why"],
+            # An `Assumption` has no `fix` column -- its four fields are
+            # found/why/basis/where. The completion line's "what to
+            # check" sentence is appended to `where`, which is the field
+            # that already answers "where do I go", rather than being
+            # dropped.
+            "where": f"{line['where']} {line['fix']}",
+            "origin": "assumed",
+            "source": "engine",
+        }
+        for line in completion_lines(db, project, exclude=exclude)
     ]

@@ -58,6 +58,13 @@ export const COLUMNS = [
     // unscored row reads as absent, never as a low score -- "nobody
     // scored this" and "this is a 1" are different claims.
     render: (item) => (item.confidence ? `${item.confidence} of 10` : NONE),
+    // A numeric sort key, because the shared string comparator sorted
+    // "10 of 10" before "3 of 10" and put the absent mark "—" ahead of
+    // every scored row ascending. `null` means unscored, and the table's
+    // comparator puts those last in BOTH directions: "nobody has scored
+    // this" is not a low score, and an item from before the column
+    // existed must not outrank a line somebody measured.
+    sortValue: (item) => (item.confidence ?? null),
   },
   { key: "name", label: "Item", align: "left", render: (item) => item.name },
   { key: "description", label: "Description", align: "left", render: (item) => item.description || NONE },

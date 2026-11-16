@@ -22,7 +22,7 @@ from __future__ import annotations
 from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session as DbSession
 
-from app.estimate import generate_cost, generate_scope, generate_takeoff
+from app.estimate import complete, generate_cost, generate_scope, generate_takeoff
 from app.estimate.basis import validate_assumption
 from app.estimate.exclusions import excluded_from_rows
 from app.takeoff.models import Assumption, Project
@@ -88,6 +88,14 @@ def generate(db: DbSession, project: Project) -> list[dict]:
     produced = (
         scope
         + generate_takeoff.takeoff_assumptions(db, project, exclude=exclude)
+        # The completion pass's own disclosures. These describe the
+        # companion allowance *items* `write_completion` wrote, and they
+        # are not optional: an allowance carrying money with no
+        # disclosure beside it is the first anti-goal
+        # estimate-without-asking.md names -- "an assumed number that
+        # does not say it is assumed". The whole licence to add money
+        # nobody counted rests on this list.
+        + complete.completion_assumptions(db, project, exclude=exclude)
         + generate_cost.labor_assumptions(db, project, exclude=exclude)
         + generate_cost.material_assumptions(db, project, exclude=exclude)
     )
@@ -118,6 +126,18 @@ def regenerate(db: DbSession, project: Project) -> int:
         text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"),
         {"key": str(project.id)},
     )
+
+    # The companion allowances, before the disclosures that describe
+    # them. Inside the lock above, because this writes `Item` rows and
+    # two estimate jobs for one project can be in flight at once; and
+    # *before* `generate`, because `completion_assumptions` has to
+    # describe items that exist.
+    #
+    # Ordering note worth keeping: the completion pass is idempotent
+    # against its own output -- every case reads only `origin ==
+    # "counted"` lines -- so running it ahead of the generators cannot
+    # make the second run guess from the first run's guesses.
+    complete.write_completion(db, project)
 
     rows = generate(db, project)
 

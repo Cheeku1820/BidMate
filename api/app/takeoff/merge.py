@@ -331,9 +331,28 @@ def merge_sheet(db, *, project, sheet, rows, ai_reading) -> MergeCounts:
     # rather than one statement in id order can deadlock against
     # bulk.bulk_approve's single ascending-id lock across the same
     # items.
+    # Counted rows only. A companion allowance
+    # (`app.estimate.complete`, `origin = "assumed"`) is not engine
+    # output in the sense this function means: it is written by the
+    # completion pass, keyed on its own identity, and its gap is
+    # re-evaluated there on every run.
+    #
+    # Including them was a judgment-loss bug with two heads. A companion
+    # carries no `source_tag`, so it landed in the `(sheet_number, "")`
+    # bucket, where either (a) nothing matched it and the leftover sweep
+    # at the bottom of this function deleted every unapproved one -- so
+    # a plain re-run destroyed an estimator's edited or rejected
+    # allowance and the next completion pass recreated it as if nothing
+    # had happened -- or (b) an untagged incoming engine row matched it
+    # and `_overwrite` rewrote a guessed allowance as a counted device.
+    # Both violate CLAUDE.md's "the engine never discards a person's
+    # judgment".
     existing = list(
         db.scalars(
-            select(Item).where(Item.sheet_id == sheet.id).order_by(Item.id).with_for_update()
+            select(Item)
+            .where(Item.sheet_id == sheet.id, Item.origin == "counted")
+            .order_by(Item.id)
+            .with_for_update()
         )
     )
     # Only this sheet's entry -- a deletion on another sheet must not be

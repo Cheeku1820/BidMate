@@ -486,3 +486,117 @@ def test_an_inferred_building_type_is_enough_to_run_the_case(db, project):
     _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
 
     assert _case(completion_lines(db, project), "system")
+
+
+# --- Whole-branch review findings 4, 5, 6 ---------------------------------
+
+def test_a_long_measured_run_does_not_collapse_the_per_device_average(db, project):
+    """Review finding 4. `_ClassAverage`'s denominator must count devices
+    only. Feet and devices are not the same quantity, and mixing them
+    makes 10,000 ft of conduit divide the per-device cost by a hundred --
+    an empty-sheet allowance that should be $6,000 came out at $130."""
+    for number in ("E-1.0", "E-1.1"):
+        _item(db, project, _sheet(db, project, number=number), quantity=60, cost="6000",
+              name="20A duplex receptacle")
+    _sheet(db, project, number="E-1.2")
+
+    [before] = _case(completion_lines(db, project), "empty")
+
+    scaled = _sheet(db, project, number="E-1.3", scale='1/8" = 1\'-0"')
+    _item(db, project, scaled, quantity=10000, unit="ft", path=[[0, 0], [99, 99]],
+          cost="10000", name="3/4\" EMT")
+
+    [after] = _case(completion_lines(db, project), "empty")
+    assert after["material_cost"] == before["material_cost"]
+
+
+def test_a_measured_run_that_already_priced_gets_no_unscaled_allowance(db, project):
+    """Review finding 5. A row on an unscaled sheet that nonetheless
+    resolved a price is already in `rom_totals` -- `missing` status does
+    not keep it out. An allowance covering it bills the same footage
+    twice."""
+    sheet = _sheet(db, project, number="E-2.1", scale="")
+    _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]],
+          status=ReviewStatus.MISSING, cost="720", name="3/4\" EMT")
+    scaled = _sheet(db, project, number="E-1.0", scale='1/8" = 1\'-0"')
+    _item(db, project, scaled, quantity=300, unit="ft", path=[[0, 0], [20, 20]],
+          cost="900", name="3/4\" EMT")
+
+    assert _case(completion_lines(db, project), "unscaled") == []
+
+
+def test_an_unpriced_run_on_the_same_unscaled_sheet_still_gets_one(db, project):
+    """The other half of finding 5: narrowing to unpriced rows must not
+    turn case 2 off."""
+    sheet = _sheet(db, project, number="E-2.1", scale="")
+    _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]],
+          status=ReviewStatus.MISSING, cost="0", name="3/4\" EMT")
+    scaled = _sheet(db, project, number="E-1.0", scale='1/8" = 1\'-0"')
+    _item(db, project, scaled, quantity=300, unit="ft", path=[[0, 0], [20, 20]],
+          cost="900", name="3/4\" EMT")
+
+    assert len(_case(completion_lines(db, project), "unscaled")) == 1
+
+
+def test_counted_fire_alarm_devices_suppress_the_fire_alarm_allowance(db, project):
+    """Review finding 6, and the worst of them. The classifier has no
+    "Fire alarm" system -- `engine.contracts.RESOLVE_SYSTEMS` puts a
+    smoke detector under "Life safety" -- so comparing system strings
+    meant case 5 claimed no fire alarm work was found on EVERY project,
+    including ones carrying counted smoke detectors.
+
+    This is the same trap `generate_scope.StandardExclusion.vocabulary`
+    already documents: "a counted fire-alarm device may classify as
+    'Life safety', but so do exit signs". The absence check has to read
+    the item's own name, not only its system."""
+    project.building_type, project.building_type_source = "school", "estimator"
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+    _item(db, project, sheet, quantity=8, cost="1000", system="Life safety",
+          name="Smoke detector")
+
+    assert not [l for l in completion_lines(db, project)
+                if l["case"] == "system" and l["system"] == "Fire alarm"]
+
+
+def test_an_exit_sign_does_not_pass_for_fire_alarm_work(db, project):
+    """The inverse. Exit signs classify as Life safety too, and they ARE
+    Division 26 work this estimate includes -- but they are not fire
+    alarm devices, so they must not suppress that allowance."""
+    project.building_type, project.building_type_source = "school", "estimator"
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+    _item(db, project, sheet, quantity=12, cost="900", system="Life safety",
+          name="Exit sign")
+
+    assert [l for l in completion_lines(db, project)
+            if l["case"] == "system" and l["system"] == "Fire alarm"]
+
+
+def test_counted_life_safety_work_suppresses_its_own_allowance(db, project):
+    project.building_type, project.building_type_source = "school", "estimator"
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+    _item(db, project, sheet, quantity=12, cost="900", system="Life safety",
+          name="Exit sign")
+
+    assert not [l for l in completion_lines(db, project)
+                if l["case"] == "system" and l["system"] == "Life safety"]
+
+
+def test_a_sheet_carrying_only_measured_runs_is_not_an_empty_sheet(db, project):
+    """Found while fixing review finding 4. A riser or single-line sheet
+    can carry real counted work and zero *devices*, and case 4's own
+    definition is "produced no items at all" -- read failed, render
+    failed, or counting returned nothing. Topping such a sheet up to its
+    siblings' device median invents devices on a sheet that was read
+    correctly and has none."""
+    for number in ("E-1.0", "E-1.1"):
+        _item(db, project, _sheet(db, project, number=number), quantity=60, cost="6000",
+              name="20A duplex receptacle")
+    riser = _sheet(db, project, number="E-1.3", scale='1/8" = 1\'-0"')
+    _item(db, project, riser, quantity=10000, unit="ft", path=[[0, 0], [99, 99]],
+          cost="10000", name="3/4\" EMT")
+
+    assert not [l for l in completion_lines(db, project)
+                if l["case"] in ("thin", "empty") and l["sheet_number"] == "E-1.3"]

@@ -308,28 +308,53 @@ def _grounded_or_fallback(raw_warning, sheet_number: str, valid_sheet_numbers: s
     return fallback_warning(tag, quantity, sheet_number, warning["reason"]), True
 
 
-def _confidence(raw) -> int | None:
-    """The engine's 1-10 score, or None.
+# The ceiling the engine may write. 10 is reserved for a line a person
+# approved (`app.takeoff.confidence.UNAPPROVED_CEILING`), and the engine
+# never approves anything -- so no payload, whatever it claims, buys a
+# 10 through this path. Mirrored rather than imported for the reason the
+# FEET_PER_DEVICE comment in `generate_takeoff` gives: this module is
+# reached from the API process, and the two are kept honest by test.
+_ENGINE_CEILING = 9
 
-    `ck_items_confidence` closes the range at the database too, so a
-    value outside it would fail the whole sheet's merge rather than one
-    row. Refusing it here instead leaves the column NULL -- an empty bar
-    and a line that sorts last, which is recoverable, where a failed
-    merge loses every other row on the sheet with it.
+
+def _confidence(raw, reasons: list[str] | None) -> int | None:
+    """The engine's 1-9 score, or None.
+
+    Refused outright when `reasons` is empty, and that is the important
+    half. A score is admissible on the wire *only* because it explains
+    itself (`app.takeoff.confidence` builds it as a sum of named
+    sentences); a bare number with nothing behind it is precisely the
+    unexplained confidence figure `product-spec.md` §3 bans and the one
+    ROADMAP invariant 7 was narrowed around. An unexplainable number on
+    the bar is worse than an empty bar, because the empty bar is honest.
+
+    Clamped to 9 rather than refused above it: the top of the scale
+    means "a person checked this", which is what keeps approval worth
+    doing, and an engine payload claiming a 10 is wrong about its own
+    authority rather than wrong about the row.
+
+    `ck_items_confidence` closes the range at the database too, so an
+    out-of-range value would otherwise fail the whole sheet's merge
+    rather than one row. Refusing it here leaves the column NULL -- an
+    empty bar on one line, which is recoverable, where a failed merge
+    loses every other row on the sheet with it.
     """
+    if not reasons:
+        return None
     try:
         value = int(raw)
     except (TypeError, ValueError):
         return None
-    return value if 1 <= value <= 10 else None
+    if value < 1:
+        return None
+    return min(value, _ENGINE_CEILING)
 
 
 def _confidence_reasons(raw) -> list[str] | None:
-    """The sentences behind the score. The score is only admissible
-    because these exist (`app.takeoff.confidence`), so a score that
-    arrives without them is still stored -- the bar is useful and the
-    reasons are what the tooltip adds -- but anything that is not a list
-    of non-empty strings is dropped rather than rendered."""
+    """The sentences behind the score, or None.
+
+    Anything that is not a list of non-empty strings is dropped -- and
+    dropping them drops the score with them, see `_confidence`."""
     if not isinstance(raw, list):
         return None
     reasons = [str(r).strip() for r in raw if str(r or "").strip()]
@@ -419,6 +444,7 @@ def map_payload(payload: dict, valid_sheet_numbers: set[str] | None = None) -> M
             warning, sheet_number, grounded_numbers, str(raw.get("tag") or ""), raw.get("quantity") or 0
         )
         fallback_count += fell_back
+        _reasons = _confidence_reasons(raw.get("confidence_reasons"))
         items.append({
             "sheet_key": key,
             "symbol": str(raw.get("symbol") or "") or infer_symbol(name, system),
@@ -458,8 +484,8 @@ def map_payload(payload: dict, valid_sheet_numbers: set[str] | None = None) -> M
             # `classification_basis` above takes -- an unrecognized
             # value is not stored under a vocabulary that does not
             # cover it.
-            "confidence": _confidence(raw.get("confidence")),
-            "confidence_reasons": _confidence_reasons(raw.get("confidence_reasons")),
+            "confidence": _confidence(raw.get("confidence"), _reasons),
+            "confidence_reasons": _reasons,
             "warning": item_warning,
             "evidence": {
                 "detail": f"Counted from the drawing at {n_places} location{'s' if n_places != 1 else ''}",

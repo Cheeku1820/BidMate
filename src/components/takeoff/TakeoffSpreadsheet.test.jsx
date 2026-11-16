@@ -215,3 +215,41 @@ describe("a guessed row", () => {
     expect(screen.getByText("Ready to review")).toBeInTheDocument();
   });
 });
+
+describe("sorting the confidence column", () => {
+  /* Review finding 9, at the table level: the behaviour an estimator
+     actually sees when they click the Confidence header. */
+  const scored = (id, confidence) => ({
+    id, sheetId: "s1", name: `Item ${id}`, description: "", system: "Power",
+    quantity: 1, unit: "ea", status: "ready", notes: "", rejected: false,
+    warnings: [], version: 1, origin: "counted", confidence,
+    confidenceReasons: confidence ? ["Counted off the drawing"] : null,
+  });
+
+  const names = () =>
+    Array.from(document.querySelectorAll("tbody th[scope=row]")).map((el) => el.textContent);
+
+  it("puts an unscored row last ascending", async () => {
+    context.snapshot.items = [scored("a", 3), scored("b", null), scored("c", 9)];
+    renderSheet();
+    await userEvent.click(await screen.findByRole("button", { name: /confidence/i }));
+    expect(names()).toEqual(["Item a", "Item c", "Item b"]);
+  });
+
+  it("puts an unscored row last descending too", async () => {
+    context.snapshot.items = [scored("a", 3), scored("b", null), scored("c", 9)];
+    renderSheet();
+    const header = await screen.findByRole("button", { name: /confidence/i });
+    await userEvent.click(header);
+    await userEvent.click(header);
+    expect(names()).toEqual(["Item c", "Item a", "Item b"]);
+  });
+
+  it("orders scores as numbers, not as text", async () => {
+    /* The string comparator put "10 of 10" before "3 of 10". */
+    context.snapshot.items = [scored("a", 10), scored("b", 3)];
+    renderSheet();
+    await userEvent.click(await screen.findByRole("button", { name: /confidence/i }));
+    expect(names()).toEqual(["Item b", "Item a"]);
+  });
+});

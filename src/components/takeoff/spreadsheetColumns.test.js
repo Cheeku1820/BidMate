@@ -62,3 +62,27 @@ describe("COLUMNS", () => {
     expect(DEFAULT_VISIBLE.has("name")).toBe(true);
   });
 });
+
+
+describe("sorting by confidence puts unscored rows last", () => {
+  /* Review finding 9. The confidence column used the shared string
+     comparator, so "—" sorted before "3 of 10" and an item processed
+     before the column existed outranked every scored row ascending.
+     Review focus 5 names the requirement explicitly: a null score sorts
+     LAST, in both directions, because "nobody scored this" is not a low
+     score. */
+  const column = COLUMNS.find((c) => c.key === "confidence");
+
+  it("exposes a numeric sort value, not a string", () => {
+    expect(column.sortValue({ confidence: 3 })).toBe(3);
+  });
+
+  it("gives an unscored row no sort value at all", () => {
+    expect(column.sortValue({ confidence: null })).toBeNull();
+    expect(column.sortValue({})).toBeNull();
+  });
+
+  it("still renders the absent mark rather than a zero", () => {
+    expect(column.render({ confidence: null })).toBe("—");
+  });
+});

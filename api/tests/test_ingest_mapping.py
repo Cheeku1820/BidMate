@@ -594,3 +594,76 @@ def test_the_engine_half_is_kept_when_the_model_half_fails():
     assert basis_note({"location_note": "Confidence 90%.", "wiring_note": "Branch wiring is estimated."}) \
         == "Branch wiring is estimated."
     assert basis_note({"location_note": "Confidence 90%."}) == ""
+
+
+# --- Whole-branch review finding 8 ---------------------------------------
+
+def _scored_payload(confidence, reasons, status="ready"):
+    item = {"name": "20A duplex receptacle", "system": "Power", "category": "Devices",
+            "unit": "ea", "quantity": 14, "status": status, "sheet_id": "0",
+            "symbol": "receptacle", "warning": None, "x": 100, "y": 100,
+            "placements": [[100, 100]], "tag": "R", "material_cost": 10.0,
+            "labor_hours": 1.0, "labor_cost": 78.0, "total_cost": 88.0}
+    if confidence is not None:
+        item["confidence"] = confidence
+    if reasons is not None:
+        item["confidence_reasons"] = reasons
+    sheet = {"id": "0", "number": "E2.1", "takeoff_id": "doc-1", "page": 0,
+             "width_pt": 2000, "height_pt": 1500, "unreadable": None,
+             "kind": "plan", "title": "Power plan"}
+    return {"sheets": [sheet], "items": [item]}
+
+
+def test_a_score_with_no_reasons_is_refused_entirely():
+    """A confidence figure is admissible only because it explains
+    itself. A bare 8 with nothing behind it is the unexplained
+    confidence `product-spec.md` §3 bans and ROADMAP invariant 7 was
+    narrowed around -- storing it would put an unexplainable number on
+    the bar, which is worse than an empty one."""
+    [row] = map_payload(_scored_payload(8, None)).items
+    assert row["confidence"] is None
+    assert row["confidence_reasons"] is None
+
+
+def test_a_score_with_empty_reasons_is_refused_too():
+    [row] = map_payload(_scored_payload(8, [])).items
+    assert row["confidence"] is None
+
+
+def test_a_score_with_unusable_reasons_is_refused():
+    [row] = map_payload(_scored_payload(8, ["", "   "])).items
+    assert row["confidence"] is None
+
+
+def test_a_score_with_reasons_is_kept():
+    [row] = map_payload(_scored_payload(8, ["Counted off the drawing"])).items
+    assert row["confidence"] == 8
+    assert row["confidence_reasons"] == ["Counted off the drawing"]
+
+
+def test_nothing_unapproved_is_stored_at_ten():
+    """The scale's first invariant: 10 means a person checked it, which
+    is what keeps approval worth doing. The engine has no business
+    writing it -- it never approves anything."""
+    [row] = map_payload(_scored_payload(10, ["Counted off the drawing"])).items
+    assert row["confidence"] == 9
+
+
+def test_an_approved_row_from_the_engine_is_still_capped():
+    """The engine does not approve, so even a payload claiming approved
+    status does not buy a 10 here. Only `confidence.score(approved=True)`
+    produces one, from a real approval."""
+    [row] = map_payload(_scored_payload(10, ["Counted off the drawing"], status="approved")).items
+    assert row["confidence"] == 9
+
+
+def test_the_engine_ceiling_mirrors_the_confidence_scale():
+    """`ingest._ENGINE_CEILING` is a deliberate small duplication of
+    `confidence.UNAPPROVED_CEILING`, kept because this module is reached
+    from the API process. Asserted rather than trusted, the same way
+    `test_the_feet_per_device_rule_mirrors_the_engine` does for the
+    feet-per-device rule."""
+    from app.takeoff.confidence import UNAPPROVED_CEILING
+    from app.takeoff.ingest import _ENGINE_CEILING
+
+    assert _ENGINE_CEILING == UNAPPROVED_CEILING

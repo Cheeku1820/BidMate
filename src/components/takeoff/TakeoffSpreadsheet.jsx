@@ -142,7 +142,22 @@ export default function TakeoffSpreadsheet() {
 
     if (sort.key) {
       const column = columns.find((c) => c.key === sort.key);
-      if (column) {
+      if (column?.sortValue) {
+        // A column with a real ordering of its own (confidence, so far)
+        // sorts on that rather than on its rendered text. `null` means
+        // "no value", and those rows go last whichever direction is
+        // chosen — reversing a list that put them first would only move
+        // the problem to the other end.
+        const withKeys = result.map((item) => ({ item, key: column.sortValue(item) }));
+        const sign = sort.dir === "desc" ? -1 : 1;
+        withKeys.sort((a, b) => {
+          if (a.key === null && b.key === null) return 0;
+          if (a.key === null) return 1;
+          if (b.key === null) return -1;
+          return (a.key - b.key) * sign;
+        });
+        result = withKeys.map((entry) => entry.item);
+      } else if (column) {
         const withKeys = result.map((item) => ({ item, key: String(column.render(item, renderCtx)) }));
         withKeys.sort((a, b) => a.key.localeCompare(b.key));
         result = withKeys.map((entry) => entry.item);

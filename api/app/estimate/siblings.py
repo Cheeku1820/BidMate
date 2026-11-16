@@ -139,3 +139,33 @@ def plan_sheet_counts(db: DbSession, project: Project) -> list[tuple[str, int]]:
         totals[item.sheet_id] += int(item.quantity or 0)
 
     return sorted((sheets[sheet_id], count) for sheet_id, count in totals.items())
+
+
+def sheets_with_items(db: DbSession, project: Project) -> set[str]:
+    """Sheet numbers carrying at least one counted item of any kind.
+
+    Separate from `plan_sheet_counts`, which counts *devices*, because
+    the two answer different questions and a caller needs both. A riser
+    or single-line sheet can carry real counted work -- measured
+    footage, a feeder run -- and zero devices; it reads as a zero in the
+    device counts and is emphatically not an empty sheet.
+
+    Case 4's own definition is "produced no items at all": read failed,
+    render failed, or counting returned nothing. Topping a correctly-read
+    riser sheet up to its siblings' device median would invent devices on
+    a sheet that has none, which is the fabrication this whole slice is
+    built to avoid.
+    """
+    numbers = dict(db.execute(
+        select(Sheet.id, Sheet.number).where(
+            Sheet.project_id == project.id, Sheet.superseded_at.is_(None)
+        )
+    ).all())
+    found: set[str] = set()
+    for item in db.scalars(countable_items(project.id)):
+        if item.origin != "counted":
+            continue
+        number = numbers.get(item.sheet_id)
+        if number:
+            found.add(number)
+    return found

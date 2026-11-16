@@ -9,6 +9,21 @@ export { SHEET_W, SHEET_H } from "../lib/sheetGeometry.js";
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 6;
 
+/* Whether this item has a place on the page at all.
+   docs/specs/estimate-without-asking.md: a companion allowance has no
+   position — nothing was read, so there is no coordinate and no
+   evidence crop, and `x`/`y`/`path` are all null. The row says why the
+   work is believed to be there instead.
+
+   Without this guard such a line draws at an undefined position, which
+   lands at the sheet's top-left corner. One visibly wrong marker costs
+   the estimator's trust in every other marker on the page — the same
+   argument ROADMAP 2.1 makes for extracting placements rather than
+   estimating them. */
+function located(item) {
+  return Boolean(item.path?.length) || (Number.isFinite(item.x) && Number.isFinite(item.y));
+}
+
 function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
@@ -251,7 +266,7 @@ export default function BlueprintCanvas({
             {/* measured runs */}
             {layers.measurements &&
               visible
-                .filter((it) => it.path)
+                .filter((it) => it.path?.length)
                 .map((it) => {
                   const meta = STATUS[it.status];
                   const sel = it.id === selectedId;
@@ -305,7 +320,7 @@ export default function BlueprintCanvas({
 
             {/* point markers */}
             {visible
-              .filter((it) => !it.path)
+              .filter((it) => !it.path && located(it))
               .map((it) => {
                 const meta = STATUS[it.status];
                 const sel = it.id === selectedId;
@@ -464,8 +479,11 @@ export default function BlueprintCanvas({
       {/* minimap */}
       <div className="overlay minimap" style={{ right: 14, bottom: 14 }}>
         <div className="minimap__frame" style={{ width: 136, height: 136 * (paper.h / paper.w) }}>
-          {visible.map((it) => {
-            const [px, py] = it.path ? pointToPaper(it.path[0], sheet) : pointToPaper([it.x, it.y], sheet);
+          {/* Same coordinate guard the markers use. A dot at 0,0 would
+              be a claim that something sits in the sheet's top-left
+              corner. */}
+          {visible.filter(located).map((it) => {
+            const [px, py] = it.path?.length ? pointToPaper(it.path[0], sheet) : pointToPaper([it.x, it.y], sheet);
             return (
               <span
                 key={it.id}

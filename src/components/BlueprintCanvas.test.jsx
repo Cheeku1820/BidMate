@@ -124,3 +124,52 @@ describe("BlueprintCanvas brings the selected marker into view", () => {
     expect(stageTransform(container)).toEqual(before);
   });
 });
+
+/* --- docs/plans/estimate-without-asking.md Task 13 -------------------
+   A companion allowance has no position on the page. Nothing was read,
+   so there is no coordinate and no evidence crop — the row shows why
+   the work is believed to be there instead.
+
+   Both marker filters checked only `path`, with no coordinate guard, so
+   a guessed line would have been drawn at an undefined position. One
+   visibly wrong marker costs the estimator's trust in every other
+   marker on the page, which is the whole argument ROADMAP 2.1 makes for
+   extracting placements rather than estimating them. */
+
+describe("a line that was never located on the page", () => {
+  const guessed = {
+    id: "g1", sheetId: "s1", x: null, y: null, path: null, status: "ready",
+    symbol: "", name: "Allowance — unidentified devices on E2.1",
+    quantity: 1, unit: "ls", origin: "assumed", placements: null,
+  };
+  const located = {
+    id: "i1", sheetId: "s1", x: 500, y: 375, status: "ready", symbol: "receptacle",
+    name: "20A duplex receptacle", quantity: 1, unit: "ea", placements: [[500, 375]],
+  };
+
+  it("draws no marker for it", () => {
+    const { container } = canvas(THREE_TWO, [guessed]);
+    expect(container.querySelectorAll('g[transform^="translate"]')).toHaveLength(0);
+  });
+
+  it("still draws located items beside it", () => {
+    const { container } = canvas(THREE_TWO, [guessed, located]);
+    const drawn = container.querySelectorAll('g[transform^="translate"]');
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].getAttribute("transform")).toBe("translate(500 333.5)");
+  });
+
+  it("draws no measured polyline for a path-less guessed run", () => {
+    const { container } = canvas(THREE_TWO, [guessed]);
+    expect(container.querySelectorAll("polyline")).toHaveLength(0);
+  });
+
+  it("leaves it out of the minimap too, rather than plotting it at the origin", () => {
+    /* A dot at 0,0 on the minimap is a claim that something sits in the
+       top-left corner of the sheet. */
+    const { container } = canvas(THREE_TWO, [guessed, located]);
+    const dots = container.querySelectorAll(".minimap__dot");
+    expect(dots).toHaveLength(1);
+    expect(dots[0].style.left).not.toBe("NaN%");
+  });
+});

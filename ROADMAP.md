@@ -154,7 +154,7 @@ The seed store's local transport — `BroadcastChannel` + `localStorage` — is 
 ### 2.9 Operations
 
 - Environments, infrastructure as code, secrets management
-- CI that runs the test suites. There is a real frontend and backend test suite now, but no workflow runs them on a push or a pull request
+- CI runs both suites on every pull request — `.github/workflows/ci.yml` has existed since 1 October, with `backend` and `frontend` as required checks. What is still missing is coverage gating and a scheduled run against a real bid set.
 - Error tracking, structured logs, metrics, alerting, on-call, incident process
 - Public status page. Bid-week downtime is a different severity of event here than in most B2B software.
 - **Back-office tooling.** Support cannot help with a stuck sheet without seeing the project. Impersonation needs to be explicit, scoped, and written to the same audit log.
@@ -280,7 +280,7 @@ These are the rules that break silently when a new service is added by someone w
 4. **Approval rules are server-authoritative.** *Missing information* blocks approval; bulk approval accepts only *Ready to review*. The client enforces both for good feedback; the server enforces both for correctness.
 5. **The warning schema is validated at the API boundary.** Four fields or the write is rejected. This is why the pipeline cannot emit a partial warning under load.
 6. **The action log is append-only.** Undo writes a new compensating action; it never deletes history.
-7. **Processing internals stop at the API boundary.** Confidence scores, model identifiers, and pipeline stage names are used for routing and never serialized into a client response. The status vocabulary is the only thing that crosses.
+7. **Processing internals stop at the API boundary.** Model identifiers, prompts, pipeline stage names, job ids, and attempt counts are used for routing and never serialized into a client response. **One deliberate exception:** `Item.confidence` and `Item.confidence_reasons` cross, as an explained 1–10 meter — amended by [`docs/specs/estimate-without-asking.md`](docs/specs/estimate-without-asking.md) at the estimator's direction. It is admissible because it is not a model's self-report: every input is a fact about *which method produced the number* (counted or guessed, matched to a legend or named from context, measured against a confirmed scale or not), those facts are the same for every project, and the reasons travel with the score so it can always explain itself. A confidence *percentage* is still banned, and so is a score with no reasons — that would be the unexplained figure `product-spec.md` §3 names.
 8. **Every mutation is attributable.** `by` and `at` on every action, including actions taken by support staff while impersonating.
 9. **The conversation layer proposes; it never writes.** Every change it produces goes through the same action path as a manual edit, attributed to the person who applied it. There is no code path from a message to a quantity that skips a human.
 10. **No workflow requires the panel.** Anything sayable in conversation is doable through the structured interface, and every question raised there also exists in the review queue. This is testable: a full review completed with the panel closed must reach the same end state.

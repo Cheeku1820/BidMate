@@ -50,6 +50,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.estimate import complete_copy as copy
+from app.estimate import siblings
 from app.takeoff import confidence
 from app.takeoff.models import Project, ScopeStatement, Sheet
 from app.takeoff.totals import ResolvedLine, resolved_lines
@@ -341,6 +342,91 @@ def _unscaled(lines: list[ResolvedLine], sheets: dict[uuid.UUID, Sheet],
     return rows
 
 
+def _against_siblings(counts: list[tuple[str, int]], sheets: dict[uuid.UUID, Sheet],
+                      averages: _ClassAverage, labor_rate: Decimal) -> list[dict]:
+    """Cases 3 and 4 -- a sheet thin or empty against its siblings.
+
+    One calculation, two cases: an empty sheet is the thin case with a
+    count of zero. Splitting them would mean two thresholds that could
+    drift apart, and the only real difference is the sentence printed.
+
+    Stands down entirely when `sibling_stats` returns None, which is
+    both review focus 1 (nothing counted anywhere) and review focus 2 (a
+    single-sheet project, where a sheet would be compared against
+    itself).
+    """
+    stats = siblings.sibling_stats(counts)
+    if stats is None:
+        return []
+
+    per_unit = averages.per_unit()
+    if per_unit is None:
+        return []
+
+    by_number = {sheet.number: sheet for sheet in sheets.values()}
+    floor = stats.median * THIN_FRACTION
+    listed = _listed(list(stats.sheet_numbers))
+
+    rows: list[dict] = []
+    for number, counted in counts:
+        if counted >= floor:
+            continue
+        sheet = by_number.get(number)
+        if sheet is None:
+            continue
+        shortfall = stats.median - counted
+        if shortfall <= 0:
+            continue
+
+        empty = counted == 0
+        words = copy.EMPTY if empty else copy.THIN
+        # A page that rendered or read only partly is a named
+        # adjustment, not a different kind of guess -- the count is over
+        # an incomplete picture of the sheet, which the scale already
+        # has a word for.
+        adjustments = ["partial_page"] if empty and sheet.render_status == "failed" else []
+
+        rows.append(_line(
+            case="empty" if empty else "thin", sheet=sheet,
+            name=words["name"].format(sheet=sheet.number),
+            # Deliberately not a system read off the thin sheet: there
+            # may be nothing on it to read. The whole job's blended rate
+            # prices it, and the line says so.
+            system="Unassigned", category="Allowance",
+            quantity=Decimal(shortfall), unit="EA",
+            basis="class_average", method="class_average_sibling",
+            adjustments=adjustments,
+            money=_money(per_unit, Decimal(shortfall), labor_rate),
+            title=words["title"].format(sheet=sheet.number),
+            found=words["found"].format(
+                sheet=sheet.number, counted=copy.plural(counted, "device"),
+                median=copy.plural(stats.median, "device"),
+                shortfall=copy.plural(shortfall, "device")),
+            why=words["why"],
+            fix=words["fix"].format(sheet=sheet.number),
+            where=words["where"].format(sheet=sheet.number, sheets=listed),
+        ))
+    return rows
+
+
+_LISTED_MAX = 6
+
+
+def _listed(values: list[str]) -> str:
+    """A readable, bounded list of sheet numbers. Mirrors
+    `generate_takeoff._listed` -- a disclosure naming two hundred sheets
+    is a wall, and one naming none cannot be checked."""
+    values = [v for v in values if v]
+    if not values:
+        return "the other plan sheets"
+    if len(values) > _LISTED_MAX:
+        shown = values[:_LISTED_MAX]
+        return f"{', '.join(shown)} and {len(values) - _LISTED_MAX} more"
+    if len(values) == 1:
+        return values[0]
+    return f"{', '.join(values[:-1])} and {values[-1]}"
+
+
 def completion_lines(db: DbSession, project: Project, *,
                      exclude: set[uuid.UUID] | None = None) -> list[dict]:
     """Every companion allowance this project's gaps call for.
@@ -370,4 +456,6 @@ def completion_lines(db: DbSession, project: Project, *,
     return [
         *_unidentified(lines, sheets, averages, labor_rate),
         *_unscaled(lines, sheets, labor_rate),
+        *_against_siblings(siblings.plan_sheet_counts(db, project), sheets,
+                           averages, labor_rate),
     ]

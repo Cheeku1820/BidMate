@@ -286,3 +286,102 @@ def test_an_unscaled_sheet_with_nothing_measured_elsewhere_stands_down(db, proje
           status=ReviewStatus.MISSING, cost="0")
     _item(db, project, sheet, quantity=47, cost="564")
     assert _case(completion_lines(db, project), "unscaled") == []
+
+
+# --- Cases 3 and 4: thin or empty against the siblings --------------------
+# Built together because they share one calculation -- the shortfall
+# against the sibling median. An empty sheet is the thin case at zero.
+
+def _siblings(db, project, counts, cost="120"):
+    """Plan sheets that each counted something and priced, so there is a
+    base and a class average to be relative to."""
+    for number, quantity in counts:
+        sheet = _sheet(db, project, number=number)
+        if quantity:
+            _item(db, project, sheet, quantity=quantity, cost=cost,
+                  name="20A duplex receptacle")
+    return None
+
+
+def test_a_sheet_counted_well_below_its_siblings_is_topped_up(db, project):
+    _siblings(db, project, [("E-1.0", 60), ("E-1.1", 60)])
+    thin = _sheet(db, project, number="E-1.2")
+    _item(db, project, thin, quantity=5, cost="60", name="20A duplex receptacle")
+
+    [line] = _case(completion_lines(db, project), "thin")
+    assert line["sheet_id"] == thin.id
+    assert line["quantity"] == 55
+    assert line["confidence"] == 3
+    assert line["basis"] == "class_average"
+    assert line["total_cost"] > 0
+
+
+def test_a_sheet_in_line_with_its_siblings_is_left_alone(db, project):
+    _siblings(db, project, [("E-1.0", 60), ("E-1.1", 60), ("E-1.2", 55)])
+    assert _case(completion_lines(db, project), "thin") == []
+    assert _case(completion_lines(db, project), "empty") == []
+
+
+def test_a_sheet_that_counted_nothing_is_guessed_from_its_siblings(db, project):
+    _siblings(db, project, [("E-1.0", 60), ("E-1.1", 60)])
+    _sheet(db, project, number="E-1.2")
+
+    [line] = _case(completion_lines(db, project), "empty")
+    assert line["quantity"] == 60
+    assert line["confidence"] == 3
+
+
+def test_a_sheet_that_failed_to_render_is_scored_lower(db, project):
+    """The page read only partly, which is a named adjustment on the
+    confidence scale rather than a separate kind of guess."""
+    _siblings(db, project, [("E-1.0", 60), ("E-1.1", 60)])
+    _sheet(db, project, number="E-1.2", render_status="failed")
+
+    [line] = _case(completion_lines(db, project), "empty")
+    assert line["confidence"] == 2
+    assert "partly" in " ".join(line["confidence_reasons"]).lower()
+
+
+def test_a_single_sheet_project_guesses_nothing(db, project):
+    """Review focus 2: no siblings, no comparison, no guess. A sheet
+    cannot be thin against itself."""
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=5, cost="60", name="20A duplex receptacle")
+    lines = completion_lines(db, project)
+    assert _case(lines, "thin") == []
+    assert _case(lines, "empty") == []
+
+
+def test_two_sheets_one_empty_still_stands_down(db, project):
+    """`MIN_SAMPLE` is 2, and one sibling is an anecdote rather than a
+    distribution."""
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=60, cost="720", name="20A duplex receptacle")
+    _sheet(db, project, number="E-1.1")
+    assert _case(completion_lines(db, project), "empty") == []
+
+
+def test_the_disclosure_names_the_sheets_the_median_came_from(db, project):
+    _siblings(db, project, [("E-1.0", 60), ("E-1.1", 60)])
+    _sheet(db, project, number="E-1.2")
+
+    [line] = _case(completion_lines(db, project), "empty")
+    assert "E-1.0" in line["where"]
+    assert "E-1.1" in line["where"]
+
+
+def test_a_schedule_sheet_is_never_called_thin(db, project):
+    """A luminaire schedule is not a plan sheet and has no business
+    being compared to one."""
+    _siblings(db, project, [("E-1.0", 60), ("E-1.1", 60)])
+    _sheet(db, project, number="E-501", kind="schedule")
+    lines = completion_lines(db, project)
+    assert not [line for line in lines if line["sheet_number"] == "E-501"]
+
+
+def test_a_sheet_gets_a_thin_allowance_or_an_empty_one_never_both(db, project):
+    _siblings(db, project, [("E-1.0", 60), ("E-1.1", 60)])
+    _sheet(db, project, number="E-1.2")
+    lines = completion_lines(db, project)
+    per_sheet = [line["sheet_number"] for line in lines if line["case"] in ("thin", "empty")]
+    assert len(per_sheet) == len(set(per_sheet))

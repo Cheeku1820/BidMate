@@ -12,6 +12,8 @@ the two of them from importing each other.
 
 from __future__ import annotations
 
+from app.takeoff import confidence
+
 from . import assemblies, pricing
 from .catalog import CATALOG
 
@@ -184,6 +186,26 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
     hours = round(device_hours + (asm.labor_hours if asm else 0.0), 2)
     labor = round(hours * labor_rate, 2)
     status = "ready" if spec.get("confidence") == "high" else "attention"
+    # A separate channel from `status`, deliberately computed right
+    # beside it and deliberately not allowed to change it. The status
+    # routes the review queue; this ranks it. Collapsing the two is how
+    # a 400-item sheet ends up with one signal doing two jobs
+    # (CLAUDE.md keeps glyph, ring colour, and badge independent for
+    # exactly this reason).
+    #
+    # The classifier's own word maps to a method rather than being
+    # stored as-is: "high" is worth more when a legend row defined the
+    # tag than when the name was read off surrounding context, and
+    # `classification_basis == "inferred"` is the engine's own record of
+    # which of those happened.
+    inferred = spec.get("classification_basis") == "inferred"
+    if spec.get("confidence") == "high":
+        method = "counted_high" if inferred else "counted_matched"
+    else:
+        method = "counted_uncertain"
+    score, reasons = confidence.score(
+        method, ["not_in_legend"] if inferred else [],
+    )
     sheet_no = _sheet_no(sheets, cluster.sheet_page_index)
     warning = None if status == "ready" else _model_warning(spec.get("warning"), cluster.tag, qty, sheet_no)
     return {
@@ -211,6 +233,8 @@ def _row_from_spec(spec: dict, cluster, sheets, labor_rate: float, material_fact
         # construction, so an absent value there means "matched", not
         # "unknown".
         "classification_basis": spec.get("classification_basis"),
+        "confidence": score,
+        "confidence_reasons": reasons,
         "warning": warning,
     }
 
@@ -234,6 +258,13 @@ def _row_from_catalog(item, cluster, sheets, labor_rate: float, material_factor:
     it."""
     priced = pricing.price_item(item, labor_rate)
     qty = item.quantity
+    # The deterministic path resolves a cluster against the legend in
+    # order to exist at all -- an unmatched tag never reaches this
+    # function -- so its quantity is as well evidenced as a counted line
+    # gets. What is rough here is the *price* (catalog.py's placeholder
+    # hours), and the price's own looseness is carried by the basis
+    # spread on the ROM, not by this meter.
+    score, reasons = confidence.score("counted_matched")
     material = round(priced.material_cost * material_factor, 2)
     hours = priced.labor_hours
     labor = priced.labor_cost
@@ -256,5 +287,7 @@ def _row_from_catalog(item, cluster, sheets, labor_rate: float, material_factor:
         "labor_cost": labor,
         "total_cost": round(material + labor, 2),
         "symbol": item.symbol,
+        "confidence": score,
+        "confidence_reasons": reasons,
         "warning": item.warning,
     }

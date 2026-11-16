@@ -308,6 +308,34 @@ def _grounded_or_fallback(raw_warning, sheet_number: str, valid_sheet_numbers: s
     return fallback_warning(tag, quantity, sheet_number, warning["reason"]), True
 
 
+def _confidence(raw) -> int | None:
+    """The engine's 1-10 score, or None.
+
+    `ck_items_confidence` closes the range at the database too, so a
+    value outside it would fail the whole sheet's merge rather than one
+    row. Refusing it here instead leaves the column NULL -- an empty bar
+    and a line that sorts last, which is recoverable, where a failed
+    merge loses every other row on the sheet with it.
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if 1 <= value <= 10 else None
+
+
+def _confidence_reasons(raw) -> list[str] | None:
+    """The sentences behind the score. The score is only admissible
+    because these exist (`app.takeoff.confidence`), so a score that
+    arrives without them is still stored -- the bar is useful and the
+    reasons are what the tooltip adds -- but anything that is not a list
+    of non-empty strings is dropped rather than rendered."""
+    if not isinstance(raw, list):
+        return None
+    reasons = [str(r).strip() for r in raw if str(r or "").strip()]
+    return reasons or None
+
+
 def map_payload(payload: dict, valid_sheet_numbers: set[str] | None = None) -> MappedTakeoff:
     """Engine payload -> domain rows, keyed by the engine's sheet ids.
 
@@ -421,6 +449,17 @@ def map_payload(payload: dict, valid_sheet_numbers: set[str] | None = None) -> M
             # stored: the column is a closed vocabulary, and the honest
             # answer for an unrecognized value is "not an inference".
             "classification_basis": "inferred" if raw.get("classification_basis") == "inferred" else None,
+            # The 1-10 meter and the named sentences that produced it
+            # (estimate-without-asking.md). Clamped to the column's own
+            # range and dropped entirely when absent or unreadable: an
+            # engine payload predating the score, or one carrying a
+            # nonsense value, leaves the column NULL, which renders as
+            # an empty bar and sorts last. Same discipline
+            # `classification_basis` above takes -- an unrecognized
+            # value is not stored under a vocabulary that does not
+            # cover it.
+            "confidence": _confidence(raw.get("confidence")),
+            "confidence_reasons": _confidence_reasons(raw.get("confidence_reasons")),
             "warning": item_warning,
             "evidence": {
                 "detail": f"Counted from the drawing at {n_places} location{'s' if n_places != 1 else ''}",

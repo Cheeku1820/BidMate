@@ -534,3 +534,51 @@ def test_a_rerun_leaves_phase_ids_alone(db, project, dana):
     db.refresh(sheet); db.refresh(item)
     assert item.name == "Isolated ground receptacle"
     assert sheet.phase_id == phase.id and item.phase_id == phase.id
+
+
+# --- docs/plans/estimate-without-asking.md Task 3 -------------------------
+
+def _scored_row(tag, name, confidence=9, reasons=("Counted off the drawing and matched to the legend or a schedule",)):
+    row = _row(tag, name)
+    row["confidence"] = confidence
+    row["confidence_reasons"] = list(reasons)
+    return row
+
+
+def test_merge_persists_the_confidence_and_its_reasons(db, project):
+    _merge(db, project, [_scored_row("R", "20A duplex receptacle")])
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    assert item.confidence == 9
+    assert item.confidence_reasons == ["Counted off the drawing and matched to the legend or a schedule"]
+
+
+def test_a_merged_engine_row_is_counted(db, project):
+    """Only `app.estimate.complete` writes `assumed`. Everything that
+    comes through the engine's own merge path is a counted line."""
+    _merge(db, project, [_scored_row("R", "20A duplex receptacle")])
+    assert db.scalars(select(Item).where(Item.source_tag == "R")).one().origin == "counted"
+
+
+def test_a_rerun_updates_a_changed_confidence(db, project):
+    _merge(db, project, [_scored_row("R", "20A duplex receptacle", confidence=9)])
+    _merge(db, project, [_scored_row("R", "20A duplex receptacle", confidence=6, reasons=("Counted off the drawing, name uncertain",))])
+    item = db.scalars(select(Item).where(Item.source_tag == "R")).one()
+    assert item.confidence == 6
+    assert item.confidence_reasons == ["Counted off the drawing, name uncertain"]
+
+
+def test_a_changed_confidence_alone_is_not_reported_as_a_reclassification(db, project):
+    """`reclassified` means "something the estimator would notice
+    changed". A score moving from 9 to 8 with the same name, quantity,
+    and warning is not news, and counting it as news is how a re-run
+    that changed nothing reported 300 reclassifications."""
+    _merge(db, project, [_scored_row("R", "20A duplex receptacle", confidence=9)])
+    counts = _merge(db, project, [_scored_row("R", "20A duplex receptacle", confidence=8)])
+    assert counts.reclassified == 0
+
+
+def test_an_engine_row_with_no_score_leaves_the_column_null(db, project):
+    """Review focus 5: items predating this slice have no confidence to
+    recover, and an invented one would be worse than an empty bar."""
+    _merge(db, project, [_row("R", "20A duplex receptacle")])
+    assert db.scalars(select(Item).where(Item.source_tag == "R")).one().confidence is None

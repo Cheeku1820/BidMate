@@ -179,6 +179,14 @@ def _bucket_order(item: Item) -> tuple[bool, object, uuid.UUID]:
 # A warning appearing, vanishing, or changing its title counts too: it
 # is the evidence that decides the status, and it is on screen.
 _VISIBLE_FIELDS = ("name", "description", "symbol", "system", "category", "quantity", "unit")
+# `confidence` and `confidence_reasons` are deliberately NOT in that
+# tuple (estimate-without-asking.md). A score moving from 9 to 8 with
+# the same name, quantity, and warning is not something an estimator
+# needs told about -- it is the same row, ranked slightly differently.
+# Counting it would put every scored row into `reclassified` on the
+# first re-run after this column shipped, which is the exact false
+# "300 items reclassified" report this function was written to stop.
+# The fields are still written by `_overwrite`; they just are not news.
 
 
 def _changes_visibly(item: Item, sheet: Sheet, row: dict, warning_title: str | None) -> bool:
@@ -250,6 +258,12 @@ def _overwrite(item: Item, sheet: Sheet, row: dict) -> None:
     item.ai_confirmed = row["ai_confirmed"]
     item.source_tag = row["source_tag"]
     item.classification_basis = row["classification_basis"]
+    # estimate-without-asking.md. The engine owns both: it recomputes
+    # the score every run from the same facts, so a stale score must not
+    # outlive the classification it described. Deliberately NOT in
+    # `_VISIBLE_FIELDS` -- see `_changes_visibly`.
+    item.confidence = row["confidence"]
+    item.confidence_reasons = row["confidence_reasons"]
     item.evidence = row["evidence"]
     # Bumped exactly like every other mutation that changes a row's
     # fields (review._apply_edit, undo_apply._apply_item_state) -- a
@@ -396,6 +410,7 @@ def merge_sheet(db, *, project, sheet, rows, ai_reading) -> MergeCounts:
                 labor_hours=row["labor_hours"], labor_cost=row["labor_cost"],
                 total_cost=row["total_cost"], ai_confirmed=row["ai_confirmed"],
                 source_tag=row["source_tag"], classification_basis=row["classification_basis"],
+                confidence=row["confidence"], confidence_reasons=row["confidence_reasons"],
                 evidence=row["evidence"],
             )
             db.add(item)

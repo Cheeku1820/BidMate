@@ -50,7 +50,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.estimate import complete_copy as copy
-from app.estimate import siblings
+from app.estimate import building_type, siblings
 from app.takeoff import confidence
 from app.takeoff.models import Project, ScopeStatement, Sheet
 from app.takeoff.totals import ResolvedLine, resolved_lines
@@ -78,6 +78,55 @@ MEASURED_UNITS = ("ft", "lf", "feet")
 #
 # Expected to move once a real bid set has been through it.
 THIN_FRACTION = 0.5
+
+# What share of a job's counted electrical cost each system is worth,
+# by kind of building. Case 5's whole arithmetic.
+#
+# A share, never a dollar figure, because that is what keeps the rule
+# relative: a share of zero is zero, so a project with nothing counted
+# produces no system allowance rather than a constant. One cell changed
+# here moves every project of that kind, which is the point of keeping
+# it as one table a person can read.
+#
+# **Expected to move once a real bid set has been through it.** These
+# are deliberately conservative: the failure to avoid is an allowance so
+# large it swamps the counted work, because an estimator who sees one
+# absurd line stops trusting every other line on the document.
+#
+# "default" is used when a document names the work but nothing says what
+# kind of building this is. The *existence* evidence there is the
+# document itself, which is the strongest kind; only the amount is
+# generic.
+SYSTEM_SHARES: dict[str, dict[str, float]] = {
+    "default": {"Fire alarm": 0.06, "Low voltage": 0.05, "Life safety": 0.03},
+    "school": {"Fire alarm": 0.08, "Low voltage": 0.07, "Life safety": 0.03},
+    "healthcare": {"Fire alarm": 0.10, "Low voltage": 0.10, "Life safety": 0.05},
+    "warehouse": {"Fire alarm": 0.05, "Low voltage": 0.03, "Life safety": 0.02},
+    "office": {"Fire alarm": 0.07, "Low voltage": 0.08, "Life safety": 0.03},
+    "multifamily": {"Fire alarm": 0.07, "Low voltage": 0.04, "Life safety": 0.03},
+    "retail": {"Fire alarm": 0.06, "Low voltage": 0.05, "Life safety": 0.03},
+    "industrial": {"Fire alarm": 0.05, "Low voltage": 0.04, "Life safety": 0.02},
+}
+
+# How a document says it carries work in a system. Substring matching
+# over stored text, the same shape and the same justification as
+# `building_type.TYPE_VOCABULARY` and
+# `generate_scope.StandardExclusion.vocabulary`: extracted document text
+# is untrusted input (ROADMAP invariant 11), and a drawing cannot steer
+# a `str.find`.
+SYSTEM_VOCABULARY: dict[str, tuple[str, ...]] = {
+    "Fire alarm": (
+        "fire alarm", "division 28", "smoke detector", "pull station", "notification appliance",
+        "horn strobe", "horn/strobe", "facp", "annunciator",
+    ),
+    "Low voltage": (
+        "division 27", "structured cabling", "data outlet", "telecom room",
+        "access control", "cctv", "security camera", "nurse call", "paging system",
+    ),
+    "Life safety": (
+        "exit sign", "emergency lighting", "egress lighting", "emergency egress",
+    ),
+}
 
 # The lump-sum unit. Case 1's companion carries money for devices that
 # were already counted, so giving it a device count would make the
@@ -409,6 +458,148 @@ def _against_siblings(counts: list[tuple[str, int]], sheets: dict[uuid.UUID, She
     return rows
 
 
+def _document_mentions(db: DbSession, project: Project,
+                       sheets: dict[uuid.UUID, Sheet]) -> dict[str, str]:
+    """`{system: the verbatim sentence that named it}`.
+
+    The strongest of the three kinds of evidence a system allowance can
+    rest on: a real quote on a real page. Read out of scope statements
+    and stored schedule text, both of which the read job already put in
+    the database -- this opens no file.
+    """
+    found: dict[str, str] = {}
+
+    def observe(text: str) -> None:
+        low = text.lower()
+        for system, words in SYSTEM_VOCABULARY.items():
+            if system in found:
+                continue
+            for word in words:
+                if word in low:
+                    found[system] = text.strip()
+                    break
+
+    for statement in db.scalars(
+        select(ScopeStatement).where(ScopeStatement.project_id == project.id)
+    ):
+        for text in (statement.edited_text, statement.text, statement.quote):
+            if text:
+                observe(text)
+    for sheet in sheets.values():
+        if sheet.schedule_text:
+            observe(sheet.schedule_text)
+    return found
+
+
+def _system_allowances(db: DbSession, project: Project, lines: list[ResolvedLine],
+                       sheets: dict[uuid.UUID, Sheet], averages: _ClassAverage,
+                       labor_rate: Decimal) -> list[dict]:
+    """Case 5 -- a system a job of this kind carries and this one never
+    found at all. No panels, no lighting, no fire alarm.
+
+    The weakest rung on the ladder, and the copy says so on the line.
+    Two guards keep it from fabricating a building:
+
+    - **Nothing counted, nothing to take a share of.** The amount is a
+      share of this project's own counted electrical cost, so a share of
+      zero is zero.
+    - **No building type and no document naming the work, no line.** A
+      system allowance invented with no sense of the job is exactly the
+      fabricated number the spec forbids. An *inferred* type is enough
+      to run -- the spec's rule is infer it, disclose it, ask about it,
+      never block on it.
+    """
+    counted_cost = averages.total_cost
+    if counted_cost <= 0:
+        return []
+
+    counted_systems = {
+        line.item.system for line in lines if line.item.origin == "counted"
+    }
+
+    mentions = _document_mentions(db, project, sheets)
+
+    kind = project.building_type
+    if kind is None:
+        inferred = building_type.infer_building_type(db, project)
+        kind = inferred[0] if inferred else None
+
+    shares = SYSTEM_SHARES.get(kind or "", SYSTEM_SHARES["default"])
+    # Systems to consider: the ones a job of this kind carries, plus any
+    # the documents named outright. A document-named system runs even
+    # with no building type, because the evidence for its *existence* is
+    # the document rather than the building.
+    candidates = set(mentions)
+    if kind is not None:
+        candidates |= set(shares)
+    if not candidates:
+        return []
+
+    # `Item.sheet_id` is NOT NULL, so there is no such thing as an item
+    # without a sheet. The lowest-numbered plan sheet is a nominal
+    # home, and `where` says so rather than letting it read as the place
+    # the work was found.
+    plan_sheets = sorted(
+        (s for s in sheets.values() if s.kind == "plan"), key=lambda s: s.number)
+    anchor = plan_sheets[0] if plan_sheets else None
+    if anchor is None:
+        return []
+
+    per_unit = averages.per_unit()
+    if per_unit is None:
+        return []
+
+    rows: list[dict] = []
+    for system in sorted(candidates):
+        if system in counted_systems:
+            continue
+        share = shares.get(system) or SYSTEM_SHARES["default"].get(system)
+        if not share:
+            continue
+
+        dollars = _cents(counted_cost * Decimal(str(share)))
+        if dollars <= 0:
+            continue
+
+        quote = mentions.get(system)
+        if quote:
+            found = copy.SYSTEM_EVIDENCE_DOCUMENT.format(system=system.lower(), quote=quote)
+            basis_sentence = copy.SYSTEM_BASIS_DOCUMENT.format(system=system.lower())
+        else:
+            reading = (
+                f"This is read as a {kind} job, and a {kind} job normally carries it."
+                if kind else ""
+            )
+            found = copy.SYSTEM_EVIDENCE_BUILDING_TYPE.format(
+                system=system.lower(), reading=reading).strip()
+            basis_sentence = copy.SYSTEM_BASIS_BUILDING_TYPE
+
+        # The share is a share of the whole cost, and the material/labor
+        # split follows the job's own split so the hours land on the
+        # schedule as well as the dollars on the ROM.
+        material_per, hours_per = per_unit
+        units = (dollars / material_per) if material_per > 0 else Decimal("0")
+        rows.append(_line(
+            case="system", subject_kind="system", sheet=anchor,
+            name=copy.SYSTEM["name"].format(system=system),
+            system=system, category="Allowance",
+            quantity=Decimal("1"), unit=LUMP_SUM,
+            basis="class_average", method="class_average_system", adjustments=[],
+            money={
+                "material_cost": dollars,
+                "labor_hours": _cents(hours_per * units),
+                "labor_cost": _cents(hours_per * units * labor_rate),
+                "total_cost": _cents(dollars + hours_per * units * labor_rate),
+            },
+            title=copy.SYSTEM["title"].format(system=system.lower()),
+            found=found,
+            why=copy.SYSTEM["why"].format(system=system.lower()),
+            fix=copy.SYSTEM["fix"].format(system=system),
+            where=copy.SYSTEM["where"].format(sheet=anchor.number, basis=basis_sentence),
+        ))
+    return rows
+
+
 _LISTED_MAX = 6
 
 
@@ -458,4 +649,5 @@ def completion_lines(db: DbSession, project: Project, *,
         *_unscaled(lines, sheets, labor_rate),
         *_against_siblings(siblings.plan_sheet_counts(db, project), sheets,
                            averages, labor_rate),
+        *_system_allowances(db, project, lines, sheets, averages, labor_rate),
     ]

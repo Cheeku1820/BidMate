@@ -39,8 +39,8 @@ def _engine_priced(project):
     return project
 
 
-def _sheet(db, project, *, number="E-2.1", kind="plan", scale="", **kw):
-    s = Sheet(project_id=project.id, number=number, title="Power plan", discipline="Electrical",
+def _sheet(db, project, *, number="E-2.1", kind="plan", scale="", title="Power plan", **kw):
+    s = Sheet(project_id=project.id, number=number, title=title, discipline="Electrical",
               revision="Rev 1", scale=scale, scale_options=[], plan="", kind=kind, **kw)
     db.add(s)
     db.flush()
@@ -385,3 +385,104 @@ def test_a_sheet_gets_a_thin_allowance_or_an_empty_one_never_both(db, project):
     lines = completion_lines(db, project)
     per_sheet = [line["sheet_number"] for line in lines if line["case"] in ("thin", "empty")]
     assert len(per_sheet) == len(set(per_sheet))
+
+
+# --- Case 5: a system the job should have and nothing found ---------------
+
+def _scope(db, project, dana, text):
+    import uuid as _uuid
+
+    from app.takeoff.models import Document, ScopeStatement
+    doc = Document(project_id=project.id, filename="spec.pdf", doc_type="specifications",
+                   content_type="application/pdf", size_bytes=1, sha256="b" * 64,
+                   storage_key="k2", uploaded_by=dana.id)
+    db.add(doc)
+    db.flush()
+    s = ScopeStatement(project_id=project.id, org_id=project.org_id, document_id=doc.id,
+                       page_index=0, kind="included", text=text, quote=text,
+                       run_id=_uuid.uuid4())
+    db.add(s)
+    db.flush()
+    return s
+
+
+def test_a_school_with_no_fire_alarm_gets_a_share_of_the_counted_work(db, project):
+    project.building_type, project.building_type_source = "school", "estimator"
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+
+    [line] = [l for l in completion_lines(db, project) if l["system"] == "Fire alarm"]
+    assert line["case"] == "system"
+    assert line["confidence"] == 2
+    assert line["basis"] == "class_average"
+    assert line["total_cost"] > 0
+
+
+def test_a_system_already_counted_is_not_guessed(db, project):
+    project.building_type, project.building_type_source = "school", "estimator"
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+    _item(db, project, sheet, quantity=4, cost="400", system="Fire alarm",
+          name="Smoke detector")
+
+    assert not [l for l in completion_lines(db, project)
+                if l["case"] == "system" and l["system"] == "Fire alarm"]
+
+
+def test_an_unknown_building_type_skips_system_completion(db, project):
+    """Review focus: never invent a baseline for an unknown building. A
+    system allowance sized with no sense of the job is the fabricated
+    number this product exists to prevent."""
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+    assert _case(completion_lines(db, project), "system") == []
+
+
+def test_nothing_counted_means_no_share_to_take(db, project):
+    """Review focus 1 again: a share of zero is zero, never a constant."""
+    project.building_type, project.building_type_source = "school", "estimator"
+    _sheet(db, project, number="E-1.0")
+    assert _case(completion_lines(db, project), "system") == []
+
+
+def test_a_system_line_still_points_at_a_real_sheet(db, project):
+    """`Item.sheet_id` is NOT NULL, so there is no such thing as a line
+    without a sheet. The copy has to say the location is nominal rather
+    than let it read as a place the work was found."""
+    project.building_type, project.building_type_source = "school", "estimator"
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+
+    line = _case(completion_lines(db, project), "system")[0]
+    assert line["sheet_id"] is not None
+    assert "nominal" in line["where"].lower()
+
+
+def test_a_building_type_only_guess_says_it_is_the_weakest_basis(db, project):
+    project.building_type, project.building_type_source = "school", "estimator"
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+
+    line = _case(completion_lines(db, project), "system")[0]
+    assert "weakest" in line["where"].lower()
+
+
+def test_a_spec_section_naming_the_work_is_quoted_as_the_evidence(db, project, dana):
+    """The strongest of the three kinds of evidence: a real quote on a
+    real page, which stands on its own without a building type."""
+    _scope(db, project, dana, "Division 28 fire alarm devices by this contractor.")
+    sheet = _sheet(db, project, number="E-1.0")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+
+    line = [l for l in completion_lines(db, project) if l["system"] == "Fire alarm"][0]
+    assert "Division 28" in line["found"]
+    assert "weakest" not in line["where"].lower()
+
+
+def test_an_inferred_building_type_is_enough_to_run_the_case(db, project):
+    """The spec: infer it, disclose it, ask about it, never block on it."""
+    _sheet(db, project, number="E-1.0", title="Classroom wing power plan")
+    sheet = _sheet(db, project, number="E-1.1", title="Classroom wing lighting plan")
+    _item(db, project, sheet, quantity=100, cost="10000", name="20A duplex receptacle")
+
+    assert _case(completion_lines(db, project), "system")

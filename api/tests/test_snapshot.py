@@ -91,6 +91,18 @@ def test_no_response_field_exposes_processing_internals(client, db, dana, projec
     there's nothing there to leak from. Seeding a populated `evidence` blob
     (and a warning, which carries its own free-text fields) gives the scan
     something a real regression would actually show up in.
+
+    **"confidence" came off this list deliberately**, and this is the one
+    place the removal is recorded in a test rather than in prose.
+    `docs/specs/estimate-without-asking.md` amended ROADMAP invariant 7
+    at the estimator's direction: `Item.confidence` crosses the boundary
+    as an explained 1-10 meter, so the field name is now legitimate
+    content and scanning for the substring would fail on every response
+    forever. What replaced it is not nothing -- see the two tests below,
+    which hold the *shape* of the exception: a score never renders as a
+    percentage, and never without the reasons that explain it. The rest
+    of the list is untouched, and "score" in particular still catches a
+    `confidence_score`-style leak from the engine's own internals.
     """
     item.evidence = {"sheet": "E2.1", "excerpt": "Title block scale note, grid D-2"}
     db.add(Warning(item_id=item.id, reason=WarningReason.SCALE, title="Scale needs confirmation",
@@ -101,8 +113,46 @@ def test_no_response_field_exposes_processing_internals(client, db, dana, projec
     _sign_in(client)
     body = client.get(f"/api/projects/{project.id}/snapshot").text.lower()
 
-    for forbidden in ("confidence", "model", "score", "pipeline"):
+    for forbidden in ("model", "score", "pipeline", "prompt", "token", "attempt_count"):
         assert forbidden not in body
+
+
+def test_the_confidence_exception_is_no_wider_than_a_meter_and_its_reasons(client, db, dana, project, sheet, item):
+    """The two fields the amendment allows through, and nothing else.
+
+    A score is admissible only because it explains itself: an
+    unexplained figure is exactly what `product-spec.md` §3 bans, and
+    the amendment rests on `confidence_reasons` travelling with the
+    number. A response carrying one without the other would be the
+    violation the old blanket ban was protecting against.
+    """
+    item.confidence = 5
+    item.confidence_reasons = ["Counted off the drawing, but nothing named what these are"]
+    db.flush()
+    _sign_in(client)
+
+    [row] = client.get(f"/api/projects/{project.id}/snapshot").json()["items"]
+    assert row["confidence"] == 5
+    assert row["confidence_reasons"]
+    # The meter is 1-10. A percentage is a figure an estimator could
+    # multiply by the total, which is the anti-goal the spec names.
+    assert 1 <= row["confidence"] <= 10
+
+
+def test_a_score_never_crosses_without_its_reasons(client, db, dana, project, sheet, item):
+    """The failure mode the amendment is one step away from: a bare
+    number on the wire. Asserted on the API's own output rather than
+    trusted, because the reasons are what make the figure legal."""
+    import json
+
+    item.confidence = 4
+    item.confidence_reasons = ["Measured on a sheet with no confirmed scale"]
+    db.flush()
+    _sign_in(client)
+
+    body = json.dumps(client.get(f"/api/projects/{project.id}/snapshot").json())
+    assert "%" not in body
+    assert "percent" not in body.lower()
 
 
 # --- Beyond the plan's four: required by the brief ---

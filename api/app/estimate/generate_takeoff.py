@@ -40,6 +40,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
 from app.estimate import copy
+from app.estimate.complete import NO_SINGLE_SCALE
 from app.takeoff.models import Item, Project, Sheet
 from app.takeoff.totals import countable_items
 
@@ -63,7 +64,13 @@ MEASURED_UNITS = ("ft", "lf", "feet")
 # no single scale. Either way the measurements on it rest on a choice
 # nobody made; "mixed" is the engine's own word for the second case
 # (`Sheet.scale`, and the E2.1 case in README's walkthrough).
-_NO_SINGLE_SCALE = ("", "mixed", "unknown", "none")
+#
+# Defined in `app.estimate.complete` and imported here rather than the
+# other way round, because that module is the one that now puts money on
+# these sheets. Two lists would be able to disagree about which sheets
+# they are, and the disagreement would be silent: a sheet disclosed as
+# unscaled but not completed for, or completed for twice.
+_NO_SINGLE_SCALE = NO_SINGLE_SCALE
 
 
 def _is_measured(item: Item) -> bool:

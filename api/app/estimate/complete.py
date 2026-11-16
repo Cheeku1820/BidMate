@@ -270,6 +270,77 @@ def _unidentified(lines: list[ResolvedLine], sheets: dict[uuid.UUID, Sheet],
     return rows
 
 
+def _measured(line: ResolvedLine) -> bool:
+    item = line.item
+    return bool(item.path) or (item.unit or "").strip().lower() in MEASURED_UNITS
+
+
+def _unscaled(lines: list[ResolvedLine], sheets: dict[uuid.UUID, Sheet],
+              labor_rate: Decimal) -> list[dict]:
+    """Case 2 -- measured runs on a sheet with no confirmed scale.
+
+    Today those items are *Missing information* and contribute nothing
+    to the number, so the ROM is silently short by whatever that footage
+    is worth -- and wire and conduit are a large share of material cost
+    (ROADMAP 2.1 calls them the largest single threat to a defensible
+    total).
+
+    **The item keeps its `missing` status and `Sheet.scale` is never
+    written.** Both deliberate, and the second one is the most dangerous
+    write this design could have made: a stored scale is
+    indistinguishable from a confirmed one, so writing a guess there
+    would release every blocked item on the sheet and let the export
+    through. What changes is only that the money is in the number and
+    disclosed; the firewall stays shut until a person sets the scale.
+
+    The cost per foot is this project's own: the resolved cost of
+    measured runs on sheets that *do* have a confirmed scale. With no
+    such run anywhere, there is nothing to be relative to and the case
+    stands down.
+    """
+    confirmed_cost = confirmed_hours = confirmed_feet = Decimal("0")
+    by_sheet: dict[uuid.UUID, list[ResolvedLine]] = {}
+
+    for line in lines:
+        if not _measured(line) or line.item.origin != "counted":
+            continue
+        sheet = sheets.get(line.item.sheet_id)
+        if sheet is None:
+            continue
+        if (sheet.scale or "").strip().lower() in NO_SINGLE_SCALE:
+            by_sheet.setdefault(sheet.id, []).append(line)
+        elif line.priced:
+            confirmed_cost += line.material_cost
+            confirmed_hours += line.labor_hours
+            confirmed_feet += Decimal(line.item.quantity or 0)
+
+    if confirmed_feet <= 0:
+        return []
+    per_foot = (confirmed_cost / confirmed_feet, confirmed_hours / confirmed_feet)
+
+    rows: list[dict] = []
+    for sheet_id, affected in sorted(by_sheet.items(), key=lambda kv: sheets[kv[0]].number):
+        sheet = sheets[sheet_id]
+        feet = sum(Decimal(line.item.quantity or 0) for line in affected)
+        if feet <= 0:
+            continue
+        rows.append(_line(
+            case="unscaled", sheet=sheet,
+            name=copy.UNSCALED["name"].format(sheet=sheet.number),
+            system=affected[0].item.system, category="Allowance",
+            quantity=Decimal("1"), unit=LUMP_SUM,
+            basis="scaled", method="measured_unconfirmed", adjustments=[],
+            money=_money(per_foot, feet, labor_rate),
+            title=copy.UNSCALED["title"].format(sheet=sheet.number),
+            found=copy.UNSCALED["found"].format(
+                lines=copy.plural(len(affected), "measured line"), sheet=sheet.number),
+            why=copy.UNSCALED["why"],
+            fix=copy.UNSCALED["fix"].format(sheet=sheet.number),
+            where=copy.UNSCALED["where"].format(sheet=sheet.number),
+        ))
+    return rows
+
+
 def completion_lines(db: DbSession, project: Project, *,
                      exclude: set[uuid.UUID] | None = None) -> list[dict]:
     """Every companion allowance this project's gaps call for.
@@ -296,4 +367,7 @@ def completion_lines(db: DbSession, project: Project, *,
     averages = _ClassAverage(lines)
     labor_rate = _labor_rate(lines)
 
-    return _unidentified(lines, sheets, averages, labor_rate)
+    return [
+        *_unidentified(lines, sheets, averages, labor_rate),
+        *_unscaled(lines, sheets, labor_rate),
+    ]

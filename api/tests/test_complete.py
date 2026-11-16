@@ -190,3 +190,99 @@ def test_every_completion_line_names_its_reasons(db, project):
     for line in completion_lines(db, project):
         assert line["confidence_reasons"]
         assert 1 <= line["confidence"] <= 9
+
+
+# --- Case 2: measured runs with no confirmed scale ------------------------
+
+def test_measured_items_on_an_unscaled_sheet_get_an_allowance(db, project):
+    sheet = _sheet(db, project, number="E-2.1", scale="")
+    _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]],
+          status=ReviewStatus.MISSING, name="3/4\" EMT homerun", cost="0")
+    scaled = _sheet(db, project, number="E-1.0", scale='1/8" = 1\'-0"')
+    _item(db, project, scaled, quantity=300, unit="ft", path=[[0, 0], [20, 20]],
+          cost="900", name="3/4\" EMT homerun")
+
+    [line] = _case(completion_lines(db, project), "unscaled")
+    assert line["confidence"] == 4
+    assert line["basis"] == "scaled"
+    assert line["sheet_id"] == sheet.id
+    assert line["total_cost"] > 0
+
+
+def test_a_confirmed_scale_produces_no_allowance(db, project):
+    sheet = _sheet(db, project, number="E-2.1", scale='1/8" = 1\'-0"')
+    _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]], cost="720")
+    assert _case(completion_lines(db, project), "unscaled") == []
+
+
+def test_a_sheet_with_two_scale_labels_is_treated_as_unscaled(db, project):
+    """The E2.1 case from the README walkthrough. "mixed" is the
+    engine's own word for it, and the measurements rest on a choice
+    nobody made either way."""
+    sheet = _sheet(db, project, number="E-2.1", scale="mixed")
+    _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]],
+          status=ReviewStatus.MISSING, cost="0")
+    scaled = _sheet(db, project, number="E-1.0", scale='1/8" = 1\'-0"')
+    _item(db, project, scaled, quantity=300, unit="ft", path=[[0, 0], [20, 20]], cost="900")
+    assert len(_case(completion_lines(db, project), "unscaled")) == 1
+
+
+def test_the_sheets_scale_is_never_written(db, project):
+    """The single most dangerous write in this design. A stored scale is
+    indistinguishable from a confirmed one, and writing one would
+    release every blocked item on the sheet and let the export through
+    on a guess."""
+    sheet = _sheet(db, project, number="E-2.1", scale="")
+    _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]],
+          status=ReviewStatus.MISSING, cost="0")
+    scaled = _sheet(db, project, number="E-1.0", scale='1/8" = 1\'-0"')
+    _item(db, project, scaled, quantity=300, unit="ft", path=[[0, 0], [20, 20]], cost="900")
+
+    completion_lines(db, project)
+    db.refresh(sheet)
+    assert not sheet.scale
+
+
+def test_the_measured_items_keep_missing_information(db, project):
+    """The firewall stays shut: the export still blocks until a person
+    sets the scale. Only the ROM stops being silently short."""
+    sheet = _sheet(db, project, number="E-2.1", scale="")
+    item = _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]],
+                 status=ReviewStatus.MISSING, cost="0")
+    scaled = _sheet(db, project, number="E-1.0", scale='1/8" = 1\'-0"')
+    _item(db, project, scaled, quantity=300, unit="ft", path=[[0, 0], [20, 20]], cost="900")
+
+    completion_lines(db, project)
+    db.refresh(item)
+    assert item.status is ReviewStatus.MISSING
+
+
+def test_the_disclosure_says_which_sheet_lacks_a_scale(db, project):
+    sheet = _sheet(db, project, number="E-2.1", scale="")
+    _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]],
+          status=ReviewStatus.MISSING, cost="0")
+    scaled = _sheet(db, project, number="E-1.0", scale='1/8" = 1\'-0"')
+    _item(db, project, scaled, quantity=300, unit="ft", path=[[0, 0], [20, 20]], cost="900")
+
+    [line] = _case(completion_lines(db, project), "unscaled")
+    assert "E-2.1" in line["found"]
+    assert "scale" in line["why"].lower() or "scale" in line["found"].lower()
+
+
+def test_an_unscaled_sheet_with_no_measured_items_gets_nothing(db, project):
+    """A sheet with no scale and nothing measured on it has no problem
+    to solve."""
+    sheet = _sheet(db, project, number="E-2.1", scale="")
+    _item(db, project, sheet, quantity=47, cost="564")
+    assert _case(completion_lines(db, project), "unscaled") == []
+
+
+def test_an_unscaled_sheet_with_nothing_measured_elsewhere_stands_down(db, project):
+    """Nothing counted means nothing guessed, applied to case 2: with no
+    measured run anywhere that priced, there is no footage-per-run on
+    this job to be relative to."""
+    sheet = _sheet(db, project, number="E-2.1", scale="")
+    _item(db, project, sheet, quantity=240, unit="ft", path=[[0, 0], [10, 10]],
+          status=ReviewStatus.MISSING, cost="0")
+    _item(db, project, sheet, quantity=47, cost="564")
+    assert _case(completion_lines(db, project), "unscaled") == []

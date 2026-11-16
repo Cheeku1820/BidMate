@@ -115,6 +115,29 @@ class ItemOut(BaseModel):
     # yet, which the client reads as "the only phase".
     phase_id: uuid.UUID | None = None
     phase_overridden: bool = False
+    # Whether this line's quantity was counted off the drawing or
+    # guessed (estimate-without-asking.md). "assumed" is a companion
+    # allowance for work the engine could not count, identify, or
+    # measure; the row leads with "Guessed" and the four review labels
+    # are untouched -- this is the counted/assumed axis CLAUDE.md
+    # already establishes, not a fifth status.
+    origin: str = "counted"
+    # The 1-10 meter, and the named sentences that produced it.
+    #
+    # The one place a confidence figure crosses the API boundary, by the
+    # estimator's explicit decision, which is why ROADMAP invariant 7
+    # was narrowed in the same change rather than quietly broken. What
+    # makes it admissible is `confidence_reasons`: a score that cannot
+    # explain itself is the unexplained confidence percentage
+    # `product-spec.md` §3 bans. Model identifiers, prompts, stage
+    # names, and attempt counts still stop here.
+    #
+    # Null for every item processed before the column existed. The
+    # client renders that as an empty bar and sorts it last; it is never
+    # defaulted to a number, because an invented score is worse than no
+    # score.
+    confidence: int | None = None
+    confidence_reasons: list[str] | None = None
 
     model_config = MODEL_CONFIG
 

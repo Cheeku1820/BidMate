@@ -438,3 +438,40 @@ def test_item_order_is_stable_across_repeated_polls(client, dana, project, sheet
 
     assert first_order == second_order
     assert set(first_order) == {str(item.id), str(second.id)}
+
+
+# --- docs/plans/estimate-without-asking.md Task 11 ------------------------
+
+def test_an_item_reports_its_origin_and_confidence(client, dana, project, sheet, item):
+    _sign_in(client)
+    [row] = client.get(f"/api/projects/{project.id}/snapshot").json()["items"]
+    assert row["origin"] == "counted"
+    assert "confidence" in row
+    assert row["confidence"] is None
+    assert row["confidence_reasons"] is None
+
+
+def test_a_scored_item_puts_its_reasons_on_the_wire(client, db, dana, project, sheet, item):
+    """The score is admissible on the wire only because the reasons
+    travel with it -- an unexplained figure is what product-spec.md §3
+    bans, and what ROADMAP invariant 7 was narrowed around."""
+    item.confidence = 5
+    item.confidence_reasons = ["Counted off the drawing, but nothing named what these are"]
+    db.flush()
+    _sign_in(client)
+
+    [row] = client.get(f"/api/projects/{project.id}/snapshot").json()["items"]
+    assert row["confidence"] == 5
+    assert row["confidence_reasons"]
+
+
+def test_no_processing_internals_leak(client, dana, project, sheet, item):
+    """ROADMAP invariant 7 still holds for everything except the agreed
+    score: model identifiers, prompts, stage names, and attempt counts
+    never cross this boundary."""
+    import json
+
+    _sign_in(client)
+    body = json.dumps(client.get(f"/api/projects/{project.id}/snapshot").json()).lower()
+    for banned in ("prompt", "token", "anthropic", "claude", "attempt_count"):
+        assert banned not in body

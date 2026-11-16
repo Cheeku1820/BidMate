@@ -138,6 +138,18 @@ def _item_out(
         source_tag=item.source_tag,
         phase_id=phase_id,
         phase_overridden=item.phase_id is not None,
+        # Counted off the drawing, or a companion allowance for work the
+        # engine could not count (estimate-without-asking.md). The row
+        # leads with "Guessed"; the four review labels are untouched.
+        origin=item.origin,
+        # The 1-10 meter and the sentences behind it. The reasons are
+        # not decoration: a score that cannot explain itself is the
+        # unexplained confidence figure product-spec.md §3 bans, and
+        # they are what narrowed ROADMAP invariant 7 rather than broke
+        # it. Null stays null -- an item with no score renders an empty
+        # bar, never an invented number.
+        confidence=item.confidence,
+        confidence_reasons=item.confidence_reasons,
     )
 
 

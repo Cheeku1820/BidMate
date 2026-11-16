@@ -119,3 +119,25 @@ describe("mapItem", () => {
     expect(mapItem(base)).toMatchObject({ rejectReason: null, resolveNote: null });
   });
 });
+
+
+describe("mapItem origin and confidence", () => {
+  const base = { id: "i1", sheet_id: "s1", name: "x", symbol: "receptacle", system: "Power",
+    category: "Devices", quantity: "1", unit: "ea", status: "ready", notes: "", warnings: [], version: 1 };
+
+  test("maps origin and confidence onto the item", () => {
+    expect(mapItem({ ...base, origin: "assumed", confidence: 3, confidence_reasons: ["Typical for the other sheets on this job"] }))
+      .toMatchObject({ origin: "assumed", confidence: 3, confidenceReasons: ["Typical for the other sheets on this job"] });
+  });
+
+  test("defaults origin to counted when the wire omits it", () => {
+    expect(mapItem(base).origin).toBe("counted");
+  });
+
+  test("leaves confidence null for an item that predates the column", () => {
+    // Review focus 5. Null renders an empty bar and sorts last; 0 would
+    // render as a scored-but-worthless line, which is a different claim.
+    expect(mapItem(base).confidence).toBeNull();
+    expect(mapItem(base).confidenceReasons).toBeNull();
+  });
+});

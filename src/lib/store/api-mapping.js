@@ -59,6 +59,19 @@ export function mapItem(i) {
     // is what makes the panel able to say "moved from Phase 1".
     phaseId: i.phase_id ?? null,
     phaseOverridden: Boolean(i.phase_overridden),
+    // Whether this line's quantity was counted off the drawing or
+    // guessed (docs/specs/estimate-without-asking.md). "assumed" is a
+    // companion allowance for work the engine could not count,
+    // identify, or measure. The row leads with "Guessed"; the four
+    // review labels are untouched.
+    origin: i.origin ?? "counted",
+    // The 1-10 meter and the sentences behind it. Null — never 0 — for
+    // an item processed before the column existed: the bar renders
+    // empty and the row sorts last, and an invented score would be
+    // worse than no score. `?? null` rather than `|| null` so a
+    // genuine 0 from a future API would not be silently erased.
+    confidence: i.confidence ?? null,
+    confidenceReasons: i.confidence_reasons ?? null,
   };
 }
 

@@ -52,7 +52,28 @@ def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-test_engine = create_engine(settings.test_database_url)
+# `prepare_threshold=None` disables psycopg3's server-side prepared
+# statements for the test engine only.
+#
+# The `db` fixture below drops and recreates every table *per test* on a
+# pooled connection. psycopg3 prepares a statement server-side once it
+# has seen it a few times on the same connection, and a prepared plan
+# over `items` becomes invalid the moment that table is dropped and
+# recreated -- Postgres then refuses the next execution with "cached
+# plan must not change result type". It surfaces as a flake in whichever
+# test happens to run the same query the sixth time after a recreate,
+# which is random-order dependent and has nothing to do with the test
+# that fails.
+#
+# Found when `app.estimate.complete` started calling `countable_items`
+# an extra time per run, which crossed the threshold sooner and turned a
+# latent fixture bug into a visible one. Disabling the cache here is the
+# narrow fix: the application engine (`app/db.py`) is untouched and
+# keeps its prepared statements, and no production code path drops a
+# table under itself.
+test_engine = create_engine(
+    settings.test_database_url, connect_args={"prepare_threshold": None}
+)
 TestSession = sessionmaker(bind=test_engine, expire_on_commit=False)
 
 

@@ -129,6 +129,13 @@ def plan_sheet_counts(db: DbSession, project: Project) -> list[tuple[str, int]]:
             continue
         if item.path or (item.unit or "").strip().lower() in _MEASURED_UNITS:
             continue
+        # Counted lines only. A companion allowance written by the last
+        # run is a guess, and letting it into the base means the next
+        # run guesses from the previous run's guesses -- which compounds
+        # silently every time the estimate regenerates, and the number
+        # drifts away from anything on the drawings.
+        if item.origin != "counted":
+            continue
         totals[item.sheet_id] += int(item.quantity or 0)
 
     return sorted((sheets[sheet_id], count) for sheet_id, count in totals.items())

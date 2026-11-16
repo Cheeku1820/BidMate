@@ -129,3 +129,15 @@ def test_the_counts_are_sorted_by_sheet_number(db, project):
     for number in ("E-1.2", "E-1.0", "E-1.1"):
         _item(db, project, _sheet(db, project, number=number, kind="plan"), quantity=40)
     assert [n for n, _ in plan_sheet_counts(db, project)] == ["E-1.0", "E-1.1", "E-1.2"]
+
+
+def test_a_guessed_line_is_not_part_of_the_base(db, project):
+    """The base has to be what this project *counted*. A companion
+    allowance written by the last run is a guess, and letting it into the
+    median means the second run guesses from the first run's guesses --
+    which compounds, silently, every time the estimate regenerates."""
+    _item(db, project, _sheet(db, project, number="E-1.0", kind="plan"), quantity=40)
+    _item(db, project, _sheet(db, project, number="E-1.1", kind="plan"), quantity=60)
+    guessed_sheet = _sheet(db, project, number="E-1.2", kind="plan")
+    _item(db, project, guessed_sheet, quantity=50, origin="assumed")
+    assert plan_sheet_counts(db, project) == [("E-1.0", 40), ("E-1.1", 60), ("E-1.2", 0)]

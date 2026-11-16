@@ -35,6 +35,30 @@ export const COLUMNS = [
     // markup rather than a string.
     render: (item) => STATUS[item.status]?.label ?? item.status,
   },
+  {
+    key: "origin",
+    label: "Origin",
+    align: "left",
+    // Where the NUMBER came from, which is a different axis from what a
+    // person has done about it (docs/specs/estimate-without-asking.md,
+    // decision 5). "Guessed" is deliberately not a fifth review label:
+    // the row's status stays one of the four, and this column says
+    // whether the quantity was read off the drawing or assumed.
+    //
+    // Rendered as a tag by the table itself, same as `status` -- this
+    // string is what sorting and any text consumer reads.
+    render: (item) => (item.origin === "assumed" ? "Guessed" : "Counted"),
+  },
+  {
+    key: "confidence",
+    label: "Confidence",
+    align: "left",
+    // The 1-10 meter. Drawn as a bar by the table; this string exists
+    // so the column sorts and so a text consumer has something. An
+    // unscored row reads as absent, never as a low score -- "nobody
+    // scored this" and "this is a 1" are different claims.
+    render: (item) => (item.confidence ? `${item.confidence} of 10` : NONE),
+  },
   { key: "name", label: "Item", align: "left", render: (item) => item.name },
   { key: "description", label: "Description", align: "left", render: (item) => item.description || NONE },
   { key: "system", label: "System", align: "left", render: (item) => item.system || NONE },

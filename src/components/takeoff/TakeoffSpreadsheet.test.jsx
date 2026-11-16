@@ -137,3 +137,81 @@ describe("TakeoffSpreadsheet", () => {
     });
   });
 });
+
+
+/* --- docs/plans/estimate-without-asking.md Task 12 -------------------
+   A guessed line that lands invisibly is worthless, so the row has to
+   say "Guessed" and show its confidence. The hard rule here is that
+   "Guessed" is NOT a fifth review label: it rides the counted/assumed
+   axis, the row's own status stays `ready`, and the four labels keep
+   their meanings and their colours. */
+
+describe("a guessed row", () => {
+  const guessed = {
+    id: "i9", sheetId: "s2", name: "Allowance — unidentified devices on E2.1",
+    description: "", system: "Power", quantity: 1, unit: "ls", status: "ready",
+    notes: "", rejected: false, warnings: [], version: 1,
+    origin: "assumed", confidence: 5,
+    confidenceReasons: ["Counted off the drawing, but nothing named what these are"],
+    materialCost: 1200, laborHours: 4, totalCost: 1500,
+  };
+
+  it("marks a guessed row guessed, and not with a review label", async () => {
+    context.snapshot.items = [guessed];
+    renderSheet();
+    expect(await screen.findByText("Guessed")).toBeInTheDocument();
+    expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+  });
+
+  it("still shows the row's real review status beside it", async () => {
+    /* Two independent channels. The guess tag says where the number
+       came from; the Pill says what a person has done about it. */
+    context.snapshot.items = [guessed];
+    renderSheet();
+    expect(await screen.findByText("Guessed")).toBeInTheDocument();
+    expect(screen.getByText("Ready to review")).toBeInTheDocument();
+  });
+
+  it("names the sheet its evidence sits on", async () => {
+    /* A guessed line has no marker and no evidence crop — nothing was
+       read. The sheet it is attached to is the thing an estimator opens
+       to check it, so the row must name it. */
+    context.snapshot.items = [guessed];
+    renderSheet();
+    const row = (await screen.findByText("Guessed")).closest("tr");
+    expect(within(row).getByText("E2.1")).toBeInTheDocument();
+  });
+
+  it("shows the confidence meter with its reasons", async () => {
+    context.snapshot.items = [guessed];
+    renderSheet();
+    const row = (await screen.findByText("Guessed")).closest("tr");
+    expect(within(row).getByRole("img")).toHaveAccessibleName(/5 out of 10/i);
+    expect(within(row).getByRole("img")).toHaveAccessibleName(/nothing named what these are/i);
+  });
+
+  it("marks a counted row counted", async () => {
+    context.snapshot.items = [items[0]];
+    renderSheet();
+    expect(await screen.findByText("Counted")).toBeInTheDocument();
+  });
+
+  it("leaves the meter empty for a row that was never scored", async () => {
+    /* Review focus 5. An item from before the column exists renders an
+       empty bar rather than a 1, and nothing throws. */
+    context.snapshot.items = [items[0]];
+    renderSheet();
+    const row = (await screen.findByText("Counted")).closest("tr");
+    expect(within(row).getByRole("img")).toHaveAccessibleName(/not scored/i);
+  });
+
+  it("cannot be bulk approved, because only Ready to review items can", async () => {
+    /* CLAUDE.md: bulk approval applies only to Ready to review. A
+       guessed line IS ready, so this is a check that the guess tag did
+       not quietly change that — approval still means a person looked. */
+    context.snapshot.items = [guessed];
+    renderSheet();
+    expect(await screen.findByText("Guessed")).toBeInTheDocument();
+    expect(screen.getByText("Ready to review")).toBeInTheDocument();
+  });
+});

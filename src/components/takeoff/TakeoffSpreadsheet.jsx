@@ -35,6 +35,7 @@ import { STATUS } from "../../lib/vocabulary.js";
 import { countsTowardTotals } from "../../lib/rules.js";
 import { saveStateText } from "../../lib/format.js";
 import { COLUMNS, DEFAULT_VISIBLE, applicableColumns } from "./spreadsheetColumns.js";
+import ConfidenceBar from "./ConfidenceBar.jsx";
 import { useWorkspaceContext } from "../project/useWorkspaceContext.js";
 import { useConversationView } from "../conversation/screenContext.jsx";
 
@@ -395,6 +396,30 @@ export default function TakeoffSpreadsheet() {
                                 return (
                                   <td key={column.key}>
                                     <Pill status={displayStatus(item)} />
+                                  </td>
+                                );
+                              }
+                              // Counted or guessed — markup rather than a
+                              // string, because it is a tag with its own
+                              // hue. Reuses the ROM's `est-tag-*` pair
+                              // (`--slate`/`--plum`) rather than adding a
+                              // colour: one vocabulary, one set of tokens,
+                              // and originColors.test.js already guards it
+                              // off the four review hues.
+                              if (column.key === "origin") {
+                                const assumed = item.origin === "assumed";
+                                return (
+                                  <td key={column.key}>
+                                    <span className={assumed ? "est-tag est-tag-assumed" : "est-tag est-tag-counted"}>
+                                      {column.render(item, renderCtx)}
+                                    </span>
+                                  </td>
+                                );
+                              }
+                              if (column.key === "confidence") {
+                                return (
+                                  <td key={column.key}>
+                                    <ConfidenceBar value={item.confidence} reasons={item.confidenceReasons} />
                                   </td>
                                 );
                               }

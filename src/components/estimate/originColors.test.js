@@ -85,3 +85,28 @@ describe("the counted/assumed axis keeps its own colours", () => {
     expect(pill).toContain("--amber");
   });
 });
+
+describe("the confidence meter keeps off the review hues too", () => {
+  it("has rules to check", () => {
+    expect(blocksFor(".conf-step").length).toBeGreaterThan(0);
+  });
+
+  it("never paints a step in a review-status hue", () => {
+    /* A meter that turned amber at 4 would read as *Needs attention*,
+       and a red-to-green ramp would put green on something no person
+       has approved — green is reserved for estimator-approved content
+       and nothing else. */
+    for (const fragment of [".conf-bar", ".conf-step"]) {
+      for (const block of blocksFor(fragment)) {
+        for (const reviewHue of ["--amber", "--red", "--green"]) {
+          expect(block.body).not.toContain(reviewHue);
+        }
+      }
+    }
+  });
+
+  it("uses the second-vocabulary slate, like the counted tag", () => {
+    const steps = blocksFor(".conf-step").map((b) => b.body).join(" ");
+    expect(steps).toContain("--slate");
+  });
+});

@@ -67,6 +67,15 @@ ITEM_SNAPSHOT_TYPES: dict[str, type] = {
     # entry here `decode_snapshot` raises, which is the loud failure its
     # own docstring promises for an untyped snapshot field.
     "classification_basis": str,
+    # estimate-without-asking.md. Same reason `classification_basis` is
+    # here: every mapped column of `Item` travels in the delete snapshot,
+    # and a field `decode_snapshot` has no type for raises. Concretely --
+    # a guessed companion allowance an estimator deletes and then undoes
+    # must come back as a guessed line with its score intact, not as a
+    # counted one with an empty bar.
+    "origin": str,
+    "confidence": int,
+    "confidence_reasons": list,
     # The per-item phase override (phases-and-timeline §3.1). Nullable --
     # None when the item inherits its sheet's phase.
     "phase_id": uuid.UUID,

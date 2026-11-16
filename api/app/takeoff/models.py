@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger, Boolean, CheckConstraint, Date, DateTime, Enum, ForeignKey, Identity, Index,
-    Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text,
+    Integer, LargeBinary, Numeric, SmallInteger, String, Text, UniqueConstraint, func, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -78,6 +78,15 @@ warning_reason_enum = Enum(
 
 class Project(Base):
     __tablename__ = "projects"
+    __table_args__ = (
+        # Who decided the building type. An estimator's own choice is
+        # never overwritten by a later inference, and the column is what
+        # lets `infer_building_type` tell the two apart.
+        CheckConstraint(
+            "building_type_source is null or building_type_source in ('inferred', 'estimator')",
+            name="ck_projects_building_type_source",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
@@ -132,6 +141,21 @@ class Project(Base):
     # Phases-and-timeline §3.6: both estimator-typed, neither derived.
     expected_award_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     mobilization_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # What kind of building this is, and who said so
+    # (estimate-without-asking.md, "The building type"). Needed by the
+    # one completion case that reasons about a system absent from the
+    # whole job: a share of the electrical work is meaningless without
+    # knowing whether this is a school or a warehouse.
+    #
+    # Itself a laddered value: inferred from what the read job already
+    # stored (`app.estimate.building_type`), disclosed as inferred, and
+    # correctable by the estimator -- whose choice is never overwritten
+    # by a later inference. It **never gates processing**; a project
+    # with no building type runs every other completion case and says
+    # so, because a system allowance invented with no sense of the
+    # building is the fabricated number this product exists to prevent.
+    building_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    building_type_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
 
 class Sheet(Base):
@@ -333,6 +357,19 @@ class Item(Base):
             "classification_basis is null or classification_basis in ('inferred')",
             name="ck_items_classification_basis",
         ),
+        # The same two values `assumptions.origin` carries, so one
+        # vocabulary covers both records (estimate-without-asking.md).
+        CheckConstraint(
+            "origin in ('counted', 'assumed')",
+            name="ck_items_origin",
+        ),
+        # The meter is 1-10 and null means nothing scored it. A stored 0
+        # would be indistinguishable from the second state on screen,
+        # since both render as an empty bar.
+        CheckConstraint(
+            "confidence is null or (confidence >= 1 and confidence <= 10)",
+            name="ck_items_confidence",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -393,6 +430,37 @@ class Item(Base):
     # which method named the row, which is the same fact for every
     # project and is printed in words, never as a number.
     classification_basis: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Whether this line's quantity was read off the drawing or guessed
+    # (estimate-without-asking.md). `assumed` is a *companion allowance*
+    # written by `app.estimate.complete` for work the engine could not
+    # count, identify, or measure -- it carries money the counted lines
+    # do not, and the counted line beside it is never rewritten.
+    #
+    # Deliberately its own column rather than a synthetic `source_tag`:
+    # `source_tag` is the drawing's own symbol tag and drives cluster
+    # identity and "find every one like this"
+    # (`resolve_apply.py:103`, `:200`), so a value invented there would
+    # fabricate a symbol cluster.
+    #
+    # Deliberately NOT a fifth review label either. The four labels
+    # describe an item's evidence and govern approval; this is the
+    # counted/assumed axis CLAUDE.md already establishes, and a guessed
+    # line's status is `ready` -- nothing blocks, a person has not looked.
+    origin: Mapped[str] = mapped_column(String(20), default="counted", server_default="counted")
+    # How much an estimator should trust this line, 1-10
+    # (`app.takeoff.confidence`). NULL for every item processed before
+    # the column existed: the spec requires null to render as an empty
+    # bar and sort last rather than be backfilled with an invented
+    # number, and a re-run fills it.
+    #
+    # The one place a confidence figure is allowed to reach the
+    # interface, by the estimator's explicit decision against a stated
+    # objection. What makes it admissible is `confidence_reasons`: the
+    # score is a sum of named sentences, never an opaque number, so the
+    # product can always answer "why is this a 4". Percentages stay
+    # banned.
+    confidence: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    confidence_reasons: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     # Optimistic-concurrency counter for the five single-item mutations
     # (task-13b-brief.md) -- deliberately not `updated_at` (below), which
     # is driven by `onupdate=func.now()` and therefore transaction-

@@ -180,3 +180,73 @@ def test_pricing_columns_are_not_flattened_into_the_item_snapshot_types():
 
     assert ITEM_SNAPSHOT_TYPES["labor_line"] is dict
     assert ITEM_SNAPSHOT_TYPES["material_price"] is dict
+
+
+# --- docs/plans/estimate-without-asking.md Task 2 -------------------------
+# `Item.origin`, `Item.confidence`, and the project's building type. The
+# origin axis is the one `Assumption.origin` already uses (counted /
+# assumed), so one vocabulary covers both records -- deliberately NOT
+# `source_tag`, which carries the drawing's own symbol tag and drives
+# cluster identity in `resolve_apply.py`.
+
+def _bare_item(project, sheet, **kw):
+    return Item(
+        project_id=project.id, sheet_id=sheet.id, symbol="receptacle",
+        name="20A duplex receptacle", system="Power", category="Devices",
+        quantity=14, unit="EA", status=ReviewStatus.READY, **kw,
+    )
+
+
+def test_an_item_defaults_to_counted(db, project, sheet):
+    item = _bare_item(project, sheet)
+    db.add(item)
+    db.flush()
+    assert item.origin == "counted"
+    assert item.confidence is None
+    assert item.confidence_reasons is None
+
+
+def test_an_unrecognized_origin_is_refused_by_the_database(db, project, sheet):
+    db.add(_bare_item(project, sheet, origin="maybe"))
+    with pytest.raises(IntegrityError):
+        db.flush()
+
+
+def test_a_confidence_outside_the_meter_is_refused(db, project, sheet):
+    """The scale is 1-10. A stored 0 would render as an empty bar, which
+    is the rendering reserved for "nothing scored this yet"."""
+    db.add(_bare_item(project, sheet, confidence=11))
+    with pytest.raises(IntegrityError):
+        db.flush()
+
+
+def test_building_type_is_optional(db, project):
+    assert project.building_type is None
+    assert project.building_type_source is None
+
+
+def test_an_unrecognized_building_type_source_is_refused(db, project):
+    project.building_type = "warehouse"
+    project.building_type_source = "hunch"
+    with pytest.raises(IntegrityError):
+        db.flush()
+
+
+def test_an_inferred_building_type_is_accepted(db, project):
+    project.building_type = "school"
+    project.building_type_source = "inferred"
+    db.flush()
+    assert project.building_type_source == "inferred"
+
+
+def test_the_new_item_columns_are_in_the_delete_undo_snapshot():
+    """`decode_snapshot` raises on a snapshot field it has no type for,
+    which is the loud failure its docstring promises -- and this codebase
+    has already shipped "a new Item column breaks decode_snapshot()"
+    twice. A guessed line an estimator deletes and undoes must come back
+    as a guessed line, not as a counted one."""
+    from app.takeoff.snapshots import ITEM_SNAPSHOT_TYPES
+
+    assert ITEM_SNAPSHOT_TYPES["origin"] is str
+    assert ITEM_SNAPSHOT_TYPES["confidence"] is int
+    assert ITEM_SNAPSHOT_TYPES["confidence_reasons"] is list

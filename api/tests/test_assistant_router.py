@@ -150,6 +150,43 @@ def test_rate_limit_is_busy(client, signed_in_user, project, model, monkeypatch)
     assert events == [("error", {"code": "busy", "message": "Busy right now — ask again in a moment"})]
 
 
+def test_an_exhausted_credit_balance_is_not_configured_not_interrupted(
+    client, signed_in_user, project, model, monkeypatch, caplog
+):
+    """A 400 is never worth retrying, and the one an estimator actually
+    meets is billing: a valid key on an account out of credits. Mapping
+    it to "interrupted" invites a retry that cannot succeed until
+    somebody tops up the account, which is the same class of problem as
+    a key that is absent or rejected -- a setup one. The panel says so
+    rather than asking them to try again forever.
+
+    Keyed off the status code, not off the vendor's sentence: a
+    malformed request is equally unretryable, and matching on the words
+    "credit balance" would make the panel's recovery copy depend on
+    someone else's error text.
+    """
+    import logging
+
+    import anthropic
+    import httpx2
+
+    def broke(system_blocks, messages):
+        raise anthropic.BadRequestError(
+            "Your credit balance is too low to access the Anthropic API.",
+            response=httpx2.Response(400, request=httpx2.Request("POST", "http://x")), body=None)
+        yield  # noqa: unreachable -- makes this a generator
+
+    monkeypatch.setattr(service.llm, "stream", broke)
+    with caplog.at_level(logging.WARNING, logger="app.assistant.service"):
+        res = _post(client, project)
+    assert _events(res.text) == [("error", {"code": "not_configured",
+                                            "message": "The conversation panel isn't set up on this server"})]
+    # The vendor's own sentence never reaches the estimator.
+    assert "credit balance" not in res.text
+    record = next(r for r in caplog.records if r.exc_info)
+    assert record.exc_info[0] is anthropic.BadRequestError
+
+
 def test_a_rejected_key_is_not_configured_not_interrupted(client, signed_in_user, project, model, monkeypatch, caplog):
     """A key that is present but wrong (401/403) is a setup problem, not
     a transient one: the panel must say so rather than invite a retry."""

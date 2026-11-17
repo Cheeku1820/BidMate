@@ -39,8 +39,9 @@ THREAD_CAP = 200
 
 BUSY = ("busy", "Busy right now — ask again in a moment")
 INTERRUPTED = ("interrupted", "Answer interrupted — ask again")
-# A key that is present but rejected (401/403) is the same problem as
-# no key: a setup one, not one a retry fixes. Same words as the 503.
+# A key that is present but rejected (401/403), or an account out of
+# credits (400), is the same problem as no key: a setup one, not one a
+# retry fixes. Same words as the 503.
 NOT_CONFIGURED = ("not_configured", "The conversation panel isn't set up on this server")
 
 
@@ -189,7 +190,19 @@ def answer_events(*, project_id: uuid.UUID, actor_id: uuid.UUID, bundle_text: st
         yield _failed(BUSY)
         return
     except anthropic.APIStatusError as exc:
-        yield _failed(BUSY if exc.status_code == 529 else INTERRUPTED)
+        if exc.status_code == 529:
+            yield _failed(BUSY)
+        elif exc.status_code == 400:
+            # Nothing about a 400 improves on a retry: the request shape
+            # is wrong, or -- the one an estimator actually meets -- the
+            # account behind a perfectly valid key is out of credits.
+            # Both need somebody to change something on the server, which
+            # is what NOT_CONFIGURED already says. Keyed off the status
+            # rather than the vendor's sentence, so the panel's recovery
+            # copy does not depend on someone else's error text.
+            yield _failed(NOT_CONFIGURED)
+        else:
+            yield _failed(INTERRUPTED)
         return
     except Exception:  # noqa: BLE001 -- connection drops and anything else: the panel says "ask again"
         yield _failed(INTERRUPTED)

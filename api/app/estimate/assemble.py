@@ -431,4 +431,5 @@ def build_estimate_out(db: DbSession, project: Project) -> EstimateOut:
         qualifications=_qualifications(assumptions, removed),
         empty_reason=_empty_reason(db, project, totals, exclude),
         pending_reason=_pending_reason(db, project, totals, assumptions),
+        pricing_note=project.pricing_note or None,
     )

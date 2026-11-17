@@ -57,9 +57,15 @@ export function toRomCsv(estimate) {
   // empty qualifications block and no explanation reads as a complete
   // estimate, which is the precise failure this feature exists to
   // prevent.
-  const prefix = estimate.pendingReason
-    ? [[`Not ready to hand over: ${estimate.pendingReason}`], []]
-    : [];
+  // Same rule for the pricing basis: the screen states what priced the
+  // job, so the file does too. A total that came out short because
+  // nothing was connected to price it must carry that sentence into the
+  // one artifact a GC opens, or the number arrives with no basis.
+  const prefix = [
+    ...(estimate.pendingReason ? [[`Not ready to hand over: ${estimate.pendingReason}`]] : []),
+    ...(estimate.pricingNote ? [[`Pricing basis: ${estimate.pricingNote}`]] : []),
+  ];
+  if (prefix.length) prefix.push([]);
   const rows = [];
 
   for (const section of estimate.sections) {

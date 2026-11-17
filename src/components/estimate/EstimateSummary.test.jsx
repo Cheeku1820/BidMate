@@ -124,6 +124,27 @@ describe("EstimateSummary", () => {
     expect(labels.slice(0, 4)).toEqual(["Scope", "Takeoff quantities", "Labor", "Material"]);
   });
 
+  it("states what priced the job, so a short number carries its cause", async () => {
+    /* Labor pricing and Material pricing both show this note. The ROM
+       is the one a GC sees, and it was the only one that did not: an
+       estimate that came out thin because automated pricing was
+       unavailable reads as a small job unless the basis says so. */
+    context.store.getEstimate = vi.fn().mockResolvedValue(
+      estimate({ pricingNote: "Automated pricing wasn't available, so regional cost data was used." }),
+    );
+    render(<EstimateSummary />);
+    expect(await screen.findByText(/automated pricing wasn't available/i)).toBeInTheDocument();
+  });
+
+  it("shows no pricing basis line when the project has no note", async () => {
+    /* An absent note renders nothing rather than an empty label: a
+       blank "Pricing basis:" reads as a missing value, which is a
+       claim about the pricing this screen has not earned. */
+    render(<EstimateSummary />);
+    await screen.findAllByRole("heading", { level: 2 });
+    expect(screen.queryByTestId("est-pricing-note")).not.toBeInTheDocument();
+  });
+
   it("tags each line with a word, not colour alone", async () => {
     render(<EstimateSummary />);
     expect(await screen.findAllByText("Assumed")).not.toHaveLength(0);

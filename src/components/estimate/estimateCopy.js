@@ -23,6 +23,14 @@ export const COPY = {
   kicker: "Rough order of magnitude · Division 26",
   rangeLabel: "Budget range",
   loading: "Loading the estimate…",
+
+  // What priced the job, in the project's own stored words. The label
+  // only; the sentence itself comes from `Project.pricing_note`, the
+  // same one Labor pricing and Material pricing state. A number that
+  // came out short because nothing was connected to price it must say
+  // so here -- "this bid is thin" and "nothing priced it" are different
+  // facts, and only the second one has a fix.
+  pricingBasisLabel: "Pricing basis",
   loadError: "The estimate could not be loaded. Reload the page to try again.",
 
   // The footer. This is the sentence that keeps the document from being

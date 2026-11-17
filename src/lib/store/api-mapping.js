@@ -732,5 +732,6 @@ export function mapEstimate(e) {
     })),
     emptyReason: e.empty_reason ?? null,
     pendingReason: e.pending_reason ?? null,
+    pricingNote: e.pricing_note ?? null,
   };
 }

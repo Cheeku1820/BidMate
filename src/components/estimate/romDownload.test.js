@@ -180,6 +180,22 @@ describe("the unfinished-estimate warning", () => {
     expect(rows(csv)[0]).toContain("have not been generated yet");
   });
 
+  it("carries the pricing basis, so the emailed file says what priced it", () => {
+    /* Same rule as the pending reason above: the screen states what
+       priced the job, and the file a GC opens is the one artifact that
+       leaves the building. A short total whose cause stayed behind in
+       the browser is a number with no basis attached. */
+    const csv = toRomCsv(
+      estimate({ pricingNote: "Automated pricing wasn't available, so regional cost data was used." }),
+    );
+    expect(csv).toContain("Pricing basis");
+    expect(csv).toContain("Automated pricing wasn't available");
+  });
+
+  it("omits the pricing basis line when the project has no note", () => {
+    expect(toRomCsv(estimate())).not.toContain("Pricing basis");
+  });
+
   it("puts it above the column header, not inside the table", () => {
     const csv = toRomCsv(estimate({ pendingReason: "Not generated yet." }));
     const header = rows(csv).indexOf(ROM_COLUMNS.join(","));

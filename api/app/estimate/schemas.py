@@ -116,4 +116,13 @@ class EstimateOut(BaseModel):
     # fully counted, which is the one way this document can overstate
     # what it knows -- so the screen refuses to present it as finished.
     pending_reason: str | None = None
+    # What priced this job, in the project's own words -- the same note
+    # Labor pricing and Material pricing already state
+    # (`pricing_router.get_labor`, `get_material_pricing`). The ROM was
+    # the only one of the three that did not carry it, and it is the one
+    # a GC sees: a number that came out short because automated pricing
+    # was unavailable reads as a small job unless the basis says
+    # otherwise. Nullable because a project that has not been priced has
+    # no note to show, and an invented one would be worse than none.
+    pricing_note: str | None = None
     model_config = MODEL_CONFIG

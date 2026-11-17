@@ -238,6 +238,21 @@ def test_an_unpriced_line_is_counted_and_reported(client, db, priced_project):
     assert client.get(url(priced_project)).json()["unpriced_count"] == 1
 
 
+def test_the_rom_carries_the_projects_pricing_basis_note(client, priced_project):
+    """Labor pricing and Material pricing both state what priced the job
+    (`pricing_router.get_labor` / `get_material_pricing` return
+    `pricing_note`). The ROM is the one of the three a GC actually sees,
+    and it was the only one not saying it.
+
+    This is the sentence that distinguishes "this bid is thin" from
+    "nothing is connected to price it" -- on a run where automated
+    pricing was unavailable the note says so, and without it an
+    estimator reads a short number with no cause attached.
+    """
+    body = client.get(url(priced_project)).json()
+    assert body["pricing_note"] == "Indiana regional basis"
+
+
 # --- empty -------------------------------------------------------------
 
 

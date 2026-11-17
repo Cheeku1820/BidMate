@@ -66,6 +66,12 @@ export default function EstimateSummary() {
               .join(" · ")}
           </p>
 
+          {estimate.pricingNote && (
+            <p className="est-basis" data-testid="est-pricing-note">
+              <b>{COPY.pricingBasisLabel}:</b> {estimate.pricingNote}
+            </p>
+          )}
+
           {estimate.pendingReason && (
             <div className="est-pending" role="status">
               <p className="est-pending-head">{COPY.pendingHeading}</p>

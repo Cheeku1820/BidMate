@@ -16,9 +16,16 @@ __pycache__/
 api/.venv/
 
 # Real contractor bid sets. NDA'd drawings -- bid confidentiality rules
-# committing them out (ROADMAP.md 3.3). The engine regression tests read
-# from here via tests/bid_set.py; the files never leave this machine.
+# committing them out (ROADMAP.md 3.3), and two of the archives exceed
+# GitHub's 100 MB file cap regardless. They are distributed instead
+# through an access-controlled bucket: `scripts/corpus.py fetch` pulls
+# them in, verified against the committed digests in
+# scripts/corpus-manifest.json. The engine regression tests read from
+# here via api/tests/bid_set.py.
 bid_examples/
+
+# Archives staged by scripts/corpus.py on their way to or from the bucket.
+.corpus-cache/
 
 # Root .env: docker compose reads it for ${ANTHROPIC_API_KEY:-} and the
 # like. It carries a real key, so it never lands in the repo.

@@ -45,6 +45,31 @@ Open http://localhost:5173, sign in with the account you created, create a proje
 
 ---
 
+## Get the bid corpus
+
+The engine's regression tests measure against eight real contractor bid sets — five vector, two raster, and one not yet asserted against — about 810 MB on disk, 770 MB to download. They are **not in the repo**: they are NDA'd drawings from named firms, so bid confidentiality keeps them out of git history ([`ROADMAP.md`](ROADMAP.md) §3.3), and two of the archives exceed GitHub's 100 MB file cap besides.
+
+They are distributed through an access-controlled bucket instead. Ask for credentials, put them in your environment, and pull the sets in:
+
+```bash
+export CORPUS_BUCKET=... CORPUS_ACCESS_KEY=... CORPUS_SECRET_KEY=...
+.enginevenv/bin/python scripts/corpus.py fetch
+```
+
+That lands them in `bid_examples/`, where [`api/tests/bid_set.py`](api/tests/bid_set.py) expects them. Each archive is verified against the SHA-256 digest committed in [`scripts/corpus-manifest.json`](scripts/corpus-manifest.json) before it is extracted — a mismatch is a hard failure rather than a warning, because the tests would otherwise run against a truncated set and report numbers nobody could reproduce.
+
+Fetch one set rather than all eight — most of the engine assertions only need the Unalaska drawings:
+
+```bash
+.enginevenv/bin/python scripts/corpus.py fetch "Unalaska Bid"   # 144 MB
+.enginevenv/bin/python scripts/corpus.py list                   # sizes and roles
+.enginevenv/bin/python scripts/corpus.py verify                 # check what's on disk
+```
+
+`BIDMATE_CORPUS` and `BIDMATE_BID_SET` still override the paths if you keep the sets elsewhere. Without the corpus the engine tests **skip rather than fail**, so a green suite on a fresh checkout does not mean those assertions ran — `verify` is how you tell. Whoever holds the bucket publishes a new set with `scripts/corpus.py upload`, then commits the regenerated manifest.
+
+---
+
 ## Try the multi-user behavior
 
 Open the app in **two browser windows side by side**, both signed in against the same project.

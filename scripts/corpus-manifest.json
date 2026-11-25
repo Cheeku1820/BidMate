@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "prefix": "bid-corpus/v1",
+  "sets": {
+    "FedEx Office Bid": {
+      "archive": "fedex-office-bid.tar.gz",
+      "bytes": 12313967,
+      "sha256": "40bb58f204a8f1ea830b634b494cff34a04ff247b828eeca32071f522392f3e3",
+      "files": 2,
+      "unpacked_bytes": 16148853,
+      "role": "raster"
+    },
+    "Gerber Collision & Glass Bid": {
+      "archive": "gerber-collision-and-glass-bid.tar.gz",
+      "bytes": 36573237,
+      "sha256": "a8cfde533b8fbc8767675b53d850f45c39a918f9fa7a46275fac391c8f5a9feb",
+      "files": 2,
+      "unpacked_bytes": 51266331,
+      "role": "raster"
+    },
+    "Kittles Saxony": {
+      "archive": "kittles-saxony.tar.gz",
+      "bytes": 136472622,
+      "sha256": "bba73efdda2d2698d9c20f925afc577471284d785f841faf87744f048e2ef9aa",
+      "files": 14,
+      "unpacked_bytes": 153885591,
+      "role": "vector"
+    },
+    "Pulte Sagebriar Clubhouse": {
+      "archive": "pulte-sagebriar-clubhouse.tar.gz",
+      "bytes": 176392780,
+      "sha256": "c820623c4398cafddfff5ee407e9372d62c65f6d2b510dbc1047da46f46d9d45",
+      "files": 11,
+      "unpacked_bytes": 186232209,
+      "role": "vector"
+    },
+    "TSC Harrison HS Fire Alarm": {
+      "archive": "tsc-harrison-hs-fire-alarm.tar.gz",
+      "bytes": 35411882,
+      "sha256": "e06293a2a9ac39410695b04cc777bbce44ffcf0ad2490a2248b5728554e2816f",
+      "files": 17,
+      "unpacked_bytes": 38066856,
+      "role": "unassigned"
+    },
+    "TSC Nutrition & Technology Renovations": {
+      "archive": "tsc-nutrition-and-technology-renovations.tar.gz",
+      "bytes": 151095268,
+      "sha256": "450d36363d9344fbe2272bf94a60f35d487a384c5709bfa74809d9d9e4f30bc9",
+      "files": 11,
+      "unpacked_bytes": 157097677,
+      "role": "vector"
+    },
+    "Unalaska Bid": {
+      "archive": "unalaska-bid.tar.gz",
+      "bytes": 145681541,
+      "sha256": "aa111ab80461382bda0c46055c7e8ceb5753a3b78eb7d0d9694832aa716a5ce7",
+      "files": 21,
+      "unpacked_bytes": 151251745,
+      "role": "vector"
+    },
+    "United Utility Supply": {
+      "archive": "united-utility-supply.tar.gz",
+      "bytes": 112999138,
+      "sha256": "a11f483687ffa7c17c39bf862ca4700e2c08349d403d103f44797d6082c39ff3",
+      "files": 7,
+      "unpacked_bytes": 126622527,
+      "role": "vector"
+    }
+  }
+}

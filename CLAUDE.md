@@ -208,6 +208,7 @@ Rules that are easy to break here:
 - Tabular numerals (`className="tabular"`) on every quantity, count, and total.
 - Sentence case for all interface copy. No exclamation marks, no "successfully," no "please."
 - Run `npm run build` before committing — it catches most breakage.
+- **The engine's regression corpus is fetched, not committed.** Eight real bid sets, ~770 MB, in an access-controlled bucket: `scripts/corpus.py fetch` pulls them into `bid_examples/` and verifies each against the digests in `scripts/corpus-manifest.json`. They stay out of git because they are NDA'd drawings from named firms (ROADMAP.md 3.3) and the repo is public. Without the corpus the engine tests **skip rather than fail** — a green suite does not mean those assertions ran, which is the whole reason `api/tests/bid_set.py` reads an overridable path. `scripts/corpus.py verify` is how you tell.
 
 ## Open decisions, do not silently resolve
 
